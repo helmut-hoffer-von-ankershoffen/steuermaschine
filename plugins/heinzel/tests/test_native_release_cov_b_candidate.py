@@ -160,18 +160,15 @@ def test_validate_accepts_both_events_in_both_ci_shapes(shape, tests, jobs):
     assert out["event"] == "workflow_dispatch" and out["job_count"] == jobs
 
 
-def test_the_proof_records_workflow_and_recorder_and_every_other_pin_is_reread_at_the_source_commit():
+def test_the_proof_records_workflow_and_recorder_and_the_other_pins_are_bound_by_the_tree():
     pins = PINS | {"scripts/focused_plan.py": "c" * 64}
     policy = kit.policy(commit=H, sources=pins)
     assert rc.validate(evidence(), EXPECTED, policy)["sources"] == pins  # the proof keeps its two entries
     broken(lambda d: d["proof"].update(sources=pins), "source artifact differs", policy=policy)
-    table, get, download, small = verify_world()
-    table[f"contents/scripts/focused_plan.py?ref={S}"] = {"encoding": "base64", "type": "file", "content": base64.b64encode(b"plan").decode()}
-    many = kit.policy(commit=H, sources=small.sources | {"scripts/focused_plan.py": hashlib.sha256(b"plan").hexdigest()})
-    assert rc.verify(get, download, EXPECTED, many)["run_id"] == 9
-    stale = kit.policy(commit=H, sources=small.sources | {"scripts/focused_plan.py": "0" * 64})
-    with pytest.raises(rc.CandidateError, match="differs from independent review"):
-        rc.verify(get, download, EXPECTED, stale)
+    broken(lambda d: d["source"]["commit"]["tree"].update(sha="9" * 40), "tested checkout tree differs", policy=policy)
+    _table, get, download, small = verify_world()
+    many = kit.policy(commit=H, sources=small.sources | {"scripts/focused_plan.py": "0" * 64})
+    assert rc.verify(get, download, EXPECTED, many)["run_id"] == 9  # no request for the other pins: the tree binds them
 
 
 def test_validate_refuses_a_candidate_of_another_ci_shape():

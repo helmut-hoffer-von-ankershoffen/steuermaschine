@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 import base64
-import hashlib
 import io
 import json
 import re
@@ -28,7 +27,6 @@ ARTIFACT = "release-candidate-source"
 PROOF_FILE = "release-candidate.json"
 VERSION = re.compile(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)")
 SHA = re.compile(r"[0-9a-f]{40}")
-DIGEST = re.compile(r"[0-9a-f]{64}")
 MAX_JOBS = 1000
 MAX_PROOF = 64 * 1024
 
@@ -166,9 +164,8 @@ def job_inventory(get: Callable[[str], Any], run_id: int) -> list[dict[str, Any]
 def validate(evidence: dict[str, Any], expected: ExpectedCandidate, policy: Policy) -> dict[str, Any]:
     """Consume real completed first-attempt evidence only, without aliasing checks or replacing any main gate.
 
-    Every fact of Core's CI (pinned files, their digests, the job inventory) comes from `policy`, the reviewed
-    manifest read at the exact release head (core_policy), never from this plugin."""
-    approved_sources = policy.sources
+    Every fact of Core's CI (the workflow, the job inventory) comes from `policy`, the reviewed manifest read at the
+    exact release head (core_policy), never from this plugin. The commit and its review verdict bind it, no checksum."""
     run, jobs, proof, pr, source, head = (evidence[key] for key in ("run", "jobs", "proof", "pr", "source", "head"))
     expected_head = expected.head
     expected_tree = expected.tree
@@ -177,11 +174,8 @@ def validate(evidence: dict[str, Any], expected: ExpectedCandidate, policy: Poli
         "invalid expected head or tree",
     )
     require(
-        policy.commit == expected_head
-        and policy.repository == REPOSITORY
-        and {policy.workflow, policy.recorder} <= set(approved_sources)
-        and all(DIGEST.fullmatch(value) for value in approved_sources.values()),
-        "missing reviewed CI source pins",
+        policy.commit == expected_head and policy.repository == REPOSITORY,
+        "candidate policy is not the release head's",
     )
     require(
         type(run.get("id")) is int
@@ -221,8 +215,7 @@ def validate(evidence: dict[str, Any], expected: ExpectedCandidate, policy: Poli
         and proof.get("run_attempt") == 1
         and proof.get("head") == expected_head
         and proof.get("tree") == expected_tree
-        and proof.get("version") == version
-        and proof.get("sources") == policy.recorded_sources,
+        and proof.get("version") == version,
         "candidate source artifact differs from reviewed run or release identity",
     )
     require(proof.get("base") == pr.get("base", {}).get("sha"), "release base changed after candidate execution")
@@ -284,7 +277,7 @@ def validate(evidence: dict[str, Any], expected: ExpectedCandidate, policy: Poli
         "created_at": created,
         "updated_at": finished,
         "workflow_wall_seconds": duration,
-        "sources": approved_sources,
+        "policy_commit": policy.commit,
     }
 
 
@@ -400,11 +393,6 @@ def verify(
     pr = get(f"pulls/{pr_number}")
     head = get(f"commits/{expected_head}")
     source = get(f"commits/{proof['source_commit']}")
-    for path, digest in policy.sources.items():
-        require(
-            hashlib.sha256(source_bytes(get, path, proof["source_commit"], policy.sources)).hexdigest() == digest,
-            "executed CI source differs from independent review",
-        )
     require(get(f"actions/runs/{run_id}") == run, "candidate run changed during evidence collection")
     return validate(
         {"run": run, "jobs": inventory, "proof": proof, "pr": pr, "source": source, "head": head},

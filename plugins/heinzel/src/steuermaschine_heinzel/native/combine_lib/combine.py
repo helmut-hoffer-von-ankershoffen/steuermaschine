@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 
 
 def approved_sources(gh, repo: str) -> tuple[str, ...] | None:
-    """Pinned files: the `sources` of Core's reviewed release policy at the tip of Core's main (None: unreadable)."""
+    """Pinned files: the workflow and the recorder of Core's reviewed release policy at Core's main (None: unreadable)."""
     from ..queue_lib import core_policy
     from ..queue_lib.release_candidate import CandidateError
 
@@ -28,7 +28,7 @@ def approved_sources(gh, repo: str) -> tuple[str, ...] | None:
         return json.loads(out)
 
     try:
-        return tuple(sorted(core_policy.at_commit_api(get, get("commits/main")["sha"]).sources))
+        return tuple(sorted(core_policy.at_commit_api(get, get("commits/main")["sha"]).pinned))
     except (CandidateError, ValueError, KeyError, TypeError):
         return None
 

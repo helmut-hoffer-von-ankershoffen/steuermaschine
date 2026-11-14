@@ -91,17 +91,15 @@ def read_config(state: Path) -> dict | None:
     config = json.loads(path.read_bytes(), object_pairs_hook=rc.unique_object)
     require(
         isinstance(config, dict)
-        and set(config) == {"schema", "pr", "run", "core_repo", "sources"}
+        and set(config) == {"schema", "pr", "run", "core_repo"}
         and type(config["schema"]) is int
-        and config["schema"] == 1
+        and config["schema"] == 2  # 1 carried source pins: Core's commit and its verdict bind the sources now
         and type(config["pr"]) is int
         and config["pr"] > 0
         and type(config["run"]) is int
         and config["run"] > 0
         and isinstance(config["core_repo"], str)
-        and Path(config["core_repo"]).is_absolute()
-        and isinstance(config["sources"], dict)
-        and all(isinstance(k, str) and isinstance(v, str) and rc.DIGEST.fullmatch(v) for k, v in config["sources"].items()),
+        and Path(config["core_repo"]).is_absolute(),
         "checkpoint configuration differs from independently reviewed source policy",
     )
     return config
@@ -140,17 +138,9 @@ def merged_candidate(config: dict, api: Callable, read: Callable) -> dict:
         rc.valid_sha(head) and rc.valid_sha(squash),
         "release head or actual squash missing",
     )
-    # The pins and the inventory are Core's reviewed release policy at the exact release head; a release whose head
-    # has no policy (older than the manifest) cannot be a checkpoint.
+    # The workflow and the inventory are Core's reviewed release policy at the exact release head; a release whose
+    # head has no policy (older than the manifest) cannot be a checkpoint.
     policy = core_policy.at_commit_api(api, head)
-    require(
-        config["sources"] == policy.sources,
-        "unreviewed historical candidate source pins",
-    )
-    require(
-        {policy.workflow, policy.recorder} <= set(config["sources"]),
-        "incomplete candidate source pins",
-    )
     require(
         pr.get("number") == number
         and pr.get("state") == "closed"
@@ -260,8 +250,7 @@ def merged_candidate(config: dict, api: Callable, read: Callable) -> dict:
         and proof.get("run_id") == run_id
         and proof.get("run_attempt") == 1
         and proof["head"] == head
-        and proof["base"] == pr.get("base", {}).get("sha")
-        and proof.get("sources") == policy.recorded_sources,
+        and proof["base"] == pr.get("base", {}).get("sha"),
         "candidate source identity or reviewed pins differ",
     )
     source, released, merged = (
@@ -282,14 +271,6 @@ def merged_candidate(config: dict, api: Callable, read: Callable) -> dict:
         and [p.get("sha") for p in merged.get("parents", [])] == [proof["base"]],
         "release source or squash parent differs",
     )
-    for path, expected in config["sources"].items():
-        require(
-            hashlib.sha256(
-                rc.source_bytes(api, path, proof["source_commit"], policy.sources)
-            ).hexdigest()
-            == expected,
-            "candidate executed source is not independently reviewed",
-        )
     jobs = rc.quarantine_lane([job_proof.log_proven(job, run_id, lambda job_id: read(f"actions/jobs/{job_id}/logs", MAX_JOB_LOG))
                                for job in rc.job_inventory(api, run_id)], run_id, head, policy)
     inventory = policy.expected_jobs("pull_request")
@@ -653,13 +634,6 @@ def verify_configured(config, pin):
     )
 
 
-def release_pins(number):
-    """The pins of Core's reviewed release policy at the head of release PR `number` (refuses when it has none)."""
-    head = get(f"pulls/{number}").get("head", {}).get("sha")
-    require(rc.valid_sha(head), "release head missing")
-    return dict(core_policy.at_commit_api(get, head).sources)
-
-
 def establish(state, pin, number, run, core_repo, *, apply=False):
     """Official verifier command: write only configuration after a fresh complete proof.
 
@@ -668,11 +642,10 @@ def establish(state, pin, number, run, core_repo, *, apply=False):
     """
     require(not hzlib.merge_frozen(), "merge freeze or release hold is present")
     config = {
-        "schema": 1,
+        "schema": 2,
         "pr": number,
         "run": run,
         "core_repo": str(Path(core_repo).resolve()),
-        "sources": release_pins(number),
     }
     proof = verify_configured(config, pin)
     with timed_phase("final_hold_guard"):
