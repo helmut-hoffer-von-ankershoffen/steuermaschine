@@ -82,7 +82,7 @@ def second_attempt(first):
     second = copy.deepcopy(first)
     second['run'].update(run_attempt=2, conclusion='success', created_at='2026-11-05T01:00:00Z')
     for job in second['jobs']:
-        if job['conclusion'] == 'cancelled' or job['name'] in cap.CLOSURE:
+        if job['conclusion'] == 'cancelled' or job['name'] in {'Build', 'CI OK'}:
             job.update(id=job['id'] + 1000, run_attempt=2, conclusion='success', runner_id=123, runner_name='Hosted Agent',
                        started_at='2026-11-05T01:00:00Z', completed_at='2026-11-05T01:01:00Z')
             if job['name'] == 'Build':

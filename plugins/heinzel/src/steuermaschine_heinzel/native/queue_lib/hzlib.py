@@ -21,7 +21,34 @@ SHORT = {"": CORE, "core": CORE, "plugins": PLUGINS, "acme": f"{OWNER}/heinzel-a
 RUN_URL = re.compile(r"/runs/(\d+)")
 
 
-GATE_CHECKS = ("merge-gate", "coverage-floor")  # .github/workflows/merge-gate.yml
+class _GateChecks:
+    """The merge-gate workflow's checks (Core's release policy at main), read on use: hzlib is imported by core_facts."""
+
+    def _names(self):
+        from . import core_facts
+
+        return core_facts.api_checks()
+
+    def __iter__(self):
+        return iter(self._names())
+
+    def __contains__(self, name):
+        return name in self._names()
+
+
+GATE_CHECKS = _GateChecks()
+
+
+def _aggregate() -> str:
+    from . import core_facts
+
+    return core_facts.aggregate()
+
+
+def _ci_file() -> str:
+    from . import core_facts
+
+    return core_facts.ci_file()
 
 
 # The Claude review runs as `review`; its inner job `attempt` (heinzel #454) can time out or be cancelled and must stay advisory too.
@@ -95,12 +122,12 @@ def latest_checks(rollup: list[dict]) -> list[dict]:
 
 def only_never_started_macos_jobs_failed(repo: str, run_id: int) -> bool:
     """True when a red CI run is red only because macOS cells were never given a runner (no runner, no steps, cancelled:
-    GitHub's macOS capacity) and CI OK, which counts them. Nothing ran, so nothing was hidden (policy 2026-11-02)."""
+    GitHub's macOS capacity) and the aggregate, which counts them. Nothing ran, so nothing was hidden (policy 2026-11-02)."""
     jobs = ghj("api", f"repos/{repo}/actions/runs/{run_id}/jobs?per_page=100", "--jq", "[.jobs[]|{name, conclusion, runner: .runner_name, steps: (.steps|length)}]")
     if not isinstance(jobs, list) or not jobs:
         return False
     bad = [j for j in jobs if j.get("conclusion") not in ("success", "skipped")]
-    others = [j for j in bad if j.get("name") != "CI OK"]
+    others = [j for j in bad if j.get("name") != _aggregate()]
     return bool(others) and all(
         "macos" in (j.get("name") or "").lower() and j.get("conclusion") == "cancelled" and not j.get("runner") and not j.get("steps") for j in others
     )
@@ -119,8 +146,10 @@ def tool_required_checks(repo: str) -> set[str]:
     so PRs opened before it don't stall. Doesn't stop a hand `gh pr merge`; hz-merge-gate says so."""
     if repo != f"{OWNER}/heinzel-sf":
         return set()
-    code, out = gh("api", f"repos/{repo}/contents/.github/workflows/ci.yml", "-H", "Accept: application/vnd.github.raw+json")
-    return {"coverage-floor"} if code == 0 and "coverage-floor:" in out else set()
+    from . import core_facts
+
+    code, out = gh("api", f"repos/{repo}/contents/{core_facts.ci_path()}", "-H", "Accept: application/vnd.github.raw+json")
+    return {name for name in core_facts.api_checks() if f"{name}:" in out} if code == 0 else set()
 
 
 def _gh_process(*args: str, timeout: float | None = None) -> subprocess.CompletedProcess:
@@ -384,7 +413,7 @@ def resolve_main_runs(rows, *, restoration_read=False):
                                      "attempt": final["run_attempt"], "createdAt": final["created_at"],
                                      "displayTitle": final["display_title"], "event": final["event"],
                                      "headBranch": final["head_branch"], "batch": proof}
-                    elif not any(j["name"] == "CI OK" and j["conclusion"] == "success" for j in jobs):
+                    elif not any(j["name"] == _aggregate() and j["conclusion"] == "success" for j in jobs):
                         raise ValueError("admission is not full CI")
             except (ValueError, TypeError, KeyError, AttributeError):
                 effective = {**row, "status": "waiting", "conclusion": None, "batch_unknown": True}
@@ -432,7 +461,7 @@ def classify_attempt(run_id: int, attempt: int) -> tuple[str, str]:
     jobs = _attempt_jobs(run_id, attempt)
     if jobs is None:
         return "unknown", f"run {run_id} attempt {attempt}: job list unreadable or incomplete"
-    hard = [j["name"] for j in jobs if j["name"] != "CI OK" and j.get("conclusion") in HARD_JOB]
+    hard = [j["name"] for j in jobs if j["name"] != _aggregate() and j.get("conclusion") in HARD_JOB]
     if not hard:
         return "none", f"run {run_id} attempt {attempt}: no job failed (cancelled or never started only)"
     known = _known_registry()
@@ -463,7 +492,7 @@ def main_release_gate(tip: str = "") -> dict:
       red with every hard-failed job KNOWN in date          -> ok  (kind known: red-by-KNOWN)
       red with an UNKNOWN job, a green rerun of an UNKNOWN failure, unreadable evidence, no evidence -> refuse
     Returns {verdict, kind, why, run, sha, tip_finished}."""
-    rows = resolve_main_runs(ghj("run", "list", "-R", CORE, "--workflow", "ci.yml", "--branch", "main", "-L", str(TRAIN_GATE_RUNS),
+    rows = resolve_main_runs(ghj("run", "list", "-R", CORE, "--workflow", _ci_file(), "--branch", "main", "-L", str(TRAIN_GATE_RUNS),
                                  "--json", "status,conclusion,databaseId,headSha,displayTitle,attempt", default=None))
     result = {"verdict": "refuse", "kind": "unknown", "run": None, "sha": "", "tip_finished": False}
     if not isinstance(rows, list) or not rows or not all(isinstance(r, dict) and type(r.get("databaseId")) is int for r in rows):

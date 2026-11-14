@@ -16,6 +16,7 @@ from steuermaschine.native import native
 
 from . import queue as queue_commands
 from .ci_evidence_lib import main_evidence
+from .queue_lib import core_facts
 
 
 class GateRepo(Model):
@@ -92,7 +93,7 @@ def main_evidence_of(module: Any) -> CiMain:
     hzlib = module.hzlib
     caught: dict[str, Any] = {}
     module.update = lambda **fields: caught.update(fields)  # main_state pins evidence as a side effect; a read must not
-    raw = hzlib.ghj("run", "list", "-R", hzlib.CORE, "--workflow", "ci.yml", "--branch", "main", "-L", "10",
+    raw = hzlib.ghj("run", "list", "-R", hzlib.CORE, "--workflow", core_facts.ci_file(), "--branch", "main", "-L", "10",
                     "--json", "status,conclusion,databaseId,headSha,displayTitle,attempt,createdAt")
     runs = hzlib.resolve_main_runs(raw)
     rows, seen = [], set()

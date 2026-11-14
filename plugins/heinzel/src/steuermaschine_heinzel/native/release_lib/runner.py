@@ -62,8 +62,8 @@ import shutil
 import stat
 import subprocess
 import sys
-import time
 import tempfile
+import time
 import tomllib
 import urllib.error
 import urllib.request
@@ -72,16 +72,20 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from steuermaschine.config import child_environment
+
+from ... import state as statedir  # the plugin's state paths
+from ..queue_lib import (
+    core_facts,
+    hzlib,  # noqa: E402
+    release_flow,
+)
+from . import candidate_capacity as release_candidate_capacity
+from . import candidate_policy as release_candidate_policy
 from . import edge  # moved: siblings are imported relatively, no sys.path entry
-from ..queue_lib import hzlib  # noqa: E402
 from . import notes_audit as release_notes_audit  # noqa: E402
 from . import rejection as release_rejection
-from . import candidate_policy as release_candidate_policy
-from . import candidate_capacity as release_candidate_capacity
-from ..queue_lib import release_flow
 from . import snapshot as release_snapshot  # noqa: E402
-from steuermaschine.config import child_environment
-from ... import state as statedir  # the plugin's state paths
 
 CORE, PLUGINS = hzlib.CORE, hzlib.PLUGINS
 POLL = 30
@@ -1168,7 +1172,7 @@ def merge_release_pr(tag: str, composite_run: int | None = None) -> None:
 
 def main_tip_green() -> bool:
     tip = hzlib.gh("api", f"repos/{CORE}/commits/main", "--jq", ".sha")[1].strip()
-    latest = (hzlib.resolve_main_runs(runs(CORE, "ci.yml", branch="main")) or [])[:3]
+    latest = (hzlib.resolve_main_runs(runs(CORE, core_facts.ci_file(), branch="main")) or [])[:3]
     if any(r["status"] != "completed" for r in latest):
         return False
     if latest and latest[0]["headSha"] == tip and latest[0]["conclusion"] == "failure":
@@ -2170,7 +2174,7 @@ def release_core(request: str, intro: str, timeout: float, snapshot_acceptance: 
 
 # ---------------------------------------------------------------- tag-on-green-main (core ADR 0144, flag)
 
-BUMP_RUN_LISTING = "actions/workflows/ci.yml/runs?head_sha={sha}&event=push&per_page=100"
+BUMP_RUN_LISTING = "actions/workflows/{workflow}/runs?head_sha={sha}&event=push&per_page=100"  # workflow: Core's policy
 
 
 def pick_flow(request: str, composite_run: int | None) -> str:
@@ -2265,7 +2269,7 @@ def checkout_branch(work: str) -> str:
 
 
 def bump_runs(sha: str) -> list[dict] | None:
-    listing = hzlib.ghj("api", f"repos/{CORE}/" + BUMP_RUN_LISTING.format(sha=sha), default=None)
+    listing = hzlib.ghj("api", f"repos/{CORE}/" + BUMP_RUN_LISTING.format(workflow=core_facts.ci_file(), sha=sha), default=None)
     rows = listing.get("workflow_runs") if isinstance(listing, dict) else None
     return rows if isinstance(rows, list) else None
 

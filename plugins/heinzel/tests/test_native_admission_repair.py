@@ -160,7 +160,7 @@ class Runtime:
 def script_github(gh: FakeGh, h: SimpleNamespace) -> SimpleNamespace:
     """Today's GitHub, as the API answered it for run 43452895000 at f6e3b02b (shapes kept, ids kept)."""
     root = f"repos/{REPO}"
-    run = dict(id=RUN, head_sha=h.main, path=r.CI, event="push", head_branch="main", status="completed",
+    run = dict(id=RUN, head_sha=h.main, path=".github/workflows/ci.yml", event="push", head_branch="main", status="completed",
                conclusion="failure", run_attempt=1)
     green = [dict(id=131979500000 + n, name=name, status="completed", conclusion=conclusion, run_id=RUN, run_attempt=1,
                   head_sha=h.main, steps=[]) for n, (name, conclusion) in enumerate(
@@ -168,7 +168,7 @@ def script_github(gh: FakeGh, h: SimpleNamespace) -> SimpleNamespace:
     paths = dict(id=JOB_PATHS, name=r.JOB, status="completed", conclusion="failure", run_id=RUN, run_attempt=1, head_sha=h.main,
                  steps=[dict(name="Set up job", conclusion="success"), dict(name="Recognize the canonical open release candidate", conclusion="success"),
                         dict(name=r.STEP, conclusion="failure"), dict(name="Complete job", conclusion="success")])
-    ok = dict(id=JOB_OK, name=r.AGGREGATE, status="completed", conclusion="failure", run_id=RUN, run_attempt=1, head_sha=h.main,
+    ok = dict(id=JOB_OK, name="CI OK", status="completed", conclusion="failure", run_id=RUN, run_attempt=1, head_sha=h.main,
               steps=[dict(name="Set up job", conclusion="success"), dict(name=r.AGGREGATE_STEP, conclusion="failure"),
                      dict(name="Require successful focused workload and all owning checks", conclusion="skipped")])
     jobs = [*green, paths, ok]
@@ -227,7 +227,7 @@ def test_todays_case_proves_exactly_the_missing_plan(case):
     assert proof["tree"] == case.h.tree and proof["pr"] == PR and proof["head"] == case.h.head
     assert proof["composition"]["admitted_base"] == case.h.base and proof["composition"]["admitted_tree"] == case.h.old_tree
     assert proof["composition"]["overlap"] == ["web/src/i18n.ts"]
-    assert proof["live"]["run"] == dict(run=RUN, attempt=1, jobs={r.JOB: JOB_PATHS, r.AGGREGATE: JOB_OK},
+    assert proof["live"]["run"] == dict(run=RUN, attempt=1, jobs={r.JOB: JOB_PATHS, "CI OK": JOB_OK},
                                         log_sha256=r.digest(LOG.encode()))
     assert proof["live"]["admissions"] == ["9bd6a951" + "0" * 56]
     assert not case.gh.writes()
@@ -377,9 +377,9 @@ def test_prepare_then_apply_writes_one_plan_and_a_receipt_the_queue_recognizes(w
     assert json.loads(w.rt.writes[0][1]) == {f"push-tree:{w.h.tree}": w.plan}
     receipt = json.loads(Path(result.receipt_path).read_text())
     assert receipt["repair_main"] == doc["repair_main"] and receipt["registry_changed"] is True
-    found = r.receipt_for(w.rt.home, RUN, w.h.main, {r.JOB: JOB_PATHS, r.AGGREGATE: JOB_OK})
+    found = r.receipt_for(w.rt.home, RUN, w.h.main, {r.JOB: JOB_PATHS, "CI OK": JOB_OK})
     assert found and found["pr"] == PR
-    assert r.receipt_for(w.rt.home, RUN + 1, w.h.main, {r.JOB: JOB_PATHS, r.AGGREGATE: JOB_OK}) is None
+    assert r.receipt_for(w.rt.home, RUN + 1, w.h.main, {r.JOB: JOB_PATHS, "CI OK": JOB_OK}) is None
     assert r.receipt_for(w.rt.home, RUN, w.h.main, {r.JOB: JOB_PATHS}) is None
 
 

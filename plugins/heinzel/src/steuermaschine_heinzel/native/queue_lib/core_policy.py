@@ -36,8 +36,9 @@ MAX_PATH = 1024  # bytes of one path, UTF-8
 EVENTS = ("pull_request", "workflow_dispatch")
 KEYS = frozenset((
     "policy", "repository", "workflow", "recorder", "aggregate", "expected_jobs", "quarantine", "test_jobs",
-    "lanes", "required_contexts", "focused_job", "not_ci",
+    "lanes", "required_contexts", "focused_job", "not_ci", "judge_workflow", "gate_checks",
 ))
+GATE_ROLES = frozenset(("coverage", "sonar"))  # what each check the merge-gate workflow posts judges
 QUARANTINE_KEYS = frozenset(("registry", "plan", "runs", "idle"))
 LANE_KEYS = frozenset(("runner", "python", "kind"))
 NOT_CI_KEYS = frozenset(("except", "match"))
@@ -78,6 +79,7 @@ class Policy:
     repository: str
     workflow: str
     recorder: str
+    judge_workflow: str
     aggregate: str
     jobs: dict[str, dict[str, str]]
     quarantine: Quarantine
@@ -85,6 +87,7 @@ class Policy:
     lanes: dict[str, Lane]
     required_contexts: frozenset[str]
     focused_job: str
+    gate_checks: dict[str, str]  # role (coverage, sonar) -> the check's name
     not_ci: tuple[str, ...]
     ci_except: frozenset[str]
 
@@ -92,6 +95,21 @@ class Policy:
         """The complete candidate inventory of `event`: job name -> its required conclusion."""
         require(event in self.jobs, "unsupported candidate event")
         return dict(self.jobs[event])
+
+    @property
+    def workflow_file(self) -> str:
+        """The candidate workflow's file name, as `gh run list --workflow` and the Actions API name it."""
+        return self.workflow.rsplit("/", 1)[-1]
+
+    @property
+    def judge_file(self) -> str:
+        """The merge-gate workflow's file name."""
+        return self.judge_workflow.rsplit("/", 1)[-1]
+
+    @property
+    def api_checks(self) -> frozenset[str]:
+        """The required contexts the merge-gate workflow posts through the API: all but the CI aggregate."""
+        return self.required_contexts - {self.aggregate}
 
     @property
     def workflow_runs(self) -> str:
@@ -167,6 +185,9 @@ def parse(raw: bytes, commit: str) -> Policy:
         and workflow.startswith(".github/workflows/"),
         "release policy pinned paths malformed",
     )
+    judge = _text(data["judge_workflow"], "judge workflow")
+    require(repo_path(judge) and judge.startswith(".github/workflows/") and judge not in (workflow, recorder),
+            "release policy judge workflow malformed")
     aggregate = _text(data["aggregate"], "aggregate")
     jobs = _jobs(data["expected_jobs"])
     require(all(job.get(aggregate) == "success" for job in jobs.values()), "release policy aggregate is not a success job")
@@ -192,6 +213,10 @@ def parse(raw: bytes, commit: str) -> Policy:
     rest = focused.replace("{lane}", "")
     require(focused.count("{lane}") == 1 and "{" not in rest and "}" not in rest,
             "release policy focused job is not a {lane} template")
+    gates = data["gate_checks"]
+    require(isinstance(gates, dict) and set(gates) == GATE_ROLES and all(isinstance(v, str) and v for v in gates.values())
+            and len(set(gates.values())) == len(gates) and set(gates.values()) == contexts - {aggregate},
+            "release policy gate_checks do not name the merge-gate workflow's checks")
     raw_not_ci = data["not_ci"]
     require(isinstance(raw_not_ci, dict) and set(raw_not_ci) == NOT_CI_KEYS, "release policy not_ci malformed")
     not_ci = tuple(_names(raw_not_ci["match"], "not-CI globs"))
@@ -200,8 +225,8 @@ def parse(raw: bytes, commit: str) -> Policy:
     ci_except = frozenset(_names(raw_not_ci["except"], "not-CI exceptions", empty=True))
     require(all(repo_path(p) and not set(p) & set("[*?") for p in ci_except),
             "release policy not-CI exception is not a literal repository path")
-    return Policy(commit, repository, workflow, recorder, aggregate, jobs, quarantine, test_jobs, lanes, contexts,
-                  focused, not_ci, ci_except)
+    return Policy(commit, repository, workflow, recorder, judge, aggregate, jobs, quarantine, test_jobs, lanes, contexts,
+                  focused, dict(gates), not_ci, ci_except)
 
 
 def at_commit_api(get: Callable[[str], Any], commit: str) -> Policy:

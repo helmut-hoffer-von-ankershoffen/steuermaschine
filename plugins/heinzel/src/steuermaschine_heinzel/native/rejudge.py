@@ -24,10 +24,11 @@ from steuermaschine.models import Model
 from steuermaschine.native import Group, native, runtime
 from steuermaschine.protocols import Providers
 
+from .queue_lib import core_facts
+
 CI_WORKFLOW = "CI"
 GATE_WORKFLOW = "Merge gate"
-GATE_FILE = "merge-gate.yml"
-GATE_CHECKS = ("merge-gate", "coverage-floor")
+GATE_CHECKS = core_facts.API_CHECKS  # the merge-gate workflow's checks (Core's release policy)
 RUN_URL = re.compile(r"/actions/runs/(\d+)")
 RATINGS = {"new_reliability_rating": "reliability", "new_security_rating": "security", "new_maintainability_rating": "maintainability"}
 LETTERS = {"1": "A", "2": "B", "3": "C", "4": "D", "5": "E"}
@@ -66,7 +67,7 @@ def run_of(w: Reader, run_id: str) -> dict[str, Any] | None:
 
 
 def is_gate_run(run: dict[str, Any]) -> bool:
-    return run.get("name") == GATE_WORKFLOW or str(run.get("path") or "").endswith(GATE_FILE)
+    return run.get("name") == GATE_WORKFLOW or str(run.get("path") or "").endswith(core_facts.judge_file())
 
 
 def trace(w: Reader, urls: list[str], head: str = "") -> tuple[dict[str, Any] | None, str]:
@@ -78,7 +79,7 @@ def trace(w: Reader, urls: list[str], head: str = "") -> tuple[dict[str, Any] | 
             return run, "the check's details URL"
     if not head:
         return None, "the check's details URL names no Merge gate run and the head is unknown"
-    data, why = w.gh.api(f"actions/workflows/{GATE_FILE}/runs", {"head_sha": head, "per_page": 20})
+    data, why = w.gh.api(f"actions/workflows/{core_facts.judge_file()}/runs", {"head_sha": head, "per_page": 20})
     if why:
         return None, f"the Merge gate runs of the head cannot be read: {why}"
     runs = [r for r in (data or {}).get("workflow_runs") or [] if r.get("head_sha") == head]
@@ -88,7 +89,7 @@ def trace(w: Reader, urls: list[str], head: str = "") -> tuple[dict[str, Any] | 
 
 
 def gate_checks(w: Reader, head: str) -> tuple[list[dict[str, Any]], str]:
-    """The latest merge-gate and coverage-floor check runs on the head."""
+    """The latest check runs of the merge-gate workflow on the head."""
     data, why = w.gh.api(f"commits/{head}/check-runs", {"filter": "latest", "per_page": 100})
     if why:
         return [], why

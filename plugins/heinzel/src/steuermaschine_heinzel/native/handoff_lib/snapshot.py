@@ -21,6 +21,7 @@ from steuermaschine.github import Gh
 from steuermaschine.models import Model
 
 from ..coord_lib.base import child_env, setting, tracker_dir
+from ..queue_lib import core_facts
 
 
 class HandoffSettings(BaseModel):
@@ -32,7 +33,7 @@ class HandoffSettings(BaseModel):
     handoff_remote: str = Field("origin", description="The remote of the tracker's repository a handoff pushes to.")
     handoff_branch: str = Field("main", description="The branch a handoff commits on and pushes; a checkout on another branch is refused.")
     handoff_extra_repos: list[str] = Field([], description="Further repositories (OWNER/NAME) whose open pull requests and releases the snapshot lists.")
-    handoff_ci_workflow: str = Field("ci.yml", description="The workflow whose runs on main the snapshot lists.")
+    handoff_ci_workflow: str = Field("", description="The workflow whose runs on main the snapshot lists; empty: Core's CI workflow (its release policy).")
     handoff_worktree_prefix: str = Field("heinzel", description="Directories next to the tracker's repository whose name starts with this are looked at for unpushed work.")
     handoff_recent_days: int = Field(3, description="Only worktrees changed within this many days are listed as local work.")
     handoff_commit_message: str = Field("docs: refresh the tracking document", description="The commit message of a handoff.")
@@ -116,7 +117,7 @@ class World:
         for repo in repos:
             out += self.pr_table(repo)
         out += ["**Main and releases**", ""]
-        for run in self.gh_list("run", "list", "-R", self.repo, "--workflow", str(get(self.s, "handoff_ci_workflow")), "--branch", "main", "-L", "5", "--json", "conclusion,status,headSha"):
+        for run in self.gh_list("run", "list", "-R", self.repo, "--workflow", str(get(self.s, "handoff_ci_workflow") or core_facts.ci_file()), "--branch", "main", "-L", "5", "--json", "conclusion,status,headSha"):
             out.append(f"- CI {run.get('conclusion') or run.get('status')} `{str(run.get('headSha', ''))[:8]}`")
         for repo in repos:
             for rel in self.gh_list("release", "list", "-R", repo, "-L", "4", "--json", "tagName,isLatest,isPrerelease"):

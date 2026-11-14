@@ -488,7 +488,8 @@ def test_the_replay_driver_runs_as_a_script(tmp_path):
     (evidence / "report_logs").write_bytes(log("  MERGE_GATE: 1", "  COVERAGE_FLOOR: 2"))
     (evidence / "actions_artifacts_1_zip").write_bytes(blob)
     request = {"token": "fixture-token", "repository": "o/r", "original": original, "plan": {"x": 1}, "live": live,
-               "paths": {"checkout": "checkout/logs", "coverage": "coverage/logs", "report": "report/logs"}}
+               "paths": {"checkout": "checkout/logs", "coverage": "coverage/logs", "report": "report/logs"},
+               "gate_checks": ["coverage-floor", "merge-gate"]}  # the policy's merge-gate checks, named by focused_resulting
     done = subprocess.run([sys.executable, "-I", str(driver)], input=a.canonical(request), capture_output=True, cwd=tmp_path, check=False)
     assert done.returncode == 0, done.stderr.decode()
     proof = json.loads(done.stdout)

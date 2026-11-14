@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import datetime
 
-REQUIRED = ("CI OK", "merge-gate", "coverage-floor")  # contexts main requires; the caller drops what the rules do not demand
+from ..queue_lib import core_facts
+
+REQUIRED = core_facts.CONTEXTS  # contexts main requires (Core's release policy); the caller drops what the rules do not demand
 GREEN = ("SUCCESS", "SKIPPED", "NEUTRAL")
 STALL_MIN = 15
 ADMISSION_MIN = 20
@@ -106,7 +108,7 @@ def stall_alarm(key: str, state: str | None, rollup: list[dict], required, since
 
 def bad_jobs(jobs: list[dict]) -> list[str]:
     names = [j.get("name") or "?" for j in jobs if (j.get("conclusion") or "").lower() in BAD_JOB]
-    return [n for n in dict.fromkeys(names) if n != "CI OK"] or list(dict.fromkeys(names))
+    return [n for n in dict.fromkeys(names) if n != core_facts.aggregate()] or list(dict.fromkeys(names))
 
 
 def named(names: list[str], cap: int = 6) -> str:

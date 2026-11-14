@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import re
 
+from ..queue_lib import core_facts
+
 TOOLS = ("gitleaks", "actionlint", "pnpm", "electron", "uv", "gh", "vhs", "ttyd", "jq", "tools wheel")
 NET = re.compile(r"download failed|HTTP (?:error )?5\d\d|\b5\d\d (?:Server|Bad|Service|Gateway)|read timed out|timed out|Connection reset|curl: \(\d+\)", re.I)
 STEP = re.compile(r"Install the locked Electron package", re.I)
@@ -68,7 +70,6 @@ def split_log(text: str) -> dict[tuple[str, str], list[str]]:
 
 
 UNNAMED_STEP = "UNKNOWN STEP"  # what the step column of a failed-step log says when the log does not name the steps
-AGGREGATE = "CI OK"  # the aggregate job of the CI run: red whenever another job is, it repeats the real failures
 HOSTED_ONLY = (
     (re.compile(r"scoped coverage below the \d+% report threshold"), "scoped coverage under the floor (a hosted-only gate): cover the changed lines; sm head preflight shows it before admission"),
 )
@@ -82,7 +83,7 @@ def classify_jobs(jobs: list[dict], logs: dict[tuple[str, str], list[str]]) -> d
     failed = [j for j in jobs if j.get("conclusion") == "failure"]
     out: dict[str, tuple[str, str | None]] = {}
     for j in failed:
-        if j["name"] == AGGREGATE and len(failed) > 1:
+        if j["name"] == core_facts.aggregate() and len(failed) > 1:
             out[j["name"]] = ("AGGREGATE", None)
             continue
         fsteps = [s["name"] for s in j.get("steps", []) if s.get("conclusion") == "failure"] or [""]

@@ -15,6 +15,7 @@ from pathlib import Path
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "core_policy"
 WORKFLOW = ".github/workflows/ci.yml"
+JUDGE = ".github/workflows/merge-gate.yml"
 RECORDER = "scripts/release_candidate.py"
 PATH = "scripts/release_policy.json"
 REPOSITORY = "helmut-hoffer-von-ankershoffen/heinzel"
@@ -74,7 +75,7 @@ def manifest(shape: str = "old", **override) -> dict:
         jobs[event] = {"success": sorted(n for n, c in inventory.items() if c == "success"),
                        "skipped": sorted(n for n, c in inventory.items() if c == "skipped")}
     data = {
-        "policy": 1, "repository": REPOSITORY, "workflow": WORKFLOW, "recorder": RECORDER,
+        "policy": 1, "repository": REPOSITORY, "workflow": WORKFLOW, "recorder": RECORDER, "judge_workflow": JUDGE,
         "aggregate": "CI OK", "expected_jobs": jobs,
         "quarantine": {"registry": "Quarantine registry", "plan": "Quarantine plan",
                        "runs": ["Quarantine (macos-latest)", "Quarantine (ubuntu-24.04)"], "idle": "Quarantine (${{ matrix.os }})"},
@@ -82,6 +83,7 @@ def manifest(shape: str = "old", **override) -> dict:
         "lanes": {name: {"kind": kind, "python": python, "runner": runner} for name, (runner, python, kind) in LANES.items()},
         "required_contexts": ["CI OK", "coverage-floor", "merge-gate"],
         "focused_job": "Focused tests ({lane})",
+        "gate_checks": {"coverage": "coverage-floor", "sonar": "merge-gate"},
         "not_ci": {"except": ["docs/conftest.md"], "match": ["*.md", "docs/**"]},
     }
     return data | override
@@ -136,13 +138,13 @@ def policy(*, commit: str = "c" * 40, jobs: dict[str, str] | None = None,
     inventory = {event: dict(jobs) if jobs is not None else expected_jobs(event, shape) for event in core_policy.EVENTS}
     q = data["quarantine"]
     fields = dict(
-        commit=commit, repository=REPOSITORY, workflow=WORKFLOW, recorder=RECORDER,
+        commit=commit, repository=REPOSITORY, workflow=WORKFLOW, recorder=RECORDER, judge_workflow=JUDGE,
         aggregate="CI OK", jobs=inventory,
         quarantine=core_policy.Quarantine(q["registry"], q["plan"], frozenset(q["runs"]), q["idle"]),
         test_jobs=frozenset(data["test_jobs"]),
         lanes={name: core_policy.Lane(**lane) for name, lane in data["lanes"].items()},
         required_contexts=frozenset(data["required_contexts"]),
-        focused_job=data["focused_job"], not_ci=tuple(data["not_ci"]["match"]),
+        focused_job=data["focused_job"], gate_checks=dict(data["gate_checks"]), not_ci=tuple(data["not_ci"]["match"]),
         ci_except=frozenset(data["not_ci"]["except"]),
     )
     return core_policy.Policy(**(fields | override))

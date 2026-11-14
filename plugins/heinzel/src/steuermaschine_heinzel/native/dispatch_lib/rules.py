@@ -17,6 +17,8 @@ from typing import Any
 
 from steuermaschine import window
 
+from ..queue_lib import core_facts
+
 MAX_FOCUSED = 5
 MAX_REPEAT = 60  # rounds in one focused job (core focused_job.py MAX_REPEAT)
 MAX_RERUN_REPEAT = 10  # sequential re-runs of one CI job
@@ -37,7 +39,12 @@ LANES = ("cli", "supervised", "web-1", "web-2")
 OSES = ("macos-latest", "ubuntu-24.04")
 WORKFLOW = "focused-job.yml"
 # Checks that are not a re-runnable CI job (code scanning results, Sonar, gates): fix those from their findings.
-NOT_JOBS = ("CodeQL", "SonarCloud", "merge-gate", "coverage-floor", "review", "attempt")
+OTHER_CHECKS = ("CodeQL", "SonarCloud", "review", "attempt")
+
+
+def not_jobs() -> tuple[str, ...]:
+    """Checks that are not jobs of the CI run: these and the merge-gate workflow's (Core's release policy)."""
+    return OTHER_CHECKS + tuple(core_facts.API_CHECKS)
 # Mirrors scripts/focused_job.py in core, so a bad selector is refused here instead of after a runner was taken.
 TOKEN = re.compile(r"\w[\w./]{0,199}(::\w{1,120}(\[[\w.,=+-]{1,80}\])?){0,2}", re.ASCII)
 REF = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,199}")
@@ -98,7 +105,7 @@ def pick_run(runs, head_sha=None, workflow="CI"):
 
 
 def failed_jobs(jobs):
-    return [j for j in jobs if j.get("conclusion") in ("failure", "timed_out", "cancelled") and j.get("name") != "CI OK"]
+    return [j for j in jobs if j.get("conclusion") in ("failure", "timed_out", "cancelled") and j.get("name") != core_facts.aggregate()]
 
 
 def match_job(jobs, name):
@@ -197,7 +204,7 @@ def selection(suite=None, tests=(), kind=None):
 
 def verify_hint(target, job_names):
     """The one line the tick digest and the fail log print for a failing PR or run."""
-    names = [n for n in job_names if n and n not in ("CI OK", "run") and not n.startswith(NOT_JOBS)]
+    names = [n for n in job_names if n and n not in (core_facts.aggregate(), "run") and not n.startswith(not_jobs())]
     if not names:
         return f"verify with: sm ci one rerun {target} --wait   (hosted-only failure; do not push-and-wait for full CI)"
     return f'verify with: sm ci one rerun {target} --job "{names[0]}" --wait   (hosted-only failure; do not push-and-wait for full CI)'

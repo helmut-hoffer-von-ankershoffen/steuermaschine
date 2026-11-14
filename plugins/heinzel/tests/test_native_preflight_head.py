@@ -7,6 +7,7 @@ fake's `key` changed with the edge: the checks get their fakes through `prefligh
 import json
 from pathlib import Path
 
+import policy_kit as kit
 import pytest
 
 from steuermaschine.app import Runtime
@@ -71,6 +72,8 @@ class Fake:
         return name + (" " + cmd[1] if name in ("uv", "gh") else "")
 
     def default(self, key, cmd):
+        if key == "git show" and cmd[-1].endswith(":scripts/release_policy.json"):  # Core's release policy at the head
+            return 0, kit.encode(kit.manifest()).decode()
         if key == "git rev-parse":
             return 0, ("feat/thing" if "--abbrev-ref" in cmd else {"HEAD": HEAD, m.BASE: MAIN}[cmd[-1]]) + "\n"
         if key == "git diff":

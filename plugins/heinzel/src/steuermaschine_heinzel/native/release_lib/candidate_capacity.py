@@ -9,7 +9,7 @@ import subprocess
 import zipfile
 from datetime import datetime
 
-from ..queue_lib import core_policy, hzlib
+from ..queue_lib import core_facts, core_policy, hzlib
 from ..queue_lib import release_candidate as strict
 from . import edge  # moved: records, processes and what used to be separate scripts
 
@@ -18,7 +18,6 @@ COMPOSITE = 'candidate-capacity-composite/v1'
 LIMIT = 2 * 1024 * 1024
 NOT_ACQUIRED = 'The job was not acquired by Runner of type hosted even after multiple attempts'
 CAPACITY = 'Due to capacity constraints, jobs targeting macOS arm64 runners may experience longer queue times.'
-CLOSURE = {'Build', 'CI OK'}
 BUILD_STEPS = {
     'Run actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333',
     'Unpack Heinzel Notifier into the package', 'Check the wheel ships Heinzel Notifier',
@@ -183,7 +182,7 @@ def executed(job):
 
 
 def replacement_steps(job):
-    required = {'Fail if any required job failed'} if job['name'] == 'CI OK' else set()
+    required = {'Fail if any required job failed'} if job['name'] == core_facts.aggregate() else set()
     if job['name'] == 'Build':
         required = BUILD_STEPS | {'Run make build', 'Run actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9'}
     elif job['name'] == 'Heinzel Notifier (macOS app)':
@@ -216,7 +215,8 @@ def never_acquired(job, rows, head):
 def original(data, version, run_id):
     proof = identity(data, version, run_id, 1)
     require(data['run'].get('conclusion') in ('failure', 'cancelled'), 'original attempt was not a terminal failure')
-    inventory = reviewed(proof['head']).expected_jobs('pull_request')
+    policy = reviewed(proof['head'])
+    inventory, aggregate = policy.expected_jobs('pull_request'), policy.aggregate
     jobs = data['jobs']
     require(len(jobs) == len(inventory) and {j.get('name') for j in jobs} == set(inventory)
             and len({j.get('id') for j in jobs}) == len(jobs), 'original full candidate inventory differs')
@@ -225,7 +225,7 @@ def original(data, version, run_id):
         job_shape(job, run_id, proof['head'])
         require(job['run_attempt'] == 1, 'original inventory contains a rerun')
         name = job['name']
-        if name == 'CI OK':
+        if name == aggregate:
             require(job['conclusion'] == 'failure' and type(job.get('runner_id')) is int and job['runner_id'] > 0
                     and job.get('steps') and {s['name'] for s in job['steps'] if s.get('conclusion') == 'failure'}
                     == {'Fail if any required job failed'}, 'original aggregate must retain only required-job failure')
@@ -286,7 +286,8 @@ def dependency_closure(data, eligible):
     closure = found - selected
     expected = {'ci-ok', 'build'} if 'notifier' in selected else {'ci-ok'}
     require(closure == expected, 'failed-job request would replay an unapproved descendant workload')
-    return {'Build', 'CI OK'} if 'build' in closure else {'CI OK'}
+    aggregate = reviewed(data['proof']['head']).aggregate
+    return {'Build', aggregate} if 'build' in closure else {aggregate}
 
 
 def stable_job(job):

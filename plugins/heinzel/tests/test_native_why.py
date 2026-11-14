@@ -19,7 +19,7 @@ from steuermaschine_heinzel.toolmap import ROWS
 FIXTURES = Path(__file__).parent / "fixtures" / "why"
 REPO = "helmut-hoffer-von-ankershoffen/heinzel"
 MAIN_RUNS = [{"databaseId": 43307443399, "headSha": "f19a3782232cb24b682b3e0f5b094abb96da18fd", "attempt": 1, "status": "completed", "conclusion": "success"}]
-GREEN = [CheckState(name=n, latest="SUCCESS") for n in why_mod.REQUIRED]
+GREEN = [CheckState(name=n, latest="SUCCESS") for n in ("CI OK", "merge-gate", "coverage-floor")]  # the kit policy's contexts
 
 
 def runtime_for(tmp_path, view: str, check_runs: str, queue: dict | None = None, members: bool = True, main_runs=MAIN_RUNS):

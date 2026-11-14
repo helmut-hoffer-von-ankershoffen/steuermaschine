@@ -3,10 +3,7 @@
 import re
 import subprocess
 
-from ..queue_lib import hzlib
-from ..queue_lib import release_candidate
-from ..queue_lib import job_proof
-from ..queue_lib import core_policy
+from ..queue_lib import core_policy, hzlib, job_proof, release_candidate
 from . import edge  # moved: records, processes and what used to be separate scripts
 
 # Source qualification: the workflow and the job inventory are Core's reviewed release policy at the exact release head
@@ -22,7 +19,7 @@ HARD = ("failure", "timed_out", "startup_failure")
 BEAD = re.compile(r"[a-z0-9]{3}")
 
 
-# Core merge-gate.yml (workflow_run after CI) POSTs check runs on the PR head through the github-actions app: the
+# Core's merge-gate workflow (workflow_run after CI) POSTs check runs on the PR head through the github-actions app: the
 # required contexts of Core's release policy other than the CI aggregate. GitHub may attach them to the CI run's own
 # check suite; the Actions jobs API then lists them as jobs of the candidate run (v0.9.32, run 42480597872). They are
 # API check runs, never CI workload: drop only those, by exact name and shape.
@@ -84,7 +81,7 @@ def job_log(job_id: int) -> bytes:
 def verify_pr(number: int, waiver: dict | None = None) -> dict:
     """Read genuine first-attempt source/job evidence; this neither dispatches CI nor changes a check.
 
-    With an owner `waiver` ({"job", "bead", "owner_quote"}), the single waived job (and the `CI OK` aggregate it failed)
+    With an owner `waiver` ({"job", "bead", "owner_quote"}), the single waived job (and the aggregate it failed)
     may have failed on attempt 1 when the run is exactly at attempt 2 and that job passed there; see waived_view."""
     get = _api
 

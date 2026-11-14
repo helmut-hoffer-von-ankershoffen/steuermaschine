@@ -6,7 +6,7 @@ For a pull request it starts from `why.explain` (required checks, queue entry, h
 condensed log, or with --raw the failed-step log itself. Neither command ever calls the outside classifier: that is
 `sm ci classify`, a reviewed write command of its own (ci_classify.py).
 
-Heinzelmännchen knowledge kept here: `CI OK` is the aggregate of the CI run and repeats its real failures;
+Heinzelmännchen knowledge kept here: the aggregate job of the CI run repeats its real failures;
 `merge-gate` (Sonar) and `coverage-floor` come from their own workflow and are not jobs of the CI run; a cancelled job
 is a deferral or a superseded run, not a code failure; an UNKNOWN cause is never rerun; a rerun verifies, it is never
 the fix.
@@ -30,14 +30,23 @@ from . import merge_tier, rejudge
 from .ci_lib import cause, faillog
 from .go import world
 from .go_lib import probes
-from .queue_lib import known_failures  # the registry reader of the queue slice: one copy
+from .queue_lib import (
+    core_facts,
+    known_failures,  # the registry reader of the queue slice: one copy
+)
 from .why import PullRequestWhy, explain
 
 CI = Group("ci", H("CI reads and operations: why a run failed, the failing log, flakes, triage, reruns.",
                    "Use when a run or a pull request is red, queued, cancelled or flaky.",
                    "nothing by itself; see each command.", "sm ci why 795", "sm ci faillog 795"))
 RUN_ID_FLOOR = 100000  # a number above this is a run id, below it a pull request number
-GATES = {"merge-gate": "Sonar's quality gate and ratings: sm head sonar {pr}", "coverage-floor": "the coverage floor of the pull request"}
+GATE_ROLE_TEXT = {"sonar": "Sonar's quality gate and ratings: sm head sonar {pr}", "coverage": "the coverage floor of the pull request"}
+
+
+def gate_text(name: str) -> str:
+    """What the merge-gate workflow's check `name` judges (its role in Core's release policy)."""
+    roles = {check: role for role, check in core_facts.at_main().gate_checks.items()}
+    return GATE_ROLE_TEXT.get(roles.get(name, ""), "a check of the merge-gate workflow")
 TRAPS = {
     "download": "A rerun verifies, it is never the fix: once, and name the tool that failed to download in the handover.",
     "known": "KNOWN is a reviewed registry entry with a deadline, not a licence: one rerun of that job, no code change, no builder message.",
@@ -231,7 +240,7 @@ def decide(target: int, kind: str, runs: list[RunFailure], gates: list[str], pen
             return (f"{label}: no CI job failed; red gate check(s) judged by the head's Merge gate run: {', '.join(posted)}",
                     f"sm head sonar {target}   (clean: sm ci merge-gate rejudge {target})", TRAPS["gate"])
         return (f"{label}: no CI job failed; red check(s) posted by another check suite: {', '.join(posted)}",
-                f"sm head sonar {target}" if "merge-gate" in posted else f"sm why {target}", TRAPS["attached"])
+                f"sm head sonar {target}" if core_facts.gate_check("sonar") in posted else f"sm why {target}", TRAPS["attached"])
     if pending or any(r.status and r.status != "completed" for r in runs):
         return f"{label}: still running ({len(pending)} check(s) pending), no failure yet", f"sm ci watch {target}", TRAPS["pending"]
     if any(r.cancelled_jobs or r.conclusion == "cancelled" for r in runs):
@@ -246,10 +255,10 @@ def gate_line(check: dict[str, Any], target: int, run: dict[str, Any] | None, fo
     """One red gate check and the Merge gate run that judged it (found through its details URL or the head)."""
     suite = check.get("workflowName") or "another workflow"
     if run is None:  # not traced: as before, with what judges it
-        return f"{check.get('name')}: {check.get('conclusion')}, posted by the check suite of {suite}, not a job of the CI run; {GATES[str(check.get('name'))].format(pr=target)}"
+        return f"{check.get('name')}: {check.get('conclusion')}, posted by the check suite of {suite}, not a job of the CI run; {gate_text(str(check.get('name'))).format(pr=target)}"
     state = f"{run.get('status')} {run.get('conclusion') or ''}".rstrip()
     return (f"{check.get('name')}: {check.get('conclusion')}, shown under the check suite of {suite}; judged by Merge gate run {run.get('id')} "
-            f"(attempt {run.get('run_attempt') or 1}, {state}, from {found_by}); {GATES[str(check.get('name'))].format(pr=target)}")
+            f"(attempt {run.get('run_attempt') or 1}, {state}, from {found_by}); {gate_text(str(check.get('name'))).format(pr=target)}")
 
 
 def rerun_repairs(w: probes.World, target: int, kind: str) -> bool:
@@ -301,7 +310,7 @@ TARGET = typer.Argument(..., metavar="PR|RUN", help="A pull request number of th
     "the command on the NEXT line, after reading the TRAP line.",
     "Each failed job is classed DOWNLOAD (a pinned tool fetch failed), BROWSER_SETUP_TIMEOUT (the browser dependency\n"
     "install timed out), TEST or UNKNOWN. `[KNOWN bead]` marks a job or test in the reviewed registry of known failures.\n"
-    "`CI OK` is the aggregate of the run and repeats its real failures. merge-gate and coverage-floor are judged by their\n"
+    "The aggregate job of the run repeats its real failures. The merge-gate workflow's checks are judged by their\n"
     "own check suite, not by a job of the CI run: they are listed on GATE lines and have no log; a red one is traced to the\n"
     "head's Merge gate run (sm ci merge-gate rejudge PR re-runs it after a reviewed Sonar closure). A cancelled job is a deferral or a superseded\n"
     "run, not a code failure. An UNKNOWN cause is never rerun."))

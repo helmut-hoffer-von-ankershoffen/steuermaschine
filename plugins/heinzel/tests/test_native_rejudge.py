@@ -54,7 +54,7 @@ def gate_run(status="completed", conclusion="failure", attempt=1):
 
 
 def checks(conclusion="failure"):
-    return {"check_runs": [{"name": n, "status": "completed", "conclusion": conclusion, "details_url": GATE_URL} for n in rejudge.GATE_CHECKS]
+    return {"check_runs": [{"name": n, "status": "completed", "conclusion": conclusion, "details_url": GATE_URL} for n in ("merge-gate", "coverage-floor")]  # the kit policy's merge-gate checks
             + [{"name": "CI OK", "status": "completed", "conclusion": "success", "details_url": f"https://github.com/{REPO}/actions/runs/{CI}/job/1"}]}
 
 

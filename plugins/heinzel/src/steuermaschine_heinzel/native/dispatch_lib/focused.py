@@ -38,6 +38,7 @@ from steuermaschine.defaults import SystemClock
 from steuermaschine.github import Gh, GitHub
 from steuermaschine.protocols import Busy
 
+from ..queue_lib import core_facts
 from . import rules as c
 
 LOCK = "heinzel.dispatch.admission"
@@ -233,7 +234,7 @@ def rows(*, strict=False):
                 if strict:
                     raise
             else:
-                expected = c.WORKFLOW if row["kind"] == "dispatch" else "ci.yml"
+                expected = c.WORKFLOW if row["kind"] == "dispatch" else core_facts.ci_file()
                 if "attempt" in row and (
                     workflow_path(run) != f".github/workflows/{expected}" or run["head_branch"] != row["branch"]
                 ):
@@ -439,7 +440,7 @@ def cmd_rerun(a):
         run = run_state(rid)
         if run["head_branch"] != branch or run.get("head_sha") != pr["headRefOid"]:
             raise SystemExit(f"refusing: run {rid} does not match the PR branch and head")
-    if workflow_path(run) != ".github/workflows/ci.yml":
+    if workflow_path(run) != core_facts.ci_path():
         raise SystemExit(f"refusing: run {rid} is outside the CI workflow")
     # Merge tier (Core ADR 0149): a rerun of a red main run is a valid repair; release/* keeps the first-attempt rule.
     if why := c.branch_refusal(branch, a.force or (branch == "main" and getattr(a, "merge_tier", lambda: False)())):
@@ -470,7 +471,7 @@ def cmd_rerun(a):
     if not a.wait:
         out(f"wait with: sm ci one watch {rid}")
         return 0
-    return wait(rid, [*names, "CI OK"], a.json, label, attempt)
+    return wait(rid, [*names, core_facts.aggregate()], a.json, label, attempt)
 
 
 def exact_file_blob(path, head):

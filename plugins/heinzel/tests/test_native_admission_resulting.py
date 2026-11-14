@@ -41,7 +41,7 @@ def original(env):
                    else f'https://github.com/{rt.repo}/runs/{check_id}') for name, check_id in CHECKS.items()]
     ci = dict(id=CI_ID, run_attempt=1, head_sha=HEAD, event='pull_request', path=kit.WORKFLOW, head_branch=BRANCH,
               repository=repo, head_repository=repo, status='completed', conclusion='success', workflow_id=7, check_suite_id=8)
-    judge = dict(ci, id=JUDGE_ID, event='workflow_run', path=r.JUDGE, head_sha=JUDGE_SHA, head_branch='main',
+    judge = dict(ci, id=JUDGE_ID, event='workflow_run', path=kit.JUDGE, head_sha=JUDGE_SHA, head_branch='main',
                  workflow_id=9, check_suite_id=10)
     artifact = dict(id=90, name=f'focused-pr-evidence-python-{CI_ID}-1', size_in_bytes=22,
                     digest='sha256:' + '0' * 64, expired=False, workflow_run={'id': CI_ID})
@@ -67,7 +67,7 @@ def original(env):
         f'{root}/actions/runs/{CI_ID}': ci, f'{root}/actions/runs/{JUDGE_ID}': judge,
         f'{root}/actions/runs/{JUDGE_ID}/attempts/1': copy.deepcopy(judge),
         f'{root}/actions/workflows/7/runs?head_sha={HEAD}&event=pull_request&per_page=1': {'workflow_runs': [{'id': CI_ID}]},
-        f'{root}/actions/workflows/merge-gate.yml': {'id': 9, 'path': r.JUDGE},
+        f'{root}/actions/workflows/merge-gate.yml': {'id': 9, 'path': kit.JUDGE},
         f'{root}/check-runs/{JOB}': dict(id=JOB, name='Merge gates', head_sha=JUDGE_SHA, app={'id': r.APP},
                                        check_suite={'id': 10}, status='completed', conclusion='success'),
         **{f"{root}/check-runs/{row['id']}": copy.deepcopy(row) for row in checks},
@@ -198,7 +198,7 @@ def plan_registry(legacy, slots):
         assert runtime == rt and packet == f.packet and repo == snapshot and old == f.old
         assert live['checks'] == CHECKS
         observed.append('replay')
-        return dict(source={r.JUDGE: '3' * 40, 'scripts': '4' * 40}, evidence={'tested_commit': OLD_COMMIT})
+        return dict(source={kit.JUDGE: '3' * 40, 'scripts': '4' * 40}, evidence={'tested_commit': OLD_COMMIT})
 
     def append(archive, old, slots, additions):
         assert archive == source and old == rt.values[s.NAMES[0]] and len(slots) == 4
@@ -222,7 +222,7 @@ def test_actual_cli_main_only_binds_original_and_one_reviewed_append(original, m
     prepared = json.loads(capsys.readouterr().out)
     assert prepared['resulting_main']['original'] == f.packet['original']
     assert 'pr_update' not in prepared and observed == ['compose', 'replay'] and not rt.writes
-    if defect == 'prepared-drift': prepared['resulting_main']['original_replay']['source'][r.JUDGE] = '5' * 40
+    if defect == 'prepared-drift': prepared['resulting_main']['original_replay']['source'][kit.JUDGE] = '5' * 40
     elif defect == 'rule-after-prepare': f.rule['parameters']['strict_required_status_checks_policy'] = True
     elif defect == 'old-manifest': rt.values[s.NAMES[0]] = '{}'
     elif defect == 'stale-compose':

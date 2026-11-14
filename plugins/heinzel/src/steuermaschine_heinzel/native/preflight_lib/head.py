@@ -24,7 +24,7 @@ Checks, in the order they run (a check is left out only by `--skip NAME`, and th
               `make lint` (C901, PLR09xx)
   deps        Core dependency gate: [project] dependencies / optional-dependencies changed vs the base -> FAIL
               "plugin consumers need a relock first". Unchanged and a consumer named: build the wheel from the head
-              and run the Consumer check of that one plugin at the plugins ref pinned in ci.yml
+              and run the Consumer check of that one plugin at the plugins ref pinned in the CI workflow
   e2e         changed drivers under web/e2e: every owning journey (tests/e2e) and every journey whose driver imports
               a changed helper must be a selected browser id, or be listed under `local_only` with a reason
   validation  refuses a head SHA that already has check suites on a validation/* branch (checks are posted by SHA,
@@ -340,13 +340,28 @@ def requirement_names(pyproject: str) -> set[str]:
     return {re.split(r"[\s<>=!~;\[(]", x, maxsplit=1)[0].lower() for x in dependencies(pyproject)["dependencies"]}
 
 
+def head_workflow(c: Ctx) -> str:
+    """The CI workflow path Core's release policy names at the worktree's HEAD commit, or "" when it has none."""
+    from ..queue_lib import core_policy
+
+    rc, head = c.git("rev-parse", "HEAD")
+    if rc or not re.fullmatch(r"[0-9a-f]{40}", head.strip()):
+        return ""
+    rc, raw = c.git("show", f"{head.strip()}:{core_policy.PATH}")
+    try:
+        return core_policy.parse(raw.encode() if isinstance(raw, str) else raw, head.strip()).workflow if rc == 0 else ""
+    except core_policy.CandidateError:
+        return ""
+
+
 def lock_by_contract(c: Ctx, plugins: Path | None) -> tuple[dict[int, dict[str, int]] | None, str]:
     """PLUGIN_API at the plugins commit Core's consumer job tests, when that commit is at or after plugins ADR 0003
     (locks valid by contract); else (None, why it cannot be judged)."""
-    ci = c.wt / ".github" / "workflows" / "ci.yml"
-    ref = consumer_ref(ci.read_text()) if ci.is_file() else None
+    workflow = head_workflow(c)
+    ci = c.wt / workflow if workflow else None
+    ref = consumer_ref(ci.read_text()) if ci and ci.is_file() else None
     if not ref:
-        return None, "no consumer-check job in .github/workflows/ci.yml"
+        return None, f"no consumer-check job in {workflow or 'the CI workflow (no release policy at the head)'}"
     if plugins is None:
         return None, "no plugins clone to read the contract from (--plugins-repo DIR or the setting preflight_plugins_repo)"
     if c.sh(["git", "-C", plugins, "cat-file", "-e", f"{ref}^{{commit}}"])[0] != 0:
@@ -645,7 +660,7 @@ def step_deps(c: Ctx, consumers: str | None, target: str, plugins: Path | None) 
             return s.fail(f"Core dependencies changed vs origin/main: plugin consumers need a relock first\n{listed}\n"
                           f"       | lock-by-contract (plugins ADR 0003) not judged: {why}",
                           "relock every consumer in heinzel-plugins against a wheel of this head (`make lock NAME=<plugin> CORE=<wheel>`), land it, "
-                          "move the Consumer pin in ci.yml, then hand this head over; tell the coordinator now (the 0.9.40 candidate failed here)")
+                          "move the Consumer pin in the CI workflow, then hand this head over; tell the coordinator now (the 0.9.40 candidate failed here)")
         requirements = dependencies(head_text)["dependencies"]
         verdicts = {number: outside_contract(requirements, libraries) for number, libraries in sorted(api.items())}
         inside = [number for number, problems in verdicts.items() if not problems]
@@ -663,10 +678,12 @@ def step_deps(c: Ctx, consumers: str | None, target: str, plugins: Path | None) 
     if not consumers:
         s.data["consumer"] = "not run (--consumers NAME)"
         return s
-    ci = c.wt / ".github" / "workflows" / "ci.yml"
-    ref = consumer_ref(ci.read_text()) if ci.is_file() else None
+    workflow = head_workflow(c)
+    ci = c.wt / workflow if workflow else None
+    ref = consumer_ref(ci.read_text()) if ci and ci.is_file() else None
     if not ref:
-        return s.fail("no consumer-check job in .github/workflows/ci.yml", "check how the head's CI tests consumers; nothing was run")
+        return s.fail(f"no consumer-check job in {workflow or 'the CI workflow (no release policy at the head)'}",
+                      "check how the head's CI tests consumers; nothing was run")
     if plugins is None:  # no default: the clone is a path of this machine
         return s.fail("--consumers needs a local clone of the plugins repository and none is configured", "give --plugins-repo DIR, or set preflight_plugins_repo in [heinzel]")
     if c.sh(["git", "-C", plugins, "cat-file", "-e", f"{ref}^{{commit}}"])[0] != 0:

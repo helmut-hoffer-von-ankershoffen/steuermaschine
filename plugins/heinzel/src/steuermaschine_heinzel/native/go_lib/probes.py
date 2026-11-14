@@ -18,6 +18,7 @@ from steuermaschine.github.client import Gh
 from steuermaschine.hashing import canonical_sha256
 
 from .. import updater_hold
+from ..queue_lib import core_facts
 from . import legacy
 from .decide import unknown
 
@@ -164,7 +165,7 @@ def queue_verdict(data: dict, frozen: bool, stalls: list[str]) -> str:
 
 
 def main_runs(w: World, limit: int = 5) -> list[dict]:
-    rows, _ = w.gh.try_json(["run", "list", "-R", w.repo, "--workflow", "ci.yml", "--branch", "main", "-L", str(limit),
+    rows, _ = w.gh.try_json(["run", "list", "-R", w.repo, "--workflow", core_facts.ci_file(), "--branch", "main", "-L", str(limit),
                              "--json", "status,conclusion,databaseId,headSha,attempt,createdAt"], timeout=12, retry=False)
     return rows if isinstance(rows, list) else []
 
