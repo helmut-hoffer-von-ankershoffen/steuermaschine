@@ -4,7 +4,7 @@
 [![Coverage](https://github.com/helmut-hoffer-von-ankershoffen/steuermaschine/raw/badges/coverage.svg)](https://github.com/helmut-hoffer-von-ankershoffen/steuermaschine/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/helmut-hoffer-von-ankershoffen/steuermaschine/actions/workflows/codeql.yml/badge.svg)](https://github.com/helmut-hoffer-von-ankershoffen/steuermaschine/actions/workflows/codeql.yml)
 [![PyPI](https://img.shields.io/pypi/v/steuermaschine)](https://pypi.org/project/steuermaschine/)
-[![Python](https://img.shields.io/badge/python-3.12%2B-blue)](pyproject.toml)
+[![Python](https://img.shields.io/badge/python-3.15%2B-blue)](pyproject.toml)
 [![Quality Gate](https://sonarcloud.io/api/project_badges/measure?project=helmut-hoffer-von-ankershoffen_steuermaschine&metric=alert_status)](https://sonarcloud.io/summary/overall?id=helmut-hoffer-von-ankershoffen_steuermaschine)
 [![Maintainability](https://sonarcloud.io/api/project_badges/measure?project=helmut-hoffer-von-ankershoffen_steuermaschine&metric=sqale_rating)](https://sonarcloud.io/summary/overall?id=helmut-hoffer-von-ankershoffen_steuermaschine)
 [![Security](https://sonarcloud.io/api/project_badges/measure?project=helmut-hoffer-von-ankershoffen_steuermaschine&metric=security_rating)](https://sonarcloud.io/summary/overall?id=helmut-hoffer-von-ankershoffen_steuermaschine)
@@ -28,7 +28,7 @@ The core knows no project. Pipelines, providers, gates and traps come from plugi
 
 ## Install
 
-Supported on macOS and Linux with Python 3.12 to 3.15.
+Supported on macOS and Linux with Python 3.15 and newer.
 
 ```sh
 uv tool install steuermaschine     # puts `sm` and `steuermaschine` on your PATH

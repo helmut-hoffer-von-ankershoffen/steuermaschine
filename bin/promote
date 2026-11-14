@@ -60,7 +60,8 @@ say "2/5 build into $rel"
 if [ ! -x "$rel/venv/bin/steuermaschine" ]; then
   rm -rf "$rel"; mkdir -p "$rel/src" || exit 2
   git archive "$full" | tar -x -C "$rel/src" || die "git archive failed"
-  uv venv --quiet "$rel/venv" || die "uv venv failed"
+  # The interpreter is the commit's own .python-version, always a uv-managed build (never Homebrew's or the system's).
+  uv venv --quiet --managed-python --python "$(cat "$rel/src/.python-version")" "$rel/venv" || die "uv venv failed"
   uv pip install --quiet --python "$rel/venv/bin/python" "$rel/src" "$rel/src/plugins/heinzel" "$rel/src/examples/toy" "$rel/src/examples/layer" || die "install failed"
 fi
 cand="$rel/venv/bin/steuermaschine"

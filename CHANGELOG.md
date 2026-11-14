@@ -10,9 +10,10 @@ Entries are generated from [Conventional Commits](https://www.conventionalcommit
 ### Added
 
 - MIT license.
-- PyPI metadata like heinzel's: a PyPI README, keywords, classifiers (Python 3.12 to 3.15, macOS and Linux, typed) and
+- PyPI metadata like heinzel's: a PyPI README, keywords, classifiers (Python 3.15, macOS and Linux, typed) and
   project links.
-- CI tests Python 3.12, 3.13, 3.14 and 3.15 on Linux, and Python 3.12 on macOS on main.
+- Python 3.15 or newer is required.
+- CI tests Python 3.15 on Linux, and on macOS on main.
 
 ### Changed
 

@@ -2,7 +2,7 @@
 name = "steuermaschine-toy"
 version = "0.0.1"
 description = "Example steuermaschine plugin: a plain PR -> CI green -> merge -> tag project against a simulated forge."
-requires-python = ">=3.12"
+requires-python = ">=3.15"
 dependencies = ["steuermaschine"]
 
 [project.entry-points."steuermaschine.plugins"]

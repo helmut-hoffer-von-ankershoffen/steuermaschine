@@ -16,7 +16,7 @@ format:  # apply ruff format (not yet enforced; see lint)
 	uv run ruff format src examples tests
 
 typecheck:
-	uv run mypy --config-file= --python-version 3.12 $(MYPY_DEBT:%=--disable-error-code %) src/steuermaschine
+	uv run mypy --config-file= --python-version 3.15 $(MYPY_DEBT:%=--disable-error-code %) src/steuermaschine
 	uv run pyright
 
 # Coverage floor of the gate (line+branch, core+heinzel plugin, as CI measures it today); [tool.coverage] fail_under

@@ -2,7 +2,7 @@
 name = "steuermaschine-heinzel"
 version = "0.0.1"
 description = "steuermaschine plugin for the Heinzelmännchen project: focused admission, lane caps, release recipe, Mini verification."
-requires-python = ">=3.12"
+requires-python = ">=3.15"
 dependencies = ["steuermaschine"]
 
 [project.entry-points."steuermaschine.plugins"]

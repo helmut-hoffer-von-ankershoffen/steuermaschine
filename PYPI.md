@@ -10,7 +10,7 @@ and stops at review points where only the owner or an independent reviewer may c
 
 ## Install
 
-Supported on **macOS and Linux** with Python 3.12 to 3.15. With [uv](https://docs.astral.sh/uv/):
+Supported on **macOS and Linux** with Python 3.15 and newer. With [uv](https://docs.astral.sh/uv/):
 
 ```sh
 uv tool install steuermaschine   # puts `sm` and `steuermaschine` on your PATH

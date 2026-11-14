@@ -15,7 +15,7 @@ jobs:
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           version: "0.13.5"
-          python-version: "3.12"
+          python-version: "3.15"
           enable-cache: true
       - name: Install gitleaks
         run: |
@@ -69,8 +69,8 @@ jobs:
         run: echo "::notice::SonarQube Cloud skipped - the SONAR_TOKEN secret is not set"
 
   test:
-    # The supported Pythons, as in heinzel's CI: 3.12 to 3.15 on Linux on every run, plus macOS on main. The `check`
-    # job above is the full gate (lint, types, coverage, secrets) on 3.12; these cells run the suite only.
+    # The supported Python, 3.15: Linux on every run, plus macOS on main. The `check` job above is the full gate (lint,
+    # types, coverage, secrets) on Linux; these cells run the suite only.
     name: Test (${{ matrix.os }}, Python ${{ matrix.python }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
@@ -78,11 +78,10 @@ jobs:
       fail-fast: ${{ github.event_name == 'pull_request' }}
       matrix:
         os: [ubuntu-24.04]
-        python: ["3.12", "3.13", "3.14", "3.15"]
-        include: ${{ fromJSON(github.event_name == 'push' && github.ref == 'refs/heads/main' && '[{"os":"macos-latest","python":"3.12"}]' || '[]') }}
+        python: ["3.15"]
+        include: ${{ fromJSON(github.event_name == 'push' && github.ref == 'refs/heads/main' && '[{"os":"macos-latest","python":"3.15"}]' || '[]') }}
     env:
-      # uv's own Python builds, as `uv tool install` and the stable install use: the runner images carry a system 3.12
-      # (a framework build on macOS) whose process shape the process-table tests do not model (bead ygtp).
+      # uv's own Python builds, as the stable install uses, never a runner's system Python.
       UV_PYTHON_PREFERENCE: only-managed
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
