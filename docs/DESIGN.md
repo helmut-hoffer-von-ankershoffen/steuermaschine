@@ -385,12 +385,12 @@ Everything Heinzelmännchen-specific. The core has no word of it (`tests/test_co
 
 ```
 head admit:   preflight -> packet -> packet review (STOP) -> prepare -> apply review (STOP) -> apply* -> pr* -> queue*
-release cut:  pins -> notes -> admit prepare -> admission review (STOP) -> admit apply* -> publish review (STOP)
+release cut:  ci change -> notes -> admit prepare -> admission review (STOP) -> admit apply* -> publish review (STOP)
               -> resume* -> verify
 ```
 
 Both are resumable and dry by default (section 3). A step is one native command (`head preflight`, `head packet preopen`,
-`head prepare`, `head apply`, `head pr`, `queue add`; `release pins`, `release notes-audit`, `release admit prepare`,
+`head prepare`, `head apply`, `head pr`, `queue add`; `release notes-audit`, `release admit prepare`,
 `release admit apply`, `release resume`, `release verify`), looked up by name in the registry, never imported: a
 change to that command voids that command's verdict, not the pipeline's. Tests replace a step through
 `pipelines.common.OVERRIDE`; an override never opens a shut gate. Inputs and their meaning: `sm head admit --help`,

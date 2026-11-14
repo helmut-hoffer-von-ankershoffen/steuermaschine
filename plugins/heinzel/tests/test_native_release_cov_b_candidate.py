@@ -15,7 +15,7 @@ from steuermaschine_heinzel.native.queue_lib import release_candidate as rc
 H, T, B, S = "1" * 40, "2" * 40, "3" * 40, "4" * 40
 V = "1.2.3"
 PINS = {kit.WORKFLOW: "a" * 64, kit.RECORDER: "b" * 64}
-POLICY = kit.policy(commit=H, sources=PINS)
+POLICY = kit.policy(commit=H)
 
 
 def make_pr(**over):
@@ -152,28 +152,28 @@ def broken(mutate, msg, event="pull_request", expected=EXPECTED, policy=POLICY):
 
 @pytest.mark.parametrize(("shape", "tests", "jobs"), [("old", 16, 69), ("new", 4, 57)])
 def test_validate_accepts_both_events_in_both_ci_shapes(shape, tests, jobs):
-    policy = kit.policy(commit=H, sources=PINS, shape=shape)
+    policy = kit.policy(commit=H, shape=shape)
     out = rc.validate(evidence(policy=policy), EXPECTED, policy)
     assert out["job_count"] == len(policy.expected_jobs("pull_request")) == jobs and out["workflow_wall_seconds"] == 3600
-    assert len(policy.test_jobs) == tests and out["sources"] == PINS
+    assert len(policy.test_jobs) == tests and out["policy_commit"] == H
     out = rc.validate(evidence("workflow_dispatch", policy=policy), EXPECTED, policy)
     assert out["event"] == "workflow_dispatch" and out["job_count"] == jobs
 
 
-def test_the_proof_records_workflow_and_recorder_and_the_other_pins_are_bound_by_the_tree():
-    pins = PINS | {"scripts/focused_plan.py": "c" * 64}
-    policy = kit.policy(commit=H, sources=pins)
-    assert rc.validate(evidence(), EXPECTED, policy)["sources"] == pins  # the proof keeps its two entries
-    broken(lambda d: d["proof"].update(sources=pins), "source artifact differs", policy=policy)
-    broken(lambda d: d["source"]["commit"]["tree"].update(sha="9" * 40), "tested checkout tree differs", policy=policy)
-    _table, get, download, small = verify_world()
-    many = kit.policy(commit=H, sources=small.sources | {"scripts/focused_plan.py": "0" * 64})
-    assert rc.verify(get, download, EXPECTED, many)["run_id"] == 9  # no request for the other pins: the tree binds them
+def test_the_commit_binds_the_sources_no_checksum_is_compared():
+    """The proof's recorded digests are not compared with anything: the reviewed head and its tree bind the sources."""
+    assert rc.validate(evidence(), EXPECTED, POLICY)["policy_commit"] == H
+    data = evidence()
+    data["proof"]["sources"] = {"anything": "else"}
+    assert rc.validate(data, EXPECTED, POLICY)["run_id"] == 9
+    broken(lambda d: d["source"]["commit"]["tree"].update(sha="9" * 40), "tested checkout tree differs")
+    broken(lambda d: None, "not the release head's", policy=kit.policy(commit="9" * 40))
+    broken(lambda d: None, "not the release head's", policy=kit.policy(commit=H, repository="x/y"))
 
 
 def test_validate_refuses_a_candidate_of_another_ci_shape():
     """The inventory is the policy's: a run of the old shape does not pass the new shape's policy, nor the reverse."""
-    old, new = (kit.policy(commit=H, sources=PINS, shape=shape) for shape in ("old", "new"))
+    old, new = (kit.policy(commit=H, shape=shape) for shape in ("old", "new"))
     with pytest.raises(rc.CandidateError, match="short-matrix"):
         rc.validate(evidence(policy=old), EXPECTED, new)
     with pytest.raises(rc.CandidateError, match="short-matrix"):
@@ -182,13 +182,8 @@ def test_validate_refuses_a_candidate_of_another_ci_shape():
 
 def test_validate_refusals():
     broken(lambda d: None, "invalid expected head", expected=rc.ExpectedCandidate(9, 5, "x", T))
-    broken(lambda d: None, "missing reviewed CI source pins", policy=kit.policy(commit=H, sources={kit.WORKFLOW: "a" * 64}))
-    broken(lambda d: None, "missing reviewed CI source pins", policy=kit.policy(commit="9" * 40, sources=PINS))
-    broken(lambda d: None, "missing reviewed CI source pins", policy=kit.policy(commit=H, sources=PINS, repository="x/y"))
-    broken(lambda d: None, "missing reviewed CI source pins", policy=kit.policy(commit=H, sources=PINS | {kit.WORKFLOW: "z"}))
-    broken(lambda d: d["proof"].update(sources={kit.WORKFLOW: "a" * 64, kit.RECORDER: "c" * 64}), "source artifact differs")
     broken(lambda d: None, "wrong candidate repository", policy=kit.policy(
-        commit=H, sources={".github/workflows/other.yml": "a" * 64, kit.RECORDER: "b" * 64}, workflow=".github/workflows/other.yml"))
+        commit=H, workflow=".github/workflows/other.yml"))
     broken(lambda d: d["run"].update(run_attempt=2), "original attempt")
     broken(lambda d: d["run"].update(path="x"), "wrong candidate repository")
     broken(lambda d: d["run"].update(conclusion="failure"), "not completed successfully")
@@ -213,9 +208,7 @@ def test_validate_refusals():
 def verify_world(mutate=None):
     ev = evidence()
     proof = ev["proof"]
-    sources = {kit.WORKFLOW: b"wf", kit.RECORDER: b"rec"}
-    pins = kit.policy(commit=H, sources={k: hashlib.sha256(v).hexdigest() for k, v in sources.items()})
-    proof["sources"] = pins.sources
+    pins = kit.policy(commit=H)
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as z:
         z.writestr(rc.PROOF_FILE, json.dumps(proof))
@@ -225,8 +218,6 @@ def verify_world(mutate=None):
                  {"name": rc.ARTIFACT, "expired": False, "id": 3, "workflow_run": {"id": 9, "head_sha": H}}]}}
     jobs = ev["jobs"]
     table["actions/runs/9/attempts/1/jobs?per_page=100&page=1"] = {"total_count": len(jobs), "jobs": jobs}
-    for path, content in sources.items():
-        table[f"contents/{path}?ref={S}"] = {"encoding": "base64", "type": "file", "content": base64.b64encode(content).decode()}
     if mutate:
         mutate(table)
     return table, (lambda p: table[p]), (lambda i: archive), pins
@@ -264,8 +255,6 @@ def test_verify_refusals():
         z.writestr(rc.PROOF_FILE, json.dumps({"source_commit": "x"}))
     with pytest.raises(rc.CandidateError, match="malformed candidate source identities"):
         rc.verify(get, lambda i: buf.getvalue(), EXPECTED, pins)
-    with pytest.raises(rc.CandidateError, match="differs from independent review"):
-        rc.verify(get, download, EXPECTED, kit.policy(commit=H, sources={kit.WORKFLOW: "0" * 64, kit.RECORDER: "1" * 64}))
     flips = iter([0, 1])
     real = dict(table)
     def changing(path):

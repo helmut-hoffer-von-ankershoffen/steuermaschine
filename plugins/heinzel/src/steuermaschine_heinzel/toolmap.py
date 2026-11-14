@@ -57,7 +57,7 @@ ROWS = [
     ToolMapRow(tool="hz-release-status", path="release status", owner="heinzel-native-readonly", note="one screen"),
     ToolMapRow(tool="hz-release", path="release resume", owner="heinzel-native-queue-release", note="resumable step runner", also=["release drop"]),
     ToolMapRow(tool="hz-verify", path="release verify", owner="heinzel-native-readonly", note="published surfaces"),
-    ToolMapRow(tool="hz-chores", path="release after", owner="heinzel-native-queue-release", note="post-publish checklist", also=["release pins", "beads triage"]),
+    ToolMapRow(tool="hz-chores", path="release after", owner="heinzel-native-queue-release", note="post-publish checklist", also=["beads triage"]),
     ToolMapRow(tool="hz-stamp", path="beads stamp", owner="heinzel-native-coord", note="release stamp on beads; the sweep after a publish is beads stamp-released", also=["beads stamp-released"]),
     ToolMapRow(tool="hz-alarm", path="alarm check", owner="heinzel-native-readonly", note="stall and failure alarms; launchd runs check too", also=["alarm ack", "alarm list", "alarm clear", "alarm raise"]),
     ToolMapRow(tool="make screenshots", path="plugin gallery", owner="heinzel-native-ops", note="a heinzel-plugins gallery recapture: checks the target and capture script, runs it under the run lock, lists changed images, requires the privacy review"),

@@ -1,10 +1,10 @@
 """`sm release cut VERSION`: one core release from the release commit to verified surfaces, as one resumable pipeline.
 
-    pins -> notes -> packet -> admit prepare -> admission review (STOP) -> admit apply* -> publish review (STOP) -> resume* -> verify
+    ci change -> notes -> packet -> admit prepare -> admission review (STOP) -> admit apply* -> publish review (STOP) -> resume* -> verify
 
 The `packet` step builds the release-main-only/v1 reservation packet from the pair packet (`sm head manifest`), the
 independent review file and the normal commit-hook transcript; no command has to be run by hand.
-Each step runs the existing native command (`release pins`, `release notes-audit`, `release admit prepare|apply`,
+Each step runs the existing native command (`release notes-audit`, `release admit prepare|apply`,
 `release resume`, `release verify`) through its review gate. The release commit itself (release.sh in a hooked clone
 on main's tip) and the pair packet are made before the first run and named with --set; this pipeline never makes them.
 The state is kept per version. Main moving before the admission is applied voids prepare and its review.
@@ -24,7 +24,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from steuermaschine import USAGE
+from steuermaschine import USAGE, verdicts
 from steuermaschine.engine import Ctx, Pipeline, Refuse, ReviewStop, Step, Subject, Wait
 from steuermaschine.hashing import canonical_sha256
 from steuermaschine.native import unit
@@ -46,7 +46,8 @@ INPUTS = {
     "nonconsumers": "the reviewed stuck-queued receipts file, the same for prepare and apply",
 }
 TRAPS = {
-    "pins": "A re-pin is a review: never cut while the executed release files differ from the reviewed ones.",
+    "ci change": "A release whose CI paths changed since the last published tag needs a ci_change verdict on its exact commit: "
+                 "read the changed paths, then record it; no checksum stands in for that review.",
     "notes": "Release notes that drop a combine member are refused by the runner after the push: fix them before the cut.",
     "packet": "A packet is bound to its review file and transcript: a changed review file needs a rebuilt packet and a new admission review.",
     "admit prepare": "Admit BEFORE the push and before resume (resume takes the hold); any merge on main voids the plan: rebuild from release.sh.",
@@ -175,12 +176,45 @@ def _yes(ctx: Ctx, name: str, default: bool) -> bool:
 
 
 # ----------------------------------------------------------------------------- checks before the admission
-def pins(ctx: Ctx) -> str:
+def _last_tag(core: str, head: str) -> str:
+    """The commit of the newest published release tag (vX.Y.Z) before `head`, or "" (no tag: the gate fails closed)."""
+    from ..native.queue_lib import core_policy
+
     try:
-        done = ok("release pins", ref="origin/main")
-    except Refuse as no:
-        raise Refuse(f"the release pins differ from the reviewed files: {no.message}", "sm release pins origin/main") from None
-    return f"{len(done.pins)} pins match the reviewed files"
+        tag = core_policy.git_read(core, "describe", "--tags", "--abbrev=0", "--match", "v[0-9]*", f"{head}^").decode().strip()
+        found = core_policy.git_read(core, "rev-parse", "--verify", "--quiet", f"refs/tags/{tag}^{{commit}}").decode().strip()
+    except (core_policy.CandidateError, OSError, ValueError, core_policy.subprocess.SubprocessError):
+        return ""
+    return found if VERSION.fullmatch(tag.removeprefix("v")) and SHA.fullmatch(found) else ""
+
+
+def changes_since_release(core: str, head: str) -> tuple[str, tuple[str, ...]]:
+    """(the last published tag's commit, the CI changes from it to `head`); no tag is a reason (fail closed)."""
+    from ..native.queue_lib import core_policy
+
+    base = _last_tag(core, head)
+    return base, core_policy.ci_changes(core, base, head) if base else ("no published release tag before the release commit",)
+
+
+def ci_change(ctx: Ctx) -> str:
+    """The release commit's CI paths against the last published tag, by the not-CI paths of the tag's release policy.
+    A change needs an independent `ci_change` verdict on the exact release commit; none, or another kind, refuses."""
+    clone, core = path_input(ctx, "clone", "the hooked release clone"), str(ctx.subject.facts["core"])
+    head = ctx.providers.vcs.head(str(clone))
+    if not SHA.fullmatch(head or ""):
+        raise Refuse("the release clone has no exact head commit")
+    base, changes = changes_since_release(core, head)
+    if not changes:
+        return f"no CI path changed since {base[:12]}: no ci_change verdict needed"
+    store = ctx.providers.store
+    for author in dict.fromkeys((ctx.author, verdicts.current_agent())):  # the run's author and the driving agent
+        if author:
+            verdicts.register(store, head, "release ci_change", author=author)
+    shown = "; ".join(changes[:20]) + (f"; and {len(changes) - 20} more" if len(changes) > 20 else "")
+    command_line = (f'sm review verdict {head} --approve --kind {verdicts.CI_CHANGE} --reviewer NAME --model M '
+                    f'--notes "the changed CI paths read: {shown}"')
+    verdicts.require_independent(store, head, [], command_line, kind=verdicts.CI_CHANGE)  # authors: registered above
+    return f"{len(changes)} CI change(s) since {base[:12] or 'no tag'}: ci_change verdict for {head[:12]} recorded"
 
 
 def notes(ctx: Ctx) -> str:
@@ -399,7 +433,8 @@ def verify(ctx: Ctx) -> str:
 
 def pipeline() -> Pipeline:
     steps = [
-        Step("pins", pins, binds=BINDS, trap=TRAPS["pins"], changes="nothing (git reads)"),
+        Step("ci change", ci_change, binds=BINDS, trap=TRAPS["ci change"],
+             changes="nothing but the reviewable-digest record of the release commit (git reads)"),
         Step("notes", notes, binds=BINDS, trap=TRAPS["notes"], changes="nothing (git reads of the release clone)"),
         Step("packet", packet, binds=BINDS, trap=TRAPS["packet"], changes=f"{PACKET_NAME} next to the pair packet"),
         Step("admit prepare", admit_prepare, probe=prepare_probe, binds=BINDS, trap=TRAPS["admit prepare"],
@@ -414,7 +449,7 @@ def pipeline() -> Pipeline:
              plan=_resume_command),
         Step("verify", verify, trap=TRAPS["verify"], changes="nothing (reads PyPI and the GitHub release)"),
     ]
-    return Pipeline("release", VERB, "Cut one release: pins, notes, admission with review, a review before publishing, resume, verify; resumable.",
+    return Pipeline("release", VERB, "Cut one release: CI-change review, notes, admission with review, a review before publishing, resume, verify; resumable.",
                     steps, identify, inputs=INPUTS, when="Use when a release is due and its release commit and packet exist (release.sh in a hooked clone).",
                     example_arg="0.9.41", done_next="sm release after VERSION, then sm mini verify --minimum VERSION",
                     unit=unit("release cut", anchor, "release-cut.md"))

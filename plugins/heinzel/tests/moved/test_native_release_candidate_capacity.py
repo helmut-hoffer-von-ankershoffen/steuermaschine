@@ -26,10 +26,10 @@ def reviewed_policy(monkeypatch):
 
 
 def evidence():
-    blobs = {kit.WORKFLOW: kit.workflow_bytes(), kit.RECORDER: kit.recorder_bytes()}
+    blobs = {kit.WORKFLOW: kit.workflow_bytes()}  # the executed workflow, read for its needs graph
     proof = {'schema': 1, 'repository': cap.strict.REPOSITORY, 'event': 'pull_request', 'run_id': RUN,
              'run_attempt': 1, 'head': HEAD, 'base': BASE, 'source_commit': SOURCE, 'tree': TREE, 'version': VERSION,
-             'pr': PR, 'sources': kit.manifest()['sources']}
+             'pr': PR, 'sources': {}}
     def step(name, conclusion='success'):
         return {'name': name, 'status': 'completed', 'conclusion': conclusion,
                 'started_at': '2026-11-05T00:00:00Z', 'completed_at': '2026-11-05T00:00:10Z'}
