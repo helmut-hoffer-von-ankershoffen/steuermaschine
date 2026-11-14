@@ -3,6 +3,9 @@ fails yields one WARN naming the blind check, never silence. Nothing is written 
 
 from __future__ import annotations
 
+import json
+
+from ..coord_lib.base import child_env, tracker_dir
 from ..go_lib import legacy
 from ..go_lib.probes import World, rehearsal_state
 from . import rules
@@ -104,6 +107,22 @@ def collect(w: World, now: float) -> list[dict]:
         active = sum(1 for r in runs() if (r.get("headBranch") or "").startswith("release/v") and r.get("status") in rules.ACTIVE)
         return [rules.release_alarm(data, legacy.release_receipt_changed(w.state_dir), active, now)]
 
+    def owner_asks():
+        """Open beads labelled owner-ask or heinzel-issues (in-app reports): each one is an ALERT until acknowledged."""
+        settings = getattr(w, "settings", None)
+        if settings is None:  # a world without tracker settings (a scripted one) has none to read
+            return []
+        done = w.commands.run(["bd", "list", "--status", "open", "--label-any", ",".join(rules.ASK_LABELS), "--json", "--limit", "0"],
+                              cwd=str(tracker_dir(settings)), env=child_env(settings), timeout=60)
+        if done.rc:
+            raise RuntimeError(f"bd exited {done.rc}")
+        try:
+            found = json.loads(done.out[done.out.index("["):]) if "[" in done.out else []
+        except ValueError:
+            raise RuntimeError("bd list is not JSON") from None
+        return rules.ask_alarms(found if isinstance(found, list) else [])
+
+    guarded("owner-asks", owner_asks)
     guarded("queue-stall", stalls)
     guarded("main-red", main_red)
     guarded("candidate", lambda: rules.candidate_alarms(runs(), jobs_of, now, dropped=dropped))

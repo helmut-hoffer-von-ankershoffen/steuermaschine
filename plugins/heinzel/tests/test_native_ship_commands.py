@@ -578,3 +578,23 @@ def test_a_cleared_guard_counts_for_the_same_repository_and_the_exact_head_only(
     assert not known_failures.guard_cleared("801", [row], CORE + "-plugins", HEAD)
     assert not known_failures.guard_cleared("801", [row], CORE, "")
     assert not known_failures.guard_cleared("801", [{**row, "status": "needs work"}], CORE, HEAD)
+
+
+PLUGINS = "helmut-hoffer-von-ankershoffen/heinzel-plugins"
+
+
+def test_pr_works_for_a_plugins_worktree_the_repository_is_read_from_its_origin(rt, gh, worktree):
+    """qtz6 (a): a worktree whose origin is heinzel-plugins opens a plugins PR; the PR is looked up and would be opened there."""
+    gh.on("remote get-url origin", f"git@github.com:{PLUGINS}.git\n").on("pr list -R " + PLUGINS + " --head fix/x", [])
+    out = invoke(rt, ["--format", "json", "head", "pr", "abc", "fix(web): keep the draft", "--body-file", str(worktree)])
+    assert out.exit_code == 0 and doc(out).verdict == "dry_run", out
+    assert any(line.startswith("pr list -R " + PLUGINS) for line in gh.lines())  # the push gate still reads core's main CI
+
+
+def test_the_ship_step_of_a_plugins_pr_gets_the_plugins_key():
+    from steuermaschine_heinzel.native.admission_lib import identity
+
+    assert identity.pr_key(PLUGINS, 38) == "plugins 38" and identity.pr_key(CORE, 801) == "801"
+    assert identity.known_repo("https://github.com/Helmut-Hoffer-von-Ankershoffen/heinzel-plugins.git") == PLUGINS
+    assert identity.known_repo("git@github.com:someone/plugins.git") is None
+
