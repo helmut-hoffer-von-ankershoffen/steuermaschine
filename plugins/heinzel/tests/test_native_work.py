@@ -2,7 +2,7 @@
 
 import json
 
-from coord_kit import app_runtime, ok, unreviewed  # noqa: F401  (fixtures)
+from coord_kit import app_runtime, ok  # noqa: F401  (fixtures)
 from test_native_coord_tasks import bd, world
 
 from steuermaschine.app import command_tree
