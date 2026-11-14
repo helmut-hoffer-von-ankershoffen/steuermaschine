@@ -215,7 +215,7 @@ def test_floor_takes_a_worktree_path_and_reports_a_missing_pr_plan_and_pin(core)
 # ----------------------------------------------------------------------------- registration
 def test_registrations_and_tool_map():
     reg = {c.path: c for c in native.commands() if hasattr(c, "writes")}
-    assert reg["head manifest"].writes is True and reg["head manifest"].review_file == "head-packet-writes.md"  # it writes the packet file
+    assert reg["head manifest"].writes is True  # it writes the packet file
     for path in ("head size", "head floor"):
         assert reg[path].writes is False
     rows = {row.tool: row.path for row in ROWS}

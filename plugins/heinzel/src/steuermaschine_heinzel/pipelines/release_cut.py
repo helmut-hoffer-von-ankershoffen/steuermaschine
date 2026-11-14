@@ -417,4 +417,4 @@ def pipeline() -> Pipeline:
     return Pipeline("release", VERB, "Cut one release: pins, notes, admission with review, a review before publishing, resume, verify; resumable.",
                     steps, identify, inputs=INPUTS, when="Use when a release is due and its release commit and packet exist (release.sh in a hooked clone).",
                     example_arg="0.9.41", done_next="sm release after VERSION, then sm mini verify --minimum VERSION",
-                    unit=unit("release cut", anchor, "release-cut.md"))
+                    unit=unit("release cut", anchor))

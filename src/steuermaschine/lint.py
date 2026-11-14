@@ -1,12 +1,13 @@
 """Static rules for native code, run by the promote gate. They read source; they run nothing.
 
 1. `write_reach(cmd)`: a command registered `writes=False` must not reach code that writes outside this machine.
-   Followed: calls from the command's function into functions of its own module and its `<module>_lib` package,
-   by name. Flagged: a GitHub client call with a method other than GET, a `gh` argument list that starts a write
-   (`pr merge`, `variable set`, `workflow run`, `run cancel`, ...), a `git push`, and the write methods of the
-   provider Protocols. It is a net, not a proof: a write reached through a name this cannot follow passes.
+   Followed: calls from the command's function into the functions they name; where the source does not say which
+   function a call means, every function of that name in the command's module and its `<module>_lib` package.
+   Flagged: a GitHub client call with a method other than GET, a `gh` argument list that starts a write (`pr merge`,
+   `variable set`, `workflow run`, `run cancel`, ...), a `git push`, and the write methods of the provider Protocols.
+   It is a net, not a proof: a write reached through a name this cannot follow passes.
 2. `main_blocks(root)`: moved libraries expose functions only. A module with `if __name__ == "__main__"` is a second
-   way in that no review gate sees.
+   way in that no command registers.
 3. `script_calls(root, old_tools, old_dir)`: nothing starts an old tool script.
 """
 
@@ -55,19 +56,100 @@ def _writes_in(func: ast.AST) -> list[str]:
     return found
 
 
-def write_reach(cmd: Any) -> list[str]:
-    """Findings for one native command; empty when nothing that writes outside is reachable from its function."""
-    files = cmd.code_files()
-    if not files:
-        return []
-    defs: dict[str, list[tuple[Path, ast.FunctionDef | ast.AsyncFunctionDef]]] = {}
-    for path in files:
+_Def = ast.FunctionDef | ast.AsyncFunctionDef
+
+
+class _Source:
+    """One parsed file: its functions by name, the names its imports bind to files of the command's package, and the
+    names its other imports bind (the standard library, the core, third parties): a call on one of those leaves the
+    package, so there is nothing to follow."""
+
+    def __init__(self, path: Path, roots: dict[str, Path]):
+        from . import native
+
+        self.path = path
+        self.defs: dict[str, list[_Def]] = {}
+        self.binds: dict[str, tuple[Path, str]] = {}  # local name -> (file, "" for the module itself, else the name taken from it)
+        self.outside: set[str] = set()
+        name, package = native._module_of(path, roots)
         for node in ast.walk(ast.parse(path.read_text())):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                defs.setdefault(node.name, []).append((path, node))
-    start = [(p, n) for p, n in defs.get(cmd.fn.__name__, []) if p == files[0]]
+                self.defs.setdefault(node.name, []).append(node)
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    hit = native._resolve(alias.name, roots)
+                    if hit and (alias.asname or "." not in alias.name):
+                        self.binds[alias.asname or alias.name] = (hit, "")
+                    elif not hit:
+                        self.outside.add(alias.asname or alias.name.split(".")[0])
+            elif isinstance(node, ast.ImportFrom):
+                base = node.module or ""
+                if node.level:
+                    here = name.split(".") if package else name.split(".")[:-1]
+                    if node.level - 1 > len(here) - 1 or not here[0]:
+                        continue
+                    base = ".".join(here[:len(here) - (node.level - 1)] + ([node.module] if node.module else []))
+                for alias in node.names:
+                    module = native._resolve(f"{base}.{alias.name}", roots)
+                    inside = None if module else native._resolve(base, roots)
+                    if module:
+                        self.binds[alias.asname or alias.name] = (module, "")
+                    elif inside:
+                        self.binds[alias.asname or alias.name] = (inside, alias.name)
+                    else:
+                        self.outside.add(alias.asname or alias.name)
+        self.outside -= set(self.binds) | set(self.defs)  # a name bound both ways stays in the net
+
+
+def write_reach(cmd: Any) -> list[str]:
+    """Findings for one native command; empty when nothing that writes outside is reachable from its function.
+
+    A call is followed to its function: `module.name(...)` and an imported `name(...)` into the file the import names
+    (a file of the command's own package, also outside its module and `<module>_lib`), a plain `name(...)` to the
+    function of that name in the same file. A call on a name imported from outside the package (`subprocess.run`) is
+    not followed. Any other call (`obj.name(...)`, a name nothing here defines) is followed by name alone into every
+    function of that name in the command's module and its `<module>_lib`: the net. In a file outside those, reached
+    through an import, the net is that file alone."""
+    from . import native
+
+    files = [Path(p).resolve() for p in cmd.code_files()]
+    if not files:
+        return []
+    roots = {top: root for top, root in native._roots(cmd.fn.__module__).items() if top != native.CORE}
+    sources: dict[Path, _Source] = {}
+
+    def source(path: Path) -> _Source:
+        if path not in sources:
+            sources[path] = _Source(path, roots)
+        return sources[path]
+
+    def named(path: Path, name: str, depth: int = 0) -> list[tuple[Path, _Def]]:
+        """The functions `name` means in the file `path`: defined there, or imported there from another file."""
+        here = source(path)
+        if name in here.defs:
+            return [(path, node) for node in here.defs[name]]
+        target, member = here.binds.get(name, (None, ""))
+        return named(target, member, depth + 1) if target and member and depth < 5 else []
+
+    def by_name(path: Path, name: str) -> list[tuple[Path, _Def]]:
+        """The net. From a file outside the unit it is that file alone: such a file does not know the unit."""
+        return [(p, node) for p in (files if path in files else [path]) for node in source(p).defs.get(name, [])]
+
+    def targets(path: Path, call: ast.Call) -> list[tuple[Path, _Def]]:
+        here, func = source(path), call.func
+        if isinstance(func, ast.Attribute):
+            base = func.value.id if isinstance(func.value, ast.Name) else ""
+            if base in here.outside:
+                return []
+            target, member = here.binds.get(base, (None, ""))
+            return named(target, func.attr) if target and not member else by_name(path, func.attr)
+        name = getattr(func, "id", "")
+        if not name or name in here.outside:
+            return []
+        return named(path, name) if name in here.defs or name in here.binds else by_name(path, name)
+
     seen: set[int] = set()
-    queue, findings = list(start), []
+    queue, findings = [(files[0], node) for node in source(files[0]).defs.get(cmd.fn.__name__, [])], []
     while queue:
         path, func = queue.pop()
         if id(func) in seen:
@@ -76,28 +158,8 @@ def write_reach(cmd: Any) -> list[str]:
         findings += [f"{path.name}:{func.name}: {text}" for text in _writes_in(func)]
         for node in ast.walk(func):
             if isinstance(node, ast.Call):
-                name = node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, "id", "")
-                queue += defs.get(name, [])
+                queue += targets(path, node)
     return sorted(set(findings))
-
-
-def review_unit_gaps(cmd: Any) -> list[str]:
-    """A write command's review unit (the files its verdict's digest covers) must contain every `*_lib` package of
-    its plugin that its module imports: a change there can alter what the command writes."""
-    files = cmd.code_files()
-    if not files:
-        return []
-    module, covered = files[0], {p.resolve() for p in files}
-    gaps = []
-    for node in ast.walk(ast.parse(module.read_text())):
-        names = []
-        if isinstance(node, ast.ImportFrom) and node.level >= 1:
-            names = [(node.module or "").split(".")[0]] if node.module else [a.name for a in node.names]
-        for name in names:
-            lib = module.parent / name
-            if name.endswith("_lib") and lib.is_dir() and not any(p.resolve() in covered for p in lib.rglob("*.py")):
-                gaps.append(f"{module.name} imports {name}, which is not in the review unit of `{cmd.path}`: add files=(\"{name}\", ...) to its @native")
-    return sorted(set(gaps))
 
 
 def main_blocks(root: Path) -> list[str]:

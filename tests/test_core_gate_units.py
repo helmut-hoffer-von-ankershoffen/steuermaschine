@@ -1,5 +1,5 @@
 """Write units: what a write path's code covers (imports followed into core), every writer running without a
-per-command review file (one verdict per promoted commit replaced it), `sm self reviews` naming the write paths a diff
+per-command review (one verdict per promoted commit replaced it), `sm self reviews` naming the write paths a diff
 reaches, read-only derived from `writes=`, and the engine's review stops, running steps and superseded runs."""
 
 import importlib
@@ -26,7 +26,7 @@ from steuermaschine.testing import FakeCommands, fake_providers, invoke
 def package(tmp_path, monkeypatch):
     """A plugin package `unitpkg`: area.py imports area_lib, area_lib imports other_lib, and both import core."""
     root = tmp_path / "unitpkg"
-    for d in ("area_lib", "other_lib", "reviews"):
+    for d in ("area_lib", "other_lib"):
         (root / d).mkdir(parents=True)
     (root / "__init__.py").write_text("")
     (root / "area_lib" / "__init__.py").write_text("from ..other_lib import deep  # noqa\n")
@@ -37,9 +37,9 @@ def package(tmp_path, monkeypatch):
         "from . import area_lib  # noqa\n\n\nclass Done(Model):\n    did: str\n\n\n"
         "@native('unit write', writes=True, help=H('Write.', 'Use when testing.', 'writes a thing.', 'sm unit write', 'sm go'))\n"
         "def unit_write() -> Done:\n    return Done(did='written')\n\n\n"
-        "@native('unit lock', writes=True, exempt='the lock itself', help=H('Lock.', 'Use when testing.', 'takes a slot.', 'sm unit lock', 'sm go'))\n"
+        "@native('unit lock', writes=True, help=H('Lock.', 'Use when testing.', 'takes a slot.', 'sm unit lock', 'sm go'))\n"
         "def unit_lock() -> Done:\n    return Done(did='locked')\n\n\n"
-        "@native('gate run', writes=True, exempt='the run lock', help=H('Run.', 'Use when testing.', 'takes a slot.', 'sm gate run', 'sm go'))\n"
+        "@native('gate run', writes=True, help=H('Run.', 'Use when testing.', 'takes a slot.', 'sm gate run', 'sm go'))\n"
         "def gate_run() -> Done:\n    return Done(did='ran')\n")
     monkeypatch.syspath_prepend(str(tmp_path))
     for name in [m for m in sys.modules if m.startswith("unitpkg")]:
@@ -60,16 +60,16 @@ def package(tmp_path, monkeypatch):
     return root, module, Plugin()
 
 
-def test_the_digest_follows_imports_across_lib_packages_and_into_core(package):
-    root, module, _ = package
+def test_the_reach_follows_imports_across_lib_packages_and_into_core(package):
+    from steuermaschine.reviewgraph import reach
+
+    _, module, _ = package
     cmd = module.unit_write.__sm_native__
-    assert [p.name for p in cmd.code_files()] == ["area.py", "__init__.py"]  # the declared unit is unchanged
-    labels = cmd.labels()
-    assert "other_lib/deep.py" in labels and "other_lib/__init__.py" not in labels  # a name imported from a submodule
-    assert {"steuermaschine/hashing.py", "steuermaschine/native.py", "steuermaschine/helpdoc.py"} <= set(labels)
-    before = cmd.code_digest()
-    (root / "other_lib" / "deep.py").write_text("from steuermaschine.hashing import sha256_text  # noqa\nVALUE = 2\n")
-    assert cmd.code_digest() != before  # a change two imports away voids the verdict
+    assert [p.name for p in cmd.code_files()] == ["area.py", "__init__.py"]  # the unit: the module and its own library
+    (found,) = reach([cmd])
+    assert found.own == ("unitpkg/area.py", "unitpkg/area_lib/__init__.py")
+    assert {"unitpkg/other_lib/deep.py", "unitpkg/other_lib/__init__.py"} <= set(found.imported)  # two imports away; the library whole
+    assert {"steuermaschine/hashing.py", "steuermaschine/native.py", "steuermaschine/helpdoc.py"} <= set(found.imported)
 
 
 def git_fake(changed: str, rc: int = 0) -> FakeCommands:
@@ -85,7 +85,7 @@ def runtime_of(plugin, commands: FakeCommands | None = None) -> Runtime:
                    _providers=fake_providers(commands=commands or FakeCommands()))
 
 
-def test_every_writer_runs_without_a_review_file_and_only_the_allowlisted_run_lock_is_exempt(package):
+def test_every_writer_runs_without_a_review_file_and_only_the_cores_run_lock_path_is_exempt(package):
     _, _, plugin = package
     rt = runtime_of(plugin)
     assert invoke(rt, ["unit", "write"]).stdout == "did: written\n"  # no review file exists in the package
@@ -95,7 +95,7 @@ def test_every_writer_runs_without_a_review_file_and_only_the_allowlisted_run_lo
     assert tree["sm unit write"]["read_only"] is False and tree["sm unit lock"]["read_only"] is False and tree["sm go"]["read_only"] is True
     assert frozenset({"gate run"}) == native_mod.EXEMPT_PATHS  # exempt from the writers' lock, unchanged
     lock, gate = (next(c for c in native_mod.registered(rt) if c.path == p) for p in ("unit lock", "gate run"))
-    assert native_mod.is_exempt(gate) and not native_mod.is_exempt(lock)
+    assert native_mod.is_exempt(gate) and not native_mod.is_exempt(lock)  # by path alone: no command declares it
     assert not hasattr(native_mod, "gate_problem")
 
 
@@ -149,8 +149,10 @@ def test_the_cores_own_writers_run_without_a_review_file_and_are_write_units():
     rt = Runtime(Project(name="p", plugin="none", root=Path(".")), None, {}, {}, fake_providers())
     assert invoke(rt, ["focus", "add", "x"]).exit_code == OK
     assert {u.path for u in core_units()} == {"review verdict", "focus add", "focus done", "alarm ack", "self migrate-state", "ci cancel"}
-    for u in core_units():  # app.py (or github/cli.py) and the core files it imports, named relative to the unit's module
-        assert len(u.code_digest()) == 64 and ("engine.py" in u.labels() if u.path != "ci cancel" else "cli.py" in u.labels()), u.path
+    from steuermaschine.reviewgraph import reach
+
+    for found in reach(core_units()):  # app.py (or github/cli.py) and the core files it imports, by package path
+        assert ("steuermaschine/engine.py" if found.path != "ci cancel" else "steuermaschine/github/cli.py") in found.files, found.path
 
 
 def test_the_lint_finds_a_declared_flag_that_disagrees_with_the_changes_line():
@@ -169,7 +171,7 @@ def two_stops(p, digests):
     steps = [ReviewStop("first", lambda ctx: (digests[0], "Review one.", "/r/one.json"), binds=("head",)),
              Step("local", lambda ctx: "ok", binds=("head",)),
              ReviewStop("second", lambda ctx: (digests[1], "Review two.", "/r/two.json"), binds=("head",))]
-    return Pipeline("head", "demo", "Demo.", steps, identify, unit=unit("head demo", two_stops, "head-demo.md"))
+    return Pipeline("head", "demo", "Demo.", steps, identify, unit=unit("head demo", two_stops))
 
 
 def test_each_review_stop_names_file_digest_and_brief_and_a_spent_digest_does_not_answer_the_next(tmp_path):
@@ -251,21 +253,14 @@ def test_a_pipeline_with_a_unit_runs_without_a_review_file_and_is_a_write_unit()
     assert "head demo" in {u.path for u in write_units(rt)}
 
 
-def test_imported_files_are_ordered_by_package_path_not_install_location(tmp_path):
-    # A checkout keeps the plugin under plugins/, an install under venv/.../site-packages: sorting by the absolute path
-    # put core first in one and last in the other, so the same code had two digests (promote's review gate saw stale).
-    from steuermaschine.native import _package_path
+def test_files_are_named_by_package_path_not_install_location(tmp_path):
+    # A checkout keeps the plugin under plugins/, an install under venv/.../site-packages: the name of a file must be
+    # the same in both, or `sm self reviews` of an installed sm would not match the paths of a diff.
+    from steuermaschine.reviewgraph import _name
 
     for root in ("a-install/site-packages", "z-checkout/src"):
         (tmp_path / root / "pkg").mkdir(parents=True)
         (tmp_path / root / "pkg" / "__init__.py").write_text("")
         (tmp_path / root / "pkg" / "mod.py").write_text("")
-    assert _package_path(tmp_path / "z-checkout/src/pkg/mod.py") == "pkg/mod.py" == _package_path(tmp_path / "a-install/site-packages/pkg/mod.py")
-    from steuermaschine.plugins import stack_of
-    from steuermaschine_heinzel.plugin import plugin
-
-    stack = stack_of(plugin)
-    settings, _ = stack.validate({"heinzel": {}}, Path("."))
-    for cmd in [c for c in stack.native(settings) if getattr(c, "writes", False)][:10]:
-        imported = cmd.imported_files()
-        assert [_package_path(p) for p in imported] == sorted(_package_path(p) for p in imported), cmd.path
+    names = {_name(tmp_path / root / "pkg" / "mod.py", {"pkg": tmp_path / root / "pkg"}) for root in ("a-install/site-packages", "z-checkout/src")}
+    assert names == {"pkg/mod.py"} and _name(tmp_path / "z-checkout/src/pkg/mod.py", {}) == "pkg/mod.py"  # outside the roots: by `__init__.py`

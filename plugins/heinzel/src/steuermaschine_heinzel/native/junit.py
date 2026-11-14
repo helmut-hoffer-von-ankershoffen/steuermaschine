@@ -71,7 +71,7 @@ def count_cases(path: Path) -> int:
         return 0
 
 
-@native("head junit", writes=True, review="head-junit.md", help=H(
+@native("head junit", writes=True, help=H(
     "Run the whole Vitest suite of a head once, as JUnit, when its selection is web/ALL; the full-suite refusal is waived and logged.",
     "Use when `sm head select` gave the head `web: [\"web/ALL\"]` and its packet needs the full Vitest JUnit.",
     "writes the JUnit file given with --output (a local file the packet binds); one line in the gate's allow-full log.",

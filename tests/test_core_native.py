@@ -148,7 +148,7 @@ def test_a_write_command_runs_without_a_per_command_review_file():
 
 @pytest.fixture
 def reviewed_package(tmp_path, monkeypatch):
-    """A real package on disk with one write command, so its review file and code digest are real."""
+    """A real package on disk with one write command, so its code files are real."""
     package = tmp_path / "gated_pkg"
     (package / "reviews").mkdir(parents=True)
     (package / "area_lib").mkdir()
@@ -184,38 +184,22 @@ def test_no_review_file_is_read_at_run_time(reviewed_package):
     package, cmd, _ = reviewed_package
     (package / "reviews" / "gated-write.md").write_text("VERDICT: REJECT\n")  # a stale or rejecting file changes nothing
     assert not hasattr(cmd, "review_state") and not hasattr(cmd, "reviewed")
-    assert len(cmd.code_digest()) == 64 and [p.name for p in cmd.code_files()] == ["area.py", "__init__.py"]
+    assert not hasattr(cmd, "code_digest") and not hasattr(cmd, "review_file")
+    assert [p.name for p in cmd.code_files()] == ["area.py", "__init__.py"]
 
 
-def test_an_explicit_review_unit_limits_the_digest_to_the_files_the_command_executes(reviewed_package):
-    package, cmd, _ = reviewed_package
-    (package / "area_lib" / "other.py").write_text("X = 1\n")
-    (package / "area_lib" / "used.py").write_text("Y = 1\n")
-    from dataclasses import replace
-
-    narrow = replace(cmd, files=("area_lib/used.py",))
-    assert [p.name for p in narrow.code_files()] == ["area.py", "used.py"]
-    before = narrow.code_digest()
-    (package / "area_lib" / "other.py").write_text("X = 2\n")  # another command's file changes: this approval stays
-    assert narrow.code_digest() == before and cmd.code_digest() != before
-    (package / "area_lib" / "used.py").write_text("Y = 2\n")
-    assert narrow.code_digest() != before
-    with pytest.raises(FileNotFoundError):
-        replace(cmd, files=("area_lib/gone.py",)).code_files()
-    assert [p.name for p in replace(cmd, files=("area_lib",)).code_files()] == ["area.py", "__init__.py", "other.py", "used.py"]  # a directory
-
-
-def test_a_write_command_that_imports_a_library_outside_its_review_unit_is_found(reviewed_package):
-    from dataclasses import replace
-
+def test_no_command_declares_a_review_file_its_files_or_an_exemption(reviewed_package):
     from steuermaschine import lint
+    from steuermaschine.native import native, unit
 
-    package, cmd, _ = reviewed_package
-    (package / "other_lib").mkdir()
-    (package / "other_lib" / "__init__.py").write_text("")
-    (package / "area.py").write_text((package / "area.py").read_text() + "\nfrom .other_lib import nothing  # noqa\n".replace("nothing", "__name__"))
-    assert lint.review_unit_gaps(cmd) == ['area.py imports other_lib, which is not in the review unit of `gated write`: add files=("other_lib", ...) to its @native']
-    assert lint.review_unit_gaps(replace(cmd, files=("area_lib", "other_lib"))) == []
+    _, cmd, _ = reviewed_package
+    for argument in ("review", "files", "exempt"):
+        with pytest.raises(TypeError):
+            native("gated other", help="x", writes=True, **{argument: "x"})
+        assert not hasattr(cmd, argument)
+    with pytest.raises(TypeError):
+        unit("gated other", cmd.fn, "gated-other.md")
+    assert not hasattr(lint, "review_unit_gaps")  # the reach follows every import; there is no declared unit to have a gap
 
 
 def test_a_write_command_runs_through_the_real_entry_point_without_a_review_file(reviewed_package, tmp_path, monkeypatch, capsys):

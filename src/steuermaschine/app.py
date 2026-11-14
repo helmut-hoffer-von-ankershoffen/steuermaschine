@@ -221,7 +221,7 @@ def _pipeline_command(rt: Runtime, sub: typer.Typer, pl: Pipeline) -> None:
             if not eq or name not in pl.inputs:
                 fail(f"--set {pair}: expected NAME=VALUE with NAME one of: {', '.join(pl.inputs) or 'none'}", USAGE)
             inputs[name] = value
-        writer = None if plan else pl.unit or native_mod.unit(f"{pl.subject} {pl.verb}", _pipeline_command, "")
+        writer = None if plan else pl.unit or native_mod.unit(f"{pl.subject} {pl.verb}", _pipeline_command)
         with native_mod.writing(rt, writer) as pending:  # a run holds the writers' lock and waits out a switch, as a typed write does
             if pending is not None:
                 fail(f"a promote (pid {pending}) is switching the live sm: `sm {pl.subject} {pl.verb}` writes and waits until it is done",
@@ -646,7 +646,7 @@ def _self(rt: Runtime, app: typer.Typer) -> None:
         raise typer.Exit(1 if problems else 0)
 
 
-# ----------------------------------------------------------------------------- the write paths and their review units
+# ----------------------------------------------------------------------------- the write paths and their units
 def _move_state(move: Any) -> str:
     if statemove.pending([move]):
         return "old"
@@ -675,7 +675,7 @@ def _exclusive_writers(rt: Runtime, wait: int) -> Iterator[None]:
 
 
 def _core_unit() -> None:
-    """Anchor of the review unit of the core's own local writers in this module (`review verdict`, `focus add|done`,
+    """Anchor of the unit of the core's own local writers in this module (`review verdict`, `focus add|done`,
     `alarm ack`): this file and every core file it imports."""
 
 
@@ -685,8 +685,7 @@ CORE_WRITERS = ("review verdict", "focus add", "focus done", "alarm ack", "self 
 def core_units() -> list[Any]:
     from .github import cli as github_cli
 
-    return [*(native_mod.unit(path, _core_unit, "core-local-writers.md") for path in CORE_WRITERS),
-            native_mod.unit("ci cancel", github_cli.unit_anchor, "ci-cancel.md")]
+    return [*(native_mod.unit(path, _core_unit) for path in CORE_WRITERS), native_mod.unit("ci cancel", github_cli.unit_anchor)]
 
 
 def natives(rt: Runtime) -> list[Any]:

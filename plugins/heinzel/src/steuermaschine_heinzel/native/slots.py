@@ -25,7 +25,6 @@ from .. import state as statedir
 from .slots_lib import collect, legacy, registry_lock
 
 PR_LIMIT = 1000
-REVIEW = "head-slots-apply.md"
 
 SLOTS = Group("head slots", H(
     "head slots: the focused plan registry (five repository variables) and what may be collected from it.",
@@ -177,7 +176,7 @@ def head_slots_collect(all_: bool = typer.Option(False, "--all", help="Also list
     return _model(repo, texts, rows, reserved, main, all_)
 
 
-@native("head slots apply", writes=True, review=REVIEW, help=H(
+@native("head slots apply", writes=True, help=H(
     "Apply one approved collection: rewrite the slots that lose entries, with a receipt.",
     "Use after an independent reviewer approved the digest of `sm head slots collect`.",
     "up to five repository variables (the focused plan slots that lose entries); writes a receipt.",

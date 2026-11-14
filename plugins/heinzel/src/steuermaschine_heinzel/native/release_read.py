@@ -411,7 +411,7 @@ class ReleaseAssets(Model):
         return 0 if all(r.ok for r in self.results) and self.stable is not False else 1
 
 
-@native("release assets", writes=True, files=("release_read_lib", "release_lib"), replaces=("hz-assets-health",), help=H(
+@native("release assets", writes=True, replaces=("hz-assets-health",), help=H(
     "Probe with a real GET every external asset that hooks and CI download; 200 or 206 is OK.",
     "Use before a release is cut and when CI fails on a download.",
     "the probe cache file (setting release_assets_cache); nothing else.",

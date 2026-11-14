@@ -94,14 +94,15 @@ def test_status_without_runs_and_with_a_paused_admission(rt, tmp_path):
     assert "9 dispatch dispatch e2e web-2 [3/3 green] (since 21:00)" in text and "admission paused" in text
 
 
-def test_the_review_units_and_files_of_the_write_commands():
-    by_path = {cmd.path: cmd for cmd in (fn.__sm_native__ for fn in (dispatch.ci_one_dispatch, dispatch.ci_one_rerun, window.head_validate,
-                                                                     window.ci_window_run, window.ci_window_release))}
-    assert by_path["ci one rerun"].review_file == by_path["ci one dispatch"].review_file == "ci-one-dispatch.md"
-    assert by_path["ci one rerun"].code_digest() == by_path["ci one dispatch"].code_digest()
+def test_the_files_the_write_commands_reach():
+    from steuermaschine.reviewgraph import reach
+
+    by_path = {found.path: found.files for found in reach(fn.__sm_native__ for fn in (dispatch.ci_one_dispatch, dispatch.ci_one_rerun, window.head_validate,
+                                                                                    window.ci_window_run, window.ci_window_release))}
+    assert by_path["ci one rerun"] == by_path["ci one dispatch"]
     for path in ("head validate", "ci window run", "ci window release"):
-        names = {f.name for f in by_path[path].code_files()}
-        assert by_path[path].review_file == "head-validate.md" and {"window.py", "dispatch.py", "focused.py", "rules.py", "lock.py", "refuse.py"} <= names, path
+        names = {name.rsplit("/", 1)[-1] for name in by_path[path]}
+        assert {"window.py", "dispatch.py", "focused.py", "rules.py", "lock.py", "refuse.py"} <= names, path
 
 
 def test_one_dispatch_makes_exactly_these_github_calls_in_this_order(rt, registry):

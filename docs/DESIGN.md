@@ -246,7 +246,7 @@ names, so the outermost plugin that sets a key decides: `gate.POLICY` (the run l
 `window.WINDOW` (the project's validation window: `window(runtime) -> steuermaschine.window.Window`). Without a plugin
 they use the core defaults: lock files and logs below the project's state directory, no refusals, FILE required, the
 window's `Rules()` in the namespace `core`. A plugin that needs a different command, not only different values, registers a native command at
-the same path; it replaces the core's, and its own review file gates it.
+the same path; it replaces the core's.
 
 A layer that replaces a write command's path brings its own write unit: `sm self reviews` names it when a change
 reaches its code. Review happens once per promoted commit (section 8, "The review gate"), not per command at run time.
@@ -260,7 +260,7 @@ Heinzelmännchen plugin (`plugins = ["heinzel", "layer"]`): load order, both set
 next to heinzel's, its wrapper vetoing a step before heinzel or the core sees it, and an outer plugin's extra
 replacing heinzel's for a core command; `tests/test_core_layers.py` checks each rule above with three in-process
 plugins; `tests/test_core_commands.py` checks the core's commands alone, with extras, and replaced by a plugin
-command that brings its own review file.
+command.
 
 **A plugin that does not load is never replaced by the core silently.** Every command except `sm self ...` prints
 two loud lines on stderr and exits 70. The core alone runs only on purpose (`plugins = ["none"]` or
@@ -376,8 +376,7 @@ Everything Heinzelmännchen-specific. The core has no word of it (`tests/test_co
 | Part | Where | State |
 |---|---|---|
 | Native commands: `head`, `ci`, `queue`, `release`, `daemon`, `mini`, `beads`, `doc`, `gate`, `guard`, `timing`, `lim`, `note`, `status`, `tick`, `why` | `native/<area>.py`, logic in `native/<area>_lib/`; registry `native/__init__.py` | built, live; every command `@native` with a result model |
-| Pipelines `head admit` and `release cut` | `pipelines/head_admit.py`, `pipelines/release_cut.py`, `pipelines/common.py` | built and reviewed; each step calls a native command through `native.call`, so that command's own review gate holds |
-| Review units | `reviews/<command>.md`, one per unit, `VERDICT: APPROVE sha256=DIGEST` | every gated write command approved (`sm self reviews`) |
+| Pipelines `head admit` and `release cut` | `pipelines/head_admit.py`, `pipelines/release_cut.py`, `pipelines/common.py` | built and reviewed; each step calls a native command through `native.call`, so that command's own writers' lock holds |
 | Tool map | `toolmap.py`, registered through `Plugin.tool_map()` | built |
 | Traps | `traps.py`, keyed per step | built |
 
@@ -418,9 +417,11 @@ still the candidate's own code: `bin/promote` and `bin/promote_lib.sh`; a review
 `bin/promote*`, `bin/rollback` and `bin/check` first (`sm self reviews` lists them as GATE CODE). Write code run from
 a checkout (`bin/sm-dev`, `uv run`) is not reviewed; only the stable install is. Write commands do not check
 anything at run time; they still need `--live` where they write outside this machine. `sm self reviews` tells the
-reviewer which write paths the diff reaches (the code a write unit covers: its module, its `*_lib` package and the
-first-party files it imports, `steuermaschine.reviewgraph`). `sm self lint` flags a `writes=` that disagrees with
-the Changes line. The per-command review files and `bin/review_gate.py` are no longer read; they are deleted next.
+reviewer which write paths the diff reaches (the code a write unit covers: its module, its `*_lib` package, the
+first-party files it imports, and every `*_lib` package one of those files is in, whole and with its data files,
+because such a package loads modules and reads files by name; `steuermaschine.reviewgraph`). No command declares a
+review file, its files or an exemption: `@native` has no such argument. `sm self lint` flags a `writes=` that
+disagrees with the Changes line.
 The apply verdict of a head or release (`sm review verdict`, `verdicts.require_independent`) is a separate gate.
 
 ## 9. Running it without breaking it (built: `bin/promote`, `bin/rollback`)
@@ -597,10 +598,9 @@ plugin nowhere except `test_core_names.py`, which checks the core for Heinzel wo
 | help lint (`self lint`, `sm_help_lint_rules`) | core `lint.py`, `helpdoc.py` | yes: lint is clean for all three stacks | `examples/layer/tests/test_layer_stack.py` |
 | settings (layers, sources, `self config`) | core `config.py`, `plugins.Stack.validate` | yes | `tests/test_core_cli.py`, `examples/layer/tests/test_layer.py` |
 | output models (`Model`, `self schema`, one JSON document) | core `models.py`, `native.py`, `dispatch.py` | yes | `tests/test_core_native.py`, `tests/test_core_cli.py` |
-| review gate for write commands (`self reviews`) | core `native.py` | yes: the toy's `sim reset` is gated | `tests/test_core_native.py`, `examples/layer/tests/test_layer_stack.py` |
+| write paths a diff reaches (`self reviews`) | core `reviewgraph.py`, `native.py` | yes: the toy's `sim reset` is a write unit | `tests/test_core_native.py`, `examples/layer/tests/test_layer_stack.py` |
 
-What is left in the plugin that looks generic, and why it stays (each move changes the digest of a review unit;
-`feat/dod-5-6` moved its parts in one batch, and the units whose digests moved are listed in its hand-over):
+What is left in the plugin that looks generic, and why it stays:
 
 | Generic part | In the plugin | Blocker | Plan |
 |---|---|---|---|

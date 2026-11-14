@@ -615,4 +615,4 @@ def pipeline() -> Pipeline:
     ]
     return Pipeline("head", VERB, "Admit one head: preflight, packet, two independent reviews, apply, PR and queue; resumable, one step per run.",
                     steps, identify, inputs=INPUTS, when="Use when a head is committed in its own worktree and should ship.", example_arg="~/Code/heinzel-fix",
-                    unit=unit("head admit", anchor, "head-admit.md"))
+                    unit=unit("head admit", anchor))

@@ -363,7 +363,7 @@ def rehearse_status(line: bool = typer.Option(False, "--line", help="The one-lin
         raise Refuse(f"the rehearsal state cannot be read: {err}", STATUS) from err
 
 
-@native("release rehearse start", writes=True, replaces=("hz-rehearse",), files=("rehearse_lib", "dispatch.py", "dispatch_lib", "window.py", "lock.py", "lock_lib"), review="release-rehearse-start.md", help=H(
+@native("release rehearse start", writes=True, replaces=("hz-rehearse",), help=H(
     "Start a rehearsal of main's tip: one throwaway commit, one rehearsal/* branch and one hosted run per lane and OS.",
     "Use before a cut when main moved since the last green rehearsal.",
     "creates one commit and the rehearsal/* branches on the remote, starts hosted runs; later steps cancel runs and delete the branches.",
@@ -381,7 +381,7 @@ def rehearse_start(if_moved: bool = typer.Option(False, "--if-moved", help="Do n
     return done("start", lambda: lib.command("start", wanted, runners, consumers, if_moved), allow_full)
 
 
-@native("release rehearse step", writes=True, replaces=("hz-rehearse",), files=("rehearse_lib", "dispatch.py", "dispatch_lib", "window.py", "lock.py", "lock_lib"), review="release-rehearse-start.md", help=H(
+@native("release rehearse step", writes=True, replaces=("hz-rehearse",), help=H(
     "Advance the open rehearsal: start pending lanes, read finished runs, write the verdict once all are done.",
     "Use after `sm release rehearse start`, until it prints the verdict.",
     "starts hosted runs for pending lanes; cancels the rehearsal's own runs when it must give way; deletes its branches at the verdict.",
@@ -392,7 +392,7 @@ def rehearse_step(allow_full: bool = typer.Option(False, "--allow-full", help=AL
     return done("step", lambda: lib.command("step"), allow_full)
 
 
-@native("release rehearse consumers", writes=True, replaces=("hz-rehearse",), files=("rehearse_lib", "dispatch.py", "dispatch_lib", "window.py", "lock.py", "lock_lib"), review="release-rehearse-start.md", help=H(
+@native("release rehearse consumers", writes=True, replaces=("hz-rehearse",), help=H(
     "The plugin Consumer checks only: main's edge wheel against every plugin on plugins main.",
     "Use when only the plugin contract is in doubt; every rehearsal runs the lock checks too.",
     "downloads the edge wheel (removed afterwards), fetches plugins main into the clone, adds and removes a detached worktree of it;\n"
@@ -414,7 +414,7 @@ def rehearse_consumers(only: str | None = typer.Option(None, "--only", metavar="
         raise Refuse(f"the Consumer checks stopped: {err}", STATUS) from err
 
 
-@native("release rehearse cancel", writes=True, replaces=("hz-rehearse",), files=("rehearse_lib", "dispatch.py", "dispatch_lib", "window.py", "lock.py", "lock_lib"), review="release-rehearse-start.md", help=H(
+@native("release rehearse cancel", writes=True, replaces=("hz-rehearse",), help=H(
     "Stop the open rehearsal: cancel its own runs, delete its rehearsal/* branches, verdict incomplete.",
     "Use when a rehearsal must not go on, for example before a cut that cannot wait.",
     "cancels the rehearsal's own hosted runs and deletes its rehearsal/* branches (only those still on its throwaway commit).",
@@ -424,7 +424,7 @@ def rehearse_cancel() -> RehearsalRun:
     return done("cancel", lambda: (lib.cancel(), 0))
 
 
-@native("daemon rehearse", writes=True, tick=True, replaces=("hz-rehearse",), files=("rehearse_lib", "dispatch.py", "dispatch_lib", "window.py", "lock.py", "lock_lib"), review="release-rehearse-start.md", help=H(
+@native("daemon rehearse", writes=True, tick=True, replaces=("hz-rehearse",), help=H(
     "One tick of the rehearsal: step the open one, else start one when main moved and the last start is old enough.",
     "Use for the scheduled job; by hand use `sm release rehearse start` and `step`.",
     "as `sm release rehearse start` and `step`: rehearsal/* branches, hosted runs, cancels, the lock checks, with --consumers `make check`.",

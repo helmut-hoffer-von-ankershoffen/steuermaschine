@@ -90,7 +90,7 @@ GATE = Group("gate", H(
     "sm gate status"))
 
 
-@native("gate run", writes=True, exempt="the run lock itself: the tests of every review, this one included, run through it; gated, no review could ever run", help=H(
+@native("gate run", writes=True, help=H(
     "Run one heavy local command when a slot is free and the load allows; capped test workers; exclusive.",
     "Use for every pytest, vitest, tsc, mypy, playwright, make and git push on this machine.",
     "takes a lock slot while the command runs and appends one line to the gate history; the command does the rest.",

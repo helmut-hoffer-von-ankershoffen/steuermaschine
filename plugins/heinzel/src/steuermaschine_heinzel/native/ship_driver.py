@@ -165,7 +165,7 @@ def _summary(worktree: str, report: Report, derived: list[str], pr: int | None, 
                       derived=derived, pr=pr, merged=merged, exit=report.exit_code, lines=lines)
 
 
-@native("ship", writes=True, review="ship.md", help=H(
+@native("ship", writes=True, help=H(
     "Take one head from its worktree to a merged PR: `head admit` with its inputs derived, then wait for the merge.",
     "Use when a head is committed in its own worktree and should go out; type it again after every stop.",
     "what `head admit` writes: state on this machine, the selection and the packets under the plugin state directory; with --live also the plan slot, "

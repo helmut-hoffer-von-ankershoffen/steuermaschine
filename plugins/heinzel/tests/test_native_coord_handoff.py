@@ -211,9 +211,11 @@ def test_digest_calls_read_only_commands_with_their_defaults_and_survives_each_f
 
 
 def test_hour_and_handoff_units_do_not_pull_in_the_plugins_whole_registry():
+    from steuermaschine.reviewgraph import reach
     from steuermaschine_heinzel.native import handoff
 
-    for fn in (handoff.doc_hour, handoff.doc_handoff):
-        labels = fn.__sm_native__.labels()
-        assert "__init__.py" not in labels and "queue.py" not in labels and "tick.py" not in labels, labels  # a plugin change elsewhere keeps the verdict
-        assert "handoff.py" in labels and "handoff_lib/hour.py" in labels
+    area = "steuermaschine_heinzel/native/"
+    for found in reach([handoff.doc_hour.__sm_native__, handoff.doc_handoff.__sm_native__]):
+        files = set(found.files)
+        assert not {area + "__init__.py", area + "queue.py", area + "tick.py"} & files, found.path  # a change elsewhere in the plugin does not reach them
+        assert {area + "handoff.py", area + "handoff_lib/hour.py"} <= files

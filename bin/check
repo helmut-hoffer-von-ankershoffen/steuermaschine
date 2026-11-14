@@ -3,7 +3,7 @@
 #   bin/check            the whole gate: tests with coverage, then every static gate and the debt ratchet
 #   bin/check --fast     without coverage and the ratchet (what bin/merge-slice runs)
 # Gates (each must be green to merge a slice or to promote):
-#   tests          every test passes (review-gate regressions, tests/test_gate_structure.py, isolation, the json,
+#   tests          every test passes (promote-verdict regressions, tests/test_gate_structure.py, isolation, the json,
 #                  names and settings contracts)
 #   coverage       line+branch >= 90% for the core and for the plugin (full mode only)
 #   help lint      strict, for every project in tests/projects
@@ -13,8 +13,8 @@
 #   pyright        the core
 #   dead code      vulture >= 80% confidence; tests/vulture_whitelist.py names what is used by reflection
 #   debt ratchet   the plugin's mypy, ruff, environment reads and moved-library coverage may not get worse than
-#                  docs/debt.json (full mode only). They are debt, not gate at zero, because an approved review unit
-#                  and a moved library must not be edited for style.
+#                  docs/debt.json (full mode only). They are debt, not gate at zero: the moved libraries are
+#                  worked off step by step.
 set -u
 here="$(cd "$(dirname "$0")/.." && pwd)"; cd "$here" || exit 2
 fast=0; [ "${1:-}" = "--fast" ] && fast=1

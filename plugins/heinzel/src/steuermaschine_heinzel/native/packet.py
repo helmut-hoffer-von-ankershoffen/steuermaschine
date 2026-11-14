@@ -26,9 +26,6 @@ from .packet_lib import check_ops, ops, wave_ops
 from .packet_lib import floor_check as fc
 from .packet_lib import focused_manifest as fm
 
-# The packet builders write local files (the packet, the collected cases) that admission binds: one review unit.
-PACKET_REVIEW = "head-packet-writes.md"
-
 
 def _refuse(error: ops.PacketRefused, next_cmd: str) -> NoReturn:
     for line in error.summary:
@@ -55,7 +52,7 @@ def _head_of(target: str, core: Path) -> str:
     return str(head)
 
 
-@native("head manifest", writes=True, review=PACKET_REVIEW, replaces=("hz-focused-manifest",), help=H(
+@native("head manifest", writes=True, replaces=("hz-focused-manifest",), help=H(
     "Build one focused admission packet from Git objects, or regenerate a packet and compare bytes (--verify).",
     "Use when a single packet is built or checked by hand; `sm head packet preopen` calls the same code.",
     "writes the packet file given with --output (a local file); --verify reads only. Never fetches, never writes the registry.",
@@ -174,7 +171,7 @@ def _gated(cmd: list[str]) -> SimpleNamespace:
     return SimpleNamespace(returncode=outcome.exit_code, stdout="", stderr=outcome.reason)
 
 
-@native("head packet preopen", writes=True, review=PACKET_REVIEW, replaces=("hz-admit-wave",), help=H(
+@native("head packet preopen", writes=True, replaces=("hz-admit-wave",), help=H(
     "Build the pre-open packet of one head at an exact main: collected cases, the pair, the builder's REVIEW.md, verified.",
     "Use when the head merges cleanly onto the current main and its local focused run is green.",
     "writes packet files under the review root (sel.json, collected cases, packet.json, REVIEW.md, wave.json); nothing outside this machine.",
@@ -202,7 +199,7 @@ def head_packet_preopen(
         _refuse(error, "sm head packet preopen --help")
 
 
-@native("head packet predict", writes=True, review=PACKET_REVIEW, replaces=("hz-admit-wave",), help=H(
+@native("head packet predict", writes=True, replaces=("hz-admit-wave",), help=H(
     "Build the packet of a later head against the PREDICTED main after the earlier head(s) merge; for review, not admissible.",
     "Use when a head depends on heads that are still in CI, to have its packet reviewed while they merge.",
     "writes packet files under the review root, and predicted commit objects and scratch refs in --core-repo (a scratch clone, never the shared repository).",
@@ -230,7 +227,7 @@ def head_packet_predict(
         _refuse(error, "sm head packet predict --help")
 
 
-@native("head packet bind", writes=True, review=PACKET_REVIEW, replaces=("hz-admit-wave",), help=H(
+@native("head packet bind", writes=True, replaces=("hz-admit-wave",), help=H(
     "Rebind a predicted packet to the real main, only when main and the resulting tree are byte-equal to the prediction.",
     "Use after the earlier head(s) merged and the real main commit is in the scratch clone (this command never fetches).",
     "writes the bound packet directory under the review root (default PREDICT_DIR/bound-MAIN12); nothing outside this machine.",
@@ -278,7 +275,7 @@ CASES = Group("head cases", H(
     "sm head manifest BRANCH --base MAIN --selection SEL.json --junit python=python.collected.xml --output PACKET.json"))
 
 
-@native("head cases collect", writes=True, review=PACKET_REVIEW, replaces=("collect_cases.py",), help=H(
+@native("head cases collect", writes=True, replaces=("collect_cases.py",), help=H(
     "List the test cases of one lane's selection on an exact Git tree, without running them, as the hosted job reports them.",
     "Use when a lane's cases are needed for a tree other than the one that was run (a resulting tree).",
     "writes the JUnit file given with --output (a local file); extracts the tree into a temporary directory and removes it.",
@@ -301,7 +298,7 @@ def head_cases_collect(
         _refuse(error, "sm head cases collect --help")
 
 
-@native("head cases compare", writes=True, review=PACKET_REVIEW, replaces=("collect_cases.py",), help=H(
+@native("head cases compare", writes=True, replaces=("collect_cases.py",), help=H(
     "Compare three case inventories: the run's JUnit, the head-tree collection and the resulting-tree collection.",
     "Use after collecting a lane on both trees, before a packet carries cases for the resulting tree.",
     "writes the differing ids to the file given with --output (a local file); without --output nothing.",

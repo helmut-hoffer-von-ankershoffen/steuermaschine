@@ -57,10 +57,9 @@ def test_ship_and_a_live_pr_refuse_with_the_reason_while_held(rt, gh):  # noqa: 
     assert not gh.writes() and not [call for call in gh.calls if "push" in call]
 
 
-def test_hold_and_unhold_share_one_open_review_file():
+def test_hold_and_unhold_are_write_commands():
     for fn in (queue_hold.queue_hold, queue_hold.queue_unhold):
-        cmd = fn.__sm_native__
-        assert cmd.writes and cmd.review_file == "queue-hold.md"
+        assert fn.__sm_native__.writes
 
 
 def test_an_excepted_pr_ships_and_merges_alone_while_the_rest_stays_held(rt, gh):  # noqa: F811
