@@ -427,8 +427,8 @@ def test_runs_in_flight_are_counted_from_githubs_inventory_and_a_full_set_waits_
     assert done.exit_code == 75 and "4 runs in flight + 2 wanted > cap 5" in done.stderr and "Nothing was pushed" in done.stderr, done
     assert gh.git == [] and not [call for call in gh.calls if "POST" in call or "--method" in call]
     gh.on("actions/runs?status=in_progress", [{"total_count": 2, "workflow_runs": [run(1), run(7, "ci.yml", "release/v1")]}])
-    held = invoke(runtime, ["head", "validate", ".", "--max-wait", "0"])
-    assert held.exit_code == 75 and "a release/* run is active" in held.stderr and gh.git == []
+    held = invoke(runtime, ["head", "validate", ".", "--os", "macos-latest", "--max-wait", "0"])  # macOS lanes wait for the candidate; Linux lanes go on
+    assert held.exit_code == 75 and "a release/* run is active" in held.stderr and "needs macOS" in held.stderr and gh.git == []
     gh.on("actions/runs?status=in_progress", [{"total_count": 9, "workflow_runs": [run(1)]}])  # a truncated listing
     unsure = invoke(runtime, ["head", "validate", ".", "--max-wait", "0"])
     assert unsure.exit_code == 1 and "cannot count the focused runs in flight" in unsure.stderr and gh.git == []
@@ -627,3 +627,18 @@ def test_a_stop_during_the_cleanup_lets_it_finish(rt, lanes, monkeypatch):
     done = invoke(runtime, ["head", "validate", "."])
     assert done.exit_code == 0 and "VALIDATED" in done.stdout and "a stop signal came during the cleanup; the cleanup finished first" in done.stdout, done
     assert [name for name, _ in lanes["deleted"]] == [VBRANCH, V2] and window.the_window(runtime).status().active is None
+
+
+def test_the_account_caps_come_from_the_settings_and_reach_the_capacity_rule(rt, tmp_path):
+    assert dispatch.caps({}) == dispatch.c.Caps() and dispatch.caps(None) == dispatch.c.Caps()
+    assert dispatch.caps({"ci_job_cap": 40, "ci_macos_cap": 0}) == dispatch.c.Caps(jobs=40, macos=0)
+    runtime = rt(commands=remote())
+    assert (runtime.settings.get("ci_job_cap"), runtime.settings.get("ci_macos_cap")) == (dispatch.c.JOB_CEILING, dispatch.c.ARM_LIMIT)  # the defaults of the table
+    dispatch.bound(runtime, [], [])
+    assert dispatch.c.Caps() == focused.CAPS
+    focused.bind(focused.EDGE, focused.R, focused.STATE, focused.CORE_CLONE, focused.SCRATCH, dispatch.c.Caps(jobs=2, macos=1))
+    try:
+        assert focused.CAPS.jobs == 2
+    finally:
+        focused.bind(focused.EDGE, focused.R, focused.STATE, focused.CORE_CLONE, focused.SCRATCH)
+    assert dispatch.c.Caps() == focused.CAPS

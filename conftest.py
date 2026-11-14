@@ -6,6 +6,9 @@
    directories, fails the test at the line that does it.
 3. The real files a test once damaged are fingerprinted before and after the session; a change fails the run.
 4. The one process runner refuses a real `git push` or GitHub write under pytest (steuermaschine.defaults.Subprocess).
+5. The machine's load never decides a test: `os.getloadavg` answers a quiet machine. The run lock starts no heavy
+   command above its start bar, so a test that reaches it would wait or pass by the hour of the day. A test of the
+   load itself sets its own (`RunLock(load=...)`, or its own patch of `os.getloadavg`).
 """
 
 from __future__ import annotations
@@ -93,6 +96,11 @@ def _real_files_untouched():
     os.replace, os.rename = real_replace, real_rename
     changed = [path for path, mark in _fingerprint().items() if mark != before[path]]
     assert not changed, f"test isolation: the test session changed real files of this machine: {changed}"
+
+
+@pytest.fixture(autouse=True)
+def _quiet_machine(monkeypatch):
+    monkeypatch.setattr(os, "getloadavg", lambda: (1.0, 1.0, 1.0))
 
 
 @pytest.fixture(autouse=True)

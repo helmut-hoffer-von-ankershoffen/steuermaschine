@@ -5,7 +5,8 @@ how it reaches the world: GitHub through the one `Gh` client on the `Commands` p
 the admission lock through the `Store`, and every path and the repository through settings (`bind`).
 
 Guards, in the order they act:
-- never main or release/* without --force; never while a release/* run is active (not even with --force)
+- never main or release/* without --force; beside an active release/* run only a run that needs no macOS runner,
+  within the job ceiling (not even --force lifts that)
 - at most 5 focused runs in flight; at the 20-job ceiling or 4 macOS/ARM jobs it refuses while main CI waits
 - SHA guard: `dispatch` refuses a branch whose tip is the head of an open PR, a `pull_request:<sha>` key of the focused
   plan registry, or the tip of a remote branch outside validation/*, bisect/* and rehearsal/*. The required checks
@@ -57,11 +58,12 @@ R = ""  # OWNER/NAME of the core repository (setting `repo`)
 STATE = Path("focused-runs.jsonl")  # one line per focused run of the last 24 hours (setting `dispatch_state_file`)
 CORE_CLONE = Path()  # a clone of the core repository, for the throwaway commit (setting `core_repo_dir`)
 SCRATCH = Path()  # where the temporary worktree goes (setting `dispatch_scratch_dir`)
+CAPS = c.Caps()  # what the account runs at once (settings `ci_job_cap`, `ci_macos_cap`)
 
 
-def bind(edge: Edge, repo: str, state: Path, core_clone: Path, scratch: Path) -> None:
-    global EDGE, R, STATE, CORE_CLONE, SCRATCH
-    EDGE, R, STATE, CORE_CLONE, SCRATCH = edge, repo, state, core_clone, scratch
+def bind(edge: Edge, repo: str, state: Path, core_clone: Path, scratch: Path, caps: c.Caps | None = None) -> None:
+    global EDGE, R, STATE, CORE_CLONE, SCRATCH, CAPS
+    EDGE, R, STATE, CORE_CLONE, SCRATCH, CAPS = edge, repo, state, core_clone, scratch, caps or c.Caps()
 
 
 def out(text: str = "") -> None:
@@ -264,7 +266,7 @@ def admit(start, wants_arm, wait_for_slot, *, new_jobs=1, new_arm_jobs=None, rer
             why = _capacity(wants_arm, new_jobs, new_arm_jobs, rerun_id)
             if not why:
                 return start(pending)
-        if not wait_for_slot or "release/*" in why or EDGE.clock.now() - t0 > 30 * 60:
+        if not wait_for_slot or "release/*" in why or EDGE.clock.now() - t0 > 30 * 60:  # beside a candidate a refused start does not wait here
             raise SystemExit(why)
         out(f"{why.removeprefix('refusing: ')}: waiting for a slot")
         EDGE.clock.sleep(60)
@@ -278,13 +280,13 @@ def _capacity(wants_arm, new_jobs=1, new_arm_jobs=None, rerun_id=None):
                     or not run["head_branch"] or not isinstance(run.get("path"), str) or not run["path"]):
                 raise SystemExit("refusing: uncertain GitHub active run state")
             runs[run["id"]] = {**run, "headBranch": run["head_branch"]}
-    if why := c.capacity_refusal(runs.values(), [], 0, wants_arm):
+    if why := c.capacity_refusal(runs.values(), [], 0, wants_arm, new_arm_jobs=new_arm_jobs, caps=CAPS):
         return why
     tracked = {row["run"]: row for row in rows(strict=True) if row.get("result") is None}
     if rerun_id is not None and (rerun_id in tracked or rerun_id in runs):
         return f"refusing: run {rerun_id} already in flight"
     focused = set(tracked) | {rid for rid, run in runs.items() if workflow_path(run) == f".github/workflows/{c.WORKFLOW}"}
-    if why := c.capacity_refusal(runs.values(), [], len(focused), wants_arm):
+    if why := c.capacity_refusal(runs.values(), [], len(focused), wants_arm, new_arm_jobs=new_arm_jobs, caps=CAPS):
         return why
     jobs = []
     for rid in runs.keys() | tracked.keys():
@@ -294,8 +296,8 @@ def _capacity(wants_arm, new_jobs=1, new_arm_jobs=None, rerun_id=None):
             active = [{"labels": ["macos-latest"] if i < row.get("arm_jobs", 1) else []}
                       for i in range(row.get("jobs", 1))]
         jobs.extend({**job, "run_id": rid} for job in active)
-    why = c.capacity_refusal(runs.values(), jobs, len(focused), wants_arm, new_jobs=new_jobs, new_arm_jobs=new_arm_jobs)
-    if not why and (msg := c.capacity_note(jobs, wants_arm)):
+    why = c.capacity_refusal(runs.values(), jobs, len(focused), wants_arm, new_jobs=new_jobs, new_arm_jobs=new_arm_jobs, caps=CAPS)
+    if not why and (msg := c.capacity_note(jobs, wants_arm, CAPS)):
         out(msg)
     return why
 

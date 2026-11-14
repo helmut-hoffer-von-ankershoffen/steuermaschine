@@ -83,6 +83,8 @@ code first, then the write paths the diff since the live release reaches.
 - **The core stays clean.** ruff, mypy strict, pyright, 90 % line and branch coverage, no dead code. The plugin's debt in `docs/debt.json` may only fall.
 - **Privacy.** Never print, log or commit a configuration value, a home path, a person's or company's name, a token or a private repository name. `scripts/check_confidentiality.py` and gitleaks gate the tree and the commit messages.
 - **Heavy runs go through the run lock:** `sm gate run -- <command>` for the full suite, type checks, builds and pushes.
+  In the background: `sm gate run --bg -- <command>`, then `sm gate wait ID`; never `nohup sh -c "... &"` (such a job
+  starts with SIGINT ignored, and tests that stop their children with it hang).
 - **Never `git stash`.** The stash is shared by all worktrees. Commit a WIP instead.
 
 ## Commits
