@@ -5,6 +5,7 @@ import subprocess
 import zipfile
 from types import SimpleNamespace
 
+import policy_kit as kit
 import pytest
 
 from steuermaschine_heinzel.native.queue_lib import hzlib
@@ -14,6 +15,12 @@ from steuermaschine_heinzel.native.queue_lib import release_candidate as rc
 HEAD = "a" * 40
 BASE = "b" * 40
 TREE = "c" * 40
+
+
+@pytest.fixture(autouse=True)
+def main_policy(monkeypatch):
+    """Core's release policy at each main commit names the workflow whose runs are read; here the kit's."""
+    monkeypatch.setattr(mc.core_policy, "at_commit_api", lambda api, sha: kit.policy(commit=sha))
 
 
 def test_require_and_canonical():
@@ -118,7 +125,7 @@ def test_main_run():
 
 
 def ci_row(identifier, event="push", created="2026-11-13T10:00:00+00:00", status="completed", conclusion="success", **more):
-    return {"id": identifier, "head_sha": HEAD, "head_branch": "main", "path": rc.WORKFLOW, "repository": {"full_name": rc.REPOSITORY}, "event": event,
+    return {"id": identifier, "head_sha": HEAD, "head_branch": "main", "path": kit.WORKFLOW, "repository": {"full_name": rc.REPOSITORY}, "event": event,
             "workflow_id": 3, "run_attempt": 1, "status": status, "conclusion": conclusion, "created_at": created, "head_repository": {"full_name": rc.REPOSITORY}, **more}
 
 

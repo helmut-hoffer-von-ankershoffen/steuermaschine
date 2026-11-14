@@ -227,8 +227,22 @@ def test_ci_changes_fails_closed_and_never_raises(core, tmp_path):
     head = _commit(repo, {"docs/a.md": b"c\n"})
     assert core_policy.ci_changes(repo, base, base)[0].endswith("is empty or garbled")
     assert core_policy.ci_changes(repo, "main", head) == ("base and head must be exact commits",)
-    assert "unreadable" in core_policy.ci_changes(repo, base, "0" * 40)[0]
+    assert "is not an ancestor" in core_policy.ci_changes(repo, base, "0" * 40)[0]  # a missing head
     bare, old = kit.git_repo(tmp_path / "old", {"README.md": b"r\n"})  # a base without the manifest
     new = _commit(bare, {"README.md": b"s\n"})
     assert core_policy.ci_changes(bare, old, new)[0].startswith(f"no reviewed release policy at base {old}")
-    assert core_policy.ci_changes(tmp_path / "nowhere", base, head)[0].startswith("no reviewed release policy at base")
+    assert "is not an ancestor" in core_policy.ci_changes(tmp_path / "nowhere", base, head)[0]
+
+
+def test_a_base_that_is_not_an_ancestor_of_the_head_fails_closed(core):
+    """A sibling with a wider not_ci list never becomes the base: the base must be an ancestor of the head."""
+    import subprocess as sp
+
+    repo, base = core
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    sibling = _commit(repo, {kit.PATH: kit.encode(kit.manifest("new", not_ci={"except": [], "match": ["*"]}))})
+    sp.run(["git", "-C", str(repo), "checkout", "-q", base], check=True, env=env)
+    head = _commit(repo, {"src/a.py": b"x = 9\n"})
+    assert core_policy.ci_changes(repo, sibling, head) == (
+        f"base {sibling[:12]} is not an ancestor of head {head[:12]} (or either is missing in the clone)",)
+    assert core_policy.ci_changes(repo, base, head) == ("src/a.py: CI path (not listed as not CI at base " + base[:12] + ")",)

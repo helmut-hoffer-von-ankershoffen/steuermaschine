@@ -39,7 +39,7 @@ def original(env):
     checks = [dict(id=check_id, name=name, head_sha=HEAD, app={'id': r.APP}, status='completed', conclusion='success',
                    details_url=f'https://github.com/{rt.repo}/actions/runs/{CI_ID}/job/{check_id}' if name == 'CI OK'
                    else f'https://github.com/{rt.repo}/runs/{check_id}') for name, check_id in CHECKS.items()]
-    ci = dict(id=CI_ID, run_attempt=1, head_sha=HEAD, event='pull_request', path=r.CI, head_branch=BRANCH,
+    ci = dict(id=CI_ID, run_attempt=1, head_sha=HEAD, event='pull_request', path=kit.WORKFLOW, head_branch=BRANCH,
               repository=repo, head_repository=repo, status='completed', conclusion='success', workflow_id=7, check_suite_id=8)
     judge = dict(ci, id=JUDGE_ID, event='workflow_run', path=r.JUDGE, head_sha=JUDGE_SHA, head_branch='main',
                  workflow_id=9, check_suite_id=10)
@@ -96,7 +96,7 @@ def original(env):
 @pytest.mark.parametrize('defect', ['strict', 'classic', 'app', 'missing-rule', 'fork', 'pr-head', 'id', 'main',
                                     'latest', 'ci-attempt', 'judge-attempt', 'check-app', 'check-failed',
                                     'check-url', 'check-duplicate', 'artifact-expired', 'artifact-foreign',
-                                    'policy-missing', 'policy-garbled', 'policy-contexts'])
+                                    'policy-missing', 'policy-garbled', 'policy-contexts', 'policy-workflow'])
 def test_current_green_proof_refuses_drift(original, defect):
     f = original
     if defect == 'strict': f.rule['parameters']['strict_required_status_checks_policy'] = True
@@ -118,6 +118,9 @@ def test_current_green_proof_refuses_drift(original, defect):
     elif defect == 'artifact-foreign': f.artifact['workflow_run']['id'] = 123
     elif defect == 'policy-missing': f.api[f'{f.root}/contents/{kit.PATH}?ref={MAIN}'] = None
     elif defect == 'policy-garbled': f.api[f'{f.root}/contents/{kit.PATH}?ref={MAIN}'] = kit.contents(b'{"policy": 2}\n')
+    elif defect == 'policy-workflow':  # the run's workflow is not the one main's policy names
+        f.api.update({f'{f.root}/{path}': answer for path, answer in kit.contents_routes(
+            MAIN, kit.files('new', workflow='.github/workflows/other.yml')).items()})
     elif defect == 'policy-contexts':  # the ruleset still requires coverage-floor; main's policy does not
         f.api.update({f'{f.root}/{path}': answer for path, answer in kit.contents_routes(
             MAIN, kit.files('new', required_contexts=['CI OK', 'merge-gate'])).items()})

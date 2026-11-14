@@ -19,8 +19,7 @@ from steuermaschine.config import search_path
 
 MODE = 'resulting-main-only/v1'
 APP = 15368
-JUDGE = '.github/workflows/merge-gate.yml'
-CI = '.github/workflows/ci.yml'
+JUDGE = '.github/workflows/merge-gate.yml'  # sm's own merge gate workflow in Core; the CI workflow is the policy's
 STEP_COVERAGE = 'Verify the original workload and applicable coverage evidence'
 STEP_REPORT = "Report both verdicts; a gate that didn't pass, or didn't run, fails closed"
 STEP_SONAR = 'Quality gate passes, all ratings A, pull request and project'
@@ -166,7 +165,7 @@ def _checks(rt, original, policy):
     return checks
 
 
-def _run(rt, original, *, judge, attempt=False):
+def _run(rt, original, *, judge, workflow='', attempt=False):
     root = f'repos/{rt.repo}'
     run_id = original['judge_run' if judge else 'ci_run']
     record = rt.api(f'{root}/actions/runs/{run_id}' + ('/attempts/1' if attempt else ''))
@@ -175,7 +174,7 @@ def _run(rt, original, *, judge, attempt=False):
     require(record['id'] == run_id and type(record['run_attempt']) is int and record['run_attempt'] == 1
             and record['status'] == 'completed' and record['conclusion'] == 'success'
             and record['event'] == ('workflow_run' if judge else 'pull_request')
-            and record['path'] == (JUDGE if judge else CI) and record['head_branch'] == branch
+            and record['path'] == (JUDGE if judge else workflow) and bool(judge or workflow) and record['head_branch'] == branch
             and record['head_sha'] == head and _official(record['repository'], rt, original)
             and _official(record['head_repository'], rt, original)
             and positive(record.get('workflow_id')) and positive(record.get('check_suite_id')),
@@ -192,7 +191,7 @@ def live_proof(rt, packet):
     policy = _policy(rt, base)
     rules = _rules(rt, base, policy)
     checks = _checks(rt, original, policy)
-    ci = _run(rt, original, judge=False)
+    ci = _run(rt, original, judge=False, workflow=policy.workflow)
     judge = _run(rt, original, judge=True)
     latest = rt.api(f"{root}/actions/workflows/{ci['workflow_id']}/runs?head_sha={original['head']}"
                     '&event=pull_request&per_page=1')['workflow_runs']

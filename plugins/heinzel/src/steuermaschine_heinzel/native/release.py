@@ -4,9 +4,8 @@ The logic is the moved step runner in `release_lib/runner.py` (see `port/move.py
 locks, its receipts and its steps are unchanged. This module turns typed options into the runner's argument list,
 runs it in process, shows its progress and returns a result model. Nothing here starts an old script.
 
-Review unit of every command here: this file, `release_lib/` with the reviewed source files the candidate pins are
-computed from, and `queue_lib/` (the runner merges through the queue's merge train and reads GitHub through the
-queue's shared library).
+Review unit of every command here: this file, `release_lib/`, and `queue_lib/` (the runner merges through the queue's
+merge train, reads GitHub through the queue's shared library and Core's release policy through core_policy).
 """
 
 from __future__ import annotations
@@ -34,8 +33,7 @@ from .queue_lib import hzlib
 from .release_lib.binding import moved
 from .release_lib.names import translate
 
-# The review unit: the release library, EVERY reviewed source file the pins are computed from (they are data, not
-# `.py`, so they are named one by one: replacing one of them is a re-pin and must void the verdict), the queue library.
+# The review unit: the release library and the queue library (which reads Core's release policy at the checked commit).
 UNIT = ("release_lib", "queue_lib")
 EXACT = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
 STEP = re.compile(r"^ok {3}(?P<name>.+?)(?P<already> \(already\))?$")

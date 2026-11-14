@@ -99,14 +99,14 @@ def annotations(job):
 
 
 def reviewed(head):
-    """Core's reviewed release policy at the exact release head: the pins and the inventory (never a local copy)."""
+    """Core's reviewed release policy at the exact release head: the workflow and the inventory (never a local copy)."""
     require(strict.valid_sha(head), 'invalid release head identity')
     return core_policy.at_commit_api(get, head)
 
 
 def source_evidence(run_id, attempt):
     run = get(f'actions/runs/{run_id}/attempts/{attempt}')
-    candidates = paged(f'actions/workflows/ci.yml/runs?head_sha={run.get("head_sha")}', 'workflow_runs')
+    candidates = paged(f'{reviewed(run.get("head_sha")).workflow_runs}?head_sha={run.get("head_sha")}', 'workflow_runs')
     require(len(candidates) == 1 and candidates[0]['id'] == run_id, 'competing candidate runs on this head')
     require(run.get('status') == 'completed' and type(run.get('run_attempt')) is int
             and run['run_attempt'] == attempt, 'capacity attempt is not complete')

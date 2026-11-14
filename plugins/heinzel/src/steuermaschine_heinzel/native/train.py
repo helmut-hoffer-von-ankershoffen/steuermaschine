@@ -44,7 +44,7 @@ from .queue_lib import hzlib
 from .train_lib import edge, legacy, resume_ci
 from .train_lib.names import translate
 
-# the reviewed candidate sources too: the train's releases run them, so a re-pin voids this verdict as it voids the release's
+# the release and queue libraries too: the train's releases run them, so a change there voids this verdict as the release's
 UNIT = ("train_lib", "queue_lib", "release_lib")
 PLAN_UNIT = ("train_lib/plan.py", "train_lib/digest.py", "train_lib/edge.py", "train_lib/names.py")  # what `release train plan` executes
 VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")

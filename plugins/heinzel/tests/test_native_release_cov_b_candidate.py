@@ -2,7 +2,6 @@
 the verify collection on a fake API, the recorder and the command line. No network, no git, no gh."""
 
 import base64
-import hashlib
 import io
 import json
 import zipfile
@@ -36,7 +35,7 @@ def jobs_for(event="pull_request", run_id=9, policy=POLICY):
 
 
 def evidence(event="pull_request", run_id=9, policy=POLICY):
-    run = {"id": run_id, "run_attempt": 1, "status": "completed", "conclusion": "success", "event": event, "path": rc.WORKFLOW,
+    run = {"id": run_id, "run_attempt": 1, "status": "completed", "conclusion": "success", "event": event, "path": kit.WORKFLOW,
            "head_sha": H, "head_branch": f"release/v{V}", "repository": {"full_name": rc.REPOSITORY},
            "head_repository": {"full_name": rc.REPOSITORY}, "created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T01:00:00+00:00"}
     pr_proof = event == "pull_request"
@@ -117,21 +116,21 @@ def test_job_inventory():
 
 def test_discover():
     run = {"id": 9, "head_sha": H, "run_attempt": 1}
-    assert rc.discover(lambda p: {"total_count": 1, "workflow_runs": [run]}, H) == 9
+    assert rc.discover(lambda p: {"total_count": 1, "workflow_runs": [run]}, H, POLICY) == 9
     with pytest.raises(rc.CandidateError, match="invalid release head"):
-        rc.discover(lambda p: {}, "x")
+        rc.discover(lambda p: {}, "x", POLICY)
     for data, msg in (([], "malformed"), ({"total_count": 0, "workflow_runs": []}, "changed or is empty"),
                       ({"total_count": 1, "workflow_runs": [run, run]}, "extra candidate"),
                       ({"total_count": 1, "workflow_runs": [dict(run, run_attempt=2)]}, "ambiguous"),
                       ({"total_count": 2, "workflow_runs": []}, "truncated")):
         with pytest.raises(rc.CandidateError, match=msg):
-            rc.discover(lambda p, d=data: d, H)
+            rc.discover(lambda p, d=data: d, H, POLICY)
     def two(p):
         return {"total_count": 2, "workflow_runs": [run]}
     with pytest.raises(rc.CandidateError, match="ambiguous"):
-        rc.discover(two, H)
+        rc.discover(two, H, POLICY)
     with pytest.raises(rc.CandidateError, match="exceeded bound"):
-        rc.discover(lambda p: {"total_count": 1000, "workflow_runs": [run]}, H)
+        rc.discover(lambda p: {"total_count": 1000, "workflow_runs": [run]}, H, POLICY)
 
 
 def test_source_bytes():
