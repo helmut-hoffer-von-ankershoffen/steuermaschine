@@ -1,7 +1,7 @@
 # steuermaschine: design
 
-Status: 2026-11-13, main `903a1b7`. The parts marked **built** are in this repository; the rest is design. Every
-command is native: no command starts an old script (`sm tools gaps`: 0 wrapped, 3 rows not ported).
+Status: 2026-11-14, `integration/sm-dod`. The parts marked **built** are in this repository; the rest is design. Every
+command is native: no command starts an old script.
 The command is `sm`; `steuermaschine` is the same program under its full name.
 
 ## 1. Purpose
@@ -379,8 +379,7 @@ Everything Heinzelmännchen-specific. The core has no word of it (`tests/test_co
 | Native commands: `head`, `ci`, `queue`, `release`, `daemon`, `mini`, `beads`, `doc`, `gate`, `guard`, `timing`, `lim`, `note`, `status`, `tick`, `why` | `native/<area>.py`, logic in `native/<area>_lib/`; registry `native/__init__.py` | built, live; every command `@native` with a result model |
 | Pipelines `head admit` and `release cut` | `pipelines/head_admit.py`, `pipelines/release_cut.py`, `pipelines/common.py` | built and reviewed; each step calls a native command through `native.call`, so that command's own review gate holds |
 | Review units | `reviews/<command>.md`, one per unit, `VERDICT: APPROVE sha256=DIGEST` | every gated write command approved (`sm self reviews`) |
-| Parity notes | `parity/<command>.md`: what each port kept and changed from the old tool | built |
-| Tool map | `toolmap.py`, registered through `Plugin.tool_map()` | built; `sm tools gaps` lists what is not ported |
+| Tool map | `toolmap.py`, registered through `Plugin.tool_map()` | built |
 | Traps | `traps.py`, keyed per step | built |
 
 ### The two pipelines
@@ -412,12 +411,6 @@ verdict of every unit that imports it. `exempt=` holds only for a path on the co
 candidate on which a gated write command is not approved (`bin/review_gate.py`); `bin/promote-allow.toml` may
 exempt a unit with a reason, an owner and an expiry, never a queue, daemon, head or release command.
 
-### Not ported
-
-`sm tools gaps` prints the rows left: the flake list (`sm ci flakes`) and the loop reload (`sm mini loops`). It
-also lists the old focused-admission tool although `sm head admit` runs: the tool map counts only native commands
-as ported, not pipelines (core `app.py`, in a reviewed unit; fixed with its next review).
-
 ## 9. Running it without breaking it (built: `bin/promote`, `bin/rollback`)
 
 The live `sm` was broken twice on its first night because development and use shared one checkout. Now:
@@ -447,8 +440,8 @@ was installed; there is no common Unix command of that name.
 2. **Shared store for a fleet: files on a synced directory, a small server, or the forge itself (issues and
    commit statuses as receipts)?** Recommendation: the forge. Receipts become visible where the PR is, and no new
    service has to stay up.
-3. **May the core become public now?** Recommendation: yes for the core and the toy, with `bin/promote` moved
-   out; the plugin stays private. The core has no project name, path or person in it today.
+3. **May the core become public?** Decided: yes. The public repository `steuermaschine` holds snapshot commits of a proven
+   development commit (MIT license).
 
 ## 12. Core providers (built: `steuermaschine/github/`)
 
