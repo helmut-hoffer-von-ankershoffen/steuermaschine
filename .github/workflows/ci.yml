@@ -80,6 +80,10 @@ jobs:
         os: [ubuntu-24.04]
         python: ["3.12", "3.13", "3.14", "3.15"]
         include: ${{ fromJSON(github.event_name == 'push' && github.ref == 'refs/heads/main' && '[{"os":"macos-latest","python":"3.12"}]' || '[]') }}
+    env:
+      # uv's own Python builds, as `uv tool install` and the stable install use: the runner images carry a system 3.12
+      # (a framework build on macOS) whose process shape the process-table tests do not model (bead ygtp).
+      UV_PYTHON_PREFERENCE: only-managed
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
