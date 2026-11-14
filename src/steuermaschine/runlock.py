@@ -9,6 +9,13 @@ load passes the number of CPUs several times over and whatever else the machine 
 Mechanics (all of it is `flock` on files in `policy.directory`, so it holds across processes and users of one account):
 - heavy slots: slot 0 always; further slots only while the 1-minute load is below `extra_slot_load`
 - no admission at or above `max_load`, at any priority
+- start bar (`start_load`, when set): no heavy command starts at or above it. The load a running gate makes is part of
+  it, so a second heavy run starts only beside a quiet first one
+- reserved slots (`reserved_slots`): the last heavy slots are kept for a focus head, the head the coordinator named
+  (`policy.focus` maps the directory of a request to it). A focus head goes by `extra_slot_load` instead of the start
+  bar: the critical path does not wait for the load other work makes. Everyone else never takes a reserved slot
+- push lane: a command that matches `policy.exclusive_commands` (a push, whose hook runs a timed test session) is an
+  exclusive request without the caller saying so
 - priority 1 goes ahead of the normal queue, priority 2 ahead of 1; neither passes the slot limit or the load bar
 - an exclusive request (a critical-path push whose hook runs a timed test session) queues as priority 2 and starts
   only when no heavy slot is in use; while it runs no other heavy command is admitted, so its session gets the machine
@@ -26,11 +33,13 @@ Mechanics (all of it is `flock` on files in `policy.directory`, so it holds acro
 - worker caps: the variables in `policy.worker_caps` are exported to the command, lowered to this run's share of
   `cpu_budget`; a caller's own lower value wins, a higher one does not
 - `max_wait_seconds`: give up with exit 75 and nothing run
+- who holds and who waits: every heavy request keeps one record in `<prefix>.runs/<pid>.json` from the moment it asks
+  to the moment it ends (waiting, with the reason, then running); `status` reads them and drops those of dead processes
 
 A project supplies a `Policy`: the numbers, the directory and file prefix, which commands it refuses outright
 (`refusals`), which are light (`is_light`), and what else the command's environment needs (`child_env`).
-The file names are `<prefix>.lock`, `<prefix>.heavy.N.lock`, `<prefix>.light.N.lock`, `<prefix>.hold` and the two
-waiting directories; a project that replaces an older lock keeps its prefix, so both exclude each other.
+The file names are `<prefix>.lock`, `<prefix>.heavy.N.lock`, `<prefix>.light.N.lock`, `<prefix>.hold`, the two
+waiting directories and `<prefix>.runs`; a project that replaces an older lock keeps its prefix, so both exclude each other.
 """
 
 from __future__ import annotations
@@ -44,7 +53,7 @@ import re
 import shlex
 import statistics
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 from typing import IO, Any, Protocol
@@ -57,6 +66,9 @@ TIMED_OUT = 124  # exit code of a command stopped by `timeout_seconds`
 PARENT_HOPS = 64
 PID = re.compile(r"[0-9]{1,10}")
 # Whole-argv patterns (`re.fullmatch` on `shlex.join(argv)`): `make lint test` is not `make lint`, and an argument with a space is quoted.
+# A push, also behind `env NAME=value`: its pre-push hook runs a timed test session, so it gets the machine alone.
+PUSH_COMMANDS = (r"(env( [A-Za-z_][A-Za-z0-9_]*=[^ ]*)+ )?git push( .+)?",)
+BUSIEST = 3  # processes named when the load is what a command waits for
 LIGHT_COMMANDS = (r"(uv run )?ruff (check|format)( [^ ]+)*", r"make lint", r"git (status|diff|log|show|rev-parse|ls-files)( [^ ]+)*")
 SCOPE_ENV = ("PYTEST_ADDOPTS", "PYTEST_PLUGINS", "NODE_OPTIONS", "TEST_FILTER")  # variables that change what a test command runs
 MIN_REASON = 8
@@ -172,6 +184,10 @@ class Policy:
     is_light: Callable[[Sequence[str]], bool] | None = None
     child_env: Callable[[dict[str, str]], None] | None = None
     status_hint: str = "sm gate status"
+    start_load: float = 0.0  # no heavy start at or above this load; 0: only `max_load` and `extra_slot_load` count
+    reserved_slots: int = 0  # heavy slots only a focus head takes; slot 0 is never reserved
+    focus: Callable[[str], str] | None = None  # the focus head a directory belongs to, "" for none
+    exclusive_commands: Sequence[str] = ()  # whole-argv patterns of commands that are exclusive by themselves (the push lane)
 
     def slot_file(self, number: int) -> Path:
         return self.directory / (f"{self.prefix}.lock" if number == 0 else f"{self.prefix}.heavy.{number}.lock")
@@ -194,6 +210,15 @@ class Policy:
     @property
     def exclusive(self) -> Path:
         return self.directory / f"{self.prefix}.exclusive.lock"
+
+    @property
+    def runs(self) -> Path:
+        return self.directory / f"{self.prefix}.runs"
+
+    @property
+    def general_slots(self) -> int:
+        """Heavy slots anyone may take: all of them but the reserved ones, and at least one."""
+        return max(1, self.heavy_slots - max(0, self.reserved_slots))
 
 
 @dataclass(frozen=True)
@@ -220,8 +245,27 @@ class Outcome:
     reason: str = ""
 
 
+class Run(Model):
+    """One heavy request: waiting for a slot (with the reason) or running in one."""
+
+    pid: int
+    state: str  # waiting | running
+    kind: str  # heavy | push lane | focus
+    cwd: str = ""
+    command: str = ""
+    since: float = 0.0  # when it began to wait, or to run
+    seconds: float = 0.0  # how long that is ago, filled in by `status`
+    why: str = ""  # what a waiting request waits for
+    focus: str = ""  # the focus head it belongs to
+    caller: str = ""
+
+    def line(self) -> str:
+        where = f" {self.cwd}:" if self.cwd else ""
+        return f"pid {self.pid} [{self.kind}] {self.seconds:.0f}s{where} {self.command}" + (f" -- {self.why}" if self.why else "")
+
+
 class Status(Model):
-    """Who holds the run lock, and what the next command would get."""
+    """Who holds the run lock, who waits for it and why, and what the next command would get."""
 
     slots_in_use: int
     heavy_slots: int
@@ -238,12 +282,30 @@ class Status(Model):
     light_slots_in_use: int = 0
     light_slots: int = 0
     light_holders: list[str] = []
+    start_load: float = 0.0
+    reserved_slots: int = 0
+    runs: list[Run] = []  # heavy requests, running and waiting, each with its kind and, when it waits, the reason
+    busiest: list[str] = []  # who makes the load, when the load is at or above the start bar
+    background: list[str] = []  # background runs (`sm gate run --bg`) that still go or ended lately
 
     def render(self) -> list[str]:
         lines = [f"heavy slots in use {self.slots_in_use}/{self.heavy_slots}, workers per gate {self.workers_per_gate} "
                  f"(budget {self.cpu_budget}; second gate only below load {self.extra_slot_load:.0f}, none at or above {self.max_load:.0f}; "
                  f"load {self.load:.0f})"]
-        lines += [f"  held by {holder}" for holder in self.holders]
+        if self.start_load:
+            state = "NO heavy command starts now" if self.load >= self.start_load else "open"
+            lines.append(f"  start bar: no heavy start at or above load {self.start_load:.0f} ({state}); a focus head goes by {self.extra_slot_load:.0f}")
+        if self.busiest and self.start_load and self.load >= self.start_load:
+            lines.append(f"  the load is made by: {'; '.join(self.busiest)}")
+        if self.reserved_slots:
+            lines.append(f"  {self.reserved_slots} of the {self.heavy_slots} heavy slots reserved for a focus head (`sm focus list`)")
+        running = {run.pid: run for run in self.runs if run.state == "running"}
+        for holder in self.holders:
+            first = holder.split(maxsplit=1)[0]
+            run = running.get(int(first)) if first.isdigit() else None
+            lines.append(f"  held by {holder}" + (f" [{run.kind}, {run.seconds:.0f}s]" if run else ""))
+        lines += [f"  waiting: {run.line()}" for run in self.runs if run.state == "waiting"]
+        lines += [f"  background: {job}" for job in self.background]
         lines.append(f"light slots in use {self.light_slots_in_use}/{self.light_slots} (short commands: no heavy slot, no load bar)")
         lines += [f"  light: {holder}" for holder in self.light_holders]
         if self.hold:
@@ -334,7 +396,43 @@ class RunLock:
                       extra_slot_load=self.p.extra_slot_load, max_load=self.p.max_load, load=self.load(), hold=self.on_hold(),
                       holders=self._holders(), waiting_priority=self._count_waiting(self.p.waiting), waiting_urgent=self._count_waiting(self.p.urgent),
                       exclusive=self.exclusive_held(), light_slots_in_use=sum(1 for n in range(self.p.light_slots) if self._locked(self.p.light_slot_file(n))),
-                      light_slots=self.p.light_slots, light_holders=self._light_holders())
+                      light_slots=self.p.light_slots, light_holders=self._light_holders(), start_load=self.p.start_load,
+                      reserved_slots=self.p.heavy_slots - self.p.general_slots, runs=self.runs(), busiest=self._busiest())
+
+    def runs(self) -> list[Run]:
+        """The heavy requests of live processes: the running ones first, then the waiting ones, longest first."""
+        found, now = [], self.clock.now()
+        try:
+            paths = sorted(self.p.runs.iterdir())
+        except OSError:
+            return []
+        for path in paths:
+            if not alive(path.stem):
+                path.unlink(missing_ok=True)  # its process is gone and took no record with it
+                continue
+            try:
+                run = Run(**json.loads(path.read_text()))
+            except (OSError, ValueError, TypeError):
+                continue  # being written, or not a record
+            found.append(run.model_copy(update={"seconds": max(0.0, now - run.since)}))
+        return sorted(found, key=lambda run: (run.state != "running", run.since))
+
+    def _busiest(self) -> list[str]:
+        """The processes that use the most CPU, when the load is at or above the start bar; none below it."""
+        if not self.p.start_load or self.load() < self.p.start_load:
+            return []
+        try:
+            done = self.commands.run(["ps", "-Ao", "pcpu=,pid=,comm="])
+        except (OSError, ValueError):
+            return []
+        rows = []
+        for line in done.out.splitlines() if done.rc == 0 else []:
+            parts = line.split(maxsplit=2)
+            try:
+                rows.append((float(parts[0].replace(",", ".")), parts[1], parts[2].rsplit("/", 1)[-1]))
+            except (IndexError, ValueError):
+                continue
+        return [f"pid {pid} {name} {share:.0f} %" for share, pid, name in sorted(rows, reverse=True)[:BUSIEST] if share > 0]
 
     def _light_holders(self) -> list[str]:
         out = []
@@ -443,16 +541,58 @@ class RunLock:
         load = self.load()
         if load >= self.p.max_load:
             return f"load {load:.0f} is at or above {self.p.max_load:.0f}"
-        if request.exclusive:
-            return f"an exclusive run waits for the machine to be idle ({self.busy_slots()} heavy run(s) still going)"
+        if request.exclusive and (busy := self.busy_slots()):
+            return f"an exclusive run waits for the machine to be idle ({busy} heavy run(s) still going)"
+        focus = self._focus(request)
+        if (bar := self._start_bar(request, focus)) and load >= bar:
+            return (f"load {load:.0f} is at or above {bar:.0f}: no heavy command starts above it" +
+                    (" (the bar of a focus head)" if focus and not request.exclusive else ""))
         if self.exclusive_held():
             return "an exclusive run (a critical-path push) holds the machine"
+        if request.exclusive:
+            return f"an exclusive run waits for the machine to be idle ({self.busy_slots()} heavy run(s) still going)"
         try:
             holder = self.p.slot_file(0).read_text().strip()
         except OSError:
             holder = ""
         ahead = self._someone_waiting(self.p.urgent) or (request.priority == 0 and self._someone_waiting(self.p.waiting))
-        return (f"the heavy slot is held by {holder[:160]}" if holder else "the heavy slot is taken") + ("; priority gates are ahead" if ahead else "")
+        reserved = self.p.heavy_slots - self.p.general_slots
+        kept = f"; {reserved} more slot(s) are reserved for a focus head (`sm focus list`)" if reserved and not focus else ""
+        return (f"the heavy slot is held by {holder[:160]}" if holder else "the heavy slot is taken") + kept + ("; priority gates are ahead" if ahead else "")
+
+    def _focus(self, request: Request) -> str:
+        """The focus head this request belongs to; empty when it is none, or nobody named one."""
+        if self.p.focus is None or not request.cwd:
+            return ""
+        try:
+            return self.p.focus(request.cwd) or ""
+        except (OSError, ValueError, RuntimeError):
+            return ""  # a focus list that cannot be read reserves nothing for this request
+
+    def _start_bar(self, request: Request, focus: str) -> float:
+        """The load at or above which this request does not start; 0 when no start bar is set. A focus head's test run goes
+        by `extra_slot_load`; an exclusive run wants a quiet machine, whoever asks."""
+        if not self.p.start_load:
+            return 0.0
+        return max(self.p.start_load, self.p.extra_slot_load) if focus and not request.exclusive else self.p.start_load
+
+    def _kind(self, request: Request, focus: str) -> str:
+        return "push lane" if request.exclusive else "focus" if focus else "heavy"
+
+    def _note(self, request: Request, state: str, since: float, why: str = "") -> None:
+        """Write this request's record for `status` (who holds, who waits and why). Never stops a run."""
+        focus = self._focus(request)
+        run = Run(pid=self.pid(), state=state, kind=self._kind(request, focus), cwd=request.cwd, command=self._key(request.argv), since=since, why=why,
+                  focus=focus, caller=request.environ.get(self.p.caller_env, ""))
+        try:
+            self.p.runs.mkdir(parents=True, exist_ok=True)
+            (self.p.runs / f"{run.pid}.json").write_text(json.dumps(run.model_dump()))
+        except OSError:
+            pass
+
+    def _forget(self) -> None:
+        with contextlib.suppress(OSError):
+            (self.p.runs / f"{self.pid()}.json").unlink(missing_ok=True)
 
     def _light_slot(self, request: Request, start: float) -> IO[str] | None:
         limit = request.max_wait_seconds
@@ -474,7 +614,10 @@ class RunLock:
         marker = (self.p.urgent if level == 2 else self.p.waiting) / str(self.pid())
         if level in (1, 2):
             marker.touch()
-        told = -1.0
+        told, noted = -1.0, None
+        focus = self._focus(request)
+        bar = self._start_bar(request, focus)
+        slots = self.p.heavy_slots if focus else self.p.general_slots  # only a focus head reaches the reserved slots
         try:
             while True:
                 waited = self.clock.now() - start
@@ -487,22 +630,27 @@ class RunLock:
                     turn = not self._someone_waiting(self.p.urgent)
                 else:
                     turn = not self._someone_waiting(self.p.waiting) and not self._someone_waiting(self.p.urgent)
-                turn = turn and self.load() < self.p.max_load
+                load = self.load()
+                turn = turn and load < self.p.max_load and not (bar and load >= bar)
                 if turn and request.exclusive and not self.on_hold(request.hold_exempt):
                     found = self._exclusive_slot()
                     if found is not None:
                         return found, ""
                 elif turn and not request.exclusive and not self.on_hold(request.hold_exempt) and not self.exclusive_held():
-                    for number in range(self.p.heavy_slots):
+                    for number in range(slots):
                         if number and self.load() >= self.p.extra_slot_load:
                             break
                         handle = _try_lock(self.p.slot_file(number))
                         if handle is not None:
                             return handle, ""
                 waited = self.clock.now() - start
+                why = self._why_waiting(request)
+                if why != noted:
+                    noted = why
+                    self._note(request, "waiting", start, why)
                 if told < 0 or waited - told >= 60:
                     told = waited
-                    self.say(f"{self.p.label}: waiting {waited:.0f}s: {self._why_waiting(request)}. One heavy run at a time, and none above "
+                    self.say(f"{self.p.label}: waiting {waited:.0f}s: {why}. One heavy run at a time, and none above "
                              "the load bar, keeps this machine answering; this starts by itself when it is its turn.")
                 self.clock.sleep(max(0.0, min(5.0, limit - waited)) if limit else 5.0)
         finally:
@@ -616,6 +764,8 @@ class RunLock:
             return Outcome("refused", USAGE, reason=why)
         ancestor = self.holder_lane(request.environ)
         light = not request.exclusive and (request.light or bool(self.p.is_light and self.p.is_light(argv)) or self.is_light_command(argv, request.cwd, request.environ))
+        if not light and not request.exclusive and any(re.fullmatch(pattern, shlex.join(argv)) for pattern in self.p.exclusive_commands):
+            request = replace(request, exclusive=True)  # the push lane: a push is exclusive without the caller saying so
         if ancestor == "heavy" or (ancestor == "light" and light):
             began = self.clock.now()
             code = self._child(request, env)
@@ -636,10 +786,16 @@ class RunLock:
                 self._log(request, "light", waited, ran, code, tree)
                 return Outcome("ran", code, "light", waited, ran)
         self._exclusive_handle = None
-        held, why = self._heavy_slot(request, start)
+        try:
+            held, why = self._heavy_slot(request, start)
+        except BaseException:
+            self._forget()
+            raise
         if held is None:
+            self._forget()
             return Outcome("gave_up", WAITING, "heavy", self.clock.now() - start, reason=why)
-        with held, (self._exclusive_handle or contextlib.nullcontext()):
+        with held, (self._exclusive_handle or contextlib.nullcontext()), contextlib.ExitStack() as after:
+            after.callback(self._forget)
             waited = self.clock.now() - start
             self.say(f"{self.p.label}: acquired after {waited:.0f}s" + (" (exclusive: no other heavy run starts until this ends)" if request.exclusive else ""))
             # Shrink the worker caps to this run's share of the CPU budget (held is locked, so it counts as running).
@@ -648,6 +804,7 @@ class RunLock:
                 env[name] = str(stricter(env[name], min(cap, share)))
             self._record_holder(held, env, f" {request.cwd} {' '.join(argv)}")
             began = self.clock.now()
+            self._note(request, "running", began)
             code = self._child(request, env)
             ran = self.clock.now() - began
             self._log(request, "heavy", waited, ran, code, tree)

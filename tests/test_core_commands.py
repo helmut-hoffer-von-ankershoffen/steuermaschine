@@ -206,7 +206,7 @@ def test_a_plugin_command_at_a_core_path_replaces_it_and_is_the_write_unit_at_th
     assert [u.fn for u in write_units(rt) if u.path == "lim"] == [own_lim]
 
 
-@pytest.mark.parametrize("path", ["gate run", "gate status", "lim", "doc section", "ci window status"])
+@pytest.mark.parametrize("path", ["gate run", "gate wait", "gate status", "lim", "doc section", "ci window status"])
 def test_the_core_commands_follow_the_help_contract(path):
     assert invoke(core_alone(), [*path.split(), "--help"]).exit_code == 0
     lint = json.loads(invoke(core_alone(), ["--format", "json", "self", "lint"]).stdout)
