@@ -1,0 +1,36 @@
+{
+ "exit": 1,
+ "gh_calls": [],
+ "gh_rules": {},
+ "name": "absorb-accepted-refused",
+ "old_argv": [
+  "--absorb",
+  "0.9.40",
+  "--reason",
+  "fixed in 0.9.41 by #812"
+ ],
+ "pypi": {},
+ "state_after": {
+  "hz-release/v0.9.40.json": {
+   "acceptance_run": 4321,
+   "accepted": true,
+   "finished": true,
+   "freeze_token": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "version": "0.9.40"
+  },
+  "hz-release/v0.9.40.lock": ""
+ },
+ "state_before": {
+  "hz-release/v0.9.40.json": {
+   "acceptance_run": 4321,
+   "accepted": true,
+   "finished": true,
+   "freeze_token": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "version": "0.9.40"
+  }
+ },
+ "stderr": [
+  "STOPPED: release 0.9.40 is ACCEPTED: nothing to absorb. Run the same command again to continue; freeze state is preserved."
+ ],
+ "stdout": []
+}

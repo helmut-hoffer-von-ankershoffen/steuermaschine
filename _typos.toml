@@ -1,0 +1,12 @@
+[files]
+extend-exclude = ["plugins/*/tests/fixtures/**", "plugins/*/src/*/native/*_lib/**", "plugins/*/src/*/parity/**", "plugins/*/src/*/reviews/**"]  # recorded data and verbatim-moved code
+
+[default.extend-words]
+wrold = "wrold"  # a deliberate typo in a test of unknown settings
+caf = "caf"  # "caf\udce9": a word cut at a non-UTF-8 byte in the coord journal and asks tests
+ba = "ba"  # part of a hex commit id in a coord handoff test
+requst = "requst"  # deliberate typos in the tests of mistyped options and fields (ci sonar-close)
+requset = "requset"
+aply = "aply"
+iy = "iy"  # part of a bead id (heinzel-management-iy04) in a go workload test
+Maschine = "Maschine"  # the German word in the name explanation

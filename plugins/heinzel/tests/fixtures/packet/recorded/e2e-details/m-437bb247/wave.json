@@ -1,0 +1,23 @@
+{
+ "branch": "fix/e2e-details-journeys",
+ "collector": "/Users/<user>/Code/tmp-pr-fill/admit-A/bin/collect_cases.py",
+ "collector_sha256": "c258a531e09d0291397becf1c36473f86b014a060a5a5e90567f8e0a93e05cb7",
+ "core_repo": "/Users/<user>/Code/heinzel-e2e-details",
+ "head": "e9c943810ea75cfad155a431a2f168b2a9559828",
+ "kind": "preopen",
+ "lanes": [
+  "browser",
+  "python"
+ ],
+ "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+ "main_tree": "e9bb3781a3b2542d2815f55a68bf769c26286f61",
+ "manifest_sha256": "75fa446503789471e7945361f6e4ed94d285a307b00655624e94cc4979403f7e",
+ "packet_sha256": "2d20af189b22e09b97c6684c3c2cfe635e7ec0cedae267a7aa46293b6a734c0d",
+ "python": "/Users/<user>/Code/heinzel-e2e-details/.venv/bin/python",
+ "python_version": "3.14.8",
+ "review": "e2e-details/m-437bb247/REVIEW.md",
+ "review_root": "/Users/<user>/Code/tmp-pr-fill/admit-B",
+ "schema": 1,
+ "tree": "2644da58a04f7d1db0e15205ff5fc2faae91073b",
+ "worktree": "/Users/<user>/Code/heinzel-e2e-details"
+}

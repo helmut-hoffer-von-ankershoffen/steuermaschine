@@ -1,0 +1,9 @@
+{
+ "browser": [
+  "tests/e2e/daemon_browser_proof_test.py"
+ ],
+ "python": [
+  "tests/unit/e2e_browser_output_test.py",
+  "tests/unit/standards_test.py"
+ ]
+}

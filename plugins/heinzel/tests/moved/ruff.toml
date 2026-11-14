@@ -1,0 +1,5 @@
+# Moved tests keep their text (port/move.py verify); only their import lines changed. Not relinted.
+line-length = 160
+
+[lint.per-file-ignores]
+"test_native_*.py" = ["ALL"]

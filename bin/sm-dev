@@ -1,0 +1,8 @@
+#!/bin/sh
+# sm-dev: runs the DEVELOPMENT checkout (editable). Never link ~/.local/bin/sm to this file: the live sm is the stable install that bin/promote switches.
+# Fast path: the venv entry point `steuermaschine` (not `.venv/bin/sm`: the mounted hzc package installs a script of that name too).
+here="$(cd "$(dirname "$(readlink -f "$0" 2>/dev/null || python3 -c 'import os,sys;print(os.path.realpath(sys.argv[1]))' "$0")")/.." && pwd)"
+if [ ! -x "$here/.venv/bin/steuermaschine" ] || [ "$here/pyproject.toml" -nt "$here/.venv/bin/steuermaschine" ] || [ "$here/plugins/heinzel/pyproject.toml" -nt "$here/.venv/bin/steuermaschine" ]; then
+  uv sync --quiet --project "$here" >&2 && touch "$here/.venv/bin/steuermaschine" || { echo "sm: uv sync failed in $here" >&2; exit 70; }
+fi
+exec "$here/.venv/bin/steuermaschine" "$@"

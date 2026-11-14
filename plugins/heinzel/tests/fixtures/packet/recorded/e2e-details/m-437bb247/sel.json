@@ -1,0 +1,18 @@
+{
+ "browser": [
+  "tests/e2e/chat_only_workshop_test.py",
+  "tests/e2e/chat_profile_color_test.py",
+  "tests/e2e/connected_read_test.py",
+  "tests/e2e/generic_agent_chat_test.py",
+  "tests/e2e/read_set_approval_prototype_test.py",
+  "tests/e2e/scheduled_connected_test.py",
+  "tests/e2e/scheduled_notification_review_test.py",
+  "tests/e2e/source_suggestion_test.py",
+  "tests/e2e/template_scheduled_test.py",
+  "tests/e2e/web_ui_test.py::test_mobile_touch_viewports_keep_navigation_settings_and_chat_reachable"
+ ],
+ "python": [
+  "tests/unit/e2e_browser_output_test.py",
+  "tests/unit/standards_test.py"
+ ]
+}

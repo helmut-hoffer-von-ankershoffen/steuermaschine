@@ -1,0 +1,36 @@
+head 5e409527037b01f4fd7ad525bbfc13a39f37b7ae
+base da1362306815dc5ea47d691e66ff307ac05097a6
+tree 19eb6081b4a90f18de56bd7e84d14c7c38c84e62 (merge-tree)
+changed (1):
+  M web/e2e/daemon-restart-proof.mjs
+protected execution changed: none
+pyproject.toml: unchanged
+production (0): 
+repo selector (base scripts/affected.py): bounded; advisory jobs build, commits, dependency-review, e2e-web-2, lint, secrets
+selection: DECLARED, delta vs repository selector:
+  + python tests/unit/e2e_browser_output_test.py
+  + python tests/unit/standards_test.py
+  - browser tests/e2e/ai_access_install_ownership_test.py
+  - browser tests/e2e/audio_visualizer_test.py
+  - browser tests/e2e/auto_update_test.py
+  - browser tests/e2e/chat_only_workshop_test.py
+  - browser tests/e2e/chat_profile_color_test.py
+  - browser tests/e2e/connected_read_test.py
+  - browser tests/e2e/daemon_install_ui_test.py
+  - browser tests/e2e/doctor_notice_recovery_test.py
+  - browser tests/e2e/durable_five_minute_journey_test.py
+  - browser tests/e2e/generic_agent_chat_test.py
+  - browser tests/e2e/onboarding_team_name_test.py
+  - browser tests/e2e/private_skill_mobile_test.py
+  - browser tests/e2e/read_set_approval_prototype_test.py
+  - browser tests/e2e/scheduled_connected_test.py
+  - browser tests/e2e/scheduled_notification_review_test.py
+  - browser tests/e2e/source_suggestion_test.py
+  - browser tests/e2e/template_scheduled_test.py
+  - browser tests/e2e/web_durable_composer_test.py
+case_sha256 browser 2f7e45aee547f0701cf1896dc3fe94765633961f5137050d9f8002ed939d708a (junit sha256 acf1a566fb5341b88c54cd1171bc03643cdf23c9918a4f5d2aff4d29de444e99, 3 cases, NOT bound to head by Git: confirm its run)
+case_sha256 python ff4e5b2cf60d56420c21c089a9e0a0bb8ee389b8b2aba4d3d7629b93d57afaf0 (junit sha256 c7875b87d977edadd6bd82ee98f8c4d03b0dd76f7e099ddfb81511662bdff5a5, 2010 cases, NOT bound to head by Git: confirm its run)
+manifest_sha256 db8026a21a5dd960db2d5e81609375793a2edbe9ca4d44cd17718f0182524519
+main_manifest_sha256 3ec69be8ca59449c99ea39c07f7565981528700db62560ede51016e5825f3410
+review e2e-daemon-race/predict/REVIEW.md ed0ee7f05995170a0241d6ec674248ff9a61803b0b7b64f260d9722689c4f9b6
+wrote /Users/<user>/Code/tmp-pr-fill/admit-B/e2e-daemon-race/predict/packet.json sha256 e0848a7ee75c6c5563f5a0058b267cc087936ea481e9b53c10c0452460173679

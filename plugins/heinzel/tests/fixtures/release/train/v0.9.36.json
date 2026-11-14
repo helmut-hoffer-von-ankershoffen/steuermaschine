@@ -1,0 +1,21 @@
+{
+ "attempts": 2,
+ "blocked_at": 1794352038.2465222,
+ "cleared_at": 1794365341.102231,
+ "freed": {
+  "at": 1794320778.737456,
+  "deferred": "hz-ci-defer --cancel --force-release exit 0: 0 PR run(s) cancelled and recorded",
+  "main": "no unfinished main run for the tip a40aef5e3"
+ },
+ "intro": "Find uv in its install dirs under launchd's minimal PATH; Name the worker's shell cache after the build; Bind operation confirmation to its current receipt; Verify original focused runs after main advances; and 4 more.",
+ "last_error": "STOPPED: release PR #705 not merged: state BLOCKED: Test (macos-latest, Python 3.14, integration),Coverage,CI OK. Run the same command again to continue; freeze state is preserved.",
+ "last_start": 1794320529.898654,
+ "main_gate": "started with main tip a40aef5e3 first-attempt green (run 42832645782 at a40aef5e3 first-attempt green)",
+ "phase": "cleared",
+ "previous": "0.9.35",
+ "reason": "published but NOT ACCEPTED (run 42918110552); see ~/.cache/hz-train/v0.9.36.log",
+ "start": 1794320529.898654,
+ "tip": "a40aef5e307908f3e45743c2fcecb8888d2950ab",
+ "token": "d883fd7d9b0ab10e",
+ "version": "0.9.36"
+}

@@ -1,0 +1,197 @@
+{
+ "exit": 0,
+ "gh_calls": [
+  [
+   "api",
+   "graphql",
+   "-f",
+   "query=query($owner:String!,$name:String!,$tag:String!,$head:String!,$ref:String!,$branch:String!){\n  repository(owner:$owner,name:$name){ref(qualifiedName:$ref){name}\n  branch:ref(qualifiedName:$branch){name}\n  release(tagName:$tag){tagName}\n  pullRequests(first:20,headRefName:$head,states:[OPEN,CLOSED,MERGED]){\n    nodes{number state headRefName isCrossRepository}}}}",
+   "-f",
+   "owner=helmut-hoffer-von-ankershoffen",
+   "-f",
+   "name=heinzel",
+   "-f",
+   "tag=v0.9.41",
+   "-f",
+   "head=release/v0.9.41",
+   "-f",
+   "ref=refs/tags/v0.9.41",
+   "-f",
+   "branch=refs/heads/release/v0.9.41"
+  ],
+  [
+   "api",
+   "repos/helmut-hoffer-von-ankershoffen/heinzel/actions/runs?branch=release/v0.9.41&status=queued&per_page=100"
+  ],
+  [
+   "api",
+   "repos/helmut-hoffer-von-ankershoffen/heinzel/actions/runs?branch=release/v0.9.41&status=in_progress&per_page=100"
+  ],
+  [
+   "api",
+   "repos/helmut-hoffer-von-ankershoffen/heinzel/actions/runs?branch=release/v0.9.41&status=waiting&per_page=100"
+  ],
+  [
+   "api",
+   "repos/helmut-hoffer-von-ankershoffen/heinzel/actions/runs?branch=release/v0.9.41&status=requested&per_page=100"
+  ],
+  [
+   "api",
+   "repos/helmut-hoffer-von-ankershoffen/heinzel/actions/runs?branch=release/v0.9.41&status=pending&per_page=100"
+  ],
+  [
+   "pr",
+   "close",
+   "812",
+   "-R",
+   "helmut-hoffer-von-ankershoffen/heinzel"
+  ],
+  [
+   "api",
+   "--method",
+   "DELETE",
+   "repos/helmut-hoffer-von-ankershoffen/heinzel/git/refs/heads/release/v0.9.41"
+  ],
+  [
+   "api",
+   "graphql",
+   "-f",
+   "query=query($owner:String!,$name:String!,$tag:String!,$head:String!,$ref:String!,$branch:String!){\n  repository(owner:$owner,name:$name){ref(qualifiedName:$ref){name}\n  branch:ref(qualifiedName:$branch){name}\n  release(tagName:$tag){tagName}\n  pullRequests(first:20,headRefName:$head,states:[OPEN,CLOSED,MERGED]){\n    nodes{number state headRefName isCrossRepository}}}}",
+   "-f",
+   "owner=helmut-hoffer-von-ankershoffen",
+   "-f",
+   "name=heinzel",
+   "-f",
+   "tag=v0.9.41",
+   "-f",
+   "head=release/v0.9.41",
+   "-f",
+   "ref=refs/tags/v0.9.41",
+   "-f",
+   "branch=refs/heads/release/v0.9.41"
+  ],
+  [
+   "api",
+   "repos/helmut-hoffer-von-ankershoffen/heinzel/actions/runs?branch=release/v0.9.41&status=queued&per_page=100"
+  ],
+  [
+   "api",
+   "repos/helmut-hoffer-von-ankershoffen/heinzel/actions/runs?branch=release/v0.9.41&status=in_progress&per_page=100"
+  ],
+  [
+   "api",
+   "repos/helmut-hoffer-von-ankershoffen/heinzel/actions/runs?branch=release/v0.9.41&status=waiting&per_page=100"
+  ],
+  [
+   "api",
+   "repos/helmut-hoffer-von-ankershoffen/heinzel/actions/runs?branch=release/v0.9.41&status=requested&per_page=100"
+  ],
+  [
+   "api",
+   "repos/helmut-hoffer-von-ankershoffen/heinzel/actions/runs?branch=release/v0.9.41&status=pending&per_page=100"
+  ]
+ ],
+ "gh_rules": {
+  "api --method DELETE repos/helmut-hoffer-von-ankershoffen/heinzel/git/refs/heads/release/v0.9.41": "",
+  "api graphql": {
+   "__in_order__": [
+    {
+     "data": {
+      "repository": {
+       "branch": {
+        "name": "release/v0.9.41"
+       },
+       "pullRequests": {
+        "nodes": [
+         {
+          "headRefName": "release/v0.9.41",
+          "number": 812,
+          "state": "OPEN"
+         }
+        ]
+       },
+       "ref": null,
+       "release": null
+      }
+     }
+    },
+    {
+     "data": {
+      "repository": {
+       "branch": null,
+       "pullRequests": {
+        "nodes": [
+         {
+          "headRefName": "release/v0.9.41",
+          "number": 812,
+          "state": "CLOSED"
+         }
+        ]
+       },
+       "ref": null,
+       "release": null
+      }
+     }
+    }
+   ]
+  },
+  "api repos/helmut-hoffer-von-ankershoffen/heinzel/actions/runs?branch=release/v0.9.41": {
+   "total_count": 0,
+   "workflow_runs": []
+  },
+  "pr close 812": ""
+ },
+ "name": "drop-close-pr",
+ "old_argv": [
+  "0.9.41",
+  "--drop-candidate",
+  "--reason",
+  "candidate red: Coverage, fix in #812",
+  "--close-pr"
+ ],
+ "pypi": {
+  "heinzel/0.9.41": 404
+ },
+ "state_after": {
+  "hz-release-dropped/v0.9.41-20261112T222432Z.json": {
+   "drop": {
+    "at": "2026-11-12T22:24:32Z",
+    "evidence": {
+     "branch": false,
+     "branch_deleted_by_drop": true,
+     "closed_by_drop": [
+      812
+     ],
+     "closed_prs": [
+      812
+     ],
+     "github_release": false,
+     "merged_pr": false,
+     "pypi": 404,
+     "tag": false
+    },
+    "hold": "owned",
+    "reason": "candidate red: Coverage, fix in #812",
+    "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "version": "0.9.41"
+   },
+   "freeze_token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+   "version": "0.9.41"
+  },
+  "hz-release-holds/cccccccccccccccccccccccccccccccc": "0.9.42",
+  "hz-release.lock": ""
+ },
+ "state_before": {
+  "hz-release-holds/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": "0.9.41",
+  "hz-release-holds/cccccccccccccccccccccccccccccccc": "0.9.42",
+  "hz-release.json": {
+   "freeze_token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+   "version": "0.9.41"
+  }
+ },
+ "stderr": [],
+ "stdout": [
+  "DROPPED 0.9.41: its owned hold was removed; receipt archived at ~/.cache/hz-release-dropped/v0.9.41-20261112T222432Z.json. No workflow run was cancelled. A fresh `hz-release 0.9.41` starts clean.",
+  "note: other merge holds remain (incident sentinel or another release's hold); they were not touched"
+ ]
+}

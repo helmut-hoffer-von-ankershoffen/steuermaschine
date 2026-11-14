@@ -1,0 +1,10 @@
+PR 690 OPEN cb15803 github=BLOCKED  fix(release): hold stable releases as pre-releases
+  CI OK: MISSING
+  merge-gate: MISSING
+  coverage-floor: MISSING
+  queue: not queued
+  holds: freeze=off release-holds=none
+  main run 43307443399 f19a3782 attempt 1 completed success
+  
+  role: standalone
+  WHY: required check not green: CI OK, merge-gate, coverage-floor

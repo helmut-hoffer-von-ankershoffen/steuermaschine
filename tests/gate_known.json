@@ -1,0 +1,43 @@
+{
+ "main blocks": {
+  "native/admission_lib/focused_replay.py": "run as a script by focused_resulting.replay_original (its bytes are copied into a driver); it only replays and prints",
+  "native/packet_lib/collect_cases.py": "run as a script by admit_wave.collect_lanes and by `head cases collect`, in its own isolated interpreter (-I) under the run lock; it lists test cases of an extracted tree and writes the JUnit file named with -o; no network, no GitHub",
+  "native/queue_lib/main_checkpoint_reader.py": "queue-release; allowed on purpose: this file is started as a program of its own by main_checkpoint.isolated_reader",
+  "native/queue_lib/release_candidate.py": "queue-release"
+ },
+ "path defaults": {},
+ "process starts": {
+  "native/admission.py: import subprocess": "admission",
+  "native/admission_lib/focused_admit.py: import subprocess": "see owner per file: admission (admission_lib), readonly (go_*, legacy_state_dir, core_repo_dir), ops (lock_*)",
+  "native/admission_lib/focused_resulting.py: import subprocess": "see owner per file: admission (admission_lib), readonly (go_*, legacy_state_dir, core_repo_dir), ops (lock_*)",
+  "native/admission_lib/focused_slots.py: import subprocess": "see owner per file: admission (admission_lib), readonly (go_*, legacy_state_dir, core_repo_dir), ops (lock_*)",
+  "native/admission_lib/focused_update.py: import subprocess": "see owner per file: admission (admission_lib), readonly (go_*, legacy_state_dir, core_repo_dir), ops (lock_*)",
+  "native/packet_lib/admit_wave.py: import subprocess": "packet",
+  "native/packet_lib/collect_cases.py: import subprocess": "packet",
+  "native/packet_lib/floor_check.py: import subprocess": "packet",
+  "native/packet_lib/focused_manifest.py: import subprocess": "packet",
+  "native/queue_lib/edge.py: import subprocess": "queue-release",
+  "native/queue_lib/flakes_read.py: import subprocess": "queue-release",
+  "native/queue_lib/hzlib.py: import subprocess": "queue-release",
+  "native/queue_lib/main_batch.py: import subprocess": "queue-release",
+  "native/queue_lib/main_checkpoint.py: import subprocess": "queue-release",
+  "native/queue_lib/main_checkpoint_reader.py: import subprocess": "queue-release; allowed on purpose: main_checkpoint.isolated_reader starts this file as a program of its own (`uv run --no-project ... python -I FILE`), so it cannot import the package or its runner (queue_lib/moved_map.py STANDALONE)",
+  "native/queue_lib/merge_gate.py: import subprocess": "queue-release",
+  "native/queue_lib/merge_train.py: import subprocess": "queue-release",
+  "native/queue_lib/moved_map.py: an argument list starts the old tool hz-queue": "queue-release",
+  "native/queue_lib/moved_map.py: an argument list starts the old tool hz-stamp": "queue-release",
+  "native/queue_lib/queue_daemon.py: import subprocess": "queue-release",
+  "native/queue_lib/release_candidate.py: import subprocess": "queue-release",
+  "native/queue_lib/stall.py: import subprocess": "queue-release",
+  "native/release_admit_lib/release_slots.py: import subprocess": "heinzel-native-admission",
+  "native/release_lib/candidate_capacity.py: import subprocess": "release",
+  "native/release_lib/candidate_policy.py: import subprocess": "release",
+  "native/release_lib/notes_audit.py: import subprocess": "release",
+  "native/release_lib/runner.py: import subprocess": "release",
+  "native/ship_lib/moved_map.py: an argument list starts the old tool hz-push-gate": "queue-release; not a call: the table of what moved where (old file name -> module)",
+  "native/ship_lib/push_gate_cli.py: import subprocess": "queue-release",
+  "native/train_lib/train.py: import subprocess": "queue-release; the moved train starts its detached release runner (`sm daemon train --run X`, own session) and streams the release child's lines with Popen, which the core's runner cannot express; every other start goes through edge.run"
+ },
+ "read commands that reach a write": {},
+ "review units with gaps": {}
+}

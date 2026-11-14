@@ -1,0 +1,167 @@
+{
+  "main_manifest": {
+    "base": "38676849f2a6bee35c6663984a68afcc7b88892d",
+    "case_sha256": {
+      "browser": "4cb4d642d6c9beeecf03ab7ec27f8d13fdedfaff660348c2b5957e58f8b663c8",
+      "python": "34e7af47171363d3cc7d0251f26b63c6b3059a77bd2fb32023964081e9dda3e2",
+      "web": "29ba4d17363b5b5dee8477b64107651f895888885b7ec11b8616bbc099587910"
+    },
+    "changed": {
+      "web/e2e/chat-profile-color.mjs": "M",
+      "web/e2e/durable-five-minute.mjs": "M",
+      "web/e2e/mobile-responsive.mjs": "M",
+      "web/e2e/template-scheduled.mjs": "M",
+      "web/src/chat/DurableSession.test.tsx": "M",
+      "web/src/chat/DurableSession.tsx": "M",
+      "web/src/chat/SessionSwitcher.test.tsx": "M",
+      "web/src/chat/SessionSwitcher.tsx": "M",
+      "web/src/heinzel/PersonalHeinzels.test.tsx": "M",
+      "web/src/heinzel/PersonalHeinzels.tsx": "M",
+      "web/src/heinzel/look.ts": "M",
+      "web/src/heinzel/useNoticeLook.ts": "A",
+      "web/src/i18n.ts": "M",
+      "web/src/layout/ChatPanel.test.tsx": "M",
+      "web/src/layout/ChatPanel.tsx": "M",
+      "web/src/layout/DurableHeinzelStatus.test.tsx": "M",
+      "web/src/layout/DurableHeinzelStatus.tsx": "M",
+      "web/src/layout/NotificationCenter.test.tsx": "M",
+      "web/src/layout/NotificationCenter.tsx": "M",
+      "web/src/layout/Shell.tsx": "M",
+      "web/src/notifications/TodayNotifications.tsx": "M",
+      "web/src/test/copy-standards.test.ts": "M"
+    },
+    "config_blob": "82fdf4af528c42063863123c35031b03bcb587f7",
+    "diff_sha256": "1bf46a65d28ae90c1eca52a5cfd7a683e801e06afb22443a5c5fe971e59211de",
+    "event": "push",
+    "execution": {
+      ".github/actions/setup-uv/action.yml": "d67b801a40bf31bbd0cad92a30622ea0096bda48",
+      ".github/actions/setup-uv/uv-manifest.json": "ac9143564027053899c9db6c2c3a6fd37017db89",
+      ".github/workflows/ci.yml": "14abefad2cc40302622a2eb3d26d38e32f0c1512",
+      "scripts/bootstrap-pyyaml.sh": "4fd84e883bfbb9779230984479dc8bd53a98d8d1",
+      "scripts/ci_workload.py": "2de93e9adc97f5974489b99f219903ac3d1b92f0",
+      "scripts/focused_coverage.py": "903c3560a5df610d06f0f58563164343adbcfb43",
+      "scripts/focused_coverage.py.lock": "661c3449f7d12cada9abac76219243365ffcd902",
+      "scripts/focused_job.py": "528f8e424eea98905c853c6e3e393d7bb9490db3",
+      "scripts/focused_plan.py": "c6fb857320e409b199bf4fbb9a31ef9f85fbf82c",
+      "scripts/pyyaml-build-requirements.txt": "1713dbaf1406b5a3b4b2c5eb91125fd180b22e37",
+      "scripts/release_candidate.py": "5c13ec2fc903b5cd7357fe648fbe81a65340928e",
+      "uv.lock": "ddbd130d64d3dd03309f2a5d769499097fc2fc12"
+    },
+    "mode": "python-coverage-not-applicable",
+    "production": {},
+    "ref": "refs/heads/main",
+    "schema": 1,
+    "selection": {
+      "browser": [
+        "tests/e2e/chat_only_workshop_test.py",
+        "tests/e2e/chat_profile_color_test.py",
+        "tests/e2e/connected_read_test.py",
+        "tests/e2e/durable_five_minute_journey_test.py",
+        "tests/e2e/generic_agent_chat_test.py",
+        "tests/e2e/scheduled_connected_test.py",
+        "tests/e2e/scheduled_notification_review_test.py",
+        "tests/e2e/template_scheduled_test.py",
+        "tests/e2e/web_durable_composer_test.py",
+        "tests/e2e/web_ui_test.py::test_mobile_touch_viewports_keep_navigation_settings_and_chat_reachable"
+      ],
+      "python": [
+        "tests/unit/branding_test.py",
+        "tests/unit/docs_style_test.py",
+        "tests/unit/e2e_browser_output_test.py",
+        "tests/unit/standards_test.py"
+      ],
+      "web": [
+        "web/ALL"
+      ]
+    },
+    "tree": "c24e000d061b16401dcbaaa3680ff330dcdf385e"
+  },
+  "manifest": {
+    "base": "38676849f2a6bee35c6663984a68afcc7b88892d",
+    "case_sha256": {
+      "browser": "4cb4d642d6c9beeecf03ab7ec27f8d13fdedfaff660348c2b5957e58f8b663c8",
+      "python": "34e7af47171363d3cc7d0251f26b63c6b3059a77bd2fb32023964081e9dda3e2",
+      "web": "29ba4d17363b5b5dee8477b64107651f895888885b7ec11b8616bbc099587910"
+    },
+    "changed": {
+      "web/e2e/chat-profile-color.mjs": "M",
+      "web/e2e/durable-five-minute.mjs": "M",
+      "web/e2e/mobile-responsive.mjs": "M",
+      "web/e2e/template-scheduled.mjs": "M",
+      "web/src/chat/DurableSession.test.tsx": "M",
+      "web/src/chat/DurableSession.tsx": "M",
+      "web/src/chat/SessionSwitcher.test.tsx": "M",
+      "web/src/chat/SessionSwitcher.tsx": "M",
+      "web/src/heinzel/PersonalHeinzels.test.tsx": "M",
+      "web/src/heinzel/PersonalHeinzels.tsx": "M",
+      "web/src/heinzel/look.ts": "M",
+      "web/src/heinzel/useNoticeLook.ts": "A",
+      "web/src/i18n.ts": "M",
+      "web/src/layout/ChatPanel.test.tsx": "M",
+      "web/src/layout/ChatPanel.tsx": "M",
+      "web/src/layout/DurableHeinzelStatus.test.tsx": "M",
+      "web/src/layout/DurableHeinzelStatus.tsx": "M",
+      "web/src/layout/NotificationCenter.test.tsx": "M",
+      "web/src/layout/NotificationCenter.tsx": "M",
+      "web/src/layout/Shell.tsx": "M",
+      "web/src/notifications/TodayNotifications.tsx": "M",
+      "web/src/test/copy-standards.test.ts": "M"
+    },
+    "config_blob": "82fdf4af528c42063863123c35031b03bcb587f7",
+    "diff_sha256": "1bf46a65d28ae90c1eca52a5cfd7a683e801e06afb22443a5c5fe971e59211de",
+    "event": "pull_request",
+    "execution": {
+      ".github/actions/setup-uv/action.yml": "d67b801a40bf31bbd0cad92a30622ea0096bda48",
+      ".github/actions/setup-uv/uv-manifest.json": "ac9143564027053899c9db6c2c3a6fd37017db89",
+      ".github/workflows/ci.yml": "14abefad2cc40302622a2eb3d26d38e32f0c1512",
+      "scripts/bootstrap-pyyaml.sh": "4fd84e883bfbb9779230984479dc8bd53a98d8d1",
+      "scripts/ci_workload.py": "2de93e9adc97f5974489b99f219903ac3d1b92f0",
+      "scripts/focused_coverage.py": "903c3560a5df610d06f0f58563164343adbcfb43",
+      "scripts/focused_coverage.py.lock": "661c3449f7d12cada9abac76219243365ffcd902",
+      "scripts/focused_job.py": "528f8e424eea98905c853c6e3e393d7bb9490db3",
+      "scripts/focused_plan.py": "c6fb857320e409b199bf4fbb9a31ef9f85fbf82c",
+      "scripts/pyyaml-build-requirements.txt": "1713dbaf1406b5a3b4b2c5eb91125fd180b22e37",
+      "scripts/release_candidate.py": "5c13ec2fc903b5cd7357fe648fbe81a65340928e",
+      "uv.lock": "ddbd130d64d3dd03309f2a5d769499097fc2fc12"
+    },
+    "head": "ef6172189b73d67aa0cb011bf2d901390d969978",
+    "mode": "python-coverage-not-applicable",
+    "production": {},
+    "ref": "refs/pull/*/merge",
+    "schema": 1,
+    "selection": {
+      "browser": [
+        "tests/e2e/chat_only_workshop_test.py",
+        "tests/e2e/chat_profile_color_test.py",
+        "tests/e2e/connected_read_test.py",
+        "tests/e2e/durable_five_minute_journey_test.py",
+        "tests/e2e/generic_agent_chat_test.py",
+        "tests/e2e/scheduled_connected_test.py",
+        "tests/e2e/scheduled_notification_review_test.py",
+        "tests/e2e/template_scheduled_test.py",
+        "tests/e2e/web_durable_composer_test.py",
+        "tests/e2e/web_ui_test.py::test_mobile_touch_viewports_keep_navigation_settings_and_chat_reachable"
+      ],
+      "python": [
+        "tests/unit/branding_test.py",
+        "tests/unit/docs_style_test.py",
+        "tests/unit/e2e_browser_output_test.py",
+        "tests/unit/standards_test.py"
+      ],
+      "web": [
+        "web/ALL"
+      ]
+    },
+    "tree": "c24e000d061b16401dcbaaa3680ff330dcdf385e"
+  },
+  "review": {
+    "base": "38676849f2a6bee35c6663984a68afcc7b88892d",
+    "head": "ef6172189b73d67aa0cb011bf2d901390d969978",
+    "main_manifest_sha256": "c59e88d1f8e12d80ffe20896a90ac14e5605ad49e13e12dc09f1b327f902ccf4",
+    "manifest_sha256": "52575529c76b4a0854afa1c331956d93d510638089921fd8f8515c4df4422b2e",
+    "path": "m-38676849/REVIEW.md",
+    "sha256": "3208c59131fa43b64921bb6ba63bc3069375536133c02f34e91fa3632b1fe1ca",
+    "tree": "c24e000d061b16401dcbaaa3680ff330dcdf385e"
+  },
+  "schema": 1
+}

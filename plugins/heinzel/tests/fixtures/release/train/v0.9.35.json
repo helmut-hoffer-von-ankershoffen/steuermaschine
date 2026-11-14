@@ -1,0 +1,23 @@
+{
+ "acceptance": "42783041576",
+ "attempts": 0,
+ "finished": 1794300519.98089,
+ "freed": {
+  "at": 1794297804.0330648,
+  "deferred": "hz-ci-defer --cancel --force-release exit 0: 0 PR run(s) cancelled and recorded",
+  "main": "no unfinished main run for the tip b234067b1"
+ },
+ "intro": "Require per-agent MCP tokens with scopes over HTTP; Run pre-push and make pr checks through hz-gate when present.",
+ "last_error": "STOPPED: [Errno 32] Broken pipe",
+ "last_start": 1794297043.5856352,
+ "live": 1794300518.063612,
+ "live_version": "0.9.35",
+ "main_gate": "started with main tip b234067b1 unfinished/last evidence green: candidate is the gate (run 42631355618 at 432006f27 first-attempt green)",
+ "phase": "done",
+ "previous": "0.9.34",
+ "published": 1794300511.3720949,
+ "start": 1794297043.5856352,
+ "tip": "b234067b172f33db59f98c9ea38808b3d5ab9bc5",
+ "token": "aa27ce2df406c873",
+ "version": "0.9.35"
+}

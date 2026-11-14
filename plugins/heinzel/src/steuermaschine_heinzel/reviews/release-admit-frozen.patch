@@ -1,0 +1,133 @@
+--- a/plugins/heinzel/src/steuermaschine_heinzel/native/admission_lib/focused_admit.py
++++ b/plugins/heinzel/src/steuermaschine_heinzel/native/admission_lib/focused_admit.py
+@@ -645,7 +645,8 @@
+     resulting_main: dict[str, Any] | None = None,
+     check_main_append: Callable[[dict[str, str], dict[str, str]], None] | None = None,
+     pairs: int = 1,
+-) -> Path:
++    release_main: dict[str, Any] | None = None,
++) -> Path | dict[str, Any]:
+     """One approved variable update; caller holds its queue/train/release exclusions.
+ 
+     check_fresh must assert the reviewed main, complete active reader inventory,
+@@ -656,21 +657,25 @@
+     distinct push-tree keys, still appended by the one slot write below.
+     """
+     variables = ["FOCUSED_CI_PLANS", *(f"FOCUSED_CI_PLANS_V2_{i}" for i in range(4))]
+-    if type(pairs) is not int or pairs < 1 or (resulting_main is not None and pairs != 1):
++    if release_main is not None and resulting_main is not None:
++        raise AdmissionError("conflicting singleton admission proof types")
++    singleton = resulting_main if release_main is None else release_main
++    mode = "resulting-main-only/v1" if release_main is None else "release-main-only/v1"
++    if type(pairs) is not int or pairs < 1 or (singleton is not None and pairs != 1):
+         raise AdmissionError("slot admission pair count is invalid")
+-    if set(expected) != set(variables) or (resulting_main is None and len(plans) != 2 * pairs):
++    if set(expected) != set(variables) or (singleton is None and len(plans) != 2 * pairs):
+         raise AdmissionError("slot admission requires the complete five-variable snapshot and reviewed scope")
+     additions = {registry_key(plan): plan for plan in plans}
+-    if resulting_main is None:
++    if singleton is None:
+         # Distinct keys only: a duplicated key would silently shrink the batch.
+         if (len(additions) != 2 * pairs
+                 or sum(key.startswith("pull_request:") for key in additions) != pairs
+                 or sum(key.startswith("push-tree:") for key in additions) != pairs):
+             raise AdmissionError("slot admission requires one PR and one resulting-main plan per reviewed pair")
+-    elif (resulting_main.get("mode") != "resulting-main-only/v1" or len(plans) != 1
++    elif (singleton.get("mode") != mode or len(plans) != 1
+           or not next(iter(additions)).startswith("push-tree:") or "head" in plans[0] or "commit" in plans[0]
+-          or plans[0].get("base") != resulting_main.get("base") or plans[0].get("tree") != resulting_main.get("tree")
+-          or hashlib.sha256(canonical(plans[0])).hexdigest() != resulting_main.get("main_manifest_sha256")
++          or plans[0].get("base") != singleton.get("base") or plans[0].get("tree") != singleton.get("tree")
++          or hashlib.sha256(canonical(plans[0])).hexdigest() != singleton.get("main_manifest_sha256")
+           or not callable(check_main_append)):
+         raise AdmissionError("slot admission requires exact typed resulting-main proof and one manifest")
+     with _lock(lock_path):
+@@ -682,7 +687,7 @@
+         desired = dict(current)
+         result = proposal["result"]
+         changed = result is not None
+-        if resulting_main is not None and not changed:
++        if singleton is not None and not changed:
+             raise AdmissionError("resulting-main manifest already admitted; no new write required")
+         if changed:
+             index, candidate = result
+@@ -690,7 +695,7 @@
+             if hashlib.sha256(candidate.encode()).hexdigest() != approved_candidate_sha256:
+                 raise AdmissionError("proposed slot bytes differ from exact coordinator approval")
+             desired[variable] = candidate
+-            if resulting_main is not None:
++            if singleton is not None:
+                 check_main_append(current, desired)
+             check_fresh()
+             # Narrow the read/write interval and reject a non-cooperative writer.
+@@ -706,7 +711,9 @@
+                               before={name: hashlib.sha256(value.encode()).hexdigest() for name, value in current.items()},
+                               after={name: hashlib.sha256(value.encode()).hexdigest() for name, value in readback.items()},
+                               source="trusted-main compressed append-only/v1")
+-        return _write_receipt(result_receipt, home)
++        # The release-only caller records its success only after the queue is
++        # restored. Existing PR modes keep their original receipt timing.
++        return result_receipt if release_main is not None else _write_receipt(result_receipt, home)
+ 
+ 
+ def main(argv: list[str] | None = None) -> int:
+--- a/plugins/heinzel/src/steuermaschine_heinzel/native/admission_lib/focused_resulting.py
++++ b/plugins/heinzel/src/steuermaschine_heinzel/native/admission_lib/focused_resulting.py
+@@ -259,9 +259,9 @@
+ def decode(values):
+     return core.plan_registry(values["FOCUSED_CI_PLANS"], tuple(values[name] for name in core.SLOT_VARIABLES))
+ before = decode(request["before"])
+-original = before.get(request["original_key"])
+-if original is None or hashlib.sha256(core.registry_bytes(original)).hexdigest() != request["original_sha256"]:
+-    raise ValueError("original admitted PR manifest differs from its reviewed digest")
++for key, digest in request["required"].items():
++    if key not in before or hashlib.sha256(core.registry_bytes(before[key])).hexdigest() != digest:
++        raise ValueError("previously admitted manifest differs from its reviewed digest")
+ if request["after"] is not None:
+     after = decode(request["after"])
+     key = request["main_key"]
+@@ -271,26 +271,37 @@
+         raise ValueError("an existing decoded manifest changed")
+     if core.registry_bytes(after[key]) != core.registry_bytes(request["main"]):
+         raise ValueError("resulting-main plan changed in the proposed slot")
+-print(core.registry_bytes(original).decode())
++original_key = request.get("original_key")
++print(core.registry_bytes(before[original_key] if original_key else {"old_entries": len(before)}).decode())
+ '''
+ 
+ 
+-def registry_proof(source, packet, before, after=None):
+-    """Use the trusted codec to bind original scope and prove the exact one-entry append."""
+-    original, main = packet['original'], packet['manifest']
+-    request = dict(before=before, after=after, original_key='pull_request:' + original['head'],
+-                   original_sha256=original['manifest_sha256'], main_key=a.registry_key(main), main=main)
++def _registry_witness(source, request):
+     result = subprocess.run([sys.executable, '-I', '-c', REGISTRY_PROOF, str(source)],
+                             input=a.canonical(request), capture_output=True, timeout=30,
+                             env={'PATH': os.defpath, 'HOME': str(source)})
+     require(result.returncode == 0, 'trusted registry decoder refused original scope or one-entry append')
+-    plan = a._json_bytes(result.stdout, 'original admitted plan')
++    return a._json_bytes(result.stdout, 'trusted registry witness')
++
++
++def registry_proof(source, packet, before, after=None):
++    """Use the trusted codec to bind original scope and prove the exact one-entry append."""
++    original, main = packet['original'], packet['manifest']
++    key = 'pull_request:' + original['head']
++    plan = _registry_witness(source, dict(before=before, after=after, original_key=key,
++                             required={key: original['manifest_sha256']}, main_key=a.registry_key(main), main=main))
+     require(plan['event'] == 'pull_request' and plan['head'] == original['head']
+             and plan['base'] == original['tested_base'] and plan['tree'] == original['tested_tree']
+             and digest(a.canonical(plan)) == original['manifest_sha256'], 'admitted original PR source changed')
+     return plan
+ 
+ 
++def release_registry_proof(source, main, before, after, required):
++    """Read-only witness for one release push-tree and any required prior entry."""
++    return _registry_witness(source, dict(before=before, after=after, required=required,
++                             main_key=a.registry_key(main), main=main))['old_entries']
++
++
+ def replay_original(rt, packet, snapshot, original_plan, live):
+     """Use the actual protected judge's archived reader to replay original artifacts."""
+     original, base = packet['original'], packet['manifest']['base']

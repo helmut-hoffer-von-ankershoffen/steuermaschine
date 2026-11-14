@@ -1,0 +1,31 @@
+# Opt in: uvx pre-commit install --hook-type commit-msg --hook-type pre-commit
+repos:
+  - repo: local
+    hooks:
+      - id: commitizen
+        name: Conventional Commits (cz check)
+        entry: uv run cz check --allow-abort --commit-msg-file
+        language: system
+        stages: [commit-msg]
+      - id: ruff
+        name: ruff check
+        entry: uv run ruff check src examples tests
+        language: system
+        pass_filenames: false
+        types: [python]
+      - id: gitleaks
+        name: gitleaks (staged changes)
+        entry: gitleaks git --staged --redact --no-banner --pre-commit
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
+      - id: confidentiality
+        name: private-term deny-list (files)
+        entry: uv run --script scripts/check_confidentiality.py
+        language: system
+        stages: [pre-commit]
+      - id: confidentiality-message
+        name: private-term deny-list (commit message)
+        entry: uv run --script scripts/check_confidentiality.py --identity --commit-msg
+        language: system
+        stages: [commit-msg]

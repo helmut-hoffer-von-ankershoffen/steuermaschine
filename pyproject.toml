@@ -1,0 +1,149 @@
+[project]
+name = "steuermaschine"
+version = "0.0.1"
+description = "The artificial helmsman: a coordinator CLI that steers work from a change to a live release, for AI agents and a human owner."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = ["typer>=0.15", "pydantic>=2.7", "pydantic-settings>=2.6", "pluggy>=1.5"]
+
+[project.scripts]
+steuermaschine = "steuermaschine.app:main"
+sm = "steuermaschine.app:main"
+sm-guard = "steuermaschine.guardhook:main"  # the Bash hook: standard library only, safe when sm cannot load
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pytest-cov>=5",
+    "ruff>=0.6",
+    "mypy>=1.11",
+    "pyright>=1.1.414",
+    "commitizen>=4.19.3",
+    "typos>=1.24",
+    "steuermaschine-heinzel",
+    "steuermaschine-toy",
+    "steuermaschine-layer",
+    "vulture>=2.16",
+]
+
+[tool.uv.workspace]
+members = ["plugins/heinzel", "examples/toy", "examples/layer"]
+
+[tool.uv.sources]
+steuermaschine-heinzel = { workspace = true }
+steuermaschine-toy = { workspace = true }
+steuermaschine-layer = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/steuermaschine"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "plugins/heinzel/tests", "examples/toy/tests", "examples/layer/tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 200
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+ignore = ["B008", "RUF012"]  # B008: Typer declares options as call defaults. RUF012: pydantic copies mutable defaults per instance
+
+[tool.ruff.lint.isort]
+known-first-party = ["steuermaschine", "steuermaschine_heinzel", "steuermaschine_toy", "steuermaschine_layer"]
+
+[tool.ruff.lint.per-file-ignores]
+"plugins/heinzel/src/steuermaschine_heinzel/toolmap.py" = ["E501"]  # a table: one row per line
+# Focused admission: moved verbatim with its tests (reviews/head-apply.md). Restyled only after the write path is reviewed,
+# so that the diff against the originals stays the review instrument.
+"plugins/heinzel/src/steuermaschine_heinzel/native/admission_lib/focused_*.py" = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+"plugins/heinzel/tests/test_native_admission_slots.py" = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+"plugins/heinzel/tests/test_native_admission_batch.py" = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+"plugins/heinzel/tests/test_native_admission_resulting.py" = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+"plugins/heinzel/tests/test_native_admission_stuck_queued.py" = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+# Packet building: moved with its tests (tests/packet_verbatim.py prints every changed line); unstyled for the same reason.
+"plugins/heinzel/src/steuermaschine_heinzel/native/packet_lib/focused_manifest.py" = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+"plugins/heinzel/src/steuermaschine_heinzel/native/packet_lib/admit_wave.py" = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+"plugins/heinzel/src/steuermaschine_heinzel/native/packet_lib/collect_cases.py" = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+"plugins/heinzel/src/steuermaschine_heinzel/native/packet_lib/wave_size.py" = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+"plugins/heinzel/src/steuermaschine_heinzel/native/packet_lib/floor_check.py" = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+"plugins/heinzel/tests/test_native_packet_manifest.py" = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+"plugins/heinzel/tests/test_native_packet_wave.py" = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+"plugins/heinzel/tests/test_native_packet_size.py" = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+"plugins/heinzel/tests/test_native_packet_floor.py" = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+# The release-main route: moved from the reviewed operator copy (reviews/release-admit-apply.md), same rule.
+"plugins/heinzel/src/steuermaschine_heinzel/native/release_admit_lib/focused_release.py" = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+"plugins/heinzel/src/steuermaschine_heinzel/native/release_admit_lib/release_scope.py" = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+"plugins/heinzel/src/steuermaschine_heinzel/native/release_admit_lib/release_slots.py" = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+"plugins/heinzel/tests/test_native_release_admit.py" = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+"plugins/heinzel/tests/test_native_release_admit_stuck.py" = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+# Combine (status and plan), the main evidence notes and the go views' moved helpers: moved (tests/views_verbatim.py prints every changed line); unstyled.
+"plugins/heinzel/src/steuermaschine_heinzel/native/combine_lib/combine.py" = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+"plugins/heinzel/src/steuermaschine_heinzel/native/ci_evidence_lib/main_evidence.py" = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+"plugins/heinzel/src/steuermaschine_heinzel/native/go_lib/views_moved.py" = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+
+[tool.mypy]
+strict = true
+python_version = "3.12"
+mypy_path = ["src", "plugins/heinzel/src", "examples/toy/src", "examples/layer/src"]
+
+[[tool.mypy.overrides]]  # hook specifications: docstring-only bodies that pluggy never calls
+module = ["steuermaschine.hookspecs"]
+disable_error_code = ["empty-body"]
+
+[[tool.mypy.overrides]]  # moved verbatim, untyped at the source (see the ruff note above)
+module = ["steuermaschine_heinzel.native.admission_lib.focused_admit", "steuermaschine_heinzel.native.admission_lib.focused_slots", "steuermaschine_heinzel.native.admission_lib.focused_resulting", "steuermaschine_heinzel.native.admission_lib.focused_update", "steuermaschine_heinzel.native.admission_lib.focused_replay",
+          "steuermaschine_heinzel.native.release_admit_lib.focused_release", "steuermaschine_heinzel.native.release_admit_lib.release_scope", "steuermaschine_heinzel.native.release_admit_lib.release_slots"]
+ignore_errors = true
+
+[[tool.mypy.overrides]]  # packet building: moved, untyped at the source
+module = ["steuermaschine_heinzel.native.packet_lib.focused_manifest", "steuermaschine_heinzel.native.packet_lib.admit_wave", "steuermaschine_heinzel.native.packet_lib.collect_cases", "steuermaschine_heinzel.native.packet_lib.wave_size", "steuermaschine_heinzel.native.packet_lib.floor_check"]
+ignore_errors = true
+
+[[tool.mypy.overrides]]  # combine, main evidence, go views' helpers: moved, untyped at the source
+module = ["steuermaschine_heinzel.native.combine_lib.combine", "steuermaschine_heinzel.native.ci_evidence_lib.main_evidence", "steuermaschine_heinzel.native.go_lib.views_moved"]
+ignore_errors = true
+
+[[tool.mypy.overrides]]  # the typed entries of packet building call the moved, untyped functions
+module = ["steuermaschine_heinzel.native.packet_lib.ops", "steuermaschine_heinzel.native.packet_lib.wave_ops"]
+disallow_untyped_calls = false
+
+[tool.coverage.run]
+branch = true
+source = ["steuermaschine", "steuermaschine_heinzel"]
+
+[tool.coverage.report]
+fail_under = 90
+show_missing = true
+skip_covered = true
+
+# The CI gate (make typecheck) runs pyright in basic mode on the core. The rules off below fail on today's code: debt to
+# burn down, switch one on when its findings are fixed. (mypy strict stays the debt measure of bin/debt.py.)
+[tool.pyright]
+include = ["src/steuermaschine"]
+typeCheckingMode = "basic"
+pythonVersion = "3.12"
+venvPath = "."
+venv = ".venv"
+reportArgumentType = "none"
+reportAttributeAccessIssue = "none"
+reportCallIssue = "none"
+reportFunctionMemberAccess = "none"
+reportOptionalMemberAccess = "none"
+reportPossiblyUnboundVariable = "none"
+reportReturnType = "none"
+
+# Conventional Commits: `cz check` in CI, `make release` = `cz bump --changelog` (version, CHANGELOG.md, tag v*).
+[tool.commitizen]
+name = "cz_conventional_commits"
+version_provider = "uv"
+tag_format = "v$version"
+update_changelog_on_bump = true
+major_version_zero = true
+changelog_file = "CHANGELOG.md"
+allowed_prefixes = ["Merge", "Revert", "fixup!", "squash!", "amend!", "review(", "review:"]  # review(area): an independent verdict, no release note
+change_type_map = { feat = "Added", fix = "Fixed", refactor = "Changed", perf = "Changed", "BREAKING CHANGE" = "Changed" }

@@ -1,0 +1,29 @@
+head 7dc85604ba06bbb9154313d9883ced6b62cf9bdd
+base 437bb247d164d5c5140e5acab1518ba6ea54bb3e
+tree cdf43831327ecf82e2ae872dff7522817e1a2861 (merge-tree)
+changed (1):
+  M web/e2e/chat-ready.mjs
+protected execution changed: none
+pyproject.toml: unchanged
+production (0): 
+repo selector (base scripts/affected.py): e2e lane supervised has no focused lane mapping; advisory jobs build, commits, dependency-review, e2e-supervised, e2e-web-1, e2e-web-2, lint, secrets
+selection: DECLARED, delta vs repository selector:
+  + browser tests/e2e/chat_only_workshop_test.py
+  + browser tests/e2e/chat_profile_color_test.py
+  + browser tests/e2e/connected_read_test.py
+  + browser tests/e2e/generic_agent_chat_test.py
+  + browser tests/e2e/read_set_approval_prototype_test.py
+  + browser tests/e2e/scheduled_connected_test.py
+  + browser tests/e2e/scheduled_notification_review_test.py
+  + browser tests/e2e/source_suggestion_test.py
+  + browser tests/e2e/template_scheduled_test.py
+  + browser tests/e2e/web_ui_test.py::test_mobile_touch_viewports_keep_navigation_settings_and_chat_reachable
+  + python tests/unit/e2e_browser_output_test.py
+  + python tests/unit/standards_test.py
+  (no bounded derivation)
+case_sha256 browser 3c8dffd18661cc3cd41ef99a5ca2a9bcc89f88809bdfda5ac691403e6722aedf (junit sha256 87ad740adcb30ddde85cf7e313490f2b5b83955aac79c1343e7734579818af04, 42 cases, NOT bound to head by Git: confirm its run)
+case_sha256 python ff4e5b2cf60d56420c21c089a9e0a0bb8ee389b8b2aba4d3d7629b93d57afaf0 (junit sha256 c7875b87d977edadd6bd82ee98f8c4d03b0dd76f7e099ddfb81511662bdff5a5, 2010 cases, NOT bound to head by Git: confirm its run)
+manifest_sha256 35dedf6e10585074ead1d897ec25658a96d366f9972f31d011ef0163e1abdfda
+main_manifest_sha256 bb0278eafca321e4961f8ec367bf2faed8dff64060341b228b998f4bd7b61636
+review e2e-details-2/m-437bb247/REVIEW.md eb41f6b2bca91592ca9fc5c12088342508918359cb325108a6e60a7cf84f6c59
+BYTE-EQUAL sha256 a1e454ecec2fe9131557a455e2c417db3a0000f46ba116a0e023b212ee90f2a5

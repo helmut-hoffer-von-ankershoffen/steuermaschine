@@ -1,0 +1,19 @@
+[project]
+name = "steuermaschine-layer"
+version = "0.0.1"
+description = "Example steuermaschine LAYER plugin: sits on another project's plugin and adds one gate, one trap, one step and a wrapper around every step."
+requires-python = ">=3.12"
+dependencies = ["steuermaschine"]
+
+[project.entry-points."steuermaschine.plugins"]
+layer = "steuermaschine_layer.plugin:plugin"
+
+[tool.uv.sources]
+steuermaschine = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/steuermaschine_layer"]

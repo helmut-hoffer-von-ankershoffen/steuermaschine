@@ -1,0 +1,30 @@
+[End-to-end web-2 (ubuntu-24.04) / UNKNOWN STEP]
+  ^[if [ "${RUNNER_OS:-}" = macOS ]; then^[
+  ^[  test "$(uname -m)" = arm64 || { echo '::error::macOS CI requires Apple silicon (arm64)'; exit 1; }^[
+  ^[fi^[
+  >               pytest.fail((run.stderr + "\n" + run.stdout).replace(token, "<redacted-session>"))
+  E               Failed: AssertionError [ERR_ASSERTION]: Lookback seconds must keep the entered value after a render
+  E
+  =========================== short test summary info ============================
+  FAILED tests/e2e/scheduled_connected_test.py::test_mounted_scheduled_connected_read[True-webkit] - Failed: AssertionError [ERR_ASSERTION]: Lookback seconds must keep the entered value after a render
+  
+  make: *** [Makefile:266: test-e2e] Error 2
+  ##[error]Process completed with exit code 2.
+  Post job cleanup.
+[CI OK / UNKNOWN STEP]
+  A required job ended with: failure
+  ##[error]Process completed with exit code 1.
+  Cleaning up orphan processes
+--- last 12 lines ---
+^[    *) echo "A required job ended with: $result"; exit 1 ;;^[
+^[  esac^[
+^[done^[
+shell: /usr/bin/bash -e {0}
+env:
+  UV_FROZEN: 1
+  FORCE_COLOR: 1
+  RESULTS: success skipped success
+##[endgroup]
+A required job ended with: failure
+##[error]Process completed with exit code 1.
+Cleaning up orphan processes

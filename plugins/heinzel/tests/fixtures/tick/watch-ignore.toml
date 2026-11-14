@@ -1,0 +1,5 @@
+action_prefixes = ["NEEDS_REVIEW", "FLAG", "STALE", "OWNER_MSG", "P0", "READY"]
+ignore_prefixes = ["MERGED-VIA", "PUSHED?", "ASSETS:", "KNOWN(", "RELEASE", "DEFERRED"]
+starved_min = 15
+overdue_beads = ["evf","zwd","1zp","43q","t58","7mk","frt","egm","w67","6el","kil","x28","uul","zrj","c2s","xxo","vnd","5ox","d5s"]
+owned_prs = []

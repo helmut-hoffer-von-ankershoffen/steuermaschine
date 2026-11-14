@@ -1,0 +1,22 @@
+# The modules listed here moved verbatim from the old tools (port/move.py verify proves it). They are not
+# reformatted or relinted: a changed line would break the move verifier and hide a real change from review.
+# edge.py and every other file in this directory are checked normally.
+line-length = 160
+
+[lint.per-file-ignores]
+"bead_stamp.py" = ["ALL"]
+"combine_notes.py" = ["ALL"]
+"diff_guard.py" = ["ALL"]
+"flakes_read.py" = ["ALL"]
+"hzlib.py" = ["ALL"]
+"known_failures.py" = ["ALL"]
+"known_main_infra.py" = ["ALL"]
+"main_batch.py" = ["ALL"]
+"main_checkpoint.py" = ["ALL"]
+"main_checkpoint_reader.py" = ["ALL"]
+"merge_gate.py" = ["ALL"]
+"merge_train.py" = ["ALL"]
+"queue_daemon.py" = ["ALL"]
+"release_candidate.py" = ["ALL"]
+"release_flow.py" = ["ALL"]
+"stall.py" = ["ALL"]

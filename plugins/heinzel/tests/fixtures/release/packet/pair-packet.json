@@ -1,0 +1,111 @@
+{
+  "main_manifest": {
+    "base": "eb2c4529f5b48339733aea09bf2ea5e188b06412",
+    "case_sha256": {
+      "python": "d514b0cbaa331663d81928cb91afde5dde5183bde86d7d4582206cd3835b4f4c"
+    },
+    "changed": {
+      "CHANGELOG.md": "M",
+      "agent-skills/.claude-plugin/plugin.json": "M",
+      "copier.yml": "M",
+      "pyproject.toml": "M",
+      "scripts/acceptance/run_acceptance.py": "M",
+      "uv.lock": "M"
+    },
+    "config_blob": "95d243b3be68dd0ec9608c87a6d0867f110ded3d",
+    "diff_sha256": "0c6fd5ef0d344476ff9a1a2830628e4c2e9a1c9e7cde2705ae672091e70d665d",
+    "event": "push",
+    "execution": {
+      ".github/actions/setup-uv/action.yml": "d67b801a40bf31bbd0cad92a30622ea0096bda48",
+      ".github/actions/setup-uv/uv-manifest.json": "ac9143564027053899c9db6c2c3a6fd37017db89",
+      ".github/workflows/ci.yml": "02acab88439b3e53ce2fb6e12aed1c3988a3f143",
+      "scripts/bootstrap-pyyaml.sh": "4fd84e883bfbb9779230984479dc8bd53a98d8d1",
+      "scripts/ci_workload.py": "2de93e9adc97f5974489b99f219903ac3d1b92f0",
+      "scripts/focused_coverage.py": "903c3560a5df610d06f0f58563164343adbcfb43",
+      "scripts/focused_coverage.py.lock": "661c3449f7d12cada9abac76219243365ffcd902",
+      "scripts/focused_job.py": "528f8e424eea98905c853c6e3e393d7bb9490db3",
+      "scripts/focused_plan.py": "c6fb857320e409b199bf4fbb9a31ef9f85fbf82c",
+      "scripts/pyyaml-build-requirements.txt": "1713dbaf1406b5a3b4b2c5eb91125fd180b22e37",
+      "scripts/release_candidate.py": "5c13ec2fc903b5cd7357fe648fbe81a65340928e",
+      "uv.lock": "20295440d11cf5ed4544562d6029f2d36809ce8b"
+    },
+    "mode": "python-coverage-not-applicable",
+    "production": {},
+    "ref": "refs/heads/main",
+    "schema": 1,
+    "selection": {
+      "python": [
+        "tests/unit/release_summary_test.py",
+        "tests/unit/release_version_test.py",
+        "tests/unit/changelog_history_test.py",
+        "tests/unit/release_notes_test.py",
+        "tests/unit/acceptance_test.py::test_installed_metadata_selects_the_canonical_foreground_command",
+        "tests/unit/acceptance_test.py::test_unrecognized_or_wrong_installed_version_never_starts_foreground",
+        "tests/unit/acceptance_test.py::test_missing_installed_metadata_never_starts_foreground",
+        "tests/unit/changelog_intros_test.py",
+        "tests/unit/changelog_combines_test.py",
+        "tests/unit/scripts_test.py"
+      ]
+    },
+    "tree": "60b0c412d30531268208474cc41dadff0b733faa"
+  },
+  "manifest": {
+    "base": "eb2c4529f5b48339733aea09bf2ea5e188b06412",
+    "case_sha256": {
+      "python": "d514b0cbaa331663d81928cb91afde5dde5183bde86d7d4582206cd3835b4f4c"
+    },
+    "changed": {
+      "CHANGELOG.md": "M",
+      "agent-skills/.claude-plugin/plugin.json": "M",
+      "copier.yml": "M",
+      "pyproject.toml": "M",
+      "scripts/acceptance/run_acceptance.py": "M",
+      "uv.lock": "M"
+    },
+    "config_blob": "95d243b3be68dd0ec9608c87a6d0867f110ded3d",
+    "diff_sha256": "0c6fd5ef0d344476ff9a1a2830628e4c2e9a1c9e7cde2705ae672091e70d665d",
+    "event": "pull_request",
+    "execution": {
+      ".github/actions/setup-uv/action.yml": "d67b801a40bf31bbd0cad92a30622ea0096bda48",
+      ".github/actions/setup-uv/uv-manifest.json": "ac9143564027053899c9db6c2c3a6fd37017db89",
+      ".github/workflows/ci.yml": "02acab88439b3e53ce2fb6e12aed1c3988a3f143",
+      "scripts/bootstrap-pyyaml.sh": "4fd84e883bfbb9779230984479dc8bd53a98d8d1",
+      "scripts/ci_workload.py": "2de93e9adc97f5974489b99f219903ac3d1b92f0",
+      "scripts/focused_coverage.py": "903c3560a5df610d06f0f58563164343adbcfb43",
+      "scripts/focused_coverage.py.lock": "661c3449f7d12cada9abac76219243365ffcd902",
+      "scripts/focused_job.py": "528f8e424eea98905c853c6e3e393d7bb9490db3",
+      "scripts/focused_plan.py": "c6fb857320e409b199bf4fbb9a31ef9f85fbf82c",
+      "scripts/pyyaml-build-requirements.txt": "1713dbaf1406b5a3b4b2c5eb91125fd180b22e37",
+      "scripts/release_candidate.py": "5c13ec2fc903b5cd7357fe648fbe81a65340928e",
+      "uv.lock": "20295440d11cf5ed4544562d6029f2d36809ce8b"
+    },
+    "head": "9ffb5d1b130c8b9be73a721be8bd485e39699cab",
+    "mode": "python-coverage-not-applicable",
+    "production": {},
+    "ref": "refs/pull/*/merge",
+    "schema": 1,
+    "selection": {
+      "python": [
+        "tests/unit/release_summary_test.py",
+        "tests/unit/release_version_test.py",
+        "tests/unit/changelog_history_test.py",
+        "tests/unit/release_notes_test.py",
+        "tests/unit/acceptance_test.py::test_installed_metadata_selects_the_canonical_foreground_command",
+        "tests/unit/acceptance_test.py::test_unrecognized_or_wrong_installed_version_never_starts_foreground",
+        "tests/unit/acceptance_test.py::test_missing_installed_metadata_never_starts_foreground",
+        "tests/unit/changelog_intros_test.py",
+        "tests/unit/changelog_combines_test.py",
+        "tests/unit/scripts_test.py"
+      ]
+    },
+    "tree": "60b0c412d30531268208474cc41dadff0b733faa"
+  },
+  "review": {
+    "base": "eb2c4529f5b48339733aea09bf2ea5e188b06412",
+    "head": "9ffb5d1b130c8b9be73a721be8bd485e39699cab",
+    "main_manifest_sha256": "db733d06d9fbacbaebcc7218aea59b9272fd71066a0aa676ffa67e6c8b1b4f01",
+    "manifest_sha256": "f73feebdf55afcef72d633288450c12701e5e50bc1cee1414c7cbf69c81b7dc1",
+    "tree": "60b0c412d30531268208474cc41dadff0b733faa"
+  },
+  "schema": 1
+}

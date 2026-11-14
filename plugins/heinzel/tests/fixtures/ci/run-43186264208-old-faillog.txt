@@ -1,0 +1,27 @@
+[Focused tests (python) / UNKNOWN STEP]
+  ^[if [ "${RUNNER_OS:-}" = macOS ]; then^[
+  ^[  test "$(uname -m)" = arm64 || { echo '::error::macOS CI requires Apple silicon (arm64)'; exit 1; }^[
+  ^[fi^[
+  417 passed in 17.06s
+  Traceback (most recent call last):
+    File ^["/home/runner/work/heinzel/heinzel/scripts/focused_coverage.py"^[, line ^[336^[, in ^[<module>^[
+  ^[scripts.release_candidate.CandidateError^[: ^[PR scoped coverage below the 90% report threshold^[
+  ##[error]Process completed with exit code 1.
+  Post job cleanup.
+[CI OK / UNKNOWN STEP]
+  A required job ended with: failure
+  ##[error]Process completed with exit code 1.
+  Cleaning up orphan processes
+--- last 12 lines ---
+^[    *) echo "A required job ended with: $result"; exit 1 ;;^[
+^[  esac^[
+^[done^[
+shell: /usr/bin/bash -e {0}
+env:
+  UV_FROZEN: 1
+  FORCE_COLOR: 1
+  RESULTS: success skipped success
+##[endgroup]
+A required job ended with: failure
+##[error]Process completed with exit code 1.
+Cleaning up orphan processes

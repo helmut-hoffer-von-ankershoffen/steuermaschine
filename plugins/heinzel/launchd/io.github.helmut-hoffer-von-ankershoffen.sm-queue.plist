@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  The merge queue loop on `sm`. NOT installed by anything in this repository: the coordinator installs it at the
+  switch, after the old job io.github.helmut-hoffer-von-ankershoffen.hz-queue is booted out (both take the same lock,
+  ~/.cache/hz-queue.lock, so two loops never merge at once: the second exits 75 and is started again).
+  `sm daemon queue` is one tick; the loop option makes the core call it every second, and the
+  tick itself decides whether one is due (every 300 s, or at once when the queue file changed or a hold was released).
+  State, lock and log are the files the old loop used: ~/.cache/hz-queue.json, .lock, .log.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>io.github.helmut-hoffer-von-ankershoffen.sm-queue</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/USER/.local/bin/sm</string>
+    <string>daemon</string>
+    <string>queue</string>
+    <string>--loop</string>
+    <string>1</string>
+    <string>--interval</string>
+    <string>300</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>/Users/USER/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>HOME</key><string>/Users/USER</string>
+    <key>HZ_MAIN_BATCH_PUBLISH</key><string>1</string>
+    <key>SM_PROJECT__PLUGIN</key><string>heinzel</string>
+  </dict>
+  <key>WorkingDirectory</key><string>/Users/USER/Code/heinzel-management</string>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>30</integer>
+  <key>StandardOutPath</key><string>/Users/USER/Library/Logs/hz-queue.log</string>
+  <key>StandardErrorPath</key><string>/Users/USER/Library/Logs/hz-queue.log</string>
+</dict>
+</plist>

@@ -1,0 +1,59 @@
+{
+ "exit": 0,
+ "gh_calls": [
+  [
+   "pr",
+   "list",
+   "-R",
+   "helmut-hoffer-von-ankershoffen/heinzel",
+   "--state",
+   "open",
+   "--json",
+   "headRefName"
+  ]
+ ],
+ "gh_rules": {
+  "pr list": [
+   {
+    "headRefName": "release/v0.9.41"
+   },
+   {
+    "headRefName": "feat/x"
+   }
+  ]
+ },
+ "name": "absorb",
+ "old_argv": [
+  "--absorb",
+  "0.9.40",
+  "--reason",
+  "fixed in 0.9.41 by #812"
+ ],
+ "pypi": {},
+ "state_after": {
+  "hz-release/v0.9.40.json": {
+   "absorb_reason": "fixed in 0.9.41 by #812",
+   "absorbed_at": "2026-11-12T22:24:29Z",
+   "absorbed_by": "0.9.41",
+   "acceptance_run": 4321,
+   "accepted": false,
+   "finished": true,
+   "freeze_token": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "version": "0.9.40"
+  },
+  "hz-release/v0.9.40.lock": ""
+ },
+ "state_before": {
+  "hz-release/v0.9.40.json": {
+   "acceptance_run": 4321,
+   "accepted": false,
+   "finished": true,
+   "freeze_token": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "version": "0.9.40"
+  }
+ },
+ "stderr": [],
+ "stdout": [
+  "ABSORBED 0.9.40 by 0.9.41: fixed in 0.9.41 by #812"
+ ]
+}

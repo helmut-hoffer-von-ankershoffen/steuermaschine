@@ -1,0 +1,46 @@
+#!/bin/bash
+# check: the quality gate of this repository, one command. bin/promote runs it first.
+#   bin/check            the whole gate: tests with coverage, then every static gate and the debt ratchet
+#   bin/check --fast     without coverage and the ratchet (what bin/merge-slice runs)
+# Gates (each must be green to merge a slice or to promote):
+#   tests          every test passes (review-gate regressions, tests/test_gate_structure.py, isolation, the json,
+#                  names and settings contracts)
+#   coverage       line+branch >= 90% for the core and for the plugin (full mode only)
+#   help lint      strict, for every project in tests/projects
+#   typos          src, plugins, examples, tests, docs
+#   ruff           core, examples, core tests
+#   mypy strict    the core (src/steuermaschine)
+#   pyright        the core
+#   dead code      vulture >= 80% confidence; tests/vulture_whitelist.py names what is used by reflection
+#   debt ratchet   the plugin's mypy, ruff, environment reads and moved-library coverage may not get worse than
+#                  docs/debt.json (full mode only). They are debt, not gate at zero, because an approved review unit
+#                  and a moved library must not be edited for style.
+set -u
+here="$(cd "$(dirname "$0")/.." && pwd)"; cd "$here" || exit 2
+fast=0; [ "${1:-}" = "--fast" ] && fast=1
+case "${1:-}" in -h|--help) sed -n '2,10p' "$0"; exit 0 ;; esac
+failed=()
+gate() { # gate NAME command...
+  local name="$1"; shift
+  local out; out="$("$@" 2>&1)"; local rc=$?
+  if [ $rc = 0 ]; then echo "check: PASS $name   $(tail -1 <<<"$out" | cut -c1-110)"; else echo "check: FAIL $name"; echo "$out" | tail -${CHECK_TAIL:-15} | sed 's/^/    /'; failed+=("$name"); fi
+}
+uv sync --quiet || { echo "check: uv sync failed"; exit 2; }
+cov=(); [ $fast = 0 ] && cov=(--cov --cov-report= --cov-fail-under=0)
+gate "tests" env -u GITHUB_ACTIONS -u FORCE_COLOR -u PY_COLORS uv run --quiet pytest -q -p no:cacheprovider ${cov[@]+"${cov[@]}"}
+if [ $fast = 0 ]; then
+  gate "coverage core >= 90" uv run --quiet coverage report --include='src/steuermaschine/*' --fail-under=90 --format=total
+  gate "coverage plugin >= 90" uv run --quiet coverage report --include='plugins/heinzel/src/steuermaschine_heinzel/*' --fail-under=90 --format=total
+fi
+for project in tests/projects/*/; do
+  gate "help lint ($(basename "$project"))" env STEUERMASCHINE_PROJECT="$here/$project" XDG_CONFIG_HOME=/nonexistent "$here/.venv/bin/steuermaschine" self lint
+done
+gate "private-term deny-list (tree)" uv run --quiet --script scripts/check_confidentiality.py
+gate "typos" uv run --quiet typos src plugins examples tests docs README.md bin
+gate "ruff (core, examples, core tests)" uv run --quiet ruff check src examples tests
+gate "mypy strict (core)" uv run --quiet mypy -p steuermaschine
+gate "pyright (core)" uv run --quiet pyright
+gate "dead code (vulture)" uv run --quiet vulture src plugins/heinzel/src examples/toy/src examples/layer/src tests/vulture_whitelist.py --min-confidence 80
+[ $fast = 0 ] && gate "debt ratchet (plugin)" uv run --quiet python bin/debt.py --gate
+if [ ${#failed[@]} = 0 ]; then echo "check: PROMOTE GATE GREEN"; else echo "check: PROMOTE GATE RED: ${failed[*]}"; fi
+[ ${#failed[@]} = 0 ]

@@ -1,0 +1,214 @@
+{
+ "statusCheckRollup": [
+  {
+   "__typename": "CheckRun",
+   "completedAt": "2026-11-07T17:54:00Z",
+   "conclusion": "SKIPPED",
+   "detailsUrl": "https://github.com/helmut-hoffer-von-ankershoffen/heinzel/actions/runs/42398276478/job/128481161760",
+   "name": "review",
+   "startedAt": "2026-11-07T17:54:01Z",
+   "status": "COMPLETED",
+   "workflowName": "Claude review"
+  },
+  {
+   "__typename": "CheckRun",
+   "completedAt": "2026-11-07T17:53:45Z",
+   "conclusion": "SKIPPED",
+   "detailsUrl": "https://github.com/helmut-hoffer-von-ankershoffen/heinzel/actions/runs/42398276348/job/128481100844",
+   "name": "Main batch full suite (${{ needs.admission.outputs.base }})",
+   "startedAt": "2026-11-07T17:53:45Z",
+   "status": "COMPLETED",
+   "workflowName": "CI"
+  },
+  {
+   "__typename": "CheckRun",
+   "completedAt": "2026-11-07T17:53:45Z",
+   "conclusion": "SKIPPED",
+   "detailsUrl": "https://github.com/helmut-hoffer-von-ankershoffen/heinzel/actions/runs/42398276348/job/128481100883",
+   "name": "Main batch delegated to ${{ needs.admission.outputs.run }}",
+   "startedAt": "2026-11-07T17:53:45Z",
+   "status": "COMPLETED",
+   "workflowName": "CI"
+  },
+  {
+   "__typename": "CheckRun",
+   "completedAt": "2026-11-07T17:53:33Z",
+   "conclusion": "SKIPPED",
+   "detailsUrl": "https://github.com/helmut-hoffer-von-ankershoffen/heinzel/actions/runs/42398276348/job/128481050419",
+   "name": "Stop after dependency-review failure",
+   "startedAt": "2026-11-07T17:53:33Z",
+   "status": "COMPLETED",
+   "workflowName": "CI"
+  },
+  {
+   "__typename": "CheckRun",
+   "completedAt": "2026-11-07T17:53:59Z",
+   "conclusion": "SKIPPED",
+   "detailsUrl": "https://github.com/helmut-hoffer-von-ankershoffen/heinzel/actions/runs/42398276348/job/128481156586",
+   "name": "Stop after commits failure",
+   "startedAt": "2026-11-07T17:53:59Z",
+   "status": "COMPLETED",
+   "workflowName": "CI"
+  },
+  {
+   "__typename": "CheckRun",
+   "completedAt": "2026-11-07T17:55:24Z",
+   "conclusion": "SKIPPED",
+   "detailsUrl": "https://github.com/helmut-hoffer-von-ankershoffen/heinzel/actions/runs/42398276348/job/128481505814",
+   "name": "Site tests",
+   "startedAt": "2026-11-07T17:55:25Z",
+   "status": "COMPLETED",
+   "workflowName": "CI"
+  },
+  {
+   "__typename": "CheckRun",
+   "completedAt": "2026-11-07T18:08:32Z",
+   "conclusion": "FAILURE",
+   "detailsUrl": "https://github.com/helmut-hoffer-von-ankershoffen/heinzel/actions/runs/42398276348/job/128481504451",
+   "name": "End-to-end web-2 (ubuntu-24.04)",
+   "startedAt": "2026-11-07T18:04:28Z",
+   "status": "COMPLETED",
+   "workflowName": "CI"
+  },
+  {
+   "__typename": "CheckRun",
+   "completedAt": "2026-11-07T17:55:24Z",
+   "conclusion": "SKIPPED",
+   "detailsUrl": "https://github.com/helmut-hoffer-von-ankershoffen/heinzel/actions/runs/42398276348/job/128481505826",
+   "name": "Heinzel Notifier (macOS app)",
+   "startedAt": "2026-11-07T17:55:25Z",
+   "status": "COMPLETED",
+   "workflowName": "CI"
+  },
+  {
+   "__typename": "CheckRun",
+   "completedAt": "2026-11-07T17:55:24Z",
+   "conclusion": "SKIPPED",
+   "detailsUrl": "https://github.com/helmut-hoffer-von-ankershoffen/heinzel/actions/runs/42398276348/job/128481506213",
+   "name": "macOS-specific tests",
+   "startedAt": "2026-11-07T17:55:25Z",
+   "status": "COMPLETED",
+   "workflowName": "CI"
+  },
+  {
+   "__typename": "CheckRun",
+   "completedAt": "2026-11-07T17:55:24Z",
+   "conclusion": "SKIPPED",
+   "detailsUrl": "https://github.com/helmut-hoffer-von-ankershoffen/heinzel/actions/runs/42398276348/job/128481505819",
+   "name": "Optional source plugins",
+   "startedAt": "2026-11-07T17:55:25Z",
+   "status": "COMPLETED",
+   "workflowName": "CI"
+  },
+  {
+   "__typename": "CheckRun",
+   "completedAt": "2026-11-07T17:55:24Z",
+   "conclusion": "SKIPPED",
+   "detailsUrl": "https://github.com/helmut-hoffer-von-ankershoffen/heinzel/actions/runs/42398276348/job/128481505391",
+   "name": "Release candidate source",
+   "startedAt": "2026-11-07T17:55:25Z",
+   "status": "COMPLETED",
+   "workflowName": "CI"
+  },
+  {
+   "__typename": "CheckRun",
+   "completedAt": "2026-11-07T17:56:57Z",
+   "conclusion": "SKIPPED",
+   "detailsUrl": "https://github.com/helmut-hoffer-von-ankershoffen/heinzel/actions/runs/42398276348/job/128481889979",
+   "name": "Stop after secrets failure",
+   "startedAt": "2026-11-07T17:56:58Z",
+   "status": "COMPLETED",
+   "workflowName": "CI"
+  },
+  {
+   "__typename": "CheckRun",
+   "completedAt": "2026-11-07T18:02:13Z",
+   "conclusion": "SKIPPED",
+   "detailsUrl": "https://github.com/helmut-hoffer-von-ankershoffen/heinzel/actions/runs/42398276348/job/128483204416",
+   "name": "Stop after lint failure",
+   "startedAt": "2026-11-07T18:02:14Z",
+   "status": "COMPLETED",
+   "workflowName": "CI"
+  },
+  {
+   "__typename": "CheckRun",
+   "completedAt": "2026-11-07T18:05:13Z",
+   "conclusion": "SKIPPED",
+   "detailsUrl": "https://github.com/helmut-hoffer-von-ankershoffen/heinzel/actions/runs/42398276348/job/128483973226",
+   "name": "Stop after setup failure",
+   "startedAt": "2026-11-07T18:05:13Z",
+   "status": "COMPLETED",
+   "workflowName": "CI"
+  },
+  {
+   "__typename": "CheckRun",
+   "completedAt": "2026-11-07T17:58:08Z",
+   "conclusion": "SKIPPED",
+   "detailsUrl": "https://github.com/helmut-hoffer-von-ankershoffen/heinzel/actions/runs/42398276348/job/128482166280",
+   "name": "Stop after audit failure",
+   "startedAt": "2026-11-07T17:58:08Z",
+   "status": "COMPLETED",
+   "workflowName": "CI"
+  },
+  {
+   "__typename": "CheckRun",
+   "completedAt": "2026-11-07T18:00:45Z",
+   "conclusion": "SKIPPED",
+   "detailsUrl": "https://github.com/helmut-hoffer-von-ankershoffen/heinzel/actions/runs/42398276348/job/128482819435",
+   "name": "Public contract consumers",
+   "startedAt": "2026-11-07T18:00:45Z",
+   "status": "COMPLETED",
+   "workflowName": "CI"
+  },
+  {
+   "__typename": "CheckRun",
+   "completedAt": "2026-11-07T18:00:45Z",
+   "conclusion": "SKIPPED",
+   "detailsUrl": "https://github.com/helmut-hoffer-von-ankershoffen/heinzel/actions/runs/42398276348/job/128482820221",
+   "name": "Source plugin (${{ matrix.name }})",
+   "startedAt": "2026-11-07T18:00:46Z",
+   "status": "COMPLETED",
+   "workflowName": "CI"
+  },
+  {
+   "__typename": "CheckRun",
+   "completedAt": "2026-11-07T18:00:45Z",
+   "conclusion": "SKIPPED",
+   "detailsUrl": "https://github.com/helmut-hoffer-von-ankershoffen/heinzel/actions/runs/42398276348/job/128482820311",
+   "name": "Consumer (${{ matrix.name }})",
+   "startedAt": "2026-11-07T18:00:46Z",
+   "status": "COMPLETED",
+   "workflowName": "CI"
+  },
+  {
+   "__typename": "CheckRun",
+   "completedAt": "2026-11-07T18:17:50Z",
+   "conclusion": "FAILURE",
+   "detailsUrl": "https://github.com/helmut-hoffer-von-ankershoffen/heinzel/actions/runs/42398276348/job/128487154132",
+   "name": "CI OK",
+   "startedAt": "2026-11-07T18:17:46Z",
+   "status": "COMPLETED",
+   "workflowName": "CI"
+  },
+  {
+   "__typename": "CheckRun",
+   "completedAt": "2026-11-07T17:53:57Z",
+   "conclusion": "NEUTRAL",
+   "detailsUrl": "https://github.com/helmut-hoffer-von-ankershoffen/heinzel/runs/128481146063",
+   "name": "Claude review",
+   "startedAt": "2026-11-07T17:53:57Z",
+   "status": "COMPLETED",
+   "workflowName": "CI"
+  },
+  {
+   "__typename": "CheckRun",
+   "completedAt": "2026-11-07T18:19:18Z",
+   "conclusion": "SUCCESS",
+   "detailsUrl": "https://github.com/helmut-hoffer-von-ankershoffen/heinzel/runs/128487566671",
+   "name": "merge-gate",
+   "startedAt": "2026-11-07T18:19:12Z",
+   "status": "COMPLETED",
+   "workflowName": "CI"
+  }
+ ]
+}

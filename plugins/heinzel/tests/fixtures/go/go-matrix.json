@@ -1,0 +1,6242 @@
+[
+ {
+  "now": 1800000000,
+  "state": {
+   "main": {
+    "sha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "remote_heads": {
+    "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "runs": [
+    {
+     "databaseId": 1,
+     "headBranch": "main",
+     "headSha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "status": "completed",
+     "conclusion": "success",
+     "workflowName": "CI",
+     "event": "push"
+    }
+   ],
+   "prs": [],
+   "releases": {
+    "latest": "0.9.39"
+   },
+   "queue": {
+    "queued": [],
+    "freeze": false,
+    "verdict": "nothing queued",
+    "main_runs": [],
+    "added": {}
+   },
+   "train": {
+    "trains": [],
+    "tails": []
+   },
+   "release": {
+    "active": null,
+    "dropped": []
+   },
+   "holds": {
+    "files": [],
+    "prs": {}
+   },
+   "procs": [],
+   "receipts": [],
+   "packets": [],
+   "slots": {},
+   "mini": {
+    "cli": "0.9.39",
+    "live": null,
+    "live_ok": null
+   },
+   "tools": {},
+   "since_tag": {
+    "count": 0
+   }
+  },
+  "decision": {
+   "phase": "idle: nothing to ship",
+   "kind": "idle",
+   "next": null,
+   "next_for": null,
+   "then": null,
+   "trap": "",
+   "waiting": "new work: nothing is in the ship pipeline",
+   "also": [],
+   "side": [],
+   "unknown": [],
+   "alerts": [],
+   "facts": [
+    "main 437bb247 CI green (run 1)",
+    "latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)",
+    "candidate: none",
+    "queue: empty; freeze off; nothing queued",
+    "active runs: none (idle window open)"
+   ]
+  },
+  "text": "PHASE    idle: nothing to ship\nNEXT     nothing runnable now\nWAITING  new work: nothing is in the ship pipeline\nSTATE    main 437bb247 CI green (run 1)\n         latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)\n         candidate: none\n         queue: empty; freeze off; nothing queued\n         active runs: none (idle window open)"
+ },
+ {
+  "now": 1800000000,
+  "state": {
+   "main": {
+    "sha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "remote_heads": {
+    "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "runs": [
+    {
+     "databaseId": 1,
+     "headBranch": "main",
+     "headSha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "status": "completed",
+     "conclusion": "success",
+     "workflowName": "CI",
+     "event": "push"
+    }
+   ],
+   "prs": [],
+   "releases": {
+    "latest": "0.9.39"
+   },
+   "queue": {
+    "queued": [],
+    "freeze": false,
+    "verdict": "nothing queued",
+    "main_runs": [],
+    "added": {}
+   },
+   "train": {
+    "trains": [],
+    "tails": []
+   },
+   "release": {
+    "active": null,
+    "dropped": []
+   },
+   "holds": {
+    "files": [],
+    "prs": {}
+   },
+   "procs": [],
+   "receipts": [],
+   "packets": [],
+   "slots": {},
+   "mini": {
+    "cli": "0.9.39",
+    "live": null,
+    "live_ok": null
+   },
+   "tools": {},
+   "since_tag": {
+    "count": 3
+   }
+  },
+  "decision": {
+   "phase": "main 437bb247 green, 3 commits since v0.9.39, no candidate",
+   "kind": "cut-ready",
+   "next": "hz-train tick --now",
+   "next_for": null,
+   "then": null,
+   "trap": "Consumer pin: a Core change to pyproject dependencies or extras breaks the ten plugin Consumer jobs in the candidate until the plugins are relocked and the Core pin PR is in; check before the cut.",
+   "waiting": null,
+   "also": [],
+   "side": [],
+   "unknown": [],
+   "alerts": [],
+   "facts": [
+    "main 437bb247 CI green (run 1)",
+    "latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)",
+    "candidate: none",
+    "queue: empty; freeze off; nothing queued",
+    "active runs: none (idle window open)"
+   ]
+  },
+  "text": "PHASE    main 437bb247 green, 3 commits since v0.9.39, no candidate\nNEXT     hz-train tick --now\nTRAP     Consumer pin: a Core change to pyproject dependencies or extras breaks the ten plugin Consumer jobs in the candidate until the plugins are relocked and the Core pin PR is in; check before the cut.\nSTATE    main 437bb247 CI green (run 1)\n         latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)\n         candidate: none\n         queue: empty; freeze off; nothing queued\n         active runs: none (idle window open)"
+ },
+ {
+  "now": 1800000000,
+  "state": {
+   "main": {
+    "sha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "remote_heads": {
+    "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "runs": [
+    {
+     "databaseId": 1,
+     "headBranch": "main",
+     "headSha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "status": "completed",
+     "conclusion": "success",
+     "workflowName": "CI",
+     "event": "push"
+    }
+   ],
+   "prs": [],
+   "releases": {
+    "latest": "0.9.39"
+   },
+   "queue": {
+    "queued": [],
+    "freeze": false,
+    "verdict": "nothing queued",
+    "main_runs": [],
+    "added": {}
+   },
+   "train": {
+    "trains": [],
+    "tails": []
+   },
+   "release": {
+    "active": null,
+    "dropped": []
+   },
+   "holds": {
+    "files": [],
+    "prs": {}
+   },
+   "procs": [],
+   "receipts": [],
+   "packets": [],
+   "slots": {},
+   "mini": {
+    "cli": "0.9.39",
+    "live": null,
+    "live_ok": null
+   },
+   "tools": {
+    "hz-rehearse": true
+   },
+   "since_tag": {
+    "count": 3
+   }
+  },
+  "decision": {
+   "phase": "main 437bb247 green, 3 commits since v0.9.39, no candidate",
+   "kind": "cut-ready",
+   "next": "hz-rehearse start --consumers",
+   "next_for": null,
+   "then": null,
+   "trap": "Consumer pin: a Core change to pyproject dependencies or extras breaks the ten plugin Consumer jobs in the candidate until the plugins are relocked and the Core pin PR is in; check before the cut.",
+   "waiting": null,
+   "also": [],
+   "side": [],
+   "unknown": [],
+   "alerts": [],
+   "facts": [
+    "main 437bb247 CI green (run 1)",
+    "latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)",
+    "candidate: none",
+    "queue: empty; freeze off; nothing queued",
+    "active runs: none (idle window open)"
+   ]
+  },
+  "text": "PHASE    main 437bb247 green, 3 commits since v0.9.39, no candidate\nNEXT     hz-rehearse start --consumers\nTRAP     Consumer pin: a Core change to pyproject dependencies or extras breaks the ten plugin Consumer jobs in the candidate until the plugins are relocked and the Core pin PR is in; check before the cut.\nSTATE    main 437bb247 CI green (run 1)\n         latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)\n         candidate: none\n         queue: empty; freeze off; nothing queued\n         active runs: none (idle window open)"
+ },
+ {
+  "now": 1800000000,
+  "state": {
+   "main": {
+    "sha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "remote_heads": {
+    "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "runs": [
+    {
+     "databaseId": 1,
+     "headBranch": "main",
+     "headSha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "status": "completed",
+     "conclusion": "success",
+     "workflowName": "CI",
+     "event": "push"
+    }
+   ],
+   "prs": [],
+   "releases": {
+    "latest": "0.9.39"
+   },
+   "queue": {
+    "queued": [],
+    "freeze": false,
+    "verdict": "nothing queued",
+    "main_runs": [],
+    "added": {}
+   },
+   "train": {
+    "trains": [],
+    "tails": []
+   },
+   "release": {
+    "active": null,
+    "dropped": []
+   },
+   "holds": {
+    "files": [],
+    "prs": {}
+   },
+   "procs": [],
+   "receipts": [],
+   "packets": [
+    {
+     "dir": "/p",
+     "packet": "/p/packet.json",
+     "branch": "fix/e2e",
+     "head": "e9c943810ea75cfad155a431a2f168b2a9559828",
+     "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "core_repo": "/wt",
+     "worktree": "/wt",
+     "review_root": "/root",
+     "prepared": "/p/prepare.out",
+     "prepared_sha256": "9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a",
+     "approved_sha256": null,
+     "apply_refused": null,
+     "nonconsumers": "/n/STUCK.json",
+     "body": "/p/PR-BODY.md",
+     "subject": "test(web): fix",
+     "bead": null
+    }
+   ],
+   "slots": {},
+   "mini": {
+    "cli": "0.9.39",
+    "live": null,
+    "live_ok": null
+   },
+   "tools": {},
+   "since_tag": {
+    "count": 0
+   }
+  },
+  "decision": {
+   "phase": "packet prepared, awaiting independent review: fix/e2e e9c943810",
+   "kind": "packet-prepared",
+   "next": null,
+   "next_for": null,
+   "then": "after the verdict, in an idle window: hz-focused-admit apply /p/packet.json --core-repo /wt --review-root /root --nonconsumers /n/STUCK.json --prepared /p/prepare.out --approved-sha256 9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a",
+   "trap": "The apply review binds the exact bytes: the verdict line must carry the sha256 of the canonical prepared JSON; any re-prepare changes it and needs a new verdict.",
+   "waiting": "an independent reviewer (different model) to end /p/APPLY-REVIEW.md with `VERDICT: APPROVE sha256=9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a`",
+   "also": [],
+   "side": [],
+   "unknown": [],
+   "alerts": [],
+   "facts": [
+    "main 437bb247 CI green (run 1)",
+    "latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)",
+    "candidate: none",
+    "queue: empty; freeze off; nothing queued",
+    "active runs: none (idle window open)"
+   ]
+  },
+  "text": "PHASE    packet prepared, awaiting independent review: fix/e2e e9c943810\nNEXT     nothing runnable now\nWAITING  an independent reviewer (different model) to end /p/APPLY-REVIEW.md with `VERDICT: APPROVE sha256=9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a`\nTHEN     after the verdict, in an idle window: hz-focused-admit apply /p/packet.json --core-repo /wt --review-root /root --nonconsumers /n/STUCK.json --prepared /p/prepare.out --approved-sha256 9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a\nTRAP     The apply review binds the exact bytes: the verdict line must carry the sha256 of the canonical prepared JSON; any re-prepare changes it and needs a new verdict.\nSTATE    main 437bb247 CI green (run 1)\n         latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)\n         candidate: none\n         queue: empty; freeze off; nothing queued\n         active runs: none (idle window open)"
+ },
+ {
+  "now": 1800000000,
+  "state": {
+   "main": {
+    "sha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "remote_heads": {
+    "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "runs": [
+    {
+     "databaseId": 1,
+     "headBranch": "main",
+     "headSha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "status": "completed",
+     "conclusion": "success",
+     "workflowName": "CI",
+     "event": "push"
+    }
+   ],
+   "prs": [],
+   "releases": {
+    "latest": "0.9.39"
+   },
+   "queue": {
+    "queued": [],
+    "freeze": false,
+    "verdict": "nothing queued",
+    "main_runs": [],
+    "added": {}
+   },
+   "train": {
+    "trains": [],
+    "tails": []
+   },
+   "release": {
+    "active": null,
+    "dropped": []
+   },
+   "holds": {
+    "files": [],
+    "prs": {}
+   },
+   "procs": [],
+   "receipts": [],
+   "packets": [
+    {
+     "dir": "/p",
+     "packet": "/p/packet.json",
+     "branch": "fix/e2e",
+     "head": "e9c943810ea75cfad155a431a2f168b2a9559828",
+     "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "core_repo": "/wt",
+     "worktree": "/wt",
+     "review_root": "/root",
+     "prepared": "/p/prepare.out",
+     "prepared_sha256": "9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a",
+     "approved_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+     "apply_refused": null,
+     "nonconsumers": "/n/STUCK.json",
+     "body": "/p/PR-BODY.md",
+     "subject": "test(web): fix",
+     "bead": null
+    }
+   ],
+   "slots": {},
+   "mini": {
+    "cli": "0.9.39",
+    "live": null,
+    "live_ok": null
+   },
+   "tools": {},
+   "since_tag": {
+    "count": 0
+   }
+  },
+  "decision": {
+   "phase": "packet prepared, awaiting independent review: fix/e2e e9c943810",
+   "kind": "packet-prepared",
+   "next": null,
+   "next_for": null,
+   "then": "after the verdict, in an idle window: hz-focused-admit apply /p/packet.json --core-repo /wt --review-root /root --nonconsumers /n/STUCK.json --prepared /p/prepare.out --approved-sha256 9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a",
+   "trap": "The apply review binds the exact bytes: the verdict line must carry the sha256 of the canonical prepared JSON; any re-prepare changes it and needs a new verdict.",
+   "waiting": "an independent reviewer (different model) to end /p/APPLY-REVIEW.md with `VERDICT: APPROVE sha256=9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a`",
+   "also": [],
+   "side": [],
+   "unknown": [],
+   "alerts": [],
+   "facts": [
+    "main 437bb247 CI green (run 1)",
+    "latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)",
+    "candidate: none",
+    "queue: empty; freeze off; nothing queued",
+    "active runs: none (idle window open)"
+   ]
+  },
+  "text": "PHASE    packet prepared, awaiting independent review: fix/e2e e9c943810\nNEXT     nothing runnable now\nWAITING  an independent reviewer (different model) to end /p/APPLY-REVIEW.md with `VERDICT: APPROVE sha256=9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a`\nTHEN     after the verdict, in an idle window: hz-focused-admit apply /p/packet.json --core-repo /wt --review-root /root --nonconsumers /n/STUCK.json --prepared /p/prepare.out --approved-sha256 9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a\nTRAP     The apply review binds the exact bytes: the verdict line must carry the sha256 of the canonical prepared JSON; any re-prepare changes it and needs a new verdict.\nSTATE    main 437bb247 CI green (run 1)\n         latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)\n         candidate: none\n         queue: empty; freeze off; nothing queued\n         active runs: none (idle window open)"
+ },
+ {
+  "now": 1800000000,
+  "state": {
+   "main": {
+    "sha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "remote_heads": {
+    "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "runs": [
+    {
+     "databaseId": 1,
+     "headBranch": "main",
+     "headSha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "status": "completed",
+     "conclusion": "success",
+     "workflowName": "CI",
+     "event": "push"
+    }
+   ],
+   "prs": [],
+   "releases": {
+    "latest": "0.9.39"
+   },
+   "queue": {
+    "queued": [],
+    "freeze": false,
+    "verdict": "nothing queued",
+    "main_runs": [],
+    "added": {}
+   },
+   "train": {
+    "trains": [],
+    "tails": []
+   },
+   "release": {
+    "active": null,
+    "dropped": []
+   },
+   "holds": {
+    "files": [],
+    "prs": {}
+   },
+   "procs": [],
+   "receipts": [],
+   "packets": [
+    {
+     "dir": "/p",
+     "packet": "/p/packet.json",
+     "branch": "fix/e2e",
+     "head": "e9c943810ea75cfad155a431a2f168b2a9559828",
+     "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "core_repo": "/wt",
+     "worktree": "/wt",
+     "review_root": "/root",
+     "prepared": "/p/prepare.out",
+     "prepared_sha256": "9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a",
+     "approved_sha256": "9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a",
+     "apply_refused": null,
+     "nonconsumers": "/n/STUCK.json",
+     "body": "/p/PR-BODY.md",
+     "subject": "test(web): fix",
+     "bead": null
+    }
+   ],
+   "slots": {},
+   "mini": {
+    "cli": "0.9.39",
+    "live": null,
+    "live_ok": null
+   },
+   "tools": {},
+   "since_tag": {
+    "count": 0
+   }
+  },
+  "decision": {
+   "phase": "packet approved, not applied: fix/e2e e9c943810",
+   "kind": "packet-approved",
+   "next": "hz-focused-admit apply /p/packet.json --core-repo /wt --review-root /root --nonconsumers /n/STUCK.json --prepared /p/prepare.out --approved-sha256 9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a",
+   "next_for": null,
+   "then": null,
+   "trap": "Idle window: apply needs zero active Actions runs and takes the queue, train and release locks; start nothing (push, dispatch, rerun) until it reports success.",
+   "waiting": null,
+   "also": [],
+   "side": [],
+   "unknown": [],
+   "alerts": [],
+   "facts": [
+    "main 437bb247 CI green (run 1)",
+    "latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)",
+    "candidate: none",
+    "queue: empty; freeze off; nothing queued",
+    "active runs: none (idle window open)"
+   ]
+  },
+  "text": "PHASE    packet approved, not applied: fix/e2e e9c943810\nNEXT     hz-focused-admit apply /p/packet.json --core-repo /wt --review-root /root --nonconsumers /n/STUCK.json --prepared /p/prepare.out --approved-sha256 9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a\nTRAP     Idle window: apply needs zero active Actions runs and takes the queue, train and release locks; start nothing (push, dispatch, rerun) until it reports success.\nSTATE    main 437bb247 CI green (run 1)\n         latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)\n         candidate: none\n         queue: empty; freeze off; nothing queued\n         active runs: none (idle window open)"
+ },
+ {
+  "now": 1800000000,
+  "state": {
+   "main": {
+    "sha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "remote_heads": {
+    "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "runs": [
+    {
+     "databaseId": 1,
+     "headBranch": "main",
+     "headSha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "status": "completed",
+     "conclusion": "success",
+     "workflowName": "CI",
+     "event": "push"
+    },
+    {
+     "databaseId": 7,
+     "headBranch": "validation/x",
+     "headSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+     "status": "in_progress",
+     "conclusion": null,
+     "workflowName": "Focused job",
+     "event": "push"
+    }
+   ],
+   "prs": [],
+   "releases": {
+    "latest": "0.9.39"
+   },
+   "queue": {
+    "queued": [],
+    "freeze": false,
+    "verdict": "nothing queued",
+    "main_runs": [],
+    "added": {}
+   },
+   "train": {
+    "trains": [],
+    "tails": []
+   },
+   "release": {
+    "active": null,
+    "dropped": []
+   },
+   "holds": {
+    "files": [],
+    "prs": {}
+   },
+   "procs": [],
+   "receipts": [],
+   "packets": [
+    {
+     "dir": "/p",
+     "packet": "/p/packet.json",
+     "branch": "fix/e2e",
+     "head": "e9c943810ea75cfad155a431a2f168b2a9559828",
+     "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "core_repo": "/wt",
+     "worktree": "/wt",
+     "review_root": "/root",
+     "prepared": "/p/prepare.out",
+     "prepared_sha256": "9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a",
+     "approved_sha256": "9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a",
+     "apply_refused": null,
+     "nonconsumers": "/n/STUCK.json",
+     "body": "/p/PR-BODY.md",
+     "subject": "test(web): fix",
+     "bead": null
+    }
+   ],
+   "slots": {},
+   "mini": {
+    "cli": "0.9.39",
+    "live": null,
+    "live_ok": null
+   },
+   "tools": {},
+   "since_tag": {
+    "count": 0
+   }
+  },
+  "decision": {
+   "phase": "packet approved, not applied: fix/e2e e9c943810",
+   "kind": "packet-approved",
+   "next": null,
+   "next_for": null,
+   "then": "hz-focused-admit apply /p/packet.json --core-repo /wt --review-root /root --nonconsumers /n/STUCK.json --prepared /p/prepare.out --approved-sha256 9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a",
+   "trap": "Idle window: apply needs zero active Actions runs and takes the queue, train and release locks; start nothing (push, dispatch, rerun) until it reports success.",
+   "waiting": "idle window: active runs 7 validation/x",
+   "also": [],
+   "side": [],
+   "unknown": [],
+   "alerts": [],
+   "facts": [
+    "main 437bb247 CI green (run 1)",
+    "latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)",
+    "candidate: none",
+    "queue: empty; freeze off; nothing queued",
+    "active runs: 7 Focused job validation/x",
+    "hosted window in flight (1 validation runs): 7 validation/x"
+   ]
+  },
+  "text": "PHASE    packet approved, not applied: fix/e2e e9c943810\nNEXT     nothing runnable now\nWAITING  idle window: active runs 7 validation/x\nTHEN     hz-focused-admit apply /p/packet.json --core-repo /wt --review-root /root --nonconsumers /n/STUCK.json --prepared /p/prepare.out --approved-sha256 9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a\nTRAP     Idle window: apply needs zero active Actions runs and takes the queue, train and release locks; start nothing (push, dispatch, rerun) until it reports success.\nSTATE    main 437bb247 CI green (run 1)\n         latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)\n         candidate: none\n         queue: empty; freeze off; nothing queued\n         active runs: 7 Focused job validation/x\n         hosted window in flight (1 validation runs): 7 validation/x"
+ },
+ {
+  "now": 1800000000,
+  "state": {
+   "main": {
+    "sha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "remote_heads": {
+    "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "runs": {
+    "unknown": "gh timed out"
+   },
+   "prs": [],
+   "releases": {
+    "latest": "0.9.39"
+   },
+   "queue": {
+    "queued": [],
+    "freeze": false,
+    "verdict": "nothing queued",
+    "main_runs": [],
+    "added": {}
+   },
+   "train": {
+    "trains": [],
+    "tails": []
+   },
+   "release": {
+    "active": null,
+    "dropped": []
+   },
+   "holds": {
+    "files": [],
+    "prs": {}
+   },
+   "procs": [],
+   "receipts": [],
+   "packets": [
+    {
+     "dir": "/p",
+     "packet": "/p/packet.json",
+     "branch": "fix/e2e",
+     "head": "e9c943810ea75cfad155a431a2f168b2a9559828",
+     "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "core_repo": "/wt",
+     "worktree": "/wt",
+     "review_root": "/root",
+     "prepared": "/p/prepare.out",
+     "prepared_sha256": "9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a",
+     "approved_sha256": "9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a",
+     "apply_refused": null,
+     "nonconsumers": "/n/STUCK.json",
+     "body": "/p/PR-BODY.md",
+     "subject": "test(web): fix",
+     "bead": null
+    }
+   ],
+   "slots": {},
+   "mini": {
+    "cli": "0.9.39",
+    "live": null,
+    "live_ok": null
+   },
+   "tools": {},
+   "since_tag": {
+    "count": 0
+   }
+  },
+  "decision": {
+   "phase": "packet approved, not applied: fix/e2e e9c943810",
+   "kind": "packet-approved",
+   "next": null,
+   "next_for": null,
+   "then": "hz-focused-admit apply /p/packet.json --core-repo /wt --review-root /root --nonconsumers /n/STUCK.json --prepared /p/prepare.out --approved-sha256 9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a",
+   "trap": "Idle window: apply needs zero active Actions runs and takes the queue, train and release locks; start nothing (push, dispatch, rerun) until it reports success.",
+   "waiting": "the Actions run inventory (unknown): confirm zero active runs before apply",
+   "also": [],
+   "side": [],
+   "unknown": [
+    "runs: gh timed out"
+   ],
+   "alerts": [],
+   "facts": [
+    "main 437bb247 CI none",
+    "latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)",
+    "candidate: none",
+    "queue: empty; freeze off; nothing queued"
+   ]
+  },
+  "text": "PHASE    packet approved, not applied: fix/e2e e9c943810\nNEXT     nothing runnable now\nWAITING  the Actions run inventory (unknown): confirm zero active runs before apply\nTHEN     hz-focused-admit apply /p/packet.json --core-repo /wt --review-root /root --nonconsumers /n/STUCK.json --prepared /p/prepare.out --approved-sha256 9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a\nTRAP     Idle window: apply needs zero active Actions runs and takes the queue, train and release locks; start nothing (push, dispatch, rerun) until it reports success.\nSTATE    main 437bb247 CI none\n         latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)\n         candidate: none\n         queue: empty; freeze off; nothing queued\nUNKNOWN  runs: gh timed out"
+ },
+ {
+  "now": 1800000000,
+  "state": {
+   "main": {
+    "sha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "remote_heads": {
+    "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "runs": [
+    {
+     "databaseId": 1,
+     "headBranch": "main",
+     "headSha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "status": "completed",
+     "conclusion": "success",
+     "workflowName": "CI",
+     "event": "push"
+    }
+   ],
+   "prs": [
+    {
+     "number": 5,
+     "title": "t",
+     "headRefName": "fix/x",
+     "headRefOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "isDraft": false,
+     "mergeStateStatus": "CLEAN",
+     "statusCheckRollup": [
+      {
+       "name": "CI OK",
+       "status": "COMPLETED",
+       "conclusion": "SUCCESS"
+      }
+     ]
+    }
+   ],
+   "releases": {
+    "latest": "0.9.39"
+   },
+   "queue": {
+    "queued": [],
+    "freeze": false,
+    "verdict": "nothing queued",
+    "main_runs": [],
+    "added": {}
+   },
+   "train": {
+    "trains": [],
+    "tails": []
+   },
+   "release": {
+    "active": null,
+    "dropped": []
+   },
+   "holds": {
+    "files": [],
+    "prs": {}
+   },
+   "procs": [
+    {
+     "pid": 9,
+     "etime": "01:00",
+     "kind": "apply",
+     "packet": "/p/packet.json"
+    }
+   ],
+   "receipts": [],
+   "packets": [
+    {
+     "dir": "/p",
+     "packet": "/p/packet.json",
+     "branch": "fix/e2e",
+     "head": "e9c943810ea75cfad155a431a2f168b2a9559828",
+     "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "core_repo": "/wt",
+     "worktree": "/wt",
+     "review_root": "/root",
+     "prepared": "/p/prepare.out",
+     "prepared_sha256": "9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a",
+     "approved_sha256": "9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a",
+     "apply_refused": null,
+     "nonconsumers": "/n/STUCK.json",
+     "body": "/p/PR-BODY.md",
+     "subject": "test(web): fix",
+     "bead": null
+    }
+   ],
+   "slots": {},
+   "mini": {
+    "cli": "0.9.39",
+    "live": null,
+    "live_ok": null
+   },
+   "tools": {},
+   "since_tag": {
+    "count": 0
+   }
+  },
+  "decision": {
+   "phase": "admission apply running (pid 9, 01:00) for /p/packet.json",
+   "kind": "apply-running",
+   "next": null,
+   "next_for": null,
+   "then": null,
+   "trap": "Idle window: apply needs zero active Actions runs and takes the queue, train and release locks; start nothing (push, dispatch, rerun) until it reports success.",
+   "waiting": "apply pid 9 to print its receipt path; then run hz-go again",
+   "also": [
+    "backlog: PR #5 (fix/x aaaaaaaaa) green, not queued -> hz-ship 5"
+   ],
+   "side": [],
+   "unknown": [],
+   "alerts": [],
+   "facts": [
+    "main 437bb247 CI green (run 1)",
+    "latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)",
+    "candidate: none",
+    "queue: empty; freeze off; nothing queued",
+    "active runs: none (idle window open)"
+   ]
+  },
+  "text": "PHASE    admission apply running (pid 9, 01:00) for /p/packet.json\nNEXT     nothing runnable now\nWAITING  apply pid 9 to print its receipt path; then run hz-go again\nTRAP     Idle window: apply needs zero active Actions runs and takes the queue, train and release locks; start nothing (push, dispatch, rerun) until it reports success.\nALSO     backlog: PR #5 (fix/x aaaaaaaaa) green, not queued -> hz-ship 5\nSTATE    main 437bb247 CI green (run 1)\n         latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)\n         candidate: none\n         queue: empty; freeze off; nothing queued\n         active runs: none (idle window open)"
+ },
+ {
+  "now": 1800000000,
+  "state": {
+   "main": {
+    "sha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "remote_heads": {
+    "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "runs": [
+    {
+     "databaseId": 1,
+     "headBranch": "main",
+     "headSha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "status": "completed",
+     "conclusion": "success",
+     "workflowName": "CI",
+     "event": "push"
+    }
+   ],
+   "prs": [],
+   "releases": {
+    "latest": "0.9.39"
+   },
+   "queue": {
+    "queued": [],
+    "freeze": false,
+    "verdict": "nothing queued",
+    "main_runs": [],
+    "added": {}
+   },
+   "train": {
+    "trains": [],
+    "tails": []
+   },
+   "release": {
+    "active": null,
+    "dropped": []
+   },
+   "holds": {
+    "files": [],
+    "prs": {}
+   },
+   "procs": [],
+   "receipts": [],
+   "packets": [
+    {
+     "dir": "/p",
+     "packet": "/p/packet.json",
+     "branch": "fix/e2e",
+     "head": "e9c943810ea75cfad155a431a2f168b2a9559828",
+     "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "core_repo": "/wt",
+     "worktree": "/wt",
+     "review_root": "/root",
+     "prepared": "/p/prepare.out",
+     "prepared_sha256": "9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a",
+     "approved_sha256": "9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a",
+     "apply_refused": "truncated inventory",
+     "nonconsumers": "/n/STUCK.json",
+     "body": "/p/PR-BODY.md",
+     "subject": "test(web): fix",
+     "bead": null
+    }
+   ],
+   "slots": {},
+   "mini": {
+    "cli": "0.9.39",
+    "live": null,
+    "live_ok": null
+   },
+   "tools": {},
+   "since_tag": {
+    "count": 0
+   }
+  },
+  "decision": {
+   "phase": "apply refused for fix/e2e e9c943810: truncated inventory",
+   "kind": "apply-refused",
+   "next": "hz-focused-admit apply /p/packet.json --core-repo /wt --review-root /root --nonconsumers /n/STUCK.json --prepared /p/prepare.out --approved-sha256 9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a",
+   "next_for": null,
+   "then": null,
+   "trap": "Truncated inventory: `prepare`/`apply` can refuse with 'truncated inventory' right after a run ends; that is a retry of the identical command, not a new packet.",
+   "waiting": null,
+   "also": [],
+   "side": [],
+   "unknown": [],
+   "alerts": [],
+   "facts": [
+    "main 437bb247 CI green (run 1)",
+    "latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)",
+    "candidate: none",
+    "queue: empty; freeze off; nothing queued",
+    "active runs: none (idle window open)"
+   ]
+  },
+  "text": "PHASE    apply refused for fix/e2e e9c943810: truncated inventory\nNEXT     hz-focused-admit apply /p/packet.json --core-repo /wt --review-root /root --nonconsumers /n/STUCK.json --prepared /p/prepare.out --approved-sha256 9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a\nTRAP     Truncated inventory: `prepare`/`apply` can refuse with 'truncated inventory' right after a run ends; that is a retry of the identical command, not a new packet.\nSTATE    main 437bb247 CI green (run 1)\n         latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)\n         candidate: none\n         queue: empty; freeze off; nothing queued\n         active runs: none (idle window open)"
+ },
+ {
+  "now": 1800000000,
+  "state": {
+   "main": {
+    "sha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "remote_heads": {
+    "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "runs": [
+    {
+     "databaseId": 1,
+     "headBranch": "main",
+     "headSha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "status": "completed",
+     "conclusion": "success",
+     "workflowName": "CI",
+     "event": "push"
+    }
+   ],
+   "prs": [],
+   "releases": {
+    "latest": "0.9.39"
+   },
+   "queue": {
+    "queued": [],
+    "freeze": false,
+    "verdict": "nothing queued",
+    "main_runs": [],
+    "added": {}
+   },
+   "train": {
+    "trains": [],
+    "tails": []
+   },
+   "release": {
+    "active": null,
+    "dropped": []
+   },
+   "holds": {
+    "files": [],
+    "prs": {}
+   },
+   "procs": [],
+   "receipts": [],
+   "packets": [
+    {
+     "dir": "/p",
+     "packet": "/p/packet.json",
+     "branch": "fix/e2e",
+     "head": "e9c943810ea75cfad155a431a2f168b2a9559828",
+     "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "core_repo": "/wt",
+     "worktree": "/wt",
+     "review_root": "/root",
+     "prepared": "/p/prepare.out",
+     "prepared_sha256": "9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a",
+     "approved_sha256": null,
+     "apply_refused": "main moved",
+     "nonconsumers": "/n/STUCK.json",
+     "body": "/p/PR-BODY.md",
+     "subject": "test(web): fix",
+     "bead": null
+    }
+   ],
+   "slots": {},
+   "mini": {
+    "cli": "0.9.39",
+    "live": null,
+    "live_ok": null
+   },
+   "tools": {},
+   "since_tag": {
+    "count": 0
+   }
+  },
+  "decision": {
+   "phase": "apply refused for fix/e2e e9c943810: main moved",
+   "kind": "apply-refused",
+   "next": null,
+   "next_for": null,
+   "then": null,
+   "trap": "Every correction costs a full cycle (new head, new packet, review, apply, 25 min CI): read every failing check before changing the head, and change it once.",
+   "waiting": "a new packet: the refusal is not a retry case",
+   "also": [],
+   "side": [],
+   "unknown": [],
+   "alerts": [],
+   "facts": [
+    "main 437bb247 CI green (run 1)",
+    "latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)",
+    "candidate: none",
+    "queue: empty; freeze off; nothing queued",
+    "active runs: none (idle window open)"
+   ]
+  },
+  "text": "PHASE    apply refused for fix/e2e e9c943810: main moved\nNEXT     nothing runnable now\nWAITING  a new packet: the refusal is not a retry case\nTRAP     Every correction costs a full cycle (new head, new packet, review, apply, 25 min CI): read every failing check before changing the head, and change it once.\nSTATE    main 437bb247 CI green (run 1)\n         latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)\n         candidate: none\n         queue: empty; freeze off; nothing queued\n         active runs: none (idle window open)"
+ },
+ {
+  "now": 1800000000,
+  "state": {
+   "main": {
+    "sha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "remote_heads": {
+    "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "runs": [
+    {
+     "databaseId": 1,
+     "headBranch": "main",
+     "headSha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "status": "completed",
+     "conclusion": "success",
+     "workflowName": "CI",
+     "event": "push"
+    }
+   ],
+   "prs": [],
+   "releases": {
+    "latest": "0.9.39"
+   },
+   "queue": {
+    "queued": [],
+    "freeze": false,
+    "verdict": "nothing queued",
+    "main_runs": [],
+    "added": {}
+   },
+   "train": {
+    "trains": [],
+    "tails": []
+   },
+   "release": {
+    "active": null,
+    "dropped": []
+   },
+   "holds": {
+    "files": [],
+    "prs": {}
+   },
+   "procs": [],
+   "receipts": [
+    "e9c943810ea75cfad155a431a2f168b2a9559828"
+   ],
+   "packets": [
+    {
+     "dir": "/p",
+     "packet": "/p/packet.json",
+     "branch": "fix/e2e",
+     "head": "e9c943810ea75cfad155a431a2f168b2a9559828",
+     "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "core_repo": "/wt",
+     "worktree": "/wt",
+     "review_root": "/root",
+     "prepared": "/p/prepare.out",
+     "prepared_sha256": "9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a",
+     "approved_sha256": null,
+     "apply_refused": null,
+     "nonconsumers": "/n/STUCK.json",
+     "body": "/p/PR-BODY.md",
+     "subject": "test(web): fix",
+     "bead": null
+    }
+   ],
+   "slots": {},
+   "mini": {
+    "cli": "0.9.39",
+    "live": null,
+    "live_ok": null
+   },
+   "tools": {},
+   "since_tag": {
+    "count": 0
+   }
+  },
+  "decision": {
+   "phase": "fix admitted, not pushed: fix/e2e e9c943810",
+   "kind": "admitted-not-pushed",
+   "next": "cd /wt && hz-pr-open - 'test(web): fix' --body-file /p/PR-BODY.md",
+   "next_for": null,
+   "then": null,
+   "trap": "Validation SHA trap: never dispatch a validation run on the exact SHA that is or will be a PR head; merge-gate and coverage-floor attach to the oldest suite of that SHA and the PR sits BLOCKED with every check green.",
+   "waiting": null,
+   "also": [],
+   "side": [],
+   "unknown": [],
+   "alerts": [],
+   "facts": [
+    "main 437bb247 CI green (run 1)",
+    "latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)",
+    "candidate: none",
+    "queue: empty; freeze off; nothing queued",
+    "active runs: none (idle window open)"
+   ]
+  },
+  "text": "PHASE    fix admitted, not pushed: fix/e2e e9c943810\nNEXT     cd /wt && hz-pr-open - 'test(web): fix' --body-file /p/PR-BODY.md\nTRAP     Validation SHA trap: never dispatch a validation run on the exact SHA that is or will be a PR head; merge-gate and coverage-floor attach to the oldest suite of that SHA and the PR sits BLOCKED with every check green.\nSTATE    main 437bb247 CI green (run 1)\n         latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)\n         candidate: none\n         queue: empty; freeze off; nothing queued\n         active runs: none (idle window open)"
+ },
+ {
+  "now": 1800000000,
+  "state": {
+   "main": {
+    "sha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "remote_heads": {
+    "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "runs": [
+    {
+     "databaseId": 1,
+     "headBranch": "main",
+     "headSha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "status": "completed",
+     "conclusion": "success",
+     "workflowName": "CI",
+     "event": "push"
+    }
+   ],
+   "prs": [],
+   "releases": {
+    "latest": "0.9.39"
+   },
+   "queue": {
+    "queued": [],
+    "freeze": false,
+    "verdict": "nothing queued",
+    "main_runs": [],
+    "added": {}
+   },
+   "train": {
+    "trains": [],
+    "tails": []
+   },
+   "release": {
+    "active": null,
+    "dropped": []
+   },
+   "holds": {
+    "files": [],
+    "prs": {}
+   },
+   "procs": [],
+   "receipts": [
+    "e9c943810ea75cfad155a431a2f168b2a9559828",
+    "cccccccccccccccccccccccccccccccccccccccc"
+   ],
+   "packets": [
+    {
+     "dir": "/p",
+     "packet": "/p/packet.json",
+     "branch": "fix/e2e",
+     "head": "e9c943810ea75cfad155a431a2f168b2a9559828",
+     "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "core_repo": "/wt",
+     "worktree": "/wt",
+     "review_root": "/root",
+     "prepared": "/p/prepare.out",
+     "prepared_sha256": "9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a",
+     "approved_sha256": null,
+     "apply_refused": null,
+     "nonconsumers": "/n/STUCK.json",
+     "body": "/p/PR-BODY.md",
+     "subject": "test(web): fix",
+     "bead": null
+    },
+    {
+     "dir": "/p",
+     "packet": "/p/packet.json",
+     "branch": "fix/b",
+     "head": "cccccccccccccccccccccccccccccccccccccccc",
+     "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "core_repo": "/wt",
+     "worktree": "/wt",
+     "review_root": "/root",
+     "prepared": "/p/prepare.out",
+     "prepared_sha256": "9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a",
+     "approved_sha256": null,
+     "apply_refused": null,
+     "nonconsumers": "/n/STUCK.json",
+     "body": "/p/PR-BODY.md",
+     "subject": "test(web): fix",
+     "bead": null
+    }
+   ],
+   "slots": {},
+   "mini": {
+    "cli": "0.9.39",
+    "live": null,
+    "live_ok": null
+   },
+   "tools": {},
+   "since_tag": {
+    "count": 0
+   }
+  },
+  "decision": {
+   "phase": "fix admitted, not pushed: fix/e2e e9c943810",
+   "kind": "admitted-not-pushed",
+   "next": "cd /wt && hz-pr-open - 'test(web): fix' --body-file /p/PR-BODY.md",
+   "next_for": null,
+   "then": null,
+   "trap": "Validation SHA trap: never dispatch a validation run on the exact SHA that is or will be a PR head; merge-gate and coverage-floor attach to the oldest suite of that SHA and the PR sits BLOCKED with every check green.",
+   "waiting": null,
+   "also": [
+    "fix admitted, not pushed: fix/b ccccccccc"
+   ],
+   "side": [],
+   "unknown": [],
+   "alerts": [],
+   "facts": [
+    "main 437bb247 CI green (run 1)",
+    "latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)",
+    "candidate: none",
+    "queue: empty; freeze off; nothing queued",
+    "active runs: none (idle window open)"
+   ]
+  },
+  "text": "PHASE    fix admitted, not pushed: fix/e2e e9c943810\nNEXT     cd /wt && hz-pr-open - 'test(web): fix' --body-file /p/PR-BODY.md\nTRAP     Validation SHA trap: never dispatch a validation run on the exact SHA that is or will be a PR head; merge-gate and coverage-floor attach to the oldest suite of that SHA and the PR sits BLOCKED with every check green.\nALSO     fix admitted, not pushed: fix/b ccccccccc\nSTATE    main 437bb247 CI green (run 1)\n         latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)\n         candidate: none\n         queue: empty; freeze off; nothing queued\n         active runs: none (idle window open)"
+ },
+ {
+  "now": 1800000000,
+  "state": {
+   "main": {
+    "sha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "remote_heads": {
+    "fix/e2e": "e9c943810ea75cfad155a431a2f168b2a9559828"
+   },
+   "runs": [
+    {
+     "databaseId": 1,
+     "headBranch": "main",
+     "headSha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "status": "completed",
+     "conclusion": "success",
+     "workflowName": "CI",
+     "event": "push"
+    }
+   ],
+   "prs": [
+    {
+     "number": 800,
+     "title": "t",
+     "headRefName": "fix/e2e",
+     "headRefOid": "e9c943810ea75cfad155a431a2f168b2a9559828",
+     "isDraft": false,
+     "mergeStateStatus": "BLOCKED",
+     "statusCheckRollup": [
+      {
+       "name": "CI OK",
+       "status": "IN_PROGRESS",
+       "conclusion": ""
+      }
+     ]
+    }
+   ],
+   "releases": {
+    "latest": "0.9.39"
+   },
+   "queue": {
+    "queued": [],
+    "freeze": false,
+    "verdict": "nothing queued",
+    "main_runs": [],
+    "added": {}
+   },
+   "train": {
+    "trains": [],
+    "tails": []
+   },
+   "release": {
+    "active": null,
+    "dropped": []
+   },
+   "holds": {
+    "files": [],
+    "prs": {}
+   },
+   "procs": [],
+   "receipts": [
+    "e9c943810ea75cfad155a431a2f168b2a9559828"
+   ],
+   "packets": [
+    {
+     "dir": "/p",
+     "packet": "/p/packet.json",
+     "branch": "fix/e2e",
+     "head": "e9c943810ea75cfad155a431a2f168b2a9559828",
+     "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "core_repo": "/wt",
+     "worktree": "/wt",
+     "review_root": "/root",
+     "prepared": "/p/prepare.out",
+     "prepared_sha256": "9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a",
+     "approved_sha256": null,
+     "apply_refused": null,
+     "nonconsumers": "/n/STUCK.json",
+     "body": "/p/PR-BODY.md",
+     "subject": "test(web): fix",
+     "bead": null
+    }
+   ],
+   "slots": {},
+   "mini": {
+    "cli": "0.9.39",
+    "live": null,
+    "live_ok": null
+   },
+   "tools": {},
+   "since_tag": {
+    "count": 0
+   }
+  },
+  "decision": {
+   "phase": "PR #800 (fix/e2e e9c943810) CI running (1 checks pending)",
+   "kind": "pr-pending",
+   "next": null,
+   "next_for": null,
+   "then": null,
+   "trap": "Validation SHA trap: never dispatch a validation run on the exact SHA that is or will be a PR head; merge-gate and coverage-floor attach to the oldest suite of that SHA and the PR sits BLOCKED with every check green.",
+   "waiting": "PR #800 checks (about 25 min)",
+   "also": [],
+   "side": [],
+   "unknown": [],
+   "alerts": [],
+   "facts": [
+    "main 437bb247 CI green (run 1)",
+    "latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)",
+    "candidate: none",
+    "queue: empty; freeze off; nothing queued",
+    "active runs: none (idle window open)"
+   ]
+  },
+  "text": "PHASE    PR #800 (fix/e2e e9c943810) CI running (1 checks pending)\nNEXT     nothing runnable now\nWAITING  PR #800 checks (about 25 min)\nTRAP     Validation SHA trap: never dispatch a validation run on the exact SHA that is or will be a PR head; merge-gate and coverage-floor attach to the oldest suite of that SHA and the PR sits BLOCKED with every check green.\nSTATE    main 437bb247 CI green (run 1)\n         latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)\n         candidate: none\n         queue: empty; freeze off; nothing queued\n         active runs: none (idle window open)"
+ },
+ {
+  "now": 1800000000,
+  "state": {
+   "main": {
+    "sha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "remote_heads": {
+    "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "runs": [
+    {
+     "databaseId": 1,
+     "headBranch": "main",
+     "headSha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "status": "completed",
+     "conclusion": "success",
+     "workflowName": "CI",
+     "event": "push"
+    }
+   ],
+   "prs": [],
+   "releases": {
+    "latest": "0.9.39"
+   },
+   "queue": {
+    "queued": [],
+    "freeze": false,
+    "verdict": "nothing queued",
+    "main_runs": [],
+    "added": {}
+   },
+   "train": {
+    "trains": [],
+    "tails": []
+   },
+   "release": {
+    "active": null,
+    "dropped": []
+   },
+   "holds": {
+    "files": [],
+    "prs": {}
+   },
+   "procs": [],
+   "receipts": [],
+   "packets": [
+    {
+     "dir": "/p",
+     "packet": "/p/packet.json",
+     "branch": "fix/e2e",
+     "head": "e9c943810ea75cfad155a431a2f168b2a9559828",
+     "main": "1111111111111111111111111111111111111111",
+     "core_repo": "/wt",
+     "worktree": "/wt",
+     "review_root": "/root",
+     "prepared": "/p/prepare.out",
+     "prepared_sha256": "9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a",
+     "approved_sha256": null,
+     "apply_refused": null,
+     "nonconsumers": "/n/STUCK.json",
+     "body": "/p/PR-BODY.md",
+     "subject": "test(web): fix",
+     "bead": null
+    }
+   ],
+   "slots": {},
+   "mini": {
+    "cli": "0.9.39",
+    "live": null,
+    "live_ok": null
+   },
+   "tools": {},
+   "since_tag": {
+    "count": 0
+   }
+  },
+  "decision": {
+   "phase": "1 local heads with a packet for an older main, not admitted (rebuild at main 437bb247): fix/e2e",
+   "kind": "packet-stale",
+   "next": "hz-admit-wave preopen --help  # one per branch, with --main 437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+   "next_for": null,
+   "then": null,
+   "trap": "Batch plan trap: pre-open plans prepared at one main are valid for the FIRST merge only; after any merge every other prepared packet is stale and must be rebuilt on the new main.",
+   "waiting": null,
+   "also": [],
+   "side": [],
+   "unknown": [],
+   "alerts": [],
+   "facts": [
+    "main 437bb247 CI green (run 1)",
+    "latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)",
+    "candidate: none",
+    "queue: empty; freeze off; nothing queued",
+    "active runs: none (idle window open)"
+   ]
+  },
+  "text": "PHASE    1 local heads with a packet for an older main, not admitted (rebuild at main 437bb247): fix/e2e\nNEXT     hz-admit-wave preopen --help  # one per branch, with --main 437bb247d164d5c5140e5acab1518ba6ea54bb3e\nTRAP     Batch plan trap: pre-open plans prepared at one main are valid for the FIRST merge only; after any merge every other prepared packet is stale and must be rebuilt on the new main.\nSTATE    main 437bb247 CI green (run 1)\n         latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)\n         candidate: none\n         queue: empty; freeze off; nothing queued\n         active runs: none (idle window open)"
+ },
+ {
+  "now": 1800000000,
+  "state": {
+   "main": {
+    "sha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "remote_heads": {
+    "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "runs": [
+    {
+     "databaseId": 1,
+     "headBranch": "main",
+     "headSha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "status": "completed",
+     "conclusion": "success",
+     "workflowName": "CI",
+     "event": "push"
+    }
+   ],
+   "prs": [
+    {
+     "number": 5,
+     "title": "t",
+     "headRefName": "fix/x",
+     "headRefOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "isDraft": false,
+     "mergeStateStatus": "CLEAN",
+     "statusCheckRollup": [
+      {
+       "name": "CI OK",
+       "status": "COMPLETED",
+       "conclusion": "SUCCESS"
+      }
+     ]
+    }
+   ],
+   "releases": {
+    "latest": "0.9.39"
+   },
+   "queue": {
+    "queued": [],
+    "freeze": false,
+    "verdict": "nothing queued",
+    "main_runs": [],
+    "added": {}
+   },
+   "train": {
+    "trains": [],
+    "tails": []
+   },
+   "release": {
+    "active": null,
+    "dropped": []
+   },
+   "holds": {
+    "files": [],
+    "prs": {}
+   },
+   "procs": [],
+   "receipts": [],
+   "packets": [],
+   "slots": {},
+   "mini": {
+    "cli": "0.9.39",
+    "live": null,
+    "live_ok": null
+   },
+   "tools": {},
+   "since_tag": {
+    "count": 0
+   }
+  },
+  "decision": {
+   "phase": "PR #5 (fix/x aaaaaaaaa) green, not queued",
+   "kind": "pr-green",
+   "next": "hz-ship 5",
+   "next_for": null,
+   "then": null,
+   "trap": "Batch plan trap: pre-open plans prepared at one main are valid for the FIRST merge only; after any merge every other prepared packet is stale and must be rebuilt on the new main.",
+   "waiting": null,
+   "also": [],
+   "side": [],
+   "unknown": [],
+   "alerts": [],
+   "facts": [
+    "main 437bb247 CI green (run 1)",
+    "latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)",
+    "candidate: none",
+    "queue: empty; freeze off; nothing queued",
+    "active runs: none (idle window open)"
+   ]
+  },
+  "text": "PHASE    PR #5 (fix/x aaaaaaaaa) green, not queued\nNEXT     hz-ship 5\nTRAP     Batch plan trap: pre-open plans prepared at one main are valid for the FIRST merge only; after any merge every other prepared packet is stale and must be rebuilt on the new main.\nSTATE    main 437bb247 CI green (run 1)\n         latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)\n         candidate: none\n         queue: empty; freeze off; nothing queued\n         active runs: none (idle window open)"
+ },
+ {
+  "now": 1800000000,
+  "state": {
+   "main": {
+    "sha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "remote_heads": {
+    "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "runs": [
+    {
+     "databaseId": 1,
+     "headBranch": "main",
+     "headSha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "status": "completed",
+     "conclusion": "success",
+     "workflowName": "CI",
+     "event": "push"
+    }
+   ],
+   "prs": [
+    {
+     "number": 5,
+     "title": "t",
+     "headRefName": "fix/x",
+     "headRefOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "isDraft": false,
+     "mergeStateStatus": "CLEAN",
+     "statusCheckRollup": [
+      {
+       "name": "CI OK",
+       "status": "COMPLETED",
+       "conclusion": "SUCCESS"
+      }
+     ]
+    }
+   ],
+   "releases": {
+    "latest": "0.9.39"
+   },
+   "queue": {
+    "queued": [
+     "5"
+    ],
+    "freeze": false,
+    "verdict": "",
+    "main_runs": [],
+    "added": {
+     "5": 1799999880
+    }
+   },
+   "train": {
+    "trains": [],
+    "tails": []
+   },
+   "release": {
+    "active": null,
+    "dropped": []
+   },
+   "holds": {
+    "files": [],
+    "prs": {}
+   },
+   "procs": [],
+   "receipts": [],
+   "packets": [],
+   "slots": {},
+   "mini": {
+    "cli": "0.9.39",
+    "live": null,
+    "live_ok": null
+   },
+   "tools": {},
+   "since_tag": {
+    "count": 0
+   }
+  },
+  "decision": {
+   "phase": "PR #5 (fix/x aaaaaaaaa) green, queued 2 min",
+   "kind": "pr-queued",
+   "next": null,
+   "next_for": null,
+   "then": null,
+   "trap": "Batch plan trap: pre-open plans prepared at one main are valid for the FIRST merge only; after any merge every other prepared packet is stale and must be rebuilt on the new main.",
+   "waiting": "the hz-queue tick (launchd, every 5 min) to merge #5",
+   "also": [],
+   "side": [],
+   "unknown": [],
+   "alerts": [],
+   "facts": [
+    "main 437bb247 CI green (run 1)",
+    "latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)",
+    "candidate: none",
+    "queue: 5; freeze off",
+    "active runs: none (idle window open)"
+   ]
+  },
+  "text": "PHASE    PR #5 (fix/x aaaaaaaaa) green, queued 2 min\nNEXT     nothing runnable now\nWAITING  the hz-queue tick (launchd, every 5 min) to merge #5\nTRAP     Batch plan trap: pre-open plans prepared at one main are valid for the FIRST merge only; after any merge every other prepared packet is stale and must be rebuilt on the new main.\nSTATE    main 437bb247 CI green (run 1)\n         latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)\n         candidate: none\n         queue: 5; freeze off\n         active runs: none (idle window open)"
+ },
+ {
+  "now": 1800000000,
+  "state": {
+   "main": {
+    "sha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "remote_heads": {
+    "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "runs": [
+    {
+     "databaseId": 1,
+     "headBranch": "main",
+     "headSha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "status": "completed",
+     "conclusion": "success",
+     "workflowName": "CI",
+     "event": "push"
+    }
+   ],
+   "prs": [
+    {
+     "number": 5,
+     "title": "t",
+     "headRefName": "fix/x",
+     "headRefOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "isDraft": false,
+     "mergeStateStatus": "CLEAN",
+     "statusCheckRollup": [
+      {
+       "name": "CI OK",
+       "status": "COMPLETED",
+       "conclusion": "SUCCESS"
+      }
+     ]
+    }
+   ],
+   "releases": {
+    "latest": "0.9.39"
+   },
+   "queue": {
+    "queued": [
+     "5"
+    ],
+    "freeze": false,
+    "verdict": "no block recorded",
+    "main_runs": [],
+    "added": {
+     "5": 1799999040
+    }
+   },
+   "train": {
+    "trains": [],
+    "tails": []
+   },
+   "release": {
+    "active": null,
+    "dropped": []
+   },
+   "holds": {
+    "files": [],
+    "prs": {}
+   },
+   "procs": [],
+   "receipts": [],
+   "packets": [],
+   "slots": {},
+   "mini": {
+    "cli": "0.9.39",
+    "live": null,
+    "live_ok": null
+   },
+   "tools": {},
+   "since_tag": {
+    "count": 0
+   }
+  },
+  "decision": {
+   "phase": "PR #5 (fix/x aaaaaaaaa) green and queued for 16 min: STALLED",
+   "kind": "pr-queued-stalled",
+   "next": "hz-why 5",
+   "next_for": null,
+   "then": null,
+   "trap": "Stall trap: `hz-queue why` can say 'no block recorded; the next tick should merge' for hours; a green queued PR unmerged after 15 minutes is an incident, not a wait.",
+   "waiting": null,
+   "also": [],
+   "side": [],
+   "unknown": [],
+   "alerts": [],
+   "facts": [
+    "main 437bb247 CI green (run 1)",
+    "latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)",
+    "candidate: none",
+    "queue: 5; freeze off; no block recorded",
+    "active runs: none (idle window open)"
+   ]
+  },
+  "text": "PHASE    PR #5 (fix/x aaaaaaaaa) green and queued for 16 min: STALLED\nNEXT     hz-why 5\nTRAP     Stall trap: `hz-queue why` can say 'no block recorded; the next tick should merge' for hours; a green queued PR unmerged after 15 minutes is an incident, not a wait.\nSTATE    main 437bb247 CI green (run 1)\n         latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)\n         candidate: none\n         queue: 5; freeze off; no block recorded\n         active runs: none (idle window open)"
+ },
+ {
+  "now": 1800000000,
+  "state": {
+   "main": {
+    "sha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "remote_heads": {
+    "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "runs": [
+    {
+     "databaseId": 1,
+     "headBranch": "main",
+     "headSha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "status": "completed",
+     "conclusion": "success",
+     "workflowName": "CI",
+     "event": "push"
+    }
+   ],
+   "prs": [
+    {
+     "number": 790,
+     "title": "t",
+     "headRefName": "fix/x",
+     "headRefOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "isDraft": false,
+     "mergeStateStatus": "BLOCKED",
+     "statusCheckRollup": [
+      {
+       "name": "CI OK",
+       "status": "COMPLETED",
+       "conclusion": "SUCCESS"
+      }
+     ]
+    }
+   ],
+   "releases": {
+    "latest": "0.9.39"
+   },
+   "queue": {
+    "queued": [],
+    "freeze": false,
+    "verdict": "nothing queued",
+    "main_runs": [],
+    "added": {}
+   },
+   "train": {
+    "trains": [],
+    "tails": []
+   },
+   "release": {
+    "active": null,
+    "dropped": []
+   },
+   "holds": {
+    "files": [],
+    "prs": {}
+   },
+   "procs": [],
+   "receipts": [],
+   "packets": [],
+   "slots": {},
+   "mini": {
+    "cli": "0.9.39",
+    "live": null,
+    "live_ok": null
+   },
+   "tools": {},
+   "since_tag": {
+    "count": 0
+   }
+  },
+  "decision": {
+   "phase": "PR #790 (fix/x aaaaaaaaa) every check green but BLOCKED",
+   "kind": "pr-blocked-green",
+   "next": "hz-why 790",
+   "next_for": null,
+   "then": null,
+   "trap": "Validation SHA trap: never dispatch a validation run on the exact SHA that is or will be a PR head; merge-gate and coverage-floor attach to the oldest suite of that SHA and the PR sits BLOCKED with every check green.",
+   "waiting": null,
+   "also": [],
+   "side": [],
+   "unknown": [],
+   "alerts": [],
+   "facts": [
+    "main 437bb247 CI green (run 1)",
+    "latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)",
+    "candidate: none",
+    "queue: empty; freeze off; nothing queued",
+    "active runs: none (idle window open)"
+   ]
+  },
+  "text": "PHASE    PR #790 (fix/x aaaaaaaaa) every check green but BLOCKED\nNEXT     hz-why 790\nTRAP     Validation SHA trap: never dispatch a validation run on the exact SHA that is or will be a PR head; merge-gate and coverage-floor attach to the oldest suite of that SHA and the PR sits BLOCKED with every check green.\nSTATE    main 437bb247 CI green (run 1)\n         latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)\n         candidate: none\n         queue: empty; freeze off; nothing queued\n         active runs: none (idle window open)"
+ },
+ {
+  "now": 1800000000,
+  "state": {
+   "main": {
+    "sha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "remote_heads": {
+    "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "runs": [
+    {
+     "databaseId": 1,
+     "headBranch": "main",
+     "headSha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "status": "completed",
+     "conclusion": "success",
+     "workflowName": "CI",
+     "event": "push"
+    }
+   ],
+   "prs": [
+    {
+     "number": 1,
+     "title": "t",
+     "headRefName": "fix/x",
+     "headRefOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "isDraft": false,
+     "mergeStateStatus": "CLEAN",
+     "statusCheckRollup": [
+      {
+       "name": "CI OK",
+       "status": "COMPLETED",
+       "conclusion": "FAILURE"
+      }
+     ]
+    },
+    {
+     "number": 2,
+     "title": "t",
+     "headRefName": "fix/x",
+     "headRefOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "isDraft": false,
+     "mergeStateStatus": "DIRTY",
+     "statusCheckRollup": [
+      {
+       "name": "CI OK",
+       "status": "COMPLETED",
+       "conclusion": "SUCCESS"
+      }
+     ]
+    },
+    {
+     "number": 3,
+     "title": "t",
+     "headRefName": "fix/x",
+     "headRefOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "isDraft": false,
+     "mergeStateStatus": "CLEAN",
+     "statusCheckRollup": [
+      {
+       "name": "CI OK",
+       "status": "COMPLETED",
+       "conclusion": "SUCCESS"
+      }
+     ]
+    }
+   ],
+   "releases": {
+    "latest": "0.9.39"
+   },
+   "queue": {
+    "queued": [],
+    "freeze": false,
+    "verdict": "nothing queued",
+    "main_runs": [],
+    "added": {}
+   },
+   "train": {
+    "trains": [],
+    "tails": []
+   },
+   "release": {
+    "active": null,
+    "dropped": []
+   },
+   "holds": {
+    "files": [],
+    "prs": {
+     "3": "wait for owner"
+    }
+   },
+   "procs": [],
+   "receipts": [],
+   "packets": [],
+   "slots": {},
+   "mini": {
+    "cli": "0.9.39",
+    "live": null,
+    "live_ok": null
+   },
+   "tools": {},
+   "since_tag": {
+    "count": 0
+   }
+  },
+  "decision": {
+   "phase": "PR #1 (fix/x aaaaaaaaa) red: CI OK",
+   "kind": "pr-red",
+   "next": "hz-faillog 1",
+   "next_for": null,
+   "then": null,
+   "trap": "Every correction costs a full cycle (new head, new packet, review, apply, 25 min CI): read every failing check before changing the head, and change it once.",
+   "waiting": null,
+   "also": [],
+   "side": [
+    "PR #2 (fix/x aaaaaaaaa) conflicts with main",
+    "PR #3 (fix/x aaaaaaaaa) held: wait for owner"
+   ],
+   "unknown": [],
+   "alerts": [],
+   "facts": [
+    "main 437bb247 CI green (run 1)",
+    "latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)",
+    "candidate: none",
+    "queue: empty; freeze off; nothing queued",
+    "active runs: none (idle window open)"
+   ]
+  },
+  "text": "PHASE    PR #1 (fix/x aaaaaaaaa) red: CI OK\nNEXT     hz-faillog 1\nTRAP     Every correction costs a full cycle (new head, new packet, review, apply, 25 min CI): read every failing check before changing the head, and change it once.\nASIDE    PR #2 (fix/x aaaaaaaaa) conflicts with main\n         PR #3 (fix/x aaaaaaaaa) held: wait for owner\nSTATE    main 437bb247 CI green (run 1)\n         latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)\n         candidate: none\n         queue: empty; freeze off; nothing queued\n         active runs: none (idle window open)"
+ },
+ {
+  "now": 1800000000,
+  "state": {
+   "main": {
+    "sha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "remote_heads": {
+    "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "runs": [
+    {
+     "databaseId": 1,
+     "headBranch": "main",
+     "headSha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "status": "completed",
+     "conclusion": "success",
+     "workflowName": "CI",
+     "event": "push"
+    },
+    {
+     "databaseId": 9,
+     "headBranch": "release/v0.9.40",
+     "headSha": "dddddddddddddddddddddddddddddddddddddddd",
+     "status": "in_progress",
+     "conclusion": null,
+     "workflowName": "CI",
+     "event": "pull_request"
+    }
+   ],
+   "prs": [
+    {
+     "number": 792,
+     "title": "t",
+     "headRefName": "release/v0.9.40",
+     "headRefOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "isDraft": false,
+     "mergeStateStatus": "CLEAN",
+     "statusCheckRollup": [
+      {
+       "name": "CI OK",
+       "status": "COMPLETED",
+       "conclusion": "SUCCESS"
+      }
+     ]
+    },
+    {
+     "number": 5,
+     "title": "t",
+     "headRefName": "fix/x",
+     "headRefOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "isDraft": false,
+     "mergeStateStatus": "CLEAN",
+     "statusCheckRollup": [
+      {
+       "name": "CI OK",
+       "status": "COMPLETED",
+       "conclusion": "SUCCESS"
+      }
+     ]
+    }
+   ],
+   "releases": {
+    "latest": "0.9.39"
+   },
+   "queue": {
+    "queued": [],
+    "freeze": false,
+    "verdict": "nothing queued",
+    "main_runs": [],
+    "added": {}
+   },
+   "train": {
+    "trains": [],
+    "tails": []
+   },
+   "release": {
+    "active": null,
+    "dropped": []
+   },
+   "holds": {
+    "files": [],
+    "prs": {}
+   },
+   "procs": [],
+   "receipts": [],
+   "packets": [],
+   "slots": {},
+   "mini": {
+    "cli": "0.9.39",
+    "live": null,
+    "live_ok": null
+   },
+   "tools": {},
+   "since_tag": {
+    "count": 0
+   }
+  },
+  "decision": {
+   "phase": "candidate v0.9.40 running (PR #792, CI run 9)",
+   "kind": "candidate-running",
+   "next": null,
+   "next_for": null,
+   "then": null,
+   "trap": "First-attempt rule: a failed candidate job is never rerun; read ALL failures first (e2e lanes stop at the first one and hide the rest), fix forward, drop the candidate, cut again.",
+   "waiting": "candidate CI run 9 (about 85 min); watch with hz-release-status",
+   "also": [
+    "backlog: PR #5 (fix/x aaaaaaaaa) green, not queued -> hz-ship 5"
+   ],
+   "side": [],
+   "unknown": [],
+   "alerts": [],
+   "facts": [
+    "main 437bb247 CI green (run 1)",
+    "latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)",
+    "candidate: v0.9.40 running",
+    "queue: empty; freeze off; nothing queued",
+    "active runs: 9 CI release/v0.9.40"
+   ]
+  },
+  "text": "PHASE    candidate v0.9.40 running (PR #792, CI run 9)\nNEXT     nothing runnable now\nWAITING  candidate CI run 9 (about 85 min); watch with hz-release-status\nTRAP     First-attempt rule: a failed candidate job is never rerun; read ALL failures first (e2e lanes stop at the first one and hide the rest), fix forward, drop the candidate, cut again.\nALSO     backlog: PR #5 (fix/x aaaaaaaaa) green, not queued -> hz-ship 5\nSTATE    main 437bb247 CI green (run 1)\n         latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)\n         candidate: v0.9.40 running\n         queue: empty; freeze off; nothing queued\n         active runs: 9 CI release/v0.9.40"
+ },
+ {
+  "now": 1800000000,
+  "state": {
+   "main": {
+    "sha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "remote_heads": {
+    "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "runs": [
+    {
+     "databaseId": 1,
+     "headBranch": "main",
+     "headSha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "status": "completed",
+     "conclusion": "success",
+     "workflowName": "CI",
+     "event": "push"
+    },
+    {
+     "databaseId": 9,
+     "headBranch": "release/v0.9.40",
+     "headSha": "dddddddddddddddddddddddddddddddddddddddd",
+     "status": "completed",
+     "conclusion": "failure",
+     "workflowName": "CI",
+     "event": "pull_request"
+    }
+   ],
+   "prs": [
+    {
+     "number": 792,
+     "title": "t",
+     "headRefName": "release/v0.9.40",
+     "headRefOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "isDraft": false,
+     "mergeStateStatus": "CLEAN",
+     "statusCheckRollup": [
+      {
+       "name": "CI OK",
+       "status": "COMPLETED",
+       "conclusion": "SUCCESS"
+      }
+     ]
+    }
+   ],
+   "releases": {
+    "latest": "0.9.39"
+   },
+   "queue": {
+    "queued": [],
+    "freeze": false,
+    "verdict": "nothing queued",
+    "main_runs": [],
+    "added": {}
+   },
+   "train": {
+    "trains": [],
+    "tails": []
+   },
+   "release": {
+    "active": null,
+    "dropped": []
+   },
+   "holds": {
+    "files": [],
+    "prs": {}
+   },
+   "procs": [],
+   "receipts": [],
+   "packets": [],
+   "slots": {},
+   "mini": {
+    "cli": "0.9.39",
+    "live": null,
+    "live_ok": null
+   },
+   "tools": {},
+   "since_tag": {
+    "count": 0
+   }
+  },
+  "decision": {
+   "phase": "candidate v0.9.40 FAILED (CI run 9: failure)",
+   "kind": "candidate-failed",
+   "next": "hz-ci-cause 9",
+   "next_for": null,
+   "then": "after the cause is fixed forward on main: hz-release 0.9.40 --pause",
+   "trap": "First-attempt rule: a failed candidate job is never rerun; read ALL failures first (e2e lanes stop at the first one and hide the rest), fix forward, drop the candidate, cut again.",
+   "waiting": null,
+   "also": [],
+   "side": [],
+   "unknown": [],
+   "alerts": [],
+   "facts": [
+    "main 437bb247 CI green (run 1)",
+    "latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)",
+    "candidate: v0.9.40 failed",
+    "queue: empty; freeze off; nothing queued",
+    "active runs: none (idle window open)"
+   ]
+  },
+  "text": "PHASE    candidate v0.9.40 FAILED (CI run 9: failure)\nNEXT     hz-ci-cause 9\nTHEN     after the cause is fixed forward on main: hz-release 0.9.40 --pause\nTRAP     First-attempt rule: a failed candidate job is never rerun; read ALL failures first (e2e lanes stop at the first one and hide the rest), fix forward, drop the candidate, cut again.\nSTATE    main 437bb247 CI green (run 1)\n         latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)\n         candidate: v0.9.40 failed\n         queue: empty; freeze off; nothing queued\n         active runs: none (idle window open)"
+ },
+ {
+  "now": 1800000000,
+  "state": {
+   "main": {
+    "sha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "remote_heads": {
+    "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "runs": [
+    {
+     "databaseId": 1,
+     "headBranch": "main",
+     "headSha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "status": "completed",
+     "conclusion": "success",
+     "workflowName": "CI",
+     "event": "push"
+    },
+    {
+     "databaseId": 9,
+     "headBranch": "release/v0.9.40",
+     "headSha": "dddddddddddddddddddddddddddddddddddddddd",
+     "status": "completed",
+     "conclusion": "failure",
+     "workflowName": "CI",
+     "event": "pull_request"
+    }
+   ],
+   "prs": [
+    {
+     "number": 792,
+     "title": "t",
+     "headRefName": "release/v0.9.40",
+     "headRefOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "isDraft": false,
+     "mergeStateStatus": "CLEAN",
+     "statusCheckRollup": [
+      {
+       "name": "CI OK",
+       "status": "COMPLETED",
+       "conclusion": "SUCCESS"
+      }
+     ]
+    }
+   ],
+   "releases": {
+    "latest": "0.9.39"
+   },
+   "queue": {
+    "queued": [],
+    "freeze": false,
+    "verdict": "nothing queued",
+    "main_runs": [],
+    "added": {}
+   },
+   "train": {
+    "trains": [],
+    "tails": []
+   },
+   "release": {
+    "active": null,
+    "dropped": []
+   },
+   "holds": {
+    "files": [],
+    "prs": {}
+   },
+   "procs": [],
+   "receipts": [],
+   "packets": [],
+   "slots": {},
+   "mini": {
+    "cli": "0.9.39",
+    "live": null,
+    "live_ok": null
+   },
+   "tools": {
+    "drop_candidate": true
+   },
+   "since_tag": {
+    "count": 0
+   }
+  },
+  "decision": {
+   "phase": "candidate v0.9.40 FAILED (CI run 9: failure)",
+   "kind": "candidate-failed",
+   "next": "hz-ci-cause 9",
+   "next_for": null,
+   "then": "after the cause is fixed forward on main: hz-release 0.9.40 --drop-candidate",
+   "trap": "First-attempt rule: a failed candidate job is never rerun; read ALL failures first (e2e lanes stop at the first one and hide the rest), fix forward, drop the candidate, cut again.",
+   "waiting": null,
+   "also": [],
+   "side": [],
+   "unknown": [],
+   "alerts": [],
+   "facts": [
+    "main 437bb247 CI green (run 1)",
+    "latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)",
+    "candidate: v0.9.40 failed",
+    "queue: empty; freeze off; nothing queued",
+    "active runs: none (idle window open)"
+   ]
+  },
+  "text": "PHASE    candidate v0.9.40 FAILED (CI run 9: failure)\nNEXT     hz-ci-cause 9\nTHEN     after the cause is fixed forward on main: hz-release 0.9.40 --drop-candidate\nTRAP     First-attempt rule: a failed candidate job is never rerun; read ALL failures first (e2e lanes stop at the first one and hide the rest), fix forward, drop the candidate, cut again.\nSTATE    main 437bb247 CI green (run 1)\n         latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)\n         candidate: v0.9.40 failed\n         queue: empty; freeze off; nothing queued\n         active runs: none (idle window open)"
+ },
+ {
+  "now": 1800000000,
+  "state": {
+   "main": {
+    "sha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "remote_heads": {
+    "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "runs": [
+    {
+     "databaseId": 1,
+     "headBranch": "main",
+     "headSha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "status": "completed",
+     "conclusion": "success",
+     "workflowName": "CI",
+     "event": "push"
+    },
+    {
+     "databaseId": 9,
+     "headBranch": "release/v0.9.40",
+     "headSha": "dddddddddddddddddddddddddddddddddddddddd",
+     "status": "completed",
+     "conclusion": "cancelled",
+     "workflowName": "CI",
+     "event": "pull_request"
+    }
+   ],
+   "prs": [],
+   "releases": {
+    "latest": "0.9.39"
+   },
+   "queue": {
+    "queued": [],
+    "freeze": false,
+    "verdict": "nothing queued",
+    "main_runs": [],
+    "added": {}
+   },
+   "train": {
+    "trains": [],
+    "tails": []
+   },
+   "release": {
+    "active": null,
+    "dropped": []
+   },
+   "holds": {
+    "files": [],
+    "prs": {}
+   },
+   "procs": [],
+   "receipts": [],
+   "packets": [],
+   "slots": {},
+   "mini": {
+    "cli": "0.9.39",
+    "live": null,
+    "live_ok": null
+   },
+   "tools": {},
+   "since_tag": {
+    "count": 0
+   }
+  },
+  "decision": {
+   "phase": "idle: nothing to ship",
+   "kind": "idle",
+   "next": null,
+   "next_for": null,
+   "then": null,
+   "trap": "",
+   "waiting": "new work: nothing is in the ship pipeline",
+   "also": [],
+   "side": [],
+   "unknown": [],
+   "alerts": [],
+   "facts": [
+    "main 437bb247 CI green (run 1)",
+    "latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)",
+    "candidate: none",
+    "queue: empty; freeze off; nothing queued",
+    "active runs: none (idle window open)"
+   ]
+  },
+  "text": "PHASE    idle: nothing to ship\nNEXT     nothing runnable now\nWAITING  new work: nothing is in the ship pipeline\nSTATE    main 437bb247 CI green (run 1)\n         latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)\n         candidate: none\n         queue: empty; freeze off; nothing queued\n         active runs: none (idle window open)"
+ },
+ {
+  "now": 1800000000,
+  "state": {
+   "main": {
+    "sha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "remote_heads": {
+    "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "runs": [
+    {
+     "databaseId": 1,
+     "headBranch": "main",
+     "headSha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "status": "completed",
+     "conclusion": "failure",
+     "workflowName": "CI",
+     "event": "push"
+    }
+   ],
+   "prs": [
+    {
+     "number": 5,
+     "title": "t",
+     "headRefName": "fix/x",
+     "headRefOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "isDraft": false,
+     "mergeStateStatus": "CLEAN",
+     "statusCheckRollup": [
+      {
+       "name": "CI OK",
+       "status": "COMPLETED",
+       "conclusion": "SUCCESS"
+      }
+     ]
+    }
+   ],
+   "releases": {
+    "latest": "0.9.39"
+   },
+   "queue": {
+    "queued": [],
+    "freeze": false,
+    "verdict": "nothing queued",
+    "main_runs": [],
+    "added": {}
+   },
+   "train": {
+    "trains": [],
+    "tails": []
+   },
+   "release": {
+    "active": null,
+    "dropped": []
+   },
+   "holds": {
+    "files": [],
+    "prs": {}
+   },
+   "procs": [],
+   "receipts": [],
+   "packets": [],
+   "slots": {},
+   "mini": {
+    "cli": "0.9.39",
+    "live": null,
+    "live_ok": null
+   },
+   "tools": {},
+   "since_tag": {
+    "count": 0
+   }
+  },
+  "decision": {
+   "phase": "main 437bb247 is RED (CI run 1: failure)",
+   "kind": "main-red",
+   "next": "hz-main-evidence",
+   "next_for": null,
+   "then": null,
+   "trap": "Red main: read the failing job first, a rerun is never the fix; nothing merges and nothing is cut onto a red main.",
+   "waiting": null,
+   "also": [
+    "backlog: PR #5 (fix/x aaaaaaaaa) green, not queued -> hz-ship 5"
+   ],
+   "side": [],
+   "unknown": [],
+   "alerts": [],
+   "facts": [
+    "main 437bb247 CI red (run 1)",
+    "latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)",
+    "candidate: none",
+    "queue: empty; freeze off; nothing queued",
+    "active runs: none (idle window open)"
+   ]
+  },
+  "text": "PHASE    main 437bb247 is RED (CI run 1: failure)\nNEXT     hz-main-evidence\nTRAP     Red main: read the failing job first, a rerun is never the fix; nothing merges and nothing is cut onto a red main.\nALSO     backlog: PR #5 (fix/x aaaaaaaaa) green, not queued -> hz-ship 5\nSTATE    main 437bb247 CI red (run 1)\n         latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)\n         candidate: none\n         queue: empty; freeze off; nothing queued\n         active runs: none (idle window open)"
+ },
+ {
+  "now": 1800000000,
+  "state": {
+   "main": {
+    "sha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "remote_heads": {
+    "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "runs": [
+    {
+     "databaseId": 1,
+     "headBranch": "main",
+     "headSha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "status": "completed",
+     "conclusion": "success",
+     "workflowName": "CI",
+     "event": "push"
+    }
+   ],
+   "prs": [],
+   "releases": {
+    "latest": "0.9.40"
+   },
+   "queue": {
+    "queued": [],
+    "freeze": false,
+    "verdict": "nothing queued",
+    "main_runs": [],
+    "added": {}
+   },
+   "train": {
+    "trains": [],
+    "tails": []
+   },
+   "release": {
+    "active": null,
+    "dropped": []
+   },
+   "holds": {
+    "files": [],
+    "prs": {}
+   },
+   "procs": [],
+   "receipts": [],
+   "packets": [],
+   "slots": {},
+   "mini": {
+    "cli": "0.9.39",
+    "live": null,
+    "live_ok": null
+   },
+   "tools": {},
+   "since_tag": {
+    "count": 0
+   }
+  },
+  "decision": {
+   "phase": "v0.9.40 published, Mini still on 0.9.39: not live-verified",
+   "kind": "published-not-live",
+   "next": "hz-verify-mini --minimum 0.9.40",
+   "next_for": null,
+   "then": null,
+   "trap": "Merged != published != live: a pinned uv receipt lets the updater exit 0 without installing; only hz-verify-mini proves the Mini runs the version.",
+   "waiting": null,
+   "also": [],
+   "side": [],
+   "unknown": [],
+   "alerts": [],
+   "facts": [
+    "main 437bb247 CI green (run 1)",
+    "latest release v0.9.40; Mini CLI 0.9.39 (live not probed; --live)",
+    "candidate: none",
+    "queue: empty; freeze off; nothing queued",
+    "active runs: none (idle window open)"
+   ]
+  },
+  "text": "PHASE    v0.9.40 published, Mini still on 0.9.39: not live-verified\nNEXT     hz-verify-mini --minimum 0.9.40\nTRAP     Merged != published != live: a pinned uv receipt lets the updater exit 0 without installing; only hz-verify-mini proves the Mini runs the version.\nSTATE    main 437bb247 CI green (run 1)\n         latest release v0.9.40; Mini CLI 0.9.39 (live not probed; --live)\n         candidate: none\n         queue: empty; freeze off; nothing queued\n         active runs: none (idle window open)"
+ },
+ {
+  "now": 1800000000,
+  "state": {
+   "main": {
+    "unknown": "boom"
+   },
+   "remote_heads": {
+    "unknown": "boom"
+   },
+   "runs": {
+    "unknown": "boom"
+   },
+   "prs": {
+    "unknown": "boom"
+   },
+   "releases": {
+    "unknown": "boom"
+   },
+   "queue": {
+    "unknown": "boom"
+   },
+   "train": {
+    "unknown": "boom"
+   },
+   "release": {
+    "unknown": "boom"
+   },
+   "holds": {
+    "unknown": "boom"
+   },
+   "procs": {
+    "unknown": "boom"
+   },
+   "receipts": {
+    "unknown": "boom"
+   },
+   "packets": {
+    "unknown": "boom"
+   },
+   "slots": {
+    "unknown": "boom"
+   },
+   "mini": {
+    "unknown": "boom"
+   },
+   "tools": {
+    "unknown": "boom"
+   },
+   "since_tag": {
+    "unknown": "boom"
+   }
+  },
+  "decision": {
+   "phase": "idle: main CI state unknown",
+   "kind": "idle",
+   "next": null,
+   "next_for": null,
+   "then": null,
+   "trap": "",
+   "waiting": "new work: nothing is in the ship pipeline",
+   "also": [],
+   "side": [],
+   "unknown": [
+    "main: boom",
+    "remote_heads: boom",
+    "runs: boom",
+    "prs: boom",
+    "releases: boom",
+    "queue: boom",
+    "train: boom",
+    "release: boom",
+    "holds: boom",
+    "procs: boom",
+    "receipts: boom",
+    "packets: boom",
+    "slots: boom",
+    "mini: boom",
+    "tools: boom",
+    "since_tag: boom"
+   ],
+   "alerts": [],
+   "facts": [
+    "main: unknown: boom",
+    "candidate: none"
+   ]
+  },
+  "text": "PHASE    idle: main CI state unknown\nNEXT     nothing runnable now\nWAITING  new work: nothing is in the ship pipeline\nSTATE    main: unknown: boom\n         candidate: none\nUNKNOWN  main: boom\n         remote_heads: boom\n         runs: boom\n         prs: boom\n         releases: boom\n         queue: boom\n         train: boom\n         release: boom\n         holds: boom\n         procs: boom\n         receipts: boom\n         packets: boom\n         slots: boom\n         mini: boom\n         tools: boom\n         since_tag: boom"
+ },
+ {
+  "now": 1800000000,
+  "state": {
+   "main": {
+    "unknown": "gh exited 1: rate limit"
+   },
+   "remote_heads": {
+    "unknown": "gh exited 1: rate limit"
+   },
+   "runs": {
+    "unknown": "gh exited 1: rate limit"
+   },
+   "prs": {
+    "unknown": "gh exited 1: rate limit"
+   },
+   "releases": {
+    "unknown": "gh exited 1: rate limit"
+   },
+   "queue": {
+    "unknown": "gh exited 1: rate limit"
+   },
+   "train": {
+    "unknown": "gh exited 1: rate limit"
+   },
+   "release": {
+    "unknown": "gh exited 1: rate limit"
+   },
+   "holds": {
+    "unknown": "gh exited 1: rate limit"
+   },
+   "procs": {
+    "unknown": "gh exited 1: rate limit"
+   },
+   "receipts": {
+    "unknown": "gh exited 1: rate limit"
+   },
+   "packets": {
+    "unknown": "gh exited 1: rate limit"
+   },
+   "slots": {
+    "unknown": "gh exited 1: rate limit"
+   },
+   "mini": {
+    "unknown": "gh exited 1: rate limit"
+   },
+   "tools": {
+    "unknown": "gh exited 1: rate limit"
+   },
+   "alarms": {
+    "unknown": "gh exited 1: rate limit"
+   },
+   "rehearse": {
+    "unknown": "gh exited 1: rate limit"
+   },
+   "focus": {
+    "unknown": "gh exited 1: rate limit"
+   },
+   "since_tag": {
+    "unknown": "needs main and the latest release"
+   }
+  },
+  "decision": {
+   "phase": "idle: main CI state unknown",
+   "kind": "idle",
+   "next": null,
+   "next_for": null,
+   "then": null,
+   "trap": "",
+   "waiting": "new work: nothing is in the ship pipeline",
+   "also": [],
+   "side": [],
+   "unknown": [
+    "main: gh exited 1: rate limit",
+    "remote_heads: gh exited 1: rate limit",
+    "runs: gh exited 1: rate limit",
+    "prs: gh exited 1: rate limit",
+    "releases: gh exited 1: rate limit",
+    "queue: gh exited 1: rate limit",
+    "train: gh exited 1: rate limit",
+    "release: gh exited 1: rate limit",
+    "holds: gh exited 1: rate limit",
+    "procs: gh exited 1: rate limit",
+    "receipts: gh exited 1: rate limit",
+    "packets: gh exited 1: rate limit",
+    "slots: gh exited 1: rate limit",
+    "mini: gh exited 1: rate limit",
+    "tools: gh exited 1: rate limit",
+    "alarms: gh exited 1: rate limit",
+    "rehearse: gh exited 1: rate limit",
+    "focus: gh exited 1: rate limit",
+    "since_tag: needs main and the latest release"
+   ],
+   "alerts": [],
+   "facts": [
+    "main: unknown: gh exited 1: rate limit",
+    "candidate: none"
+   ]
+  },
+  "text": "PHASE    idle: main CI state unknown\nNEXT     nothing runnable now\nWAITING  new work: nothing is in the ship pipeline\nSTATE    main: unknown: gh exited 1: rate limit\n         candidate: none\nUNKNOWN  main: gh exited 1: rate limit\n         remote_heads: gh exited 1: rate limit\n         runs: gh exited 1: rate limit\n         prs: gh exited 1: rate limit\n         releases: gh exited 1: rate limit\n         queue: gh exited 1: rate limit\n         train: gh exited 1: rate limit\n         release: gh exited 1: rate limit\n         holds: gh exited 1: rate limit\n         procs: gh exited 1: rate limit\n         receipts: gh exited 1: rate limit\n         packets: gh exited 1: rate limit\n         slots: gh exited 1: rate limit\n         mini: gh exited 1: rate limit\n         tools: gh exited 1: rate limit\n         alarms: gh exited 1: rate limit\n         rehearse: gh exited 1: rate limit\n         focus: gh exited 1: rate limit\n         since_tag: needs main and the latest release"
+ },
+ {
+  "now": 1800000000,
+  "state": {
+   "main": {
+    "sha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "remote_heads": {
+    "fix/e2e": "e9c943810ea75cfad155a431a2f168b2a9559828"
+   },
+   "runs": [
+    {
+     "databaseId": 1,
+     "headBranch": "main",
+     "headSha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "status": "completed",
+     "conclusion": "success",
+     "workflowName": "CI",
+     "event": "push"
+    }
+   ],
+   "prs": [
+    {
+     "number": 690,
+     "title": "t",
+     "headRefName": "fix/old",
+     "headRefOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+     "isDraft": false,
+     "mergeStateStatus": "BLOCKED",
+     "statusCheckRollup": [
+      {
+       "name": "CI OK",
+       "status": "COMPLETED",
+       "conclusion": "SUCCESS"
+      }
+     ]
+    },
+    {
+     "number": 795,
+     "title": "t",
+     "headRefName": "fix/e2e",
+     "headRefOid": "e9c943810ea75cfad155a431a2f168b2a9559828",
+     "isDraft": false,
+     "mergeStateStatus": "BLOCKED",
+     "statusCheckRollup": [
+      {
+       "name": "CI OK",
+       "status": "IN_PROGRESS",
+       "conclusion": ""
+      }
+     ]
+    }
+   ],
+   "releases": {
+    "latest": "0.9.39"
+   },
+   "queue": {
+    "queued": [],
+    "freeze": false,
+    "verdict": "nothing queued",
+    "main_runs": [],
+    "added": {}
+   },
+   "train": {
+    "trains": [],
+    "tails": []
+   },
+   "release": {
+    "active": null,
+    "dropped": []
+   },
+   "holds": {
+    "files": [],
+    "prs": {}
+   },
+   "procs": [],
+   "receipts": [
+    "e9c943810ea75cfad155a431a2f168b2a9559828"
+   ],
+   "packets": [
+    {
+     "dir": "/p",
+     "packet": "/p/packet.json",
+     "branch": "fix/e2e",
+     "head": "e9c943810ea75cfad155a431a2f168b2a9559828",
+     "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "core_repo": "/wt",
+     "worktree": "/wt",
+     "review_root": "/root",
+     "prepared": "/p/prepare.out",
+     "prepared_sha256": "9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a",
+     "approved_sha256": null,
+     "apply_refused": null,
+     "nonconsumers": "/n/STUCK.json",
+     "body": "/p/PR-BODY.md",
+     "subject": "test(web): fix",
+     "bead": null
+    }
+   ],
+   "slots": {},
+   "mini": {
+    "cli": "0.9.39",
+    "live": null,
+    "live_ok": null
+   },
+   "tools": {},
+   "since_tag": {
+    "count": 0
+   }
+  },
+  "decision": {
+   "phase": "PR #795 (fix/e2e e9c943810) CI running (1 checks pending)",
+   "kind": "pr-pending",
+   "next": null,
+   "next_for": null,
+   "then": null,
+   "trap": "Validation SHA trap: never dispatch a validation run on the exact SHA that is or will be a PR head; merge-gate and coverage-floor attach to the oldest suite of that SHA and the PR sits BLOCKED with every check green.",
+   "waiting": "PR #795 checks (about 25 min)",
+   "also": [
+    "backlog: PR #690 (fix/old bbbbbbbbb) every check green but BLOCKED -> hz-why 690"
+   ],
+   "side": [],
+   "unknown": [],
+   "alerts": [],
+   "facts": [
+    "main 437bb247 CI green (run 1)",
+    "latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)",
+    "candidate: none",
+    "queue: empty; freeze off; nothing queued",
+    "active runs: none (idle window open)"
+   ]
+  },
+  "text": "PHASE    PR #795 (fix/e2e e9c943810) CI running (1 checks pending)\nNEXT     nothing runnable now\nWAITING  PR #795 checks (about 25 min)\nTRAP     Validation SHA trap: never dispatch a validation run on the exact SHA that is or will be a PR head; merge-gate and coverage-floor attach to the oldest suite of that SHA and the PR sits BLOCKED with every check green.\nALSO     backlog: PR #690 (fix/old bbbbbbbbb) every check green but BLOCKED -> hz-why 690\nSTATE    main 437bb247 CI green (run 1)\n         latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)\n         candidate: none\n         queue: empty; freeze off; nothing queued\n         active runs: none (idle window open)"
+ },
+ {
+  "now": 1800000000,
+  "state": {
+   "main": {
+    "sha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "remote_heads": {
+    "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "runs": [
+    {
+     "databaseId": 1,
+     "headBranch": "main",
+     "headSha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "status": "completed",
+     "conclusion": "success",
+     "workflowName": "CI",
+     "event": "push"
+    }
+   ],
+   "prs": [
+    {
+     "number": 690,
+     "title": "t",
+     "headRefName": "fix/old",
+     "headRefOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+     "isDraft": false,
+     "mergeStateStatus": "BLOCKED",
+     "statusCheckRollup": [
+      {
+       "name": "CI OK",
+       "status": "COMPLETED",
+       "conclusion": "SUCCESS"
+      }
+     ]
+    }
+   ],
+   "releases": {
+    "latest": "0.9.39"
+   },
+   "queue": {
+    "queued": [],
+    "freeze": false,
+    "verdict": "nothing queued",
+    "main_runs": [],
+    "added": {}
+   },
+   "train": {
+    "trains": [],
+    "tails": []
+   },
+   "release": {
+    "active": null,
+    "dropped": []
+   },
+   "holds": {
+    "files": [],
+    "prs": {}
+   },
+   "procs": [],
+   "receipts": [],
+   "packets": [],
+   "slots": {},
+   "mini": {
+    "cli": "0.9.39",
+    "live": null,
+    "live_ok": null
+   },
+   "tools": {},
+   "since_tag": {
+    "count": 0
+   }
+  },
+  "decision": {
+   "phase": "PR #690 (fix/old bbbbbbbbb) every check green but BLOCKED",
+   "kind": "pr-blocked-green",
+   "next": "hz-why 690",
+   "next_for": null,
+   "then": null,
+   "trap": "Validation SHA trap: never dispatch a validation run on the exact SHA that is or will be a PR head; merge-gate and coverage-floor attach to the oldest suite of that SHA and the PR sits BLOCKED with every check green.",
+   "waiting": null,
+   "also": [],
+   "side": [],
+   "unknown": [],
+   "alerts": [],
+   "facts": [
+    "main 437bb247 CI green (run 1)",
+    "latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)",
+    "candidate: none",
+    "queue: empty; freeze off; nothing queued",
+    "active runs: none (idle window open)"
+   ]
+  },
+  "text": "PHASE    PR #690 (fix/old bbbbbbbbb) every check green but BLOCKED\nNEXT     hz-why 690\nTRAP     Validation SHA trap: never dispatch a validation run on the exact SHA that is or will be a PR head; merge-gate and coverage-floor attach to the oldest suite of that SHA and the PR sits BLOCKED with every check green.\nSTATE    main 437bb247 CI green (run 1)\n         latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)\n         candidate: none\n         queue: empty; freeze off; nothing queued\n         active runs: none (idle window open)"
+ },
+ {
+  "now": 1800000000,
+  "state": {
+   "main": {
+    "sha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "remote_heads": {
+    "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "runs": [
+    {
+     "databaseId": 1,
+     "headBranch": "main",
+     "headSha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "status": "completed",
+     "conclusion": "success",
+     "workflowName": "CI",
+     "event": "push"
+    }
+   ],
+   "prs": [],
+   "releases": {
+    "latest": "0.9.39"
+   },
+   "queue": {
+    "queued": [],
+    "freeze": false,
+    "verdict": "nothing queued",
+    "main_runs": [],
+    "added": {}
+   },
+   "train": {
+    "trains": [],
+    "tails": []
+   },
+   "release": {
+    "active": null,
+    "dropped": []
+   },
+   "holds": {
+    "files": [],
+    "prs": {}
+   },
+   "procs": [],
+   "receipts": [],
+   "packets": [],
+   "slots": {},
+   "mini": {
+    "cli": "0.9.39",
+    "live": null,
+    "live_ok": null
+   },
+   "tools": {
+    "hz-rehearse": true
+   },
+   "since_tag": {
+    "count": 3
+   },
+   "rehearse": {
+    "current": null,
+    "last": {
+     "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "verdict": "red",
+     "failures": [
+      "End-to-end web-2 (macos-latest): failure https://x/runs/7",
+      "Consumer (audio)"
+     ]
+    }
+   }
+  },
+  "decision": {
+   "phase": "main 437bb247 green, 3 commits since v0.9.39, no candidate, but the last rehearsal (main 437bb247) is RED: End-to-end web-2 (macos-latest): failure https://x/runs/7; Consumer (audio)",
+   "kind": "rehearsal-red",
+   "next": "hz-rehearse status --json",
+   "next_for": null,
+   "then": "after the fix is on main: hz-rehearse start --consumers",
+   "trap": "A red rehearsal is the candidate failing in advance: lanes stop at the first failure and hide the rest; fix forward on main and rehearse again, never cut onto it.",
+   "waiting": null,
+   "also": [],
+   "side": [],
+   "unknown": [],
+   "alerts": [],
+   "facts": [
+    "main 437bb247 CI green (run 1)",
+    "latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)",
+    "candidate: none",
+    "queue: empty; freeze off; nothing queued",
+    "active runs: none (idle window open)",
+    "rehearsal: last red main 437bb247"
+   ]
+  },
+  "text": "PHASE    main 437bb247 green, 3 commits since v0.9.39, no candidate, but the last rehearsal (main 437bb247) is RED: End-to-end web-2 (macos-latest): failure https://x/runs/7; Consumer (audio)\nNEXT     hz-rehearse status --json\nTHEN     after the fix is on main: hz-rehearse start --consumers\nTRAP     A red rehearsal is the candidate failing in advance: lanes stop at the first failure and hide the rest; fix forward on main and rehearse again, never cut onto it.\nSTATE    main 437bb247 CI green (run 1)\n         latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)\n         candidate: none\n         queue: empty; freeze off; nothing queued\n         active runs: none (idle window open)\n         rehearsal: last red main 437bb247"
+ },
+ {
+  "now": 1800000000,
+  "state": {
+   "main": {
+    "sha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "remote_heads": {
+    "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "runs": [
+    {
+     "databaseId": 1,
+     "headBranch": "main",
+     "headSha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "status": "completed",
+     "conclusion": "success",
+     "workflowName": "CI",
+     "event": "push"
+    }
+   ],
+   "prs": [],
+   "releases": {
+    "latest": "0.9.39"
+   },
+   "queue": {
+    "queued": [],
+    "freeze": false,
+    "verdict": "nothing queued",
+    "main_runs": [],
+    "added": {}
+   },
+   "train": {
+    "trains": [],
+    "tails": []
+   },
+   "release": {
+    "active": null,
+    "dropped": []
+   },
+   "holds": {
+    "files": [],
+    "prs": {}
+   },
+   "procs": [],
+   "receipts": [],
+   "packets": [],
+   "slots": {},
+   "mini": {
+    "cli": "0.9.39",
+    "live": null,
+    "live_ok": null
+   },
+   "tools": {
+    "hz-rehearse": true
+   },
+   "since_tag": {
+    "count": 3
+   },
+   "rehearse": {
+    "current": null,
+    "last": {
+     "main": "1111111111111111111111111111111111111111",
+     "verdict": "red",
+     "failures": []
+    }
+   }
+  },
+  "decision": {
+   "phase": "main 437bb247 green, 3 commits since v0.9.39, no candidate, but the last rehearsal (main 11111111) is RED: failures unreadable: hz-rehearse status --json",
+   "kind": "rehearsal-red",
+   "next": "hz-rehearse start --consumers",
+   "next_for": null,
+   "then": null,
+   "trap": "A red rehearsal is the candidate failing in advance: lanes stop at the first failure and hide the rest; fix forward on main and rehearse again, never cut onto it.",
+   "waiting": null,
+   "also": [],
+   "side": [],
+   "unknown": [],
+   "alerts": [],
+   "facts": [
+    "main 437bb247 CI green (run 1)",
+    "latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)",
+    "candidate: none",
+    "queue: empty; freeze off; nothing queued",
+    "active runs: none (idle window open)",
+    "rehearsal: last red main 11111111"
+   ]
+  },
+  "text": "PHASE    main 437bb247 green, 3 commits since v0.9.39, no candidate, but the last rehearsal (main 11111111) is RED: failures unreadable: hz-rehearse status --json\nNEXT     hz-rehearse start --consumers\nTRAP     A red rehearsal is the candidate failing in advance: lanes stop at the first failure and hide the rest; fix forward on main and rehearse again, never cut onto it.\nSTATE    main 437bb247 CI green (run 1)\n         latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)\n         candidate: none\n         queue: empty; freeze off; nothing queued\n         active runs: none (idle window open)\n         rehearsal: last red main 11111111"
+ },
+ {
+  "now": 1800000000,
+  "state": {
+   "main": {
+    "sha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "remote_heads": {
+    "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "runs": [
+    {
+     "databaseId": 1,
+     "headBranch": "main",
+     "headSha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "status": "completed",
+     "conclusion": "success",
+     "workflowName": "CI",
+     "event": "push"
+    }
+   ],
+   "prs": [],
+   "releases": {
+    "latest": "0.9.39"
+   },
+   "queue": {
+    "queued": [],
+    "freeze": false,
+    "verdict": "nothing queued",
+    "main_runs": [],
+    "added": {}
+   },
+   "train": {
+    "trains": [],
+    "tails": []
+   },
+   "release": {
+    "active": null,
+    "dropped": []
+   },
+   "holds": {
+    "files": [],
+    "prs": {}
+   },
+   "procs": [],
+   "receipts": [],
+   "packets": [],
+   "slots": {},
+   "mini": {
+    "cli": "0.9.39",
+    "live": null,
+    "live_ok": null
+   },
+   "tools": {
+    "hz-rehearse": true
+   },
+   "since_tag": {
+    "count": 3
+   },
+   "rehearse": {
+    "current": null,
+    "last": {
+     "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "verdict": "green",
+     "failures": []
+    }
+   }
+  },
+  "decision": {
+   "phase": "main 437bb247 green, 3 commits since v0.9.39, no candidate, rehearsal green",
+   "kind": "cut-ready",
+   "next": "hz-train tick --now",
+   "next_for": null,
+   "then": null,
+   "trap": "Consumer pin: a Core change to pyproject dependencies or extras breaks the ten plugin Consumer jobs in the candidate until the plugins are relocked and the Core pin PR is in; check before the cut.",
+   "waiting": null,
+   "also": [],
+   "side": [],
+   "unknown": [],
+   "alerts": [],
+   "facts": [
+    "main 437bb247 CI green (run 1)",
+    "latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)",
+    "candidate: none",
+    "queue: empty; freeze off; nothing queued",
+    "active runs: none (idle window open)",
+    "rehearsal: last green main 437bb247"
+   ]
+  },
+  "text": "PHASE    main 437bb247 green, 3 commits since v0.9.39, no candidate, rehearsal green\nNEXT     hz-train tick --now\nTRAP     Consumer pin: a Core change to pyproject dependencies or extras breaks the ten plugin Consumer jobs in the candidate until the plugins are relocked and the Core pin PR is in; check before the cut.\nSTATE    main 437bb247 CI green (run 1)\n         latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)\n         candidate: none\n         queue: empty; freeze off; nothing queued\n         active runs: none (idle window open)\n         rehearsal: last green main 437bb247"
+ },
+ {
+  "now": 1800000000,
+  "state": {
+   "main": {
+    "sha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "remote_heads": {
+    "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "runs": [
+    {
+     "databaseId": 1,
+     "headBranch": "main",
+     "headSha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "status": "completed",
+     "conclusion": "success",
+     "workflowName": "CI",
+     "event": "push"
+    }
+   ],
+   "prs": [],
+   "releases": {
+    "latest": "0.9.39"
+   },
+   "queue": {
+    "queued": [],
+    "freeze": false,
+    "verdict": "nothing queued",
+    "main_runs": [],
+    "added": {}
+   },
+   "train": {
+    "trains": [],
+    "tails": []
+   },
+   "release": {
+    "active": null,
+    "dropped": []
+   },
+   "holds": {
+    "files": [],
+    "prs": {}
+   },
+   "procs": [],
+   "receipts": [],
+   "packets": [],
+   "slots": {},
+   "mini": {
+    "cli": "0.9.39",
+    "live": null,
+    "live_ok": null
+   },
+   "tools": {
+    "hz-rehearse": true
+   },
+   "since_tag": {
+    "count": 3
+   },
+   "rehearse": {
+    "current": null,
+    "last": {
+     "main": "1111111111111111111111111111111111111111",
+     "verdict": "green",
+     "failures": []
+    }
+   }
+  },
+  "decision": {
+   "phase": "main 437bb247 green, 3 commits since v0.9.39, no candidate",
+   "kind": "cut-ready",
+   "next": "hz-rehearse start --consumers",
+   "next_for": null,
+   "then": null,
+   "trap": "Consumer pin: a Core change to pyproject dependencies or extras breaks the ten plugin Consumer jobs in the candidate until the plugins are relocked and the Core pin PR is in; check before the cut.",
+   "waiting": null,
+   "also": [],
+   "side": [],
+   "unknown": [],
+   "alerts": [],
+   "facts": [
+    "main 437bb247 CI green (run 1)",
+    "latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)",
+    "candidate: none",
+    "queue: empty; freeze off; nothing queued",
+    "active runs: none (idle window open)",
+    "rehearsal: last green main 11111111"
+   ]
+  },
+  "text": "PHASE    main 437bb247 green, 3 commits since v0.9.39, no candidate\nNEXT     hz-rehearse start --consumers\nTRAP     Consumer pin: a Core change to pyproject dependencies or extras breaks the ten plugin Consumer jobs in the candidate until the plugins are relocked and the Core pin PR is in; check before the cut.\nSTATE    main 437bb247 CI green (run 1)\n         latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)\n         candidate: none\n         queue: empty; freeze off; nothing queued\n         active runs: none (idle window open)\n         rehearsal: last green main 11111111"
+ },
+ {
+  "now": 1800000000,
+  "state": {
+   "main": {
+    "sha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "remote_heads": {
+    "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "runs": [
+    {
+     "databaseId": 1,
+     "headBranch": "main",
+     "headSha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "status": "completed",
+     "conclusion": "success",
+     "workflowName": "CI",
+     "event": "push"
+    }
+   ],
+   "prs": [],
+   "releases": {
+    "latest": "0.9.39"
+   },
+   "queue": {
+    "queued": [],
+    "freeze": false,
+    "verdict": "nothing queued",
+    "main_runs": [],
+    "added": {}
+   },
+   "train": {
+    "trains": [],
+    "tails": []
+   },
+   "release": {
+    "active": null,
+    "dropped": []
+   },
+   "holds": {
+    "files": [],
+    "prs": {}
+   },
+   "procs": [],
+   "receipts": [],
+   "packets": [],
+   "slots": {},
+   "mini": {
+    "cli": "0.9.39",
+    "live": null,
+    "live_ok": null
+   },
+   "tools": {
+    "hz-rehearse": true
+   },
+   "since_tag": {
+    "count": 3
+   },
+   "rehearse": {
+    "current": null,
+    "last": {
+     "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "verdict": "incomplete",
+     "failures": []
+    }
+   }
+  },
+  "decision": {
+   "phase": "main 437bb247 green, 3 commits since v0.9.39, no candidate",
+   "kind": "cut-ready",
+   "next": "hz-rehearse start --consumers",
+   "next_for": null,
+   "then": null,
+   "trap": "Consumer pin: a Core change to pyproject dependencies or extras breaks the ten plugin Consumer jobs in the candidate until the plugins are relocked and the Core pin PR is in; check before the cut.",
+   "waiting": null,
+   "also": [],
+   "side": [],
+   "unknown": [],
+   "alerts": [],
+   "facts": [
+    "main 437bb247 CI green (run 1)",
+    "latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)",
+    "candidate: none",
+    "queue: empty; freeze off; nothing queued",
+    "active runs: none (idle window open)",
+    "rehearsal: last incomplete main 437bb247"
+   ]
+  },
+  "text": "PHASE    main 437bb247 green, 3 commits since v0.9.39, no candidate\nNEXT     hz-rehearse start --consumers\nTRAP     Consumer pin: a Core change to pyproject dependencies or extras breaks the ten plugin Consumer jobs in the candidate until the plugins are relocked and the Core pin PR is in; check before the cut.\nSTATE    main 437bb247 CI green (run 1)\n         latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)\n         candidate: none\n         queue: empty; freeze off; nothing queued\n         active runs: none (idle window open)\n         rehearsal: last incomplete main 437bb247"
+ },
+ {
+  "now": 1800000000,
+  "state": {
+   "main": {
+    "sha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "remote_heads": {
+    "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "runs": [
+    {
+     "databaseId": 1,
+     "headBranch": "main",
+     "headSha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "status": "completed",
+     "conclusion": "success",
+     "workflowName": "CI",
+     "event": "push"
+    }
+   ],
+   "prs": [],
+   "releases": {
+    "latest": "0.9.39"
+   },
+   "queue": {
+    "queued": [],
+    "freeze": false,
+    "verdict": "nothing queued",
+    "main_runs": [],
+    "added": {}
+   },
+   "train": {
+    "trains": [],
+    "tails": []
+   },
+   "release": {
+    "active": null,
+    "dropped": []
+   },
+   "holds": {
+    "files": [],
+    "prs": {}
+   },
+   "procs": [],
+   "receipts": [],
+   "packets": [],
+   "slots": {},
+   "mini": {
+    "cli": "0.9.39",
+    "live": null,
+    "live_ok": null
+   },
+   "tools": {
+    "hz-rehearse": true
+   },
+   "since_tag": {
+    "count": 3
+   },
+   "rehearse": {
+    "current": {
+     "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "lanes": []
+    },
+    "last": null
+   }
+  },
+  "decision": {
+   "phase": "main 437bb247 green, 3 commits since v0.9.39, no candidate, rehearsal of main 437bb247 running",
+   "kind": "rehearsal-running",
+   "next": null,
+   "next_for": null,
+   "then": null,
+   "trap": "A red rehearsal is the candidate failing in advance: lanes stop at the first failure and hide the rest; fix forward on main and rehearse again, never cut onto it.",
+   "waiting": "the open rehearsal (hz-rehearse step reads it; launchd ticks it)",
+   "also": [],
+   "side": [],
+   "unknown": [],
+   "alerts": [],
+   "facts": [
+    "main 437bb247 CI green (run 1)",
+    "latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)",
+    "candidate: none",
+    "queue: empty; freeze off; nothing queued",
+    "active runs: none (idle window open)",
+    "rehearsal: running main 437bb247; no verdict yet"
+   ]
+  },
+  "text": "PHASE    main 437bb247 green, 3 commits since v0.9.39, no candidate, rehearsal of main 437bb247 running\nNEXT     nothing runnable now\nWAITING  the open rehearsal (hz-rehearse step reads it; launchd ticks it)\nTRAP     A red rehearsal is the candidate failing in advance: lanes stop at the first failure and hide the rest; fix forward on main and rehearse again, never cut onto it.\nSTATE    main 437bb247 CI green (run 1)\n         latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)\n         candidate: none\n         queue: empty; freeze off; nothing queued\n         active runs: none (idle window open)\n         rehearsal: running main 437bb247; no verdict yet"
+ },
+ {
+  "now": 1800000000,
+  "state": {
+   "main": {
+    "sha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "remote_heads": {
+    "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "runs": [
+    {
+     "databaseId": 1,
+     "headBranch": "main",
+     "headSha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "status": "completed",
+     "conclusion": "success",
+     "workflowName": "CI",
+     "event": "push"
+    }
+   ],
+   "prs": [
+    {
+     "number": 5,
+     "title": "t",
+     "headRefName": "fix/x",
+     "headRefOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "isDraft": false,
+     "mergeStateStatus": "CLEAN",
+     "statusCheckRollup": [
+      {
+       "name": "CI OK",
+       "status": "COMPLETED",
+       "conclusion": "SUCCESS"
+      }
+     ]
+    }
+   ],
+   "releases": {
+    "latest": "0.9.39"
+   },
+   "queue": {
+    "queued": [
+     "5"
+    ],
+    "freeze": false,
+    "verdict": "",
+    "main_runs": [],
+    "added": {
+     "5": 1799999940
+    }
+   },
+   "train": {
+    "trains": [],
+    "tails": []
+   },
+   "release": {
+    "active": null,
+    "dropped": []
+   },
+   "holds": {
+    "files": [],
+    "prs": {}
+   },
+   "procs": [],
+   "receipts": [],
+   "packets": [],
+   "slots": {},
+   "mini": {
+    "cli": "0.9.39",
+    "live": null,
+    "live_ok": null
+   },
+   "tools": {},
+   "since_tag": {
+    "count": 3
+   },
+   "rehearse": {
+    "current": null,
+    "last": {
+     "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "verdict": "red",
+     "failures": []
+    }
+   }
+  },
+  "decision": {
+   "phase": "PR #5 (fix/x aaaaaaaaa) green, queued 1 min",
+   "kind": "pr-queued",
+   "next": null,
+   "next_for": null,
+   "then": null,
+   "trap": "Batch plan trap: pre-open plans prepared at one main are valid for the FIRST merge only; after any merge every other prepared packet is stale and must be rebuilt on the new main.",
+   "waiting": "the hz-queue tick (launchd, every 5 min) to merge #5",
+   "also": [],
+   "side": [],
+   "unknown": [],
+   "alerts": [],
+   "facts": [
+    "main 437bb247 CI green (run 1)",
+    "latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)",
+    "candidate: none",
+    "queue: 5; freeze off",
+    "active runs: none (idle window open)",
+    "rehearsal: last red main 437bb247"
+   ]
+  },
+  "text": "PHASE    PR #5 (fix/x aaaaaaaaa) green, queued 1 min\nNEXT     nothing runnable now\nWAITING  the hz-queue tick (launchd, every 5 min) to merge #5\nTRAP     Batch plan trap: pre-open plans prepared at one main are valid for the FIRST merge only; after any merge every other prepared packet is stale and must be rebuilt on the new main.\nSTATE    main 437bb247 CI green (run 1)\n         latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)\n         candidate: none\n         queue: 5; freeze off\n         active runs: none (idle window open)\n         rehearsal: last red main 437bb247"
+ },
+ {
+  "now": 1800000000,
+  "state": {
+   "main": {
+    "sha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "remote_heads": {
+    "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "runs": [
+    {
+     "databaseId": 1,
+     "headBranch": "main",
+     "headSha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "status": "completed",
+     "conclusion": "success",
+     "workflowName": "CI",
+     "event": "push"
+    }
+   ],
+   "prs": [],
+   "releases": {
+    "latest": "0.9.39"
+   },
+   "queue": {
+    "queued": [],
+    "freeze": false,
+    "verdict": "nothing queued",
+    "main_runs": [],
+    "added": {}
+   },
+   "train": {
+    "trains": [],
+    "tails": []
+   },
+   "release": {
+    "active": null,
+    "dropped": []
+   },
+   "holds": {
+    "files": [],
+    "prs": {}
+   },
+   "procs": [],
+   "receipts": [],
+   "packets": [],
+   "slots": {},
+   "mini": {
+    "cli": "0.9.39",
+    "live": null,
+    "live_ok": null
+   },
+   "tools": {},
+   "since_tag": {
+    "count": 0
+   },
+   "alarms": {
+    "stall:5": {
+     "cls": "ALERT",
+     "text": "STALL #5 unmerged for 20 min",
+     "acked": false,
+     "first": 2
+    },
+    "main-red:9": {
+     "cls": "ALERT",
+     "text": "MAIN RED run 9",
+     "acked": false,
+     "first": 1
+    },
+    "slots": {
+     "cls": "WARN",
+     "text": "slots low",
+     "acked": false,
+     "first": 0
+    },
+    "old": {
+     "cls": "ALERT",
+     "text": "acknowledged one",
+     "acked": true,
+     "first": 0
+    }
+   }
+  },
+  "decision": {
+   "phase": "idle: nothing to ship",
+   "kind": "idle",
+   "next": null,
+   "next_for": null,
+   "then": null,
+   "trap": "",
+   "waiting": "new work: nothing is in the ship pipeline",
+   "also": [],
+   "side": [],
+   "unknown": [],
+   "alerts": [
+    "MAIN RED run 9  (silence: hz-alarm ack main-red:9)",
+    "STALL #5 unmerged for 20 min  (silence: hz-alarm ack stall:5)"
+   ],
+   "facts": [
+    "main 437bb247 CI green (run 1)",
+    "latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)",
+    "candidate: none",
+    "queue: empty; freeze off; nothing queued",
+    "active runs: none (idle window open)"
+   ]
+  },
+  "text": "ALERT    MAIN RED run 9  (silence: hz-alarm ack main-red:9)\nALERT    STALL #5 unmerged for 20 min  (silence: hz-alarm ack stall:5)\nPHASE    idle: nothing to ship\nNEXT     nothing runnable now\nWAITING  new work: nothing is in the ship pipeline\nSTATE    main 437bb247 CI green (run 1)\n         latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)\n         candidate: none\n         queue: empty; freeze off; nothing queued\n         active runs: none (idle window open)"
+ },
+ {
+  "now": 1800000000,
+  "state": {
+   "main": {
+    "sha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "remote_heads": {
+    "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "runs": [
+    {
+     "databaseId": 1,
+     "headBranch": "main",
+     "headSha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "status": "completed",
+     "conclusion": "success",
+     "workflowName": "CI",
+     "event": "push"
+    }
+   ],
+   "prs": [],
+   "releases": {
+    "latest": "0.9.39"
+   },
+   "queue": {
+    "queued": [],
+    "freeze": false,
+    "verdict": "nothing queued",
+    "main_runs": [],
+    "added": {}
+   },
+   "train": {
+    "trains": [],
+    "tails": []
+   },
+   "release": {
+    "active": null,
+    "dropped": []
+   },
+   "holds": {
+    "files": [],
+    "prs": {}
+   },
+   "procs": [],
+   "receipts": [],
+   "packets": [],
+   "slots": {},
+   "mini": {
+    "cli": "0.9.39",
+    "live": null,
+    "live_ok": null
+   },
+   "tools": {},
+   "since_tag": {
+    "count": 0
+   },
+   "alarms": {
+    "unknown": "bad json"
+   }
+  },
+  "decision": {
+   "phase": "idle: nothing to ship",
+   "kind": "idle",
+   "next": null,
+   "next_for": null,
+   "then": null,
+   "trap": "",
+   "waiting": "new work: nothing is in the ship pipeline",
+   "also": [],
+   "side": [],
+   "unknown": [
+    "alarms: bad json"
+   ],
+   "alerts": [],
+   "facts": [
+    "main 437bb247 CI green (run 1)",
+    "latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)",
+    "candidate: none",
+    "queue: empty; freeze off; nothing queued",
+    "active runs: none (idle window open)"
+   ]
+  },
+  "text": "PHASE    idle: nothing to ship\nNEXT     nothing runnable now\nWAITING  new work: nothing is in the ship pipeline\nSTATE    main 437bb247 CI green (run 1)\n         latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)\n         candidate: none\n         queue: empty; freeze off; nothing queued\n         active runs: none (idle window open)\nUNKNOWN  alarms: bad json"
+ },
+ {
+  "now": 1800000000,
+  "state": {
+   "main": {
+    "sha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "remote_heads": {
+    "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "runs": [
+    {
+     "databaseId": 1,
+     "headBranch": "main",
+     "headSha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "status": "completed",
+     "conclusion": "success",
+     "workflowName": "CI",
+     "event": "push"
+    }
+   ],
+   "prs": [
+    {
+     "number": 812,
+     "title": "t",
+     "headRefName": "fix/x",
+     "headRefOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "isDraft": false,
+     "mergeStateStatus": "CLEAN",
+     "statusCheckRollup": [
+      {
+       "name": "CI OK",
+       "status": "COMPLETED",
+       "conclusion": "SUCCESS"
+      },
+      {
+       "name": "SonarCloud Code Analysis",
+       "status": "COMPLETED",
+       "conclusion": "FAILURE"
+      }
+     ]
+    }
+   ],
+   "releases": {
+    "latest": "0.9.39"
+   },
+   "queue": {
+    "queued": [],
+    "freeze": false,
+    "verdict": "nothing queued",
+    "main_runs": [],
+    "added": {}
+   },
+   "train": {
+    "trains": [],
+    "tails": []
+   },
+   "release": {
+    "active": null,
+    "dropped": []
+   },
+   "holds": {
+    "files": [],
+    "prs": {}
+   },
+   "procs": [],
+   "receipts": [],
+   "packets": [],
+   "slots": {},
+   "mini": {
+    "cli": "0.9.39",
+    "live": null,
+    "live_ok": null
+   },
+   "tools": {},
+   "since_tag": {
+    "count": 0
+   }
+  },
+  "decision": {
+   "phase": "PR #812 (fix/x aaaaaaaaa) red only on SonarCloud Code Analysis",
+   "kind": "pr-red",
+   "next": "curl -fsS 'https://sonarcloud.io/api/issues/search?componentKeys=helmut-hoffer-von-ankershoffen_heinzel&pullRequest=812&resolved=false&ps=100' | jq -r '.issues[] | [.key, .type, .severity, .rule, (.component | sub(\"^[^:]*:\"; \"\")), (.line // \"-\"), .message] | @tsv'",
+   "next_for": null,
+   "then": null,
+   "trap": "hz-sonar-close handles bugs and vulnerabilities only; code smells need a new head.",
+   "waiting": null,
+   "also": [],
+   "side": [],
+   "unknown": [],
+   "alerts": [],
+   "facts": [
+    "main 437bb247 CI green (run 1)",
+    "latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)",
+    "candidate: none",
+    "queue: empty; freeze off; nothing queued",
+    "active runs: none (idle window open)"
+   ]
+  },
+  "text": "PHASE    PR #812 (fix/x aaaaaaaaa) red only on SonarCloud Code Analysis\nNEXT     curl -fsS 'https://sonarcloud.io/api/issues/search?componentKeys=helmut-hoffer-von-ankershoffen_heinzel&pullRequest=812&resolved=false&ps=100' | jq -r '.issues[] | [.key, .type, .severity, .rule, (.component | sub(\"^[^:]*:\"; \"\")), (.line // \"-\"), .message] | @tsv'\nTRAP     hz-sonar-close handles bugs and vulnerabilities only; code smells need a new head.\nSTATE    main 437bb247 CI green (run 1)\n         latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)\n         candidate: none\n         queue: empty; freeze off; nothing queued\n         active runs: none (idle window open)"
+ },
+ {
+  "now": 1800000000,
+  "state": {
+   "main": {
+    "sha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "remote_heads": {
+    "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "runs": [
+    {
+     "databaseId": 1,
+     "headBranch": "main",
+     "headSha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "status": "completed",
+     "conclusion": "success",
+     "workflowName": "CI",
+     "event": "push"
+    }
+   ],
+   "prs": [
+    {
+     "number": 813,
+     "title": "t",
+     "headRefName": "fix/x",
+     "headRefOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "isDraft": false,
+     "mergeStateStatus": "CLEAN",
+     "statusCheckRollup": [
+      {
+       "name": "CI OK",
+       "status": "COMPLETED",
+       "conclusion": "FAILURE"
+      },
+      {
+       "name": "SonarCloud Code Analysis",
+       "status": "COMPLETED",
+       "conclusion": "FAILURE"
+      }
+     ]
+    }
+   ],
+   "releases": {
+    "latest": "0.9.39"
+   },
+   "queue": {
+    "queued": [],
+    "freeze": false,
+    "verdict": "nothing queued",
+    "main_runs": [],
+    "added": {}
+   },
+   "train": {
+    "trains": [],
+    "tails": []
+   },
+   "release": {
+    "active": null,
+    "dropped": []
+   },
+   "holds": {
+    "files": [],
+    "prs": {}
+   },
+   "procs": [],
+   "receipts": [],
+   "packets": [],
+   "slots": {},
+   "mini": {
+    "cli": "0.9.39",
+    "live": null,
+    "live_ok": null
+   },
+   "tools": {},
+   "since_tag": {
+    "count": 0
+   }
+  },
+  "decision": {
+   "phase": "PR #813 (fix/x aaaaaaaaa) red: CI OK, SonarCloud Code Analysis",
+   "kind": "pr-red",
+   "next": "hz-faillog 813",
+   "next_for": null,
+   "then": null,
+   "trap": "Every correction costs a full cycle (new head, new packet, review, apply, 25 min CI): read every failing check before changing the head, and change it once.",
+   "waiting": null,
+   "also": [],
+   "side": [],
+   "unknown": [],
+   "alerts": [],
+   "facts": [
+    "main 437bb247 CI green (run 1)",
+    "latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)",
+    "candidate: none",
+    "queue: empty; freeze off; nothing queued",
+    "active runs: none (idle window open)"
+   ]
+  },
+  "text": "PHASE    PR #813 (fix/x aaaaaaaaa) red: CI OK, SonarCloud Code Analysis\nNEXT     hz-faillog 813\nTRAP     Every correction costs a full cycle (new head, new packet, review, apply, 25 min CI): read every failing check before changing the head, and change it once.\nSTATE    main 437bb247 CI green (run 1)\n         latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)\n         candidate: none\n         queue: empty; freeze off; nothing queued\n         active runs: none (idle window open)"
+ },
+ {
+  "now": 1800000000,
+  "state": {
+   "main": {
+    "sha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "remote_heads": {
+    "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "runs": [
+    {
+     "databaseId": 1,
+     "headBranch": "main",
+     "headSha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "status": "completed",
+     "conclusion": "success",
+     "workflowName": "CI",
+     "event": "push"
+    }
+   ],
+   "prs": [],
+   "releases": {
+    "latest": "0.9.39"
+   },
+   "queue": {
+    "queued": [],
+    "freeze": false,
+    "verdict": "nothing queued",
+    "main_runs": [],
+    "added": {}
+   },
+   "train": {
+    "trains": [],
+    "tails": []
+   },
+   "release": {
+    "active": null,
+    "dropped": []
+   },
+   "holds": {
+    "files": [],
+    "prs": {}
+   },
+   "procs": [],
+   "receipts": [],
+   "packets": [
+    {
+     "dir": "/p",
+     "packet": "/p/packet.json",
+     "branch": "fix/e2e",
+     "head": "e9c943810ea75cfad155a431a2f168b2a9559828",
+     "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "core_repo": "/wt",
+     "worktree": "/wt",
+     "review_root": "/root",
+     "prepared": "/p/prepare.out",
+     "prepared_sha256": "9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a",
+     "approved_sha256": null,
+     "apply_refused": null,
+     "nonconsumers": "/n/STUCK.json",
+     "body": "/p/PR-BODY.md",
+     "subject": "test(web): fix",
+     "bead": null,
+     "pr": 795,
+     "expected_remote_head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
+   ],
+   "slots": {},
+   "mini": {
+    "cli": "0.9.39",
+    "live": null,
+    "live_ok": null
+   },
+   "tools": {},
+   "since_tag": {
+    "count": 0
+   }
+  },
+  "decision": {
+   "phase": "packet prepared, awaiting independent review: fix/e2e e9c943810",
+   "kind": "packet-prepared",
+   "next": null,
+   "next_for": null,
+   "then": "after the verdict, in an idle window: hz-focused-admit apply /p/packet.json --core-repo /wt --review-root /root --pr 795 --expected-remote-head bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb --nonconsumers /n/STUCK.json --prepared /p/prepare.out --approved-sha256 9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a",
+   "trap": "The apply review binds the exact bytes: the verdict line must carry the sha256 of the canonical prepared JSON; any re-prepare changes it and needs a new verdict.",
+   "waiting": "an independent reviewer (different model) to end /p/APPLY-REVIEW.md with `VERDICT: APPROVE sha256=9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a`",
+   "also": [],
+   "side": [],
+   "unknown": [],
+   "alerts": [],
+   "facts": [
+    "main 437bb247 CI green (run 1)",
+    "latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)",
+    "candidate: none",
+    "queue: empty; freeze off; nothing queued",
+    "active runs: none (idle window open)"
+   ]
+  },
+  "text": "PHASE    packet prepared, awaiting independent review: fix/e2e e9c943810\nNEXT     nothing runnable now\nWAITING  an independent reviewer (different model) to end /p/APPLY-REVIEW.md with `VERDICT: APPROVE sha256=9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a`\nTHEN     after the verdict, in an idle window: hz-focused-admit apply /p/packet.json --core-repo /wt --review-root /root --pr 795 --expected-remote-head bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb --nonconsumers /n/STUCK.json --prepared /p/prepare.out --approved-sha256 9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a\nTRAP     The apply review binds the exact bytes: the verdict line must carry the sha256 of the canonical prepared JSON; any re-prepare changes it and needs a new verdict.\nSTATE    main 437bb247 CI green (run 1)\n         latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)\n         candidate: none\n         queue: empty; freeze off; nothing queued\n         active runs: none (idle window open)"
+ },
+ {
+  "now": 1800000000,
+  "state": {
+   "main": {
+    "sha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "remote_heads": {
+    "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "runs": [
+    {
+     "databaseId": 1,
+     "headBranch": "main",
+     "headSha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "status": "completed",
+     "conclusion": "success",
+     "workflowName": "CI",
+     "event": "push"
+    }
+   ],
+   "prs": [],
+   "releases": {
+    "latest": "0.9.39"
+   },
+   "queue": {
+    "queued": [],
+    "freeze": false,
+    "verdict": "nothing queued",
+    "main_runs": [],
+    "added": {}
+   },
+   "train": {
+    "trains": [],
+    "tails": []
+   },
+   "release": {
+    "active": null,
+    "dropped": []
+   },
+   "holds": {
+    "files": [],
+    "prs": {}
+   },
+   "procs": [],
+   "receipts": [],
+   "packets": [
+    {
+     "dir": "/p",
+     "packet": "/p/packet.json",
+     "branch": "fix/e2e",
+     "head": "e9c943810ea75cfad155a431a2f168b2a9559828",
+     "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "core_repo": "/wt",
+     "worktree": "/wt",
+     "review_root": "/root",
+     "prepared": "/p/prepare.out",
+     "prepared_sha256": "9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a",
+     "approved_sha256": "9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a",
+     "apply_refused": null,
+     "nonconsumers": null,
+     "body": "/p/PR-BODY.md",
+     "subject": "test(web): fix",
+     "bead": null,
+     "unknown_args": [
+      "--nonconsumers: prepare used 67 receipts and no file holds them"
+     ]
+    }
+   ],
+   "slots": {},
+   "mini": {
+    "cli": "0.9.39",
+    "live": null,
+    "live_ok": null
+   },
+   "tools": {},
+   "since_tag": {
+    "count": 0
+   }
+  },
+  "decision": {
+   "phase": "packet approved, not applied: fix/e2e e9c943810",
+   "kind": "packet-approved",
+   "next": null,
+   "next_for": null,
+   "then": "hz-focused-admit apply /p/packet.json --core-repo /wt --review-root /root --nonconsumers UNKNOWN --prepared /p/prepare.out --approved-sha256 9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a",
+   "trap": "Idle window: apply needs zero active Actions runs and takes the queue, train and release locks; start nothing (push, dispatch, rerun) until it reports success.",
+   "waiting": "the apply command is not complete, unknown --nonconsumers: prepare used 67 receipts and no file holds them",
+   "also": [],
+   "side": [],
+   "unknown": [],
+   "alerts": [],
+   "facts": [
+    "main 437bb247 CI green (run 1)",
+    "latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)",
+    "candidate: none",
+    "queue: empty; freeze off; nothing queued",
+    "active runs: none (idle window open)"
+   ]
+  },
+  "text": "PHASE    packet approved, not applied: fix/e2e e9c943810\nNEXT     nothing runnable now\nWAITING  the apply command is not complete, unknown --nonconsumers: prepare used 67 receipts and no file holds them\nTHEN     hz-focused-admit apply /p/packet.json --core-repo /wt --review-root /root --nonconsumers UNKNOWN --prepared /p/prepare.out --approved-sha256 9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a\nTRAP     Idle window: apply needs zero active Actions runs and takes the queue, train and release locks; start nothing (push, dispatch, rerun) until it reports success.\nSTATE    main 437bb247 CI green (run 1)\n         latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)\n         candidate: none\n         queue: empty; freeze off; nothing queued\n         active runs: none (idle window open)"
+ },
+ {
+  "now": 1800000000,
+  "state": {
+   "main": {
+    "sha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "remote_heads": {
+    "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "runs": [
+    {
+     "databaseId": 1,
+     "headBranch": "main",
+     "headSha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "status": "completed",
+     "conclusion": "success",
+     "workflowName": "CI",
+     "event": "push"
+    }
+   ],
+   "prs": [],
+   "releases": {
+    "latest": "0.9.39"
+   },
+   "queue": {
+    "queued": [],
+    "freeze": false,
+    "verdict": "nothing queued",
+    "main_runs": [],
+    "added": {}
+   },
+   "train": {
+    "trains": [],
+    "tails": []
+   },
+   "release": {
+    "active": null,
+    "dropped": []
+   },
+   "holds": {
+    "files": [],
+    "prs": {}
+   },
+   "procs": [],
+   "receipts": [],
+   "packets": [
+    {
+     "dir": "/p",
+     "packet": "/p/packet.json",
+     "branch": "fix/e2e",
+     "head": "e9c943810ea75cfad155a431a2f168b2a9559828",
+     "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "core_repo": "",
+     "worktree": "/wt",
+     "review_root": "/root",
+     "prepared": "/p/prepare.out",
+     "prepared_sha256": "9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a",
+     "approved_sha256": "9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a",
+     "apply_refused": null,
+     "nonconsumers": "/n/STUCK.json",
+     "body": "/p/PR-BODY.md",
+     "subject": "test(web): fix",
+     "bead": null
+    }
+   ],
+   "slots": {},
+   "mini": {
+    "cli": "0.9.39",
+    "live": null,
+    "live_ok": null
+   },
+   "tools": {},
+   "since_tag": {
+    "count": 0
+   }
+  },
+  "decision": {
+   "phase": "packet approved, not applied: fix/e2e e9c943810",
+   "kind": "packet-approved",
+   "next": null,
+   "next_for": null,
+   "then": "hz-focused-admit apply /p/packet.json --core-repo UNKNOWN --review-root /root --nonconsumers /n/STUCK.json --prepared /p/prepare.out --approved-sha256 9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a",
+   "trap": "Idle window: apply needs zero active Actions runs and takes the queue, train and release locks; start nothing (push, dispatch, rerun) until it reports success.",
+   "waiting": "the apply command is not complete, unknown --core-repo: not in wave.json or prepare.args",
+   "also": [],
+   "side": [],
+   "unknown": [],
+   "alerts": [],
+   "facts": [
+    "main 437bb247 CI green (run 1)",
+    "latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)",
+    "candidate: none",
+    "queue: empty; freeze off; nothing queued",
+    "active runs: none (idle window open)"
+   ]
+  },
+  "text": "PHASE    packet approved, not applied: fix/e2e e9c943810\nNEXT     nothing runnable now\nWAITING  the apply command is not complete, unknown --core-repo: not in wave.json or prepare.args\nTHEN     hz-focused-admit apply /p/packet.json --core-repo UNKNOWN --review-root /root --nonconsumers /n/STUCK.json --prepared /p/prepare.out --approved-sha256 9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a\nTRAP     Idle window: apply needs zero active Actions runs and takes the queue, train and release locks; start nothing (push, dispatch, rerun) until it reports success.\nSTATE    main 437bb247 CI green (run 1)\n         latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)\n         candidate: none\n         queue: empty; freeze off; nothing queued\n         active runs: none (idle window open)"
+ },
+ {
+  "now": 1800000000,
+  "state": {
+   "main": {
+    "sha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "remote_heads": {
+    "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "runs": [
+    {
+     "databaseId": 1,
+     "headBranch": "main",
+     "headSha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "status": "completed",
+     "conclusion": "success",
+     "workflowName": "CI",
+     "event": "push"
+    }
+   ],
+   "prs": [],
+   "releases": {
+    "latest": "0.9.39"
+   },
+   "queue": {
+    "queued": [],
+    "freeze": false,
+    "verdict": "nothing queued",
+    "main_runs": [],
+    "added": {}
+   },
+   "train": {
+    "trains": [],
+    "tails": []
+   },
+   "release": {
+    "active": null,
+    "dropped": []
+   },
+   "holds": {
+    "files": [],
+    "prs": {}
+   },
+   "procs": [],
+   "receipts": [],
+   "packets": [],
+   "slots": {},
+   "mini": {
+    "cli": "0.9.39",
+    "live": null,
+    "live_ok": null
+   },
+   "tools": {
+    "hz-rehearse": true
+   },
+   "since_tag": {
+    "count": 3
+   }
+  },
+  "decision": {
+   "phase": "main 437bb247 green, 3 commits since v0.9.39, no candidate",
+   "kind": "cut-ready",
+   "next": "hz-rehearse start --consumers",
+   "next_for": null,
+   "then": null,
+   "trap": "Consumer pin: a Core change to pyproject dependencies or extras breaks the ten plugin Consumer jobs in the candidate until the plugins are relocked and the Core pin PR is in; check before the cut.",
+   "waiting": null,
+   "also": [],
+   "side": [],
+   "unknown": [],
+   "alerts": [],
+   "facts": [
+    "main 437bb247 CI green (run 1)",
+    "latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)",
+    "candidate: none",
+    "queue: empty; freeze off; nothing queued",
+    "active runs: none (idle window open)"
+   ]
+  },
+  "text": "PHASE    main 437bb247 green, 3 commits since v0.9.39, no candidate\nNEXT     hz-rehearse start --consumers\nTRAP     Consumer pin: a Core change to pyproject dependencies or extras breaks the ten plugin Consumer jobs in the candidate until the plugins are relocked and the Core pin PR is in; check before the cut.\nSTATE    main 437bb247 CI green (run 1)\n         latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)\n         candidate: none\n         queue: empty; freeze off; nothing queued\n         active runs: none (idle window open)"
+ },
+ {
+  "now": 1800000000,
+  "state": {
+   "main": {
+    "sha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "remote_heads": {
+    "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "runs": [
+    {
+     "databaseId": 1,
+     "headBranch": "main",
+     "headSha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "status": "completed",
+     "conclusion": "success",
+     "workflowName": "CI",
+     "event": "push"
+    }
+   ],
+   "prs": [],
+   "releases": {
+    "latest": "0.9.39"
+   },
+   "queue": {
+    "queued": [],
+    "freeze": false,
+    "verdict": "nothing queued",
+    "main_runs": [],
+    "added": {}
+   },
+   "train": {
+    "trains": [],
+    "tails": []
+   },
+   "release": {
+    "active": null,
+    "dropped": []
+   },
+   "holds": {
+    "files": [],
+    "prs": {}
+   },
+   "procs": [],
+   "receipts": [],
+   "packets": [],
+   "slots": {},
+   "mini": {
+    "cli": "0.9.39",
+    "live": null,
+    "live_ok": null
+   },
+   "tools": {
+    "hz-rehearse": true
+   },
+   "since_tag": {
+    "count": 3
+   },
+   "focus": [
+    {
+     "worktree": "/wt/fix",
+     "for": "0.9.40",
+     "note": "blocks the cut",
+     "branch": "fix/e2e-2",
+     "head": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+     "subject": "test(e2e): fix",
+     "dirty": false,
+     "prs": []
+    }
+   ]
+  },
+  "decision": {
+   "phase": "focus v0.9.40: fix/e2e-2 f0f0f0f0f local, unpushed, no packet (no validation run for it among the latest runs)",
+   "kind": "focus-local",
+   "next": "hz-admit-wave preopen --help  # build the packet for fix/e2e-2 in /wt/fix with --main 437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+   "next_for": null,
+   "then": null,
+   "trap": "A declared focus head blocks the cut: no rehearsal and no train until it is merged (or `hz-go focus done`); validate it on a validation/* commit of its own, never on the SHA that becomes the PR head.",
+   "waiting": null,
+   "also": [],
+   "side": [],
+   "unknown": [],
+   "alerts": [],
+   "facts": [
+    "focus: fix/e2e-2 f0f0f0f0f for v0.9.40 (blocks the cut)",
+    "main 437bb247 CI green (run 1)",
+    "latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)",
+    "candidate: none",
+    "queue: empty; freeze off; nothing queued",
+    "active runs: none (idle window open)"
+   ]
+  },
+  "text": "PHASE    focus v0.9.40: fix/e2e-2 f0f0f0f0f local, unpushed, no packet (no validation run for it among the latest runs)\nNEXT     hz-admit-wave preopen --help  # build the packet for fix/e2e-2 in /wt/fix with --main 437bb247d164d5c5140e5acab1518ba6ea54bb3e\nTRAP     A declared focus head blocks the cut: no rehearsal and no train until it is merged (or `hz-go focus done`); validate it on a validation/* commit of its own, never on the SHA that becomes the PR head.\nSTATE    focus: fix/e2e-2 f0f0f0f0f for v0.9.40 (blocks the cut)\n         main 437bb247 CI green (run 1)\n         latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)\n         candidate: none\n         queue: empty; freeze off; nothing queued\n         active runs: none (idle window open)"
+ },
+ {
+  "now": 1800000000,
+  "state": {
+   "main": {
+    "sha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "remote_heads": {
+    "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "runs": [
+    {
+     "databaseId": 1,
+     "headBranch": "main",
+     "headSha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "status": "completed",
+     "conclusion": "success",
+     "workflowName": "CI",
+     "event": "push"
+    },
+    {
+     "databaseId": 71,
+     "headBranch": "validation/e2e-2-f0f0f0f0",
+     "headSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+     "status": "in_progress",
+     "conclusion": null,
+     "workflowName": "Focused job",
+     "event": "workflow_dispatch"
+    },
+    {
+     "databaseId": 72,
+     "headBranch": "validation/audio-de655ee88",
+     "headSha": "cccccccccccccccccccccccccccccccccccccccc",
+     "status": "queued",
+     "conclusion": null,
+     "workflowName": "Focused job",
+     "event": "workflow_dispatch"
+    }
+   ],
+   "prs": [],
+   "releases": {
+    "latest": "0.9.39"
+   },
+   "queue": {
+    "queued": [],
+    "freeze": false,
+    "verdict": "nothing queued",
+    "main_runs": [],
+    "added": {}
+   },
+   "train": {
+    "trains": [],
+    "tails": []
+   },
+   "release": {
+    "active": null,
+    "dropped": []
+   },
+   "holds": {
+    "files": [],
+    "prs": {}
+   },
+   "procs": [],
+   "receipts": [],
+   "packets": [],
+   "slots": {},
+   "mini": {
+    "cli": "0.9.39",
+    "live": null,
+    "live_ok": null
+   },
+   "tools": {
+    "hz-rehearse": true
+   },
+   "since_tag": {
+    "count": 3
+   },
+   "focus": [
+    {
+     "worktree": "/wt/fix",
+     "for": "0.9.40",
+     "note": "blocks the cut",
+     "branch": "fix/e2e-2",
+     "head": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+     "subject": "test(e2e): fix",
+     "dirty": false,
+     "prs": []
+    }
+   ]
+  },
+  "decision": {
+   "phase": "focus v0.9.40: fix/e2e-2 f0f0f0f0f local, unpushed, validating",
+   "kind": "focus-validating",
+   "next": null,
+   "next_for": null,
+   "then": null,
+   "trap": "A declared focus head blocks the cut: no rehearsal and no train until it is merged (or `hz-go focus done`); validate it on a validation/* commit of its own, never on the SHA that becomes the PR head.",
+   "waiting": "validation runs 71 validation/e2e-2-f0f0f0f0; then the packet: hz-admit-wave preopen --help  # build the packet for fix/e2e-2 in /wt/fix with --main 437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+   "also": [],
+   "side": [],
+   "unknown": [],
+   "alerts": [],
+   "facts": [
+    "focus: fix/e2e-2 f0f0f0f0f for v0.9.40 (blocks the cut)",
+    "main 437bb247 CI green (run 1)",
+    "latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)",
+    "candidate: none",
+    "queue: empty; freeze off; nothing queued",
+    "active runs: 71 Focused job validation/e2e-2-f0f0f0f0, 72 Focused job validation/audio-de655ee88",
+    "hosted window in flight (2 validation runs): 71 validation/e2e-2-f0f0f0f0, 72 validation/audio-de655ee88"
+   ]
+  },
+  "text": "PHASE    focus v0.9.40: fix/e2e-2 f0f0f0f0f local, unpushed, validating\nNEXT     nothing runnable now\nWAITING  validation runs 71 validation/e2e-2-f0f0f0f0; then the packet: hz-admit-wave preopen --help  # build the packet for fix/e2e-2 in /wt/fix with --main 437bb247d164d5c5140e5acab1518ba6ea54bb3e\nTRAP     A declared focus head blocks the cut: no rehearsal and no train until it is merged (or `hz-go focus done`); validate it on a validation/* commit of its own, never on the SHA that becomes the PR head.\nSTATE    focus: fix/e2e-2 f0f0f0f0f for v0.9.40 (blocks the cut)\n         main 437bb247 CI green (run 1)\n         latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)\n         candidate: none\n         queue: empty; freeze off; nothing queued\n         active runs: 71 Focused job validation/e2e-2-f0f0f0f0, 72 Focused job validation/audio-de655ee88\n         hosted window in flight (2 validation runs): 71 validation/e2e-2-f0f0f0f0, 72 validation/audio-de655ee88"
+ },
+ {
+  "now": 1800000000,
+  "state": {
+   "main": {
+    "sha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "remote_heads": {
+    "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "runs": [
+    {
+     "databaseId": 1,
+     "headBranch": "main",
+     "headSha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "status": "completed",
+     "conclusion": "success",
+     "workflowName": "CI",
+     "event": "push"
+    },
+    {
+     "databaseId": 71,
+     "headBranch": "validation/e2e-2-f0f0f0f0",
+     "headSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+     "status": "completed",
+     "conclusion": "failure",
+     "workflowName": "Focused job",
+     "event": "workflow_dispatch"
+    }
+   ],
+   "prs": [],
+   "releases": {
+    "latest": "0.9.39"
+   },
+   "queue": {
+    "queued": [],
+    "freeze": false,
+    "verdict": "nothing queued",
+    "main_runs": [],
+    "added": {}
+   },
+   "train": {
+    "trains": [],
+    "tails": []
+   },
+   "release": {
+    "active": null,
+    "dropped": []
+   },
+   "holds": {
+    "files": [],
+    "prs": {}
+   },
+   "procs": [],
+   "receipts": [],
+   "packets": [],
+   "slots": {},
+   "mini": {
+    "cli": "0.9.39",
+    "live": null,
+    "live_ok": null
+   },
+   "tools": {
+    "hz-rehearse": true
+   },
+   "since_tag": {
+    "count": 3
+   },
+   "focus": [
+    {
+     "worktree": "/wt/fix",
+     "for": "0.9.40",
+     "note": "blocks the cut",
+     "branch": "fix/e2e-2",
+     "head": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+     "subject": "test(e2e): fix",
+     "dirty": false,
+     "prs": []
+    }
+   ]
+  },
+  "decision": {
+   "phase": "focus v0.9.40: fix/e2e-2 f0f0f0f0f validation run 71 on validation/e2e-2-f0f0f0f0: failure",
+   "kind": "focus-failed",
+   "next": "hz-faillog 71",
+   "next_for": null,
+   "then": null,
+   "trap": "Every correction costs a full cycle (new head, new packet, review, apply, 25 min CI): read every failing check before changing the head, and change it once.",
+   "waiting": null,
+   "also": [],
+   "side": [],
+   "unknown": [],
+   "alerts": [],
+   "facts": [
+    "focus: fix/e2e-2 f0f0f0f0f for v0.9.40 (blocks the cut)",
+    "main 437bb247 CI green (run 1)",
+    "latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)",
+    "candidate: none",
+    "queue: empty; freeze off; nothing queued",
+    "active runs: none (idle window open)"
+   ]
+  },
+  "text": "PHASE    focus v0.9.40: fix/e2e-2 f0f0f0f0f validation run 71 on validation/e2e-2-f0f0f0f0: failure\nNEXT     hz-faillog 71\nTRAP     Every correction costs a full cycle (new head, new packet, review, apply, 25 min CI): read every failing check before changing the head, and change it once.\nSTATE    focus: fix/e2e-2 f0f0f0f0f for v0.9.40 (blocks the cut)\n         main 437bb247 CI green (run 1)\n         latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)\n         candidate: none\n         queue: empty; freeze off; nothing queued\n         active runs: none (idle window open)"
+ },
+ {
+  "now": 1800000000,
+  "state": {
+   "main": {
+    "sha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "remote_heads": {
+    "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "runs": [
+    {
+     "databaseId": 1,
+     "headBranch": "main",
+     "headSha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "status": "completed",
+     "conclusion": "success",
+     "workflowName": "CI",
+     "event": "push"
+    },
+    {
+     "databaseId": 71,
+     "headBranch": "validation/e2e-2-f0f0f0f0",
+     "headSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+     "status": "completed",
+     "conclusion": "success",
+     "workflowName": "Focused job",
+     "event": "workflow_dispatch"
+    }
+   ],
+   "prs": [],
+   "releases": {
+    "latest": "0.9.39"
+   },
+   "queue": {
+    "queued": [],
+    "freeze": false,
+    "verdict": "nothing queued",
+    "main_runs": [],
+    "added": {}
+   },
+   "train": {
+    "trains": [],
+    "tails": []
+   },
+   "release": {
+    "active": null,
+    "dropped": []
+   },
+   "holds": {
+    "files": [],
+    "prs": {}
+   },
+   "procs": [],
+   "receipts": [],
+   "packets": [],
+   "slots": {},
+   "mini": {
+    "cli": "0.9.39",
+    "live": null,
+    "live_ok": null
+   },
+   "tools": {
+    "hz-rehearse": true
+   },
+   "since_tag": {
+    "count": 3
+   },
+   "focus": [
+    {
+     "worktree": "/wt/fix",
+     "for": "0.9.40",
+     "note": "blocks the cut",
+     "branch": "fix/e2e-2",
+     "head": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+     "subject": "test(e2e): fix",
+     "dirty": false,
+     "prs": []
+    }
+   ]
+  },
+  "decision": {
+   "phase": "focus v0.9.40: fix/e2e-2 f0f0f0f0f local, unpushed, no packet (validated by run 71)",
+   "kind": "focus-local",
+   "next": "hz-admit-wave preopen --help  # build the packet for fix/e2e-2 in /wt/fix with --main 437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+   "next_for": null,
+   "then": null,
+   "trap": "Batch plan trap: pre-open plans prepared at one main are valid for the FIRST merge only; after any merge every other prepared packet is stale and must be rebuilt on the new main.",
+   "waiting": null,
+   "also": [],
+   "side": [],
+   "unknown": [],
+   "alerts": [],
+   "facts": [
+    "focus: fix/e2e-2 f0f0f0f0f for v0.9.40 (blocks the cut)",
+    "main 437bb247 CI green (run 1)",
+    "latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)",
+    "candidate: none",
+    "queue: empty; freeze off; nothing queued",
+    "active runs: none (idle window open)"
+   ]
+  },
+  "text": "PHASE    focus v0.9.40: fix/e2e-2 f0f0f0f0f local, unpushed, no packet (validated by run 71)\nNEXT     hz-admit-wave preopen --help  # build the packet for fix/e2e-2 in /wt/fix with --main 437bb247d164d5c5140e5acab1518ba6ea54bb3e\nTRAP     Batch plan trap: pre-open plans prepared at one main are valid for the FIRST merge only; after any merge every other prepared packet is stale and must be rebuilt on the new main.\nSTATE    focus: fix/e2e-2 f0f0f0f0f for v0.9.40 (blocks the cut)\n         main 437bb247 CI green (run 1)\n         latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)\n         candidate: none\n         queue: empty; freeze off; nothing queued\n         active runs: none (idle window open)"
+ },
+ {
+  "now": 1800000000,
+  "state": {
+   "main": {
+    "sha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "remote_heads": {
+    "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "runs": [
+    {
+     "databaseId": 1,
+     "headBranch": "main",
+     "headSha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "status": "completed",
+     "conclusion": "success",
+     "workflowName": "CI",
+     "event": "push"
+    }
+   ],
+   "prs": [],
+   "releases": {
+    "latest": "0.9.39"
+   },
+   "queue": {
+    "queued": [],
+    "freeze": false,
+    "verdict": "nothing queued",
+    "main_runs": [],
+    "added": {}
+   },
+   "train": {
+    "trains": [],
+    "tails": []
+   },
+   "release": {
+    "active": null,
+    "dropped": []
+   },
+   "holds": {
+    "files": [],
+    "prs": {}
+   },
+   "procs": [],
+   "receipts": [],
+   "packets": [
+    {
+     "dir": "/p",
+     "packet": "/p/packet.json",
+     "branch": "fix/e2e-2",
+     "head": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+     "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "core_repo": "/wt",
+     "worktree": "/wt",
+     "review_root": "/root",
+     "prepared": "/p/prepare.out",
+     "prepared_sha256": "9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a",
+     "approved_sha256": null,
+     "apply_refused": null,
+     "nonconsumers": "/n/STUCK.json",
+     "body": "/p/PR-BODY.md",
+     "subject": "test(web): fix",
+     "bead": null
+    }
+   ],
+   "slots": {},
+   "mini": {
+    "cli": "0.9.39",
+    "live": null,
+    "live_ok": null
+   },
+   "tools": {
+    "hz-rehearse": true
+   },
+   "since_tag": {
+    "count": 3
+   },
+   "focus": [
+    {
+     "worktree": "/wt/fix",
+     "for": "0.9.40",
+     "note": "blocks the cut",
+     "branch": "fix/e2e-2",
+     "head": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+     "subject": "test(e2e): fix",
+     "dirty": false,
+     "prs": []
+    }
+   ]
+  },
+  "decision": {
+   "phase": "packet prepared, awaiting independent review: fix/e2e-2 f0f0f0f0f",
+   "kind": "packet-prepared",
+   "next": null,
+   "next_for": null,
+   "then": "after the verdict, in an idle window: hz-focused-admit apply /p/packet.json --core-repo /wt --review-root /root --nonconsumers /n/STUCK.json --prepared /p/prepare.out --approved-sha256 9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a",
+   "trap": "The apply review binds the exact bytes: the verdict line must carry the sha256 of the canonical prepared JSON; any re-prepare changes it and needs a new verdict.",
+   "waiting": "an independent reviewer (different model) to end /p/APPLY-REVIEW.md with `VERDICT: APPROVE sha256=9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a`",
+   "also": [],
+   "side": [],
+   "unknown": [],
+   "alerts": [],
+   "facts": [
+    "focus: fix/e2e-2 f0f0f0f0f for v0.9.40 (blocks the cut)",
+    "main 437bb247 CI green (run 1)",
+    "latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)",
+    "candidate: none",
+    "queue: empty; freeze off; nothing queued",
+    "active runs: none (idle window open)"
+   ]
+  },
+  "text": "PHASE    packet prepared, awaiting independent review: fix/e2e-2 f0f0f0f0f\nNEXT     nothing runnable now\nWAITING  an independent reviewer (different model) to end /p/APPLY-REVIEW.md with `VERDICT: APPROVE sha256=9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a`\nTHEN     after the verdict, in an idle window: hz-focused-admit apply /p/packet.json --core-repo /wt --review-root /root --nonconsumers /n/STUCK.json --prepared /p/prepare.out --approved-sha256 9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a\nTRAP     The apply review binds the exact bytes: the verdict line must carry the sha256 of the canonical prepared JSON; any re-prepare changes it and needs a new verdict.\nSTATE    focus: fix/e2e-2 f0f0f0f0f for v0.9.40 (blocks the cut)\n         main 437bb247 CI green (run 1)\n         latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)\n         candidate: none\n         queue: empty; freeze off; nothing queued\n         active runs: none (idle window open)"
+ },
+ {
+  "now": 1800000000,
+  "state": {
+   "main": {
+    "sha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "remote_heads": {
+    "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "runs": [
+    {
+     "databaseId": 1,
+     "headBranch": "main",
+     "headSha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "status": "completed",
+     "conclusion": "success",
+     "workflowName": "CI",
+     "event": "push"
+    }
+   ],
+   "prs": [],
+   "releases": {
+    "latest": "0.9.39"
+   },
+   "queue": {
+    "queued": [],
+    "freeze": false,
+    "verdict": "nothing queued",
+    "main_runs": [],
+    "added": {}
+   },
+   "train": {
+    "trains": [],
+    "tails": []
+   },
+   "release": {
+    "active": null,
+    "dropped": []
+   },
+   "holds": {
+    "files": [],
+    "prs": {}
+   },
+   "procs": [],
+   "receipts": [],
+   "packets": [
+    {
+     "dir": "/p",
+     "packet": "/p/packet.json",
+     "branch": "fix/e2e-2",
+     "head": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+     "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "core_repo": "/wt",
+     "worktree": "/wt",
+     "review_root": "/root",
+     "prepared": "/p/prepare.out",
+     "prepared_sha256": "9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a",
+     "approved_sha256": "9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a",
+     "apply_refused": null,
+     "nonconsumers": "/n/STUCK.json",
+     "body": "/p/PR-BODY.md",
+     "subject": "test(web): fix",
+     "bead": null
+    }
+   ],
+   "slots": {},
+   "mini": {
+    "cli": "0.9.39",
+    "live": null,
+    "live_ok": null
+   },
+   "tools": {
+    "hz-rehearse": true
+   },
+   "since_tag": {
+    "count": 3
+   },
+   "focus": [
+    {
+     "worktree": "/wt/fix",
+     "for": "0.9.40",
+     "note": "blocks the cut",
+     "branch": "fix/e2e-2",
+     "head": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+     "subject": "test(e2e): fix",
+     "dirty": false,
+     "prs": []
+    }
+   ]
+  },
+  "decision": {
+   "phase": "packet approved, not applied: fix/e2e-2 f0f0f0f0f",
+   "kind": "packet-approved",
+   "next": "hz-focused-admit apply /p/packet.json --core-repo /wt --review-root /root --nonconsumers /n/STUCK.json --prepared /p/prepare.out --approved-sha256 9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a",
+   "next_for": null,
+   "then": null,
+   "trap": "Idle window: apply needs zero active Actions runs and takes the queue, train and release locks; start nothing (push, dispatch, rerun) until it reports success.",
+   "waiting": null,
+   "also": [],
+   "side": [],
+   "unknown": [],
+   "alerts": [],
+   "facts": [
+    "focus: fix/e2e-2 f0f0f0f0f for v0.9.40 (blocks the cut)",
+    "main 437bb247 CI green (run 1)",
+    "latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)",
+    "candidate: none",
+    "queue: empty; freeze off; nothing queued",
+    "active runs: none (idle window open)"
+   ]
+  },
+  "text": "PHASE    packet approved, not applied: fix/e2e-2 f0f0f0f0f\nNEXT     hz-focused-admit apply /p/packet.json --core-repo /wt --review-root /root --nonconsumers /n/STUCK.json --prepared /p/prepare.out --approved-sha256 9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a\nTRAP     Idle window: apply needs zero active Actions runs and takes the queue, train and release locks; start nothing (push, dispatch, rerun) until it reports success.\nSTATE    focus: fix/e2e-2 f0f0f0f0f for v0.9.40 (blocks the cut)\n         main 437bb247 CI green (run 1)\n         latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)\n         candidate: none\n         queue: empty; freeze off; nothing queued\n         active runs: none (idle window open)"
+ },
+ {
+  "now": 1800000000,
+  "state": {
+   "main": {
+    "sha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "remote_heads": {
+    "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "runs": [
+    {
+     "databaseId": 1,
+     "headBranch": "main",
+     "headSha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "status": "completed",
+     "conclusion": "success",
+     "workflowName": "CI",
+     "event": "push"
+    }
+   ],
+   "prs": [],
+   "releases": {
+    "latest": "0.9.39"
+   },
+   "queue": {
+    "queued": [],
+    "freeze": false,
+    "verdict": "nothing queued",
+    "main_runs": [],
+    "added": {}
+   },
+   "train": {
+    "trains": [],
+    "tails": []
+   },
+   "release": {
+    "active": null,
+    "dropped": []
+   },
+   "holds": {
+    "files": [],
+    "prs": {}
+   },
+   "procs": [],
+   "receipts": [
+    "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0"
+   ],
+   "packets": [
+    {
+     "dir": "/p",
+     "packet": "/p/packet.json",
+     "branch": "fix/e2e-2",
+     "head": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+     "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "core_repo": "/wt",
+     "worktree": "/wt",
+     "review_root": "/root",
+     "prepared": "/p/prepare.out",
+     "prepared_sha256": "9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a",
+     "approved_sha256": null,
+     "apply_refused": null,
+     "nonconsumers": "/n/STUCK.json",
+     "body": "/p/PR-BODY.md",
+     "subject": "test(web): fix",
+     "bead": null
+    }
+   ],
+   "slots": {},
+   "mini": {
+    "cli": "0.9.39",
+    "live": null,
+    "live_ok": null
+   },
+   "tools": {
+    "hz-rehearse": true
+   },
+   "since_tag": {
+    "count": 3
+   },
+   "focus": [
+    {
+     "worktree": "/wt/fix",
+     "for": "0.9.40",
+     "note": "blocks the cut",
+     "branch": "fix/e2e-2",
+     "head": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+     "subject": "test(e2e): fix",
+     "dirty": false,
+     "prs": []
+    }
+   ]
+  },
+  "decision": {
+   "phase": "fix admitted, not pushed: fix/e2e-2 f0f0f0f0f",
+   "kind": "admitted-not-pushed",
+   "next": "cd /wt && hz-pr-open - 'test(web): fix' --body-file /p/PR-BODY.md",
+   "next_for": null,
+   "then": null,
+   "trap": "Validation SHA trap: never dispatch a validation run on the exact SHA that is or will be a PR head; merge-gate and coverage-floor attach to the oldest suite of that SHA and the PR sits BLOCKED with every check green.",
+   "waiting": null,
+   "also": [],
+   "side": [],
+   "unknown": [],
+   "alerts": [],
+   "facts": [
+    "focus: fix/e2e-2 f0f0f0f0f for v0.9.40 (blocks the cut)",
+    "main 437bb247 CI green (run 1)",
+    "latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)",
+    "candidate: none",
+    "queue: empty; freeze off; nothing queued",
+    "active runs: none (idle window open)"
+   ]
+  },
+  "text": "PHASE    fix admitted, not pushed: fix/e2e-2 f0f0f0f0f\nNEXT     cd /wt && hz-pr-open - 'test(web): fix' --body-file /p/PR-BODY.md\nTRAP     Validation SHA trap: never dispatch a validation run on the exact SHA that is or will be a PR head; merge-gate and coverage-floor attach to the oldest suite of that SHA and the PR sits BLOCKED with every check green.\nSTATE    focus: fix/e2e-2 f0f0f0f0f for v0.9.40 (blocks the cut)\n         main 437bb247 CI green (run 1)\n         latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)\n         candidate: none\n         queue: empty; freeze off; nothing queued\n         active runs: none (idle window open)"
+ },
+ {
+  "now": 1800000000,
+  "state": {
+   "main": {
+    "sha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "remote_heads": {
+    "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "runs": [
+    {
+     "databaseId": 1,
+     "headBranch": "main",
+     "headSha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "status": "completed",
+     "conclusion": "success",
+     "workflowName": "CI",
+     "event": "push"
+    }
+   ],
+   "prs": [],
+   "releases": {
+    "latest": "0.9.39"
+   },
+   "queue": {
+    "queued": [],
+    "freeze": false,
+    "verdict": "nothing queued",
+    "main_runs": [],
+    "added": {}
+   },
+   "train": {
+    "trains": [],
+    "tails": []
+   },
+   "release": {
+    "active": null,
+    "dropped": []
+   },
+   "holds": {
+    "files": [],
+    "prs": {}
+   },
+   "procs": [],
+   "receipts": [
+    "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0"
+   ],
+   "packets": [],
+   "slots": {},
+   "mini": {
+    "cli": "0.9.39",
+    "live": null,
+    "live_ok": null
+   },
+   "tools": {
+    "hz-rehearse": true
+   },
+   "since_tag": {
+    "count": 3
+   },
+   "focus": [
+    {
+     "worktree": "/wt/fix",
+     "for": "0.9.40",
+     "note": "blocks the cut",
+     "branch": "fix/e2e-2",
+     "head": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+     "subject": "test(e2e): fix",
+     "dirty": false,
+     "prs": []
+    }
+   ]
+  },
+  "decision": {
+   "phase": "focus v0.9.40: fix/e2e-2 f0f0f0f0f admitted, not pushed",
+   "kind": "admitted-not-pushed",
+   "next": "cd /wt/fix && hz-pr-open - 'test(e2e): fix'",
+   "next_for": null,
+   "then": null,
+   "trap": "Validation SHA trap: never dispatch a validation run on the exact SHA that is or will be a PR head; merge-gate and coverage-floor attach to the oldest suite of that SHA and the PR sits BLOCKED with every check green.",
+   "waiting": null,
+   "also": [],
+   "side": [],
+   "unknown": [],
+   "alerts": [],
+   "facts": [
+    "focus: fix/e2e-2 f0f0f0f0f for v0.9.40 (blocks the cut)",
+    "main 437bb247 CI green (run 1)",
+    "latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)",
+    "candidate: none",
+    "queue: empty; freeze off; nothing queued",
+    "active runs: none (idle window open)"
+   ]
+  },
+  "text": "PHASE    focus v0.9.40: fix/e2e-2 f0f0f0f0f admitted, not pushed\nNEXT     cd /wt/fix && hz-pr-open - 'test(e2e): fix'\nTRAP     Validation SHA trap: never dispatch a validation run on the exact SHA that is or will be a PR head; merge-gate and coverage-floor attach to the oldest suite of that SHA and the PR sits BLOCKED with every check green.\nSTATE    focus: fix/e2e-2 f0f0f0f0f for v0.9.40 (blocks the cut)\n         main 437bb247 CI green (run 1)\n         latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)\n         candidate: none\n         queue: empty; freeze off; nothing queued\n         active runs: none (idle window open)"
+ },
+ {
+  "now": 1800000000,
+  "state": {
+   "main": {
+    "sha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "remote_heads": {
+    "fix/e2e-2": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0"
+   },
+   "runs": [
+    {
+     "databaseId": 1,
+     "headBranch": "main",
+     "headSha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "status": "completed",
+     "conclusion": "success",
+     "workflowName": "CI",
+     "event": "push"
+    }
+   ],
+   "prs": [
+    {
+     "number": 801,
+     "title": "t",
+     "headRefName": "fix/e2e-2",
+     "headRefOid": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+     "isDraft": false,
+     "mergeStateStatus": "BLOCKED",
+     "statusCheckRollup": [
+      {
+       "name": "CI OK",
+       "status": "IN_PROGRESS",
+       "conclusion": ""
+      }
+     ]
+    }
+   ],
+   "releases": {
+    "latest": "0.9.39"
+   },
+   "queue": {
+    "queued": [],
+    "freeze": false,
+    "verdict": "nothing queued",
+    "main_runs": [],
+    "added": {}
+   },
+   "train": {
+    "trains": [],
+    "tails": []
+   },
+   "release": {
+    "active": null,
+    "dropped": []
+   },
+   "holds": {
+    "files": [],
+    "prs": {}
+   },
+   "procs": [],
+   "receipts": [],
+   "packets": [],
+   "slots": {},
+   "mini": {
+    "cli": "0.9.39",
+    "live": null,
+    "live_ok": null
+   },
+   "tools": {
+    "hz-rehearse": true
+   },
+   "since_tag": {
+    "count": 3
+   },
+   "focus": [
+    {
+     "worktree": "/wt/fix",
+     "for": "0.9.40",
+     "note": "blocks the cut",
+     "branch": "fix/e2e-2",
+     "head": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+     "subject": "test(e2e): fix",
+     "dirty": false,
+     "prs": []
+    }
+   ]
+  },
+  "decision": {
+   "phase": "PR #801 (fix/e2e-2 f0f0f0f0f) CI running (1 checks pending)",
+   "kind": "pr-pending",
+   "next": null,
+   "next_for": null,
+   "then": null,
+   "trap": "Validation SHA trap: never dispatch a validation run on the exact SHA that is or will be a PR head; merge-gate and coverage-floor attach to the oldest suite of that SHA and the PR sits BLOCKED with every check green.",
+   "waiting": "PR #801 checks (about 25 min)",
+   "also": [],
+   "side": [],
+   "unknown": [],
+   "alerts": [],
+   "facts": [
+    "focus: fix/e2e-2 f0f0f0f0f for v0.9.40 (blocks the cut)",
+    "main 437bb247 CI green (run 1)",
+    "latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)",
+    "candidate: none",
+    "queue: empty; freeze off; nothing queued",
+    "active runs: none (idle window open)"
+   ]
+  },
+  "text": "PHASE    PR #801 (fix/e2e-2 f0f0f0f0f) CI running (1 checks pending)\nNEXT     nothing runnable now\nWAITING  PR #801 checks (about 25 min)\nTRAP     Validation SHA trap: never dispatch a validation run on the exact SHA that is or will be a PR head; merge-gate and coverage-floor attach to the oldest suite of that SHA and the PR sits BLOCKED with every check green.\nSTATE    focus: fix/e2e-2 f0f0f0f0f for v0.9.40 (blocks the cut)\n         main 437bb247 CI green (run 1)\n         latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)\n         candidate: none\n         queue: empty; freeze off; nothing queued\n         active runs: none (idle window open)"
+ },
+ {
+  "now": 1800000000,
+  "state": {
+   "main": {
+    "sha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "remote_heads": {
+    "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "runs": [
+    {
+     "databaseId": 1,
+     "headBranch": "main",
+     "headSha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "status": "completed",
+     "conclusion": "success",
+     "workflowName": "CI",
+     "event": "push"
+    }
+   ],
+   "prs": [
+    {
+     "number": 801,
+     "title": "t",
+     "headRefName": "fix/e2e-2",
+     "headRefOid": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+     "isDraft": false,
+     "mergeStateStatus": "CLEAN",
+     "statusCheckRollup": [
+      {
+       "name": "CI OK",
+       "status": "COMPLETED",
+       "conclusion": "SUCCESS"
+      }
+     ]
+    }
+   ],
+   "releases": {
+    "latest": "0.9.39"
+   },
+   "queue": {
+    "queued": [],
+    "freeze": false,
+    "verdict": "nothing queued",
+    "main_runs": [],
+    "added": {}
+   },
+   "train": {
+    "trains": [],
+    "tails": []
+   },
+   "release": {
+    "active": null,
+    "dropped": []
+   },
+   "holds": {
+    "files": [],
+    "prs": {}
+   },
+   "procs": [],
+   "receipts": [],
+   "packets": [],
+   "slots": {},
+   "mini": {
+    "cli": "0.9.39",
+    "live": null,
+    "live_ok": null
+   },
+   "tools": {
+    "hz-rehearse": true
+   },
+   "since_tag": {
+    "count": 3
+   },
+   "focus": [
+    {
+     "worktree": "/wt/fix",
+     "for": "0.9.40",
+     "note": "blocks the cut",
+     "branch": "fix/e2e-2",
+     "head": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+     "subject": "test(e2e): fix",
+     "dirty": false,
+     "prs": []
+    }
+   ]
+  },
+  "decision": {
+   "phase": "PR #801 (fix/e2e-2 f0f0f0f0f) green, not queued",
+   "kind": "pr-green",
+   "next": "hz-ship 801",
+   "next_for": null,
+   "then": null,
+   "trap": "Batch plan trap: pre-open plans prepared at one main are valid for the FIRST merge only; after any merge every other prepared packet is stale and must be rebuilt on the new main.",
+   "waiting": null,
+   "also": [],
+   "side": [],
+   "unknown": [],
+   "alerts": [],
+   "facts": [
+    "focus: fix/e2e-2 f0f0f0f0f for v0.9.40 (blocks the cut)",
+    "main 437bb247 CI green (run 1)",
+    "latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)",
+    "candidate: none",
+    "queue: empty; freeze off; nothing queued",
+    "active runs: none (idle window open)"
+   ]
+  },
+  "text": "PHASE    PR #801 (fix/e2e-2 f0f0f0f0f) green, not queued\nNEXT     hz-ship 801\nTRAP     Batch plan trap: pre-open plans prepared at one main are valid for the FIRST merge only; after any merge every other prepared packet is stale and must be rebuilt on the new main.\nSTATE    focus: fix/e2e-2 f0f0f0f0f for v0.9.40 (blocks the cut)\n         main 437bb247 CI green (run 1)\n         latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)\n         candidate: none\n         queue: empty; freeze off; nothing queued\n         active runs: none (idle window open)"
+ },
+ {
+  "now": 1800000000,
+  "state": {
+   "main": {
+    "sha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "remote_heads": {
+    "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "runs": [
+    {
+     "databaseId": 1,
+     "headBranch": "main",
+     "headSha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "status": "completed",
+     "conclusion": "success",
+     "workflowName": "CI",
+     "event": "push"
+    }
+   ],
+   "prs": [
+    {
+     "number": 801,
+     "title": "t",
+     "headRefName": "fix/e2e-2",
+     "headRefOid": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+     "isDraft": false,
+     "mergeStateStatus": "CLEAN",
+     "statusCheckRollup": [
+      {
+       "name": "CI OK",
+       "status": "COMPLETED",
+       "conclusion": "SUCCESS"
+      }
+     ]
+    }
+   ],
+   "releases": {
+    "latest": "0.9.39"
+   },
+   "queue": {
+    "queued": [
+     "801"
+    ],
+    "freeze": false,
+    "verdict": "",
+    "main_runs": [],
+    "added": {
+     "801": 1799999940
+    }
+   },
+   "train": {
+    "trains": [],
+    "tails": []
+   },
+   "release": {
+    "active": null,
+    "dropped": []
+   },
+   "holds": {
+    "files": [],
+    "prs": {}
+   },
+   "procs": [],
+   "receipts": [],
+   "packets": [],
+   "slots": {},
+   "mini": {
+    "cli": "0.9.39",
+    "live": null,
+    "live_ok": null
+   },
+   "tools": {
+    "hz-rehearse": true
+   },
+   "since_tag": {
+    "count": 3
+   },
+   "focus": [
+    {
+     "worktree": "/wt/fix",
+     "for": "0.9.40",
+     "note": "blocks the cut",
+     "branch": "fix/e2e-2",
+     "head": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+     "subject": "test(e2e): fix",
+     "dirty": false,
+     "prs": []
+    }
+   ]
+  },
+  "decision": {
+   "phase": "PR #801 (fix/e2e-2 f0f0f0f0f) green, queued 1 min",
+   "kind": "pr-queued",
+   "next": null,
+   "next_for": null,
+   "then": null,
+   "trap": "Batch plan trap: pre-open plans prepared at one main are valid for the FIRST merge only; after any merge every other prepared packet is stale and must be rebuilt on the new main.",
+   "waiting": "the hz-queue tick (launchd, every 5 min) to merge #801",
+   "also": [],
+   "side": [],
+   "unknown": [],
+   "alerts": [],
+   "facts": [
+    "focus: fix/e2e-2 f0f0f0f0f for v0.9.40 (blocks the cut)",
+    "main 437bb247 CI green (run 1)",
+    "latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)",
+    "candidate: none",
+    "queue: 801; freeze off",
+    "active runs: none (idle window open)"
+   ]
+  },
+  "text": "PHASE    PR #801 (fix/e2e-2 f0f0f0f0f) green, queued 1 min\nNEXT     nothing runnable now\nWAITING  the hz-queue tick (launchd, every 5 min) to merge #801\nTRAP     Batch plan trap: pre-open plans prepared at one main are valid for the FIRST merge only; after any merge every other prepared packet is stale and must be rebuilt on the new main.\nSTATE    focus: fix/e2e-2 f0f0f0f0f for v0.9.40 (blocks the cut)\n         main 437bb247 CI green (run 1)\n         latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)\n         candidate: none\n         queue: 801; freeze off\n         active runs: none (idle window open)"
+ },
+ {
+  "now": 1800000000,
+  "state": {
+   "main": {
+    "sha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "remote_heads": {
+    "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "runs": [
+    {
+     "databaseId": 1,
+     "headBranch": "main",
+     "headSha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "status": "completed",
+     "conclusion": "success",
+     "workflowName": "CI",
+     "event": "push"
+    }
+   ],
+   "prs": [],
+   "releases": {
+    "latest": "0.9.39"
+   },
+   "queue": {
+    "queued": [],
+    "freeze": false,
+    "verdict": "nothing queued",
+    "main_runs": [],
+    "added": {}
+   },
+   "train": {
+    "trains": [],
+    "tails": []
+   },
+   "release": {
+    "active": null,
+    "dropped": []
+   },
+   "holds": {
+    "files": [],
+    "prs": {}
+   },
+   "procs": [],
+   "receipts": [],
+   "packets": [],
+   "slots": {},
+   "mini": {
+    "cli": "0.9.39",
+    "live": null,
+    "live_ok": null
+   },
+   "tools": {
+    "hz-rehearse": true
+   },
+   "since_tag": {
+    "count": 3
+   },
+   "focus": [
+    {
+     "worktree": "/wt/fix",
+     "for": "0.9.40",
+     "note": "blocks the cut",
+     "branch": "fix/e2e-2",
+     "head": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+     "subject": "test(e2e): fix",
+     "dirty": false,
+     "prs": [
+      {
+       "number": 801,
+       "state": "MERGED",
+       "headRefOid": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0"
+      }
+     ]
+    }
+   ]
+  },
+  "decision": {
+   "phase": "main 437bb247 green, 3 commits since v0.9.39, no candidate",
+   "kind": "cut-ready",
+   "next": "hz-rehearse start --consumers",
+   "next_for": null,
+   "then": null,
+   "trap": "Consumer pin: a Core change to pyproject dependencies or extras breaks the ten plugin Consumer jobs in the candidate until the plugins are relocked and the Core pin PR is in; check before the cut.",
+   "waiting": null,
+   "also": [],
+   "side": [
+    "focus v0.9.40: fix/e2e-2 f0f0f0f0f is merged: hz-go focus done /wt/fix"
+   ],
+   "unknown": [],
+   "alerts": [],
+   "facts": [
+    "focus: fix/e2e-2 f0f0f0f0f for v0.9.40 (blocks the cut)",
+    "main 437bb247 CI green (run 1)",
+    "latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)",
+    "candidate: none",
+    "queue: empty; freeze off; nothing queued",
+    "active runs: none (idle window open)"
+   ]
+  },
+  "text": "PHASE    main 437bb247 green, 3 commits since v0.9.39, no candidate\nNEXT     hz-rehearse start --consumers\nTRAP     Consumer pin: a Core change to pyproject dependencies or extras breaks the ten plugin Consumer jobs in the candidate until the plugins are relocked and the Core pin PR is in; check before the cut.\nASIDE    focus v0.9.40: fix/e2e-2 f0f0f0f0f is merged: hz-go focus done /wt/fix\nSTATE    focus: fix/e2e-2 f0f0f0f0f for v0.9.40 (blocks the cut)\n         main 437bb247 CI green (run 1)\n         latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)\n         candidate: none\n         queue: empty; freeze off; nothing queued\n         active runs: none (idle window open)"
+ },
+ {
+  "now": 1800000000,
+  "state": {
+   "main": {
+    "sha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "remote_heads": {
+    "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "runs": [
+    {
+     "databaseId": 1,
+     "headBranch": "main",
+     "headSha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "status": "completed",
+     "conclusion": "success",
+     "workflowName": "CI",
+     "event": "push"
+    }
+   ],
+   "prs": [],
+   "releases": {
+    "latest": "0.9.39"
+   },
+   "queue": {
+    "queued": [],
+    "freeze": false,
+    "verdict": "nothing queued",
+    "main_runs": [],
+    "added": {}
+   },
+   "train": {
+    "trains": [],
+    "tails": []
+   },
+   "release": {
+    "active": null,
+    "dropped": []
+   },
+   "holds": {
+    "files": [],
+    "prs": {}
+   },
+   "procs": [],
+   "receipts": [],
+   "packets": [],
+   "slots": {},
+   "mini": {
+    "cli": "0.9.39",
+    "live": null,
+    "live_ok": null
+   },
+   "tools": {
+    "hz-rehearse": true
+   },
+   "since_tag": {
+    "count": 3
+   },
+   "focus": [
+    {
+     "worktree": "/wt/fix",
+     "for": "0.9.40",
+     "note": "blocks the cut",
+     "branch": "fix/e2e-2",
+     "head": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+     "subject": "test(e2e): fix",
+     "dirty": false,
+     "prs": [
+      {
+       "number": 801,
+       "state": "MERGED",
+       "headRefOid": "1111111111111111111111111111111111111111"
+      }
+     ]
+    }
+   ]
+  },
+  "decision": {
+   "phase": "focus v0.9.40: fix/e2e-2 f0f0f0f0f local, unpushed, no packet (no validation run for it among the latest runs)",
+   "kind": "focus-local",
+   "next": "hz-admit-wave preopen --help  # build the packet for fix/e2e-2 in /wt/fix with --main 437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+   "next_for": null,
+   "then": null,
+   "trap": "A declared focus head blocks the cut: no rehearsal and no train until it is merged (or `hz-go focus done`); validate it on a validation/* commit of its own, never on the SHA that becomes the PR head.",
+   "waiting": null,
+   "also": [],
+   "side": [],
+   "unknown": [],
+   "alerts": [],
+   "facts": [
+    "focus: fix/e2e-2 f0f0f0f0f for v0.9.40 (blocks the cut)",
+    "main 437bb247 CI green (run 1)",
+    "latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)",
+    "candidate: none",
+    "queue: empty; freeze off; nothing queued",
+    "active runs: none (idle window open)"
+   ]
+  },
+  "text": "PHASE    focus v0.9.40: fix/e2e-2 f0f0f0f0f local, unpushed, no packet (no validation run for it among the latest runs)\nNEXT     hz-admit-wave preopen --help  # build the packet for fix/e2e-2 in /wt/fix with --main 437bb247d164d5c5140e5acab1518ba6ea54bb3e\nTRAP     A declared focus head blocks the cut: no rehearsal and no train until it is merged (or `hz-go focus done`); validate it on a validation/* commit of its own, never on the SHA that becomes the PR head.\nSTATE    focus: fix/e2e-2 f0f0f0f0f for v0.9.40 (blocks the cut)\n         main 437bb247 CI green (run 1)\n         latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)\n         candidate: none\n         queue: empty; freeze off; nothing queued\n         active runs: none (idle window open)"
+ },
+ {
+  "now": 1800000000,
+  "state": {
+   "main": {
+    "sha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "remote_heads": {
+    "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "runs": [
+    {
+     "databaseId": 1,
+     "headBranch": "main",
+     "headSha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "status": "completed",
+     "conclusion": "success",
+     "workflowName": "CI",
+     "event": "push"
+    }
+   ],
+   "prs": [],
+   "releases": {
+    "latest": "0.9.40"
+   },
+   "queue": {
+    "queued": [],
+    "freeze": false,
+    "verdict": "nothing queued",
+    "main_runs": [],
+    "added": {}
+   },
+   "train": {
+    "trains": [],
+    "tails": []
+   },
+   "release": {
+    "active": null,
+    "dropped": []
+   },
+   "holds": {
+    "files": [],
+    "prs": {}
+   },
+   "procs": [],
+   "receipts": [],
+   "packets": [],
+   "slots": {},
+   "mini": {
+    "cli": "0.9.40",
+    "live": null,
+    "live_ok": null
+   },
+   "tools": {
+    "hz-rehearse": true
+   },
+   "since_tag": {
+    "count": 3
+   },
+   "focus": [
+    {
+     "worktree": "/wt/fix",
+     "for": "0.9.40",
+     "note": "blocks the cut",
+     "branch": "fix/e2e-2",
+     "head": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+     "subject": "test(e2e): fix",
+     "dirty": false,
+     "prs": []
+    }
+   ]
+  },
+  "decision": {
+   "phase": "main 437bb247 green, 3 commits since v0.9.40, no candidate",
+   "kind": "cut-ready",
+   "next": "hz-rehearse start --consumers",
+   "next_for": null,
+   "then": null,
+   "trap": "Consumer pin: a Core change to pyproject dependencies or extras breaks the ten plugin Consumer jobs in the candidate until the plugins are relocked and the Core pin PR is in; check before the cut.",
+   "waiting": null,
+   "also": [],
+   "side": [
+    "focus v0.9.40: fix/e2e-2 f0f0f0f0f was declared for v0.9.40, which is out (v0.9.40): hz-go focus done /wt/fix or add it again --for the next one"
+   ],
+   "unknown": [],
+   "alerts": [],
+   "facts": [
+    "focus: fix/e2e-2 f0f0f0f0f for v0.9.40 (blocks the cut)",
+    "main 437bb247 CI green (run 1)",
+    "latest release v0.9.40; Mini CLI 0.9.40 (live not probed; --live)",
+    "candidate: none",
+    "queue: empty; freeze off; nothing queued",
+    "active runs: none (idle window open)"
+   ]
+  },
+  "text": "PHASE    main 437bb247 green, 3 commits since v0.9.40, no candidate\nNEXT     hz-rehearse start --consumers\nTRAP     Consumer pin: a Core change to pyproject dependencies or extras breaks the ten plugin Consumer jobs in the candidate until the plugins are relocked and the Core pin PR is in; check before the cut.\nASIDE    focus v0.9.40: fix/e2e-2 f0f0f0f0f was declared for v0.9.40, which is out (v0.9.40): hz-go focus done /wt/fix or add it again --for the next one\nSTATE    focus: fix/e2e-2 f0f0f0f0f for v0.9.40 (blocks the cut)\n         main 437bb247 CI green (run 1)\n         latest release v0.9.40; Mini CLI 0.9.40 (live not probed; --live)\n         candidate: none\n         queue: empty; freeze off; nothing queued\n         active runs: none (idle window open)"
+ },
+ {
+  "now": 1800000000,
+  "state": {
+   "main": {
+    "sha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "remote_heads": {
+    "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "runs": [
+    {
+     "databaseId": 1,
+     "headBranch": "main",
+     "headSha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "status": "completed",
+     "conclusion": "success",
+     "workflowName": "CI",
+     "event": "push"
+    }
+   ],
+   "prs": [
+    {
+     "number": 801,
+     "title": "t",
+     "headRefName": "fix/e2e-2",
+     "headRefOid": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+     "isDraft": false,
+     "mergeStateStatus": "CLEAN",
+     "statusCheckRollup": [
+      {
+       "name": "CI OK",
+       "status": "COMPLETED",
+       "conclusion": "SUCCESS"
+      }
+     ]
+    }
+   ],
+   "releases": {
+    "latest": "0.9.39"
+   },
+   "queue": {
+    "queued": [],
+    "freeze": false,
+    "verdict": "nothing queued",
+    "main_runs": [],
+    "added": {}
+   },
+   "train": {
+    "trains": [],
+    "tails": []
+   },
+   "release": {
+    "active": null,
+    "dropped": []
+   },
+   "holds": {
+    "files": [],
+    "prs": {
+     "801": "owner"
+    }
+   },
+   "procs": [],
+   "receipts": [],
+   "packets": [],
+   "slots": {},
+   "mini": {
+    "cli": "0.9.39",
+    "live": null,
+    "live_ok": null
+   },
+   "tools": {
+    "hz-rehearse": true
+   },
+   "since_tag": {
+    "count": 3
+   },
+   "focus": [
+    {
+     "worktree": "/wt/fix",
+     "for": "0.9.40",
+     "note": "blocks the cut",
+     "branch": "fix/e2e-2",
+     "head": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+     "subject": "test(e2e): fix",
+     "dirty": false,
+     "prs": []
+    }
+   ]
+  },
+  "decision": {
+   "phase": "focus v0.9.40: fix/e2e-2 f0f0f0f0f is not merged and nothing can move it now (see ASIDE)",
+   "kind": "focus-blocked",
+   "next": null,
+   "next_for": null,
+   "then": null,
+   "trap": "A declared focus head blocks the cut: no rehearsal and no train until it is merged (or `hz-go focus done`); validate it on a validation/* commit of its own, never on the SHA that becomes the PR head.",
+   "waiting": "the focus head to merge; no rehearsal and no cut before (hz-go focus done /wt/fix lifts it)",
+   "also": [],
+   "side": [
+    "PR #801 (fix/e2e-2 f0f0f0f0f) held: owner"
+   ],
+   "unknown": [],
+   "alerts": [],
+   "facts": [
+    "focus: fix/e2e-2 f0f0f0f0f for v0.9.40 (blocks the cut)",
+    "main 437bb247 CI green (run 1)",
+    "latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)",
+    "candidate: none",
+    "queue: empty; freeze off; nothing queued",
+    "active runs: none (idle window open)"
+   ]
+  },
+  "text": "PHASE    focus v0.9.40: fix/e2e-2 f0f0f0f0f is not merged and nothing can move it now (see ASIDE)\nNEXT     nothing runnable now\nWAITING  the focus head to merge; no rehearsal and no cut before (hz-go focus done /wt/fix lifts it)\nTRAP     A declared focus head blocks the cut: no rehearsal and no train until it is merged (or `hz-go focus done`); validate it on a validation/* commit of its own, never on the SHA that becomes the PR head.\nASIDE    PR #801 (fix/e2e-2 f0f0f0f0f) held: owner\nSTATE    focus: fix/e2e-2 f0f0f0f0f for v0.9.40 (blocks the cut)\n         main 437bb247 CI green (run 1)\n         latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)\n         candidate: none\n         queue: empty; freeze off; nothing queued\n         active runs: none (idle window open)"
+ },
+ {
+  "now": 1800000000,
+  "state": {
+   "main": {
+    "sha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "remote_heads": {
+    "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "runs": [
+    {
+     "databaseId": 1,
+     "headBranch": "main",
+     "headSha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "status": "completed",
+     "conclusion": "success",
+     "workflowName": "CI",
+     "event": "push"
+    }
+   ],
+   "prs": [],
+   "releases": {
+    "latest": "0.9.39"
+   },
+   "queue": {
+    "queued": [],
+    "freeze": false,
+    "verdict": "nothing queued",
+    "main_runs": [],
+    "added": {}
+   },
+   "train": {
+    "trains": [],
+    "tails": []
+   },
+   "release": {
+    "active": null,
+    "dropped": []
+   },
+   "holds": {
+    "files": [],
+    "prs": {}
+   },
+   "procs": [],
+   "receipts": [],
+   "packets": [],
+   "slots": {},
+   "mini": {
+    "cli": "0.9.39",
+    "live": null,
+    "live_ok": null
+   },
+   "tools": {
+    "hz-rehearse": true
+   },
+   "since_tag": {
+    "count": 3
+   },
+   "focus": [
+    {
+     "worktree": "/wt/fix",
+     "for": "0.9.40",
+     "note": "blocks the cut",
+     "branch": "fix/e2e-2",
+     "head": null,
+     "subject": "test(e2e): fix",
+     "dirty": false,
+     "prs": [],
+     "error": "git exited 128"
+    }
+   ]
+  },
+  "decision": {
+   "phase": "focus v0.9.40: fix/e2e-2  unreadable (git exited 128): /wt/fix",
+   "kind": "focus-blocked",
+   "next": "hz-go focus list",
+   "next_for": null,
+   "then": null,
+   "trap": "A declared focus head blocks the cut: no rehearsal and no train until it is merged (or `hz-go focus done`); validate it on a validation/* commit of its own, never on the SHA that becomes the PR head.",
+   "waiting": null,
+   "also": [],
+   "side": [],
+   "unknown": [],
+   "alerts": [],
+   "facts": [
+    "focus: fix/e2e-2  for v0.9.40 (blocks the cut)",
+    "main 437bb247 CI green (run 1)",
+    "latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)",
+    "candidate: none",
+    "queue: empty; freeze off; nothing queued",
+    "active runs: none (idle window open)"
+   ]
+  },
+  "text": "PHASE    focus v0.9.40: fix/e2e-2  unreadable (git exited 128): /wt/fix\nNEXT     hz-go focus list\nTRAP     A declared focus head blocks the cut: no rehearsal and no train until it is merged (or `hz-go focus done`); validate it on a validation/* commit of its own, never on the SHA that becomes the PR head.\nSTATE    focus: fix/e2e-2  for v0.9.40 (blocks the cut)\n         main 437bb247 CI green (run 1)\n         latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)\n         candidate: none\n         queue: empty; freeze off; nothing queued\n         active runs: none (idle window open)"
+ },
+ {
+  "now": 1800000000,
+  "state": {
+   "main": {
+    "sha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "remote_heads": {
+    "main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e"
+   },
+   "runs": [
+    {
+     "databaseId": 1,
+     "headBranch": "main",
+     "headSha": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+     "status": "completed",
+     "conclusion": "success",
+     "workflowName": "CI",
+     "event": "push"
+    }
+   ],
+   "prs": [
+    {
+     "number": 801,
+     "title": "t",
+     "headRefName": "fix/e2e-2",
+     "headRefOid": "1111111111111111111111111111111111111111",
+     "isDraft": false,
+     "mergeStateStatus": "DIRTY",
+     "statusCheckRollup": [
+      {
+       "name": "CI OK",
+       "status": "COMPLETED",
+       "conclusion": "SUCCESS"
+      }
+     ]
+    }
+   ],
+   "releases": {
+    "latest": "0.9.39"
+   },
+   "queue": {
+    "queued": [],
+    "freeze": false,
+    "verdict": "nothing queued",
+    "main_runs": [],
+    "added": {}
+   },
+   "train": {
+    "trains": [],
+    "tails": []
+   },
+   "release": {
+    "active": null,
+    "dropped": []
+   },
+   "holds": {
+    "files": [],
+    "prs": {}
+   },
+   "procs": [],
+   "receipts": [],
+   "packets": [],
+   "slots": {},
+   "mini": {
+    "cli": "0.9.39",
+    "live": null,
+    "live_ok": null
+   },
+   "tools": {
+    "hz-rehearse": true
+   },
+   "since_tag": {
+    "count": 3
+   },
+   "focus": [
+    {
+     "worktree": "/wt/fix",
+     "for": "0.9.40",
+     "note": "blocks the cut",
+     "branch": "fix/e2e-2",
+     "head": "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+     "subject": "test(e2e): fix",
+     "dirty": false,
+     "prs": []
+    }
+   ]
+  },
+  "decision": {
+   "phase": "focus v0.9.40: fix/e2e-2 f0f0f0f0f local, unpushed, no packet (no validation run for it among the latest runs) (PR #801 holds an older head 111111111)",
+   "kind": "focus-local",
+   "next": "hz-admit-wave preopen --help  # build the packet for fix/e2e-2 in /wt/fix with --main 437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+   "next_for": null,
+   "then": null,
+   "trap": "A declared focus head blocks the cut: no rehearsal and no train until it is merged (or `hz-go focus done`); validate it on a validation/* commit of its own, never on the SHA that becomes the PR head.",
+   "waiting": null,
+   "also": [],
+   "side": [
+    "PR #801 (fix/e2e-2 111111111) conflicts with main"
+   ],
+   "unknown": [],
+   "alerts": [],
+   "facts": [
+    "focus: fix/e2e-2 f0f0f0f0f for v0.9.40 (blocks the cut)",
+    "main 437bb247 CI green (run 1)",
+    "latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)",
+    "candidate: none",
+    "queue: empty; freeze off; nothing queued",
+    "active runs: none (idle window open)"
+   ]
+  },
+  "text": "PHASE    focus v0.9.40: fix/e2e-2 f0f0f0f0f local, unpushed, no packet (no validation run for it among the latest runs) (PR #801 holds an older head 111111111)\nNEXT     hz-admit-wave preopen --help  # build the packet for fix/e2e-2 in /wt/fix with --main 437bb247d164d5c5140e5acab1518ba6ea54bb3e\nTRAP     A declared focus head blocks the cut: no rehearsal and no train until it is merged (or `hz-go focus done`); validate it on a validation/* commit of its own, never on the SHA that becomes the PR head.\nASIDE    PR #801 (fix/e2e-2 111111111) conflicts with main\nSTATE    focus: fix/e2e-2 f0f0f0f0f for v0.9.40 (blocks the cut)\n         main 437bb247 CI green (run 1)\n         latest release v0.9.39; Mini CLI 0.9.39 (live not probed; --live)\n         candidate: none\n         queue: empty; freeze off; nothing queued\n         active runs: none (idle window open)"
+ }
+]

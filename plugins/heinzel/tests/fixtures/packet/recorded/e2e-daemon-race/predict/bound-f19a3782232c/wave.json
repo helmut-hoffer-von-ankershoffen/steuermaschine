@@ -1,0 +1,26 @@
+{
+ "branch": "fix/e2e-daemon-restart-race",
+ "collector": "/Users/<user>/Code/tmp-pr-fill/admit-A/bin/collect_cases.py",
+ "collector_sha256": "c258a531e09d0291397becf1c36473f86b014a060a5a5e90567f8e0a93e05cb7",
+ "core_repo": "/Users/<user>/Code/tmp-e2e-details/scratch-core",
+ "head": "5e409527037b01f4fd7ad525bbfc13a39f37b7ae",
+ "kind": "bound",
+ "lanes": [
+  "browser",
+  "python"
+ ],
+ "main": "f19a3782232cb24b682b3e0f5b094abb96da18fd",
+ "main_tree": "cdf43831327ecf82e2ae872dff7522817e1a2861",
+ "manifest_sha256": "ec4010d0592d1df507204f6e1b371cc3ccbf7dd9b04a142303adba8162734a28",
+ "packet_sha256": "4f6f22e7db461cad4037b10a1f319047afb75406a06846b7a0256bd5fcae991a",
+ "predicted_dir": "/Users/<user>/Code/tmp-pr-fill/admit-B/e2e-daemon-race/predict",
+ "predicted_main": "da1362306815dc5ea47d691e66ff307ac05097a6",
+ "predicted_packet_sha256": "e0848a7ee75c6c5563f5a0058b267cc087936ea481e9b53c10c0452460173679",
+ "python": "/Users/<user>/Code/heinzel-e2e-details/.venv/bin/python",
+ "python_version": "3.14.8",
+ "review": "e2e-daemon-race/predict/bound-f19a3782232c/REVIEW.md",
+ "review_root": "/Users/<user>/Code/tmp-pr-fill/admit-B",
+ "schema": 1,
+ "tree": "19eb6081b4a90f18de56bd7e84d14c7c38c84e62",
+ "worktree": "/Users/<user>/Code/heinzel-e2e-details"
+}

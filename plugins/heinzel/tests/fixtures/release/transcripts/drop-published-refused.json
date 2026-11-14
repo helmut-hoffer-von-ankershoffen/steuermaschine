@@ -1,0 +1,57 @@
+{
+ "exit": 1,
+ "gh_calls": [],
+ "gh_rules": {
+  "api graphql": {
+   "data": {
+    "repository": {
+     "branch": null,
+     "pullRequests": {
+      "nodes": [
+       {
+        "headRefName": "release/v0.9.41",
+        "number": 812,
+        "state": "CLOSED"
+       }
+      ]
+     },
+     "ref": null,
+     "release": null
+    }
+   }
+  },
+  "api repos/helmut-hoffer-von-ankershoffen/heinzel/actions/runs?branch=release/v0.9.41": {
+   "total_count": 0,
+   "workflow_runs": []
+  }
+ },
+ "name": "drop-published-refused",
+ "old_argv": [
+  "0.9.41",
+  "--drop-candidate",
+  "--reason",
+  "candidate red: Coverage, fix in #812"
+ ],
+ "pypi": {
+  "heinzel/0.9.41": 200
+ },
+ "state_after": {
+  "hz-release-holds/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": "0.9.41",
+  "hz-release.json": {
+   "freeze_token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+   "version": "0.9.41"
+  },
+  "hz-release.lock": ""
+ },
+ "state_before": {
+  "hz-release-holds/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": "0.9.41",
+  "hz-release.json": {
+   "freeze_token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+   "version": "0.9.41"
+  }
+ },
+ "stderr": [
+  "STOPPED: drop refused: heinzel 0.9.41 is on PyPI. Resolve exactly that and run the same drop command again; no other hold or receipt was touched."
+ ],
+ "stdout": []
+}

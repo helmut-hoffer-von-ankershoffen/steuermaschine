@@ -1,0 +1,39 @@
+End-to-end web-2 (ubuntu-24.04)	UNKNOWN STEP	﻿2026-11-07T18:04:29.7854275Z Current runner version: '2.338.2'
+End-to-end web-2 (ubuntu-24.04)	UNKNOWN STEP	2026-11-07T18:04:29.7874656Z ##[group]Runner Image Provisioner
+End-to-end web-2 (ubuntu-24.04)	UNKNOWN STEP	2026-11-07T18:04:29.7875375Z Hosted Compute Agent
+End-to-end web-2 (ubuntu-24.04)	UNKNOWN STEP	2026-11-07T18:04:50.2194393Z ##[group]Run if [ "${RUNNER_OS:-}" = macOS ]; then
+End-to-end web-2 (ubuntu-24.04)	UNKNOWN STEP	2026-11-07T18:04:50.2194740Z ^[[36;1mif [ "${RUNNER_OS:-}" = macOS ]; then^[[0m
+End-to-end web-2 (ubuntu-24.04)	UNKNOWN STEP	2026-11-07T18:04:50.2195193Z ^[[36;1m  test "$(uname -m)" = arm64 || { echo '::error::macOS CI requires Apple silicon (arm64)'; exit 1; }^[[0m
+End-to-end web-2 (ubuntu-24.04)	UNKNOWN STEP	2026-11-07T18:04:50.2195555Z ^[[36;1mfi^[[0m
+End-to-end web-2 (ubuntu-24.04)	UNKNOWN STEP	2026-11-07T18:04:50.2195972Z ^[[36;1mprintf 'url=data:application/json;base64,%s\n' "$(base64 < "$ACTION_PATH/uv-manifest.json" | tr -d '\r\n')" >> "$GITHUB_OUTPUT"^[[0m
+End-to-end web-2 (ubuntu-24.04)	UNKNOWN STEP	2026-11-07T18:08:28.3807022Z             if run.returncode:
+End-to-end web-2 (ubuntu-24.04)	UNKNOWN STEP	2026-11-07T18:08:28.3807560Z >               pytest.fail((run.stderr + "\n" + run.stdout).replace(token, "<redacted-session>"))
+End-to-end web-2 (ubuntu-24.04)	UNKNOWN STEP	2026-11-07T18:08:28.3808062Z E               Failed: AssertionError [ERR_ASSERTION]: Lookback seconds must keep the entered value after a render
+End-to-end web-2 (ubuntu-24.04)	UNKNOWN STEP	2026-11-07T18:08:28.3808448Z E               
+End-to-end web-2 (ubuntu-24.04)	UNKNOWN STEP	2026-11-07T18:08:28.3808631Z E               '' !== '60'
+End-to-end web-2 (ubuntu-24.04)	UNKNOWN STEP	2026-11-07T18:08:28.3878126Z INFO     heinzel.heads.web._auto_update:_auto_update.py:683 automatic updates are off: Updates are managed by your source checkout.
+End-to-end web-2 (ubuntu-24.04)	UNKNOWN STEP	2026-11-07T18:08:28.3878613Z =========================== short test summary info ============================
+End-to-end web-2 (ubuntu-24.04)	UNKNOWN STEP	2026-11-07T18:08:28.3879314Z FAILED tests/e2e/scheduled_connected_test.py::test_mounted_scheduled_connected_read[True-webkit] - Failed: AssertionError [ERR_ASSERTION]: Lookback seconds must keep the entered value after a render
+End-to-end web-2 (ubuntu-24.04)	UNKNOWN STEP	2026-11-07T18:08:28.3879836Z 
+End-to-end web-2 (ubuntu-24.04)	UNKNOWN STEP	2026-11-07T18:08:28.3879909Z '' !== '60'
+End-to-end web-2 (ubuntu-24.04)	UNKNOWN STEP	2026-11-07T18:08:28.3938118Z 1 failed, 37 passed in 156.10s (0:02:36)
+End-to-end web-2 (ubuntu-24.04)	UNKNOWN STEP	2026-11-07T18:08:28.5788756Z make: *** [Makefile:266: test-e2e] Error 2
+End-to-end web-2 (ubuntu-24.04)	UNKNOWN STEP	2026-11-07T18:08:28.5802675Z ##[error]Process completed with exit code 2.
+End-to-end web-2 (ubuntu-24.04)	UNKNOWN STEP	2026-11-07T18:08:28.5906760Z Post job cleanup.
+End-to-end web-2 (ubuntu-24.04)	UNKNOWN STEP	2026-11-07T18:08:28.5909973Z ##[start-action display=Run astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e;id=__7a3b38da-ee38-4cbe-a6de-6edb5a3c132e.__astral-sh_setup-uv]
+CI OK	UNKNOWN STEP	﻿2026-11-07T18:17:47.2507770Z Current runner version: '2.338.2'
+CI OK	UNKNOWN STEP	2026-11-07T18:17:47.2533705Z ##[group]Runner Image Provisioner
+CI OK	UNKNOWN STEP	2026-11-07T18:17:47.4400702Z ^[[36;1m  case "$result" in^[[0m
+CI OK	UNKNOWN STEP	2026-11-07T18:17:47.4486645Z ^[[36;1m    success | skipped) ;;^[[0m
+CI OK	UNKNOWN STEP	2026-11-07T18:17:47.4487994Z ^[[36;1m    *) echo "A required job ended with: $result"; exit 1 ;;^[[0m
+CI OK	UNKNOWN STEP	2026-11-07T18:17:47.4489212Z ^[[36;1m  esac^[[0m
+CI OK	UNKNOWN STEP	2026-11-07T18:17:47.4489962Z ^[[36;1mdone^[[0m
+CI OK	UNKNOWN STEP	2026-11-07T18:17:47.4863278Z shell: /usr/bin/bash -e {0}
+CI OK	UNKNOWN STEP	2026-11-07T18:17:47.4865199Z env:
+CI OK	UNKNOWN STEP	2026-11-07T18:17:47.4865914Z   UV_FROZEN: 1
+CI OK	UNKNOWN STEP	2026-11-07T18:17:47.4866655Z   FORCE_COLOR: 1
+CI OK	UNKNOWN STEP	2026-11-07T18:17:47.4869307Z   RESULTS: success skipped success
+CI OK	UNKNOWN STEP	2026-11-07T18:17:47.4872160Z ##[endgroup]
+CI OK	UNKNOWN STEP	2026-11-07T18:17:47.5118431Z A required job ended with: failure
+CI OK	UNKNOWN STEP	2026-11-07T18:17:47.5152655Z ##[error]Process completed with exit code 1.
+CI OK	UNKNOWN STEP	2026-11-07T18:17:47.5400910Z Cleaning up orphan processes

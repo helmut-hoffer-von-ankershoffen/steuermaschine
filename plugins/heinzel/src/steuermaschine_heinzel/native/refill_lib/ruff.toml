@@ -1,0 +1,5 @@
+# slots.py moved from the old tools (plugins/heinzel/tests/coord_verbatim.py proves it); it is not relinted.
+line-length = 200
+
+[lint.per-file-ignores]
+"slots.py" = ["ALL"]

@@ -1,0 +1,38 @@
+sm gate: waiting 0s: the heavy slot is held by 64604 /Users/USER/Code/heinzel-bundle-a uv run pytest tests/integration/acceptance_fixture_test.py tests/integration/activity_import_test.py tests/integration/a. One heavy run at a time, and none above the load bar, keeps this machine answering; this starts by itself when it is its turn.
+sm gate: acquired after 20s
+Preparing v0.9.42 (was 0.9.41)
+✓ lock 0.1s
+✓ template 0.1s
+✓ docs 3.4s
+✓ design 1.5s
+✓ web-client 4.1s
+✓ demo 0.1s
+✓ attributions 1.8s
+✓ format 0.1s
+✓ ruff 0.1s
+✓ format-final 0.1s
+ M agent-skills/.claude-plugin/plugin.json
+ M copier.yml
+ M pyproject.toml
+M  scripts/acceptance/run_acceptance.py
+ M uv.lock
+check for added large files..............................................Passed
+check for case conflicts.................................................Passed
+debug statements (python)................................................Passed
+detect private key.......................................................Passed
+check for merge conflicts................................................Passed
+check toml...............................................................Passed
+check yaml...............................................................Passed
+fix end of files.........................................................Passed
+trim trailing whitespace.................................................Passed
+dependency lock matches project metadata.................................Passed
+gitleaks (credentials in the staged changes).............................Passed
+ruff format..........................................(no files to check)Skipped
+ruff check...........................................(no files to check)Skipped
+mypy.....................................................................Passed
+confidential terms.......................................................Passed
+confidential terms in the author and committer...........................Passed
+owning plugin lint and unit tests........................................Passed
+confidential terms in the commit message.................................Passed
+conventional commit message..............................................Passed
+v0.9.42

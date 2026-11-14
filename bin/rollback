@@ -1,0 +1,26 @@
+#!/bin/bash
+# rollback: point the live `sm` back at the release that was live before the last promote. Atomic; run it again to go forward.
+set -u
+stable="${SM_STABLE:-$HOME/Code/steuermaschine-stable}"
+case "${1:-}" in -h|--help) sed -n '2p' "$0"; exit 0 ;; esac
+[ -L "$stable/previous" ] || { echo "rollback: no previous release in $stable" >&2; exit 1; }
+# shellcheck source=bin/promote_lib.sh
+. "$(cd "$(dirname "$0")" && pwd)/promote_lib.sh"
+# The state files move to the names the previous release uses, while no write step runs (as promote does).
+mark_switch_pending || echo "rollback: (the switch-pending file could not be written)" >&2
+trap clear_switch_pending EXIT
+wait_idle 1800 15 >/dev/null || { echo "rollback: an admission or release step still runs after 30 min; nothing switched" >&2; exit 1; }
+cur_rel="$(cd "$stable/current" && pwd -P)"; prev_rel="$(cd "$stable/previous" && pwd -P)"
+migrate_state_to "$prev_rel/venv/bin/steuermaschine" "$prev_rel/user-config.toml" "$cur_rel/venv/bin/steuermaschine" "$cur_rel/user-config.toml" 2>&1 | sed 's/^/rollback:   /' >&2
+[ "${PIPESTATUS[0]}" = 0 ] || { echo "rollback: the state could not be moved back; nothing switched" >&2; exit 1; }
+python3 - "$stable" <<'PY'
+import os, sys
+stable = sys.argv[1]
+cur, prev = os.readlink(os.path.join(stable, "current")), os.readlink(os.path.join(stable, "previous"))
+for name, target in (("current", prev), ("previous", cur)):
+    tmp = os.path.join(stable, f".{name}.{os.getpid()}")
+    os.symlink(target, tmp)
+    os.replace(tmp, os.path.join(stable, name))
+print(f"rollback: live is now {prev} (was {cur})", file=sys.stderr)
+PY
+"$stable/bin/sm" self config | head -1

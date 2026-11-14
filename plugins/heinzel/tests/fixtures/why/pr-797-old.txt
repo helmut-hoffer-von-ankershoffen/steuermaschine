@@ -1,0 +1,10 @@
+PR 797 OPEN 5e40952 github=CLEAN  test(web): wait for the expert answer before count
+  CI OK: SUCCESS
+  merge-gate: SUCCESS
+  coverage-floor: SUCCESS
+  queue: not queued
+  holds: freeze=off release-holds=none
+  main run 43307443399 f19a3782 attempt 1 completed success
+  
+  role: standalone
+  WHY: not in the queue: hz-queue add 797

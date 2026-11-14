@@ -1,0 +1,29 @@
+head e9c943810ea75cfad155a431a2f168b2a9559828
+base 437bb247d164d5c5140e5acab1518ba6ea54bb3e
+tree 2644da58a04f7d1db0e15205ff5fc2faae91073b (merge-tree)
+changed (1):
+  M web/e2e/chat-ready.mjs
+protected execution changed: none
+pyproject.toml: unchanged
+production (0): 
+repo selector (base scripts/affected.py): e2e lane supervised has no focused lane mapping; advisory jobs build, commits, dependency-review, e2e-supervised, e2e-web-1, e2e-web-2, lint, secrets
+selection: DECLARED, delta vs repository selector:
+  + browser tests/e2e/chat_only_workshop_test.py
+  + browser tests/e2e/chat_profile_color_test.py
+  + browser tests/e2e/connected_read_test.py
+  + browser tests/e2e/generic_agent_chat_test.py
+  + browser tests/e2e/read_set_approval_prototype_test.py
+  + browser tests/e2e/scheduled_connected_test.py
+  + browser tests/e2e/scheduled_notification_review_test.py
+  + browser tests/e2e/source_suggestion_test.py
+  + browser tests/e2e/template_scheduled_test.py
+  + browser tests/e2e/web_ui_test.py::test_mobile_touch_viewports_keep_navigation_settings_and_chat_reachable
+  + python tests/unit/e2e_browser_output_test.py
+  + python tests/unit/standards_test.py
+  (no bounded derivation)
+case_sha256 browser 3c8dffd18661cc3cd41ef99a5ca2a9bcc89f88809bdfda5ac691403e6722aedf (junit sha256 87ad740adcb30ddde85cf7e313490f2b5b83955aac79c1343e7734579818af04, 42 cases, NOT bound to head by Git: confirm its run)
+case_sha256 python ff4e5b2cf60d56420c21c089a9e0a0bb8ee389b8b2aba4d3d7629b93d57afaf0 (junit sha256 c7875b87d977edadd6bd82ee98f8c4d03b0dd76f7e099ddfb81511662bdff5a5, 2010 cases, NOT bound to head by Git: confirm its run)
+manifest_sha256 75fa446503789471e7945361f6e4ed94d285a307b00655624e94cc4979403f7e
+main_manifest_sha256 35727f5f974ffc350f688c89ca99efbf0347f2050a268086bde7daa368255b7b
+review: none yet (not admissible; review these digests, then rerun with --review)
+wrote /Users/<user>/Code/tmp-pr-fill/admit-B/e2e-details/m-437bb247/packet.json sha256 1ac85db9dab82f5482c367b263e65317d57f37cda6371e7161a8ada2ec72dc75

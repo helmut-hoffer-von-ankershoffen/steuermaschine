@@ -1,0 +1,36 @@
+#!/bin/bash
+# merge-slice BRANCH: merge one slice into main mechanically. Refuses on red; leaves main untouched then.
+#   1. main must be clean. 2. merge --no-ff; the two registration files every slice touches are resolved by union
+#   (native/__init__.py: imports and MODULES; plugin.py: settings mixins). Any other conflict: abort, say which file.
+#   3. bin/check --fast (the PROMOTE GATE). Red: abort the merge. Green: commit.
+#   SLICE_AREA='native/queue|test_native_queue' bin/merge-slice ...: conflicts in matching paths take the slice's version.
+#   --accept-structural OWNER: record the slice's structural findings (tests/gate_known.json) under OWNER first; for a first merge.
+set -u
+here="$(cd "$(dirname "$0")/.." && pwd)"; cd "$here" || exit 2
+branch="${1:?usage: bin/merge-slice BRANCH [--accept-structural OWNER]}"
+owner=""; [ "${2:-}" = "--accept-structural" ] && owner="${3:?--accept-structural needs the owner (the slice name)}"
+[ -z "$(git status --porcelain)" ] || { echo "merge-slice: main has uncommitted changes" >&2; exit 1; }
+tip="$(git rev-parse --short "$branch")" || exit 2
+if git merge-base --is-ancestor "$branch" HEAD; then echo "merge-slice: $branch ($tip) is already in main"; exit 0; fi
+git merge --no-ff --no-commit "$branch" >/dev/null 2>&1
+# The slice's own area (SLICE_AREA: a regular expression on paths) is taken as the slice delivered it. The known-findings
+# file is regenerated, never merged by hand.
+for f in $(git diff --name-only --diff-filter=U); do
+  if [ "$f" = "tests/gate_known.json" ]; then git checkout --ours -- "$f" && git add "$f"
+  elif [ -n "${SLICE_AREA:-}" ] && grep -qE "$SLICE_AREA" <<<"$f"; then git checkout --theirs -- "$f" && git add "$f"; fi
+done
+python3 bin/resolve-registrations.py || { echo "merge-slice: REFUSED $branch ($tip): conflicts outside the registration files:" >&2; git diff --name-only --diff-filter=U >&2; git merge --abort; exit 1; }
+# A slice's FIRST merge may bring structural findings from before the rules existed: they are recorded with their owner.
+[ -z "$owner" ] || uv run --quiet python bin/gate_known.py record "$owner" >&2
+git add -A
+if ! bin/check --fast > "/tmp/sm-merge.$$" 2>&1; then
+  grep -E "^check: FAIL|^    (FAILED|E  )" "/tmp/sm-merge.$$" | head -30 >&2
+  echo "merge-slice: REFUSED $branch ($tip): the promote gate is red with it; main is unchanged (full output: /tmp/sm-merge.$$)" >&2
+  git merge --abort 2>/dev/null || git reset -q --hard HEAD
+  exit 1
+fi
+rm -f "/tmp/sm-merge.$$"
+git commit -q -m "Merge $branch ($tip)
+
+Co-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>" || exit 1
+echo "merge-slice: MERGED $branch ($tip) -> main $(git rev-parse --short HEAD); $("$here/.venv/bin/steuermaschine" --project "$here/tests/projects/heinzel" tools gaps 2>/dev/null | tail -1)"

@@ -1,0 +1,261 @@
+{
+ "attempt": 1,
+ "conclusion": "failure",
+ "headSha": "017a00b0b93bdb059d407b7849ac07767d5dcc24",
+ "jobs": [
+  {
+   "completedAt": "2026-11-07T18:08:32Z",
+   "conclusion": "failure",
+   "databaseId": 128481504451,
+   "name": "End-to-end web-2 (ubuntu-24.04)",
+   "startedAt": "2026-11-07T18:04:28Z",
+   "status": "completed",
+   "steps": [
+    {
+     "completedAt": "2026-11-07T18:04:30Z",
+     "conclusion": "success",
+     "name": "Set up job",
+     "number": 1,
+     "startedAt": "2026-11-07T18:04:29Z",
+     "status": "completed"
+    },
+    {
+     "completedAt": "2026-11-07T18:04:49Z",
+     "conclusion": "success",
+     "name": "Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+     "number": 2,
+     "startedAt": "2026-11-07T18:04:30Z",
+     "status": "completed"
+    },
+    {
+     "completedAt": "2026-11-07T18:04:54Z",
+     "conclusion": "success",
+     "name": "Run ./.github/actions/setup-uv",
+     "number": 3,
+     "startedAt": "2026-11-07T18:04:49Z",
+     "status": "completed"
+    },
+    {
+     "completedAt": "2026-11-07T18:04:59Z",
+     "conclusion": "success",
+     "name": "Reuse the browsers this lockfile's Playwright installs",
+     "number": 4,
+     "startedAt": "2026-11-07T18:04:54Z",
+     "status": "completed"
+    },
+    {
+     "completedAt": "2026-11-07T18:04:59Z",
+     "conclusion": "success",
+     "name": "Use Ubuntu's primary archive for browser dependencies",
+     "number": 5,
+     "startedAt": "2026-11-07T18:04:59Z",
+     "status": "completed"
+    },
+    {
+     "completedAt": "2026-11-07T18:05:46Z",
+     "conclusion": "success",
+     "name": "Install browser runtimes and host dependencies",
+     "number": 6,
+     "startedAt": "2026-11-07T18:04:59Z",
+     "status": "completed"
+    },
+    {
+     "completedAt": "2026-11-07T18:08:28Z",
+     "conclusion": "failure",
+     "name": "Run make test-e2e SUITE=web-2",
+     "number": 7,
+     "startedAt": "2026-11-07T18:05:46Z",
+     "status": "completed"
+    },
+    {
+     "completedAt": "2026-11-07T18:08:28Z",
+     "conclusion": "skipped",
+     "name": "Post Reuse the browsers this lockfile's Playwright installs",
+     "number": 12,
+     "startedAt": "2026-11-07T18:08:28Z",
+     "status": "completed"
+    },
+    {
+     "completedAt": "2026-11-07T18:08:28Z",
+     "conclusion": "success",
+     "name": "Post Run ./.github/actions/setup-uv",
+     "number": 13,
+     "startedAt": "2026-11-07T18:08:28Z",
+     "status": "completed"
+    },
+    {
+     "completedAt": "2026-11-07T18:08:28Z",
+     "conclusion": "success",
+     "name": "Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+     "number": 14,
+     "startedAt": "2026-11-07T18:08:28Z",
+     "status": "completed"
+    },
+    {
+     "completedAt": "2026-11-07T18:08:28Z",
+     "conclusion": "success",
+     "name": "Complete job",
+     "number": 15,
+     "startedAt": "2026-11-07T18:08:28Z",
+     "status": "completed"
+    }
+   ],
+   "url": "https://github.com/helmut-hoffer-von-ankershoffen/heinzel/actions/runs/42398276348/job/128481504451"
+  },
+  {
+   "completedAt": "2026-11-07T18:17:50Z",
+   "conclusion": "failure",
+   "databaseId": 128487154132,
+   "name": "CI OK",
+   "startedAt": "2026-11-07T18:17:46Z",
+   "status": "completed",
+   "steps": [
+    {
+     "completedAt": "2026-11-07T18:17:47Z",
+     "conclusion": "success",
+     "name": "Set up job",
+     "number": 1,
+     "startedAt": "2026-11-07T18:17:47Z",
+     "status": "completed"
+    },
+    {
+     "completedAt": "2026-11-07T18:17:47Z",
+     "conclusion": "failure",
+     "name": "Fail if any required job failed",
+     "number": 2,
+     "startedAt": "2026-11-07T18:17:47Z",
+     "status": "completed"
+    },
+    {
+     "completedAt": "2026-11-07T18:17:47Z",
+     "conclusion": "success",
+     "name": "Complete job",
+     "number": 3,
+     "startedAt": "2026-11-07T18:17:47Z",
+     "status": "completed"
+    }
+   ],
+   "url": "https://github.com/helmut-hoffer-von-ankershoffen/heinzel/actions/runs/42398276348/job/128487154132"
+  },
+  {
+   "completedAt": "2026-11-07T17:53:32Z",
+   "conclusion": "success",
+   "databaseId": 128480277445,
+   "name": "Dependency review",
+   "startedAt": "2026-11-07T17:53:24Z",
+   "status": "completed",
+   "steps": [
+    {
+     "completedAt": "2026-11-07T17:53:26Z",
+     "conclusion": "success",
+     "name": "Set up job",
+     "number": 1,
+     "startedAt": "2026-11-07T17:53:25Z",
+     "status": "completed"
+    },
+    {
+     "completedAt": "2026-11-07T17:53:29Z",
+     "conclusion": "success",
+     "name": "Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+     "number": 2,
+     "startedAt": "2026-11-07T17:53:26Z",
+     "status": "completed"
+    },
+    {
+     "completedAt": "2026-11-07T17:53:30Z",
+     "conclusion": "success",
+     "name": "Run actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294",
+     "number": 3,
+     "startedAt": "2026-11-07T17:53:29Z",
+     "status": "completed"
+    },
+    {
+     "completedAt": "2026-11-07T17:53:30Z",
+     "conclusion": "success",
+     "name": "Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+     "number": 6,
+     "startedAt": "2026-11-07T17:53:30Z",
+     "status": "completed"
+    },
+    {
+     "completedAt": "2026-11-07T17:53:30Z",
+     "conclusion": "success",
+     "name": "Complete job",
+     "number": 7,
+     "startedAt": "2026-11-07T17:53:30Z",
+     "status": "completed"
+    }
+   ],
+   "url": "https://github.com/helmut-hoffer-von-ankershoffen/heinzel/actions/runs/42398276348/job/128480277445"
+  },
+  {
+   "completedAt": "2026-11-07T17:53:59Z",
+   "conclusion": "success",
+   "databaseId": 128480277673,
+   "name": "Conventional commits",
+   "startedAt": "2026-11-07T17:53:27Z",
+   "status": "completed",
+   "steps": [
+    {
+     "completedAt": "2026-11-07T17:53:28Z",
+     "conclusion": "success",
+     "name": "Set up job",
+     "number": 1,
+     "startedAt": "2026-11-07T17:53:27Z",
+     "status": "completed"
+    },
+    {
+     "completedAt": "2026-11-07T17:53:49Z",
+     "conclusion": "success",
+     "name": "Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+     "number": 2,
+     "startedAt": "2026-11-07T17:53:28Z",
+     "status": "completed"
+    },
+    {
+     "completedAt": "2026-11-07T17:53:51Z",
+     "conclusion": "success",
+     "name": "Run ./.github/actions/setup-uv",
+     "number": 3,
+     "startedAt": "2026-11-07T17:53:49Z",
+     "status": "completed"
+    },
+    {
+     "completedAt": "2026-11-07T17:53:56Z",
+     "conclusion": "success",
+     "name": "Commit messages, pull request title and branch (conventional, no confidential terms)",
+     "number": 4,
+     "startedAt": "2026-11-07T17:53:51Z",
+     "status": "completed"
+    },
+    {
+     "completedAt": "2026-11-07T17:53:56Z",
+     "conclusion": "success",
+     "name": "Post Run ./.github/actions/setup-uv",
+     "number": 7,
+     "startedAt": "2026-11-07T17:53:56Z",
+     "status": "completed"
+    },
+    {
+     "completedAt": "2026-11-07T17:53:56Z",
+     "conclusion": "success",
+     "name": "Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+     "number": 8,
+     "startedAt": "2026-11-07T17:53:56Z",
+     "status": "completed"
+    },
+    {
+     "completedAt": "2026-11-07T17:53:56Z",
+     "conclusion": "success",
+     "name": "Complete job",
+     "number": 9,
+     "startedAt": "2026-11-07T17:53:56Z",
+     "status": "completed"
+    }
+   ],
+   "url": "https://github.com/helmut-hoffer-von-ankershoffen/heinzel/actions/runs/42398276348/job/128480277673"
+  }
+ ],
+ "status": "completed",
+ "workflowName": "CI"
+}

@@ -1,0 +1,164 @@
+#!/bin/bash
+# promote: the only way the live `sm` changes. Builds the committed HEAD of this checkout into its own directory
+# (non-editable, own venv), tests it, and only then switches the stable pointer atomically.
+#   bin/promote              test, build, smoke, compare with the running stable, switch
+#   bin/promote --accept-diff   switch although the read-only comparison with the running stable shows differences
+#   bin/promote --check      everything except the switch
+#   bin/promote --red-gate-ok "REASON"   go on although ruff, mypy, typos or the coverage threshold is red (never tests, help lint, names) (the reason is recorded in $SM_STABLE/gate-red-accepted)
+#   bin/promote --force-during-run   switch although an admission or release step is running (it keeps its own files:
+#                            a switch only moves a symlink, but the next command of that flow would run new code)
+#   bin/promote --wait-idle MIN  how long to wait for a running admission or release step before the switch (default 30)
+#   While it waits and switches, ~/.cache/sm-promote-switch-pending holds its pid: the Bash hook refuses new head and
+#   release write steps (they would otherwise start under the switch or keep it waiting).
+#   bin/promote --recheck    run the quality gate again although it passed for this commit (receipt: $SM_STABLE/gate-passed/)
+# Layout: $SM_STABLE (default ~/Code/steuermaschine-stable)/releases/<commit>/{src,venv}, current -> releases/<commit>,
+# previous -> the one before; ~/.local/bin/sm -> $SM_STABLE/bin/sm. bin/rollback switches back.
+set -u
+here="$(cd "$(dirname "$0")/.." && pwd)"
+stable="${SM_STABLE:-$HOME/Code/steuermaschine-stable}"
+accept=0; check=0; force=0; recheck=0; redok=""; want_reason=0; want_wait=0; wait_min=30
+for a in "$@"; do
+  if [ "$want_reason" = 1 ]; then redok="$a"; want_reason=0; continue; fi
+  if [ "$want_wait" = 1 ]; then case "$a" in ''|*[!0-9]*) echo "promote: --wait-idle takes minutes" >&2; exit 2 ;; esac; wait_min="$a"; want_wait=0; continue; fi
+  case "$a" in --red-gate-ok) want_reason=1 ;; --wait-idle) want_wait=1 ;; --recheck) recheck=1 ;; --accept-diff) accept=1 ;; --check) check=1 ;; --force-during-run) force=1 ;; -h|--help) sed -n '2,15p' "$0"; exit 0 ;; *) echo "promote: unknown argument $a" >&2; exit 2 ;; esac
+done
+[ "$want_wait" = 0 ] || { echo "promote: --wait-idle takes minutes" >&2; exit 2; }
+[ "$want_reason" = 0 ] || { echo "promote: --red-gate-ok takes a reason" >&2; exit 2; }
+# shellcheck source=bin/promote_lib.sh
+. "$here/bin/promote_lib.sh"
+say() { echo "promote: $*" >&2; }
+die() { say "REFUSED: $*"; exit 1; }
+
+cd "$here" || exit 2
+[ -z "$(git status --porcelain)" ] || die "the checkout has uncommitted changes; a release is built from a commit"
+full="$(git rev-parse HEAD)"; id="${full:0:12}"   # the commit the gate checks is the commit that is built and switched
+rel="$stable/releases/$id"
+say "candidate $id"
+
+sha="$full"; fresh_gate=0
+say "1/5 quality gate (bin/check)"
+if [ "$recheck" = 0 ] && gate_passed "$stable" "$sha"; then
+  say "    passed for this commit at $(cat "$(gate_receipt "$stable" "$sha")"); not repeated (--recheck runs it again)"
+elif ! bin/check >"/tmp/sm-promote-check.$$" 2>&1; then
+  grep -E "^check: (FAIL|RED)" "/tmp/sm-promote-check.$$" >&2
+  failed_tests "/tmp/sm-promote-check.$$" | sed 's/^/    /' >&2
+  if grep -qE "^check: FAIL (tests|help lint|names)" "/tmp/sm-promote-check.$$"; then rm -f "/tmp/sm-promote-check.$$"; die "tests, help lint or names fail"; fi
+  [ -n "$redok" ] || { rm -f "/tmp/sm-promote-check.$$"; die "the quality gate is red. Fix it, or state why it may go live anyway: bin/promote --red-gate-ok \"REASON\""; }
+  red="$(sed -n 's/^check: PROMOTE GATE RED: //p' "/tmp/sm-promote-check.$$" | tail -1)"
+  say "    RED GATE ACCEPTED: $redok (red: ${red:-unknown})"; rm -f "/tmp/sm-promote-check.$$"
+  if record_red_gate "$stable" "$sha" "$redok" "${red:-unknown}"; then say "    reason recorded in $(red_gate_log "$stable")"; else say "    (the reason could not be recorded in $(red_gate_log "$stable"))"; fi
+else
+  say "    $(grep -E "^check: PASS tests" "/tmp/sm-promote-check.$$" | cut -c1-140)"; rm -f "/tmp/sm-promote-check.$$"
+  fresh_gate=1
+fi
+
+# The gate ran on the working tree: a commit or edit that landed meanwhile was not checked. Refuse rather than build it,
+# and write no gate receipt for it.
+[ "$(git rev-parse HEAD)" = "$full" ] && [ -z "$(git status --porcelain)" ] || die "the checkout moved while the gate ran (HEAD is $(git rev-parse --short=12 HEAD), the gate checked $id); promote again"
+if [ "$fresh_gate" = 1 ]; then record_gate "$stable" "$sha" || say "    (the gate receipt could not be written; a retry runs the gate again)"; fi
+say "2/5 build into $rel"
+if [ ! -x "$rel/venv/bin/steuermaschine" ]; then
+  rm -rf "$rel"; mkdir -p "$rel/src" || exit 2
+  git archive "$full" | tar -x -C "$rel/src" || die "git archive failed"
+  uv venv --quiet "$rel/venv" || die "uv venv failed"
+  uv pip install --quiet --python "$rel/venv/bin/python" "$rel/src" "$rel/src/plugins/heinzel" "$rel/src/examples/toy" "$rel/src/examples/layer" || die "install failed"
+fi
+cand="$rel/venv/bin/steuermaschine"
+"$rel/venv/bin/python" - <<PY || die "the candidate imports code from outside its own directory"
+import sys, steuermaschine, steuermaschine_heinzel
+bad = [m.__file__ for m in (steuermaschine, steuermaschine_heinzel) if not m.__file__.startswith("$rel/")]
+sys.exit(1 if bad else 0)
+PY
+
+say "   config: migrate the user config to this release (values: ~/.config/steuermaschine/migrate-values.toml)"
+source_config="$stable/current/user-config.toml"; [ -f "$source_config" ] || source_config="$HOME/.config/steuermaschine/config.toml"
+"$rel/venv/bin/python" "$rel/src/bin/migrate_config.py" "$source_config" "$HOME/.config/steuermaschine/migrate-values.toml" "$rel/user-config.toml" 2>&1 | sed 's/^/    /' >&2
+[ "${PIPESTATUS[0]}" = 0 ] || die "the user config cannot be migrated; the stable install is unchanged"
+export STEUERMASCHINE_USER_CONFIG="$rel/user-config.toml"   # the smoke list runs with the config this release will have
+
+say "3/5 smoke"
+fail=0
+ok() { # ok DIR EXPECT_RC GREP -- args...
+  local dir="$1" want="$2" pat="$3"; shift 4
+  local out rc; out="$(cd "$dir" && "$cand" "$@" 2>&1)"; rc=$?
+  if [ "$rc" != "$want" ] || ! grep -q -- "$pat" <<<"$out"; then say "    SMOKE FAIL in $dir: sm $* (exit $rc, wanted $want, pattern '$pat')"; echo "$out" | head -5 >&2; fail=1; fi
+}
+empty="$(mktemp -d)"  # a directory with no steuermaschine.toml above it: the user config must select the project
+other="$(ls -d "$HOME"/Code/hz-* "$HOME"/Code/heinzel-* 2>/dev/null | head -1)"; other="${other:-$empty}"  # a worktree of another repository
+for d in "$empty" "$other"; do
+  ok "$d" 0 "plugin: heinzel (loaded)" -- self config
+  ok "$d" 0 "1. heinzel (base" -- self plugins
+  ok "$d" 0 "sm_native" -- self hooks
+  ok "$d" 0 "help contract: every command passes" -- self lint
+  ok "$d" 0 "tools" -- --help
+  ok "$d" 2 "No such command" -- nosuch
+done
+out="$(cd "$empty" && "$cand" tools gaps 2>&1)"; rc=$?
+{ [ "$rc" = 0 ] || [ "$rc" = 1 ]; } && grep -q "missing, .* native, .* 0 wrapped" <<<"$out" || { say "    SMOKE FAIL: tools gaps (exit $rc)"; echo "$out" | tail -2 >&2; fail=1; }
+say "    port: $(tail -1 <<<"$out")"
+out="$(cd "$empty" && "$cand" --format json tools map 2>&1)"
+python3 -c 'import json,sys; rows=json.loads(sys.stdin.read()); assert rows and all(r["status"] in ("native","missing","internal","retired") for r in rows)' <<<"$out" || { say "    SMOKE FAIL: tools map is not one JSON document"; fail=1; }
+# every native read command must at least print its help; a command listed native must exist
+for path in $(python3 -c 'import json,sys; print("\n".join(r["path"].replace(" ","+") for r in json.loads(sys.stdin.read()) if r["status"]=="native"))' <<<"$out"); do
+  ok "$empty" 0 "Usage: sm" -- ${path//+/ } --help
+done
+ok "$empty" 0 '"plugin_loaded": true' -- --format json self config
+out="$(cd "$empty" && STEUERMASCHINE_PLUGIN=none "$cand" self plugins 2>&1)"; grep -q "no plugin loaded" <<<"$out" || { say "    SMOKE FAIL: STEUERMASCHINE_PLUGIN=none still loads a plugin"; fail=1; }
+out="$(cd "$empty" && SM_HEINZEL__NO_SUCH_SETTING=1 "$cand" tools gaps 2>&1)"; rc=$?
+{ [ "$rc" = 70 ] && grep -q "NOT loaded" <<<"$out"; } || { say "    SMOKE FAIL: a plugin that cannot load must exit 70 with a loud line (exit $rc)"; fail=1; }
+rmdir "$empty" 2>/dev/null
+[ "$fail" = 0 ] || die "smoke list failed; the stable install is unchanged"
+
+say "   review gate: every gated write command of the candidate approved at its exact digest (allow-list: bin/promote-allow.toml)"
+reviews_json="$(mktemp)"; gate_dir="$(mktemp -d)"
+(cd "$gate_dir" && "$cand" --format json self reviews) >"$reviews_json" 2>/dev/null || { rm -rf "$reviews_json" "$gate_dir"; die "the candidate cannot list its review units"; }
+"$rel/venv/bin/python" "$rel/src/bin/review_gate.py" "$reviews_json" "$rel/src/bin/promote-allow.toml" "$(date -u +%Y-%m-%d)" 2>&1 | sed 's/^/    /' >&2
+gate_rc="${PIPESTATUS[0]}"; rm -rf "$reviews_json" "$gate_dir"
+[ "$gate_rc" = 0 ] || die "a gated write command of the candidate is not approved; promoting would switch it off. Get its verdict at the candidate's digest (sm self reviews), or add a reviewed entry to bin/promote-allow.toml"
+
+say "4/5 compare with the running stable (read-only commands: stdout, stderr, exit code)"
+cur="$stable/current/venv/bin/steuermaschine"
+if [ -x "$cur" ]; then
+  diffs=0
+  while IFS= read -r args; do
+    a="$(cd /tmp && $cand $args 2>&1; echo "rc=$?")"; b="$(cd /tmp && env -u STEUERMASCHINE_USER_CONFIG "$stable/bin/sm" $args 2>&1; echo "rc=$?")"
+    [ "$a" = "$b" ] || { say "    DIFF: sm $args"; diff <(echo "$b") <(echo "$a") | head -6 >&2; diffs=$((diffs + 1)); }
+  done <<LIST
+tools gaps
+tools map
+tools where hz-queue
+self plugins
+--help
+nosuch
+LIST
+  if [ "$diffs" != 0 ] && [ "$accept" = 0 ]; then die "$diffs command(s) differ from the running stable. Read the differences; if they are intended: bin/promote --accept-diff"; fi
+  say "    $diffs difference(s)$([ "$diffs" != 0 ] && echo ' accepted')"
+else
+  say "    no stable install yet: nothing to compare"
+fi
+[ "$check" = 0 ] || { say "check only: not switched"; exit 0; }
+mark_switch_pending || say "    (the switch-pending file could not be written: new write steps are not held back)"
+trap clear_switch_pending EXIT
+if [ "$force" = 0 ] && ! busy="$(wait_idle $((wait_min * 60)) 15)"; then
+  say "an admission or release step is still running after ${wait_min} min:"; echo "$busy" >&2
+  die "not switching under a running step. Run bin/promote again (the gate is not repeated for this commit), or: bin/promote --force-during-run"
+fi
+
+[ "$(git rev-parse HEAD)" = "$full" ] || die "the checkout moved during the promote (HEAD is now $(git rev-parse --short=12 HEAD)); nothing switched"
+
+say "   state: move the state files to the names of this release (self migrate-state; each rename is logged)"
+live_rel=""; [ -x "$stable/current/venv/bin/steuermaschine" ] && live_rel="$(cd "$stable/current" && pwd -P)"
+migrate_state_to "$cand" "$rel/user-config.toml" "${live_rel:+$live_rel/venv/bin/steuermaschine}" "${live_rel:+$live_rel/user-config.toml}" 2>&1 | sed 's/^/    /' >&2
+[ "${PIPESTATUS[0]}" = 0 ] || die "the state could not be migrated; nothing switched (the lines above name the path; run bin/promote again once it is fixed)"
+
+say "5/5 switch"
+install_launcher "$stable" || die "the launcher could not be written"
+point_current "$stable" "$id" || die "switch failed"
+mkdir -p "$HOME/.local/bin"
+ln -sfn "$stable/bin/sm" "$HOME/.local/bin/sm"
+loops="$(grep -lE "steuermaschine-stable|\.local/bin/sm<|/sm</string>" "$HOME"/Library/LaunchAgents/*.plist 2>/dev/null)"
+if [ -n "$loops" ]; then
+  say "loops that run sm (a --loop daemon ends by itself at its next tick and is restarted; to restart now):"
+  for f in $loops; do say "    launchctl kickstart -k gui/$(id -u)/$(basename "$f" .plist)"; done
+fi
+say "LIVE: $id   (previous: $(readlink "$stable/previous" 2>/dev/null || echo none); undo with bin/rollback)"

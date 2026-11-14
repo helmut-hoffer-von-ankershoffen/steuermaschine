@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  The release train's dispatcher tick on `sm`. NOT installed by anything in this repository: the coordinator installs it
+  at the switch, after the old job io.github.helmut-hoffer-von-ankershoffen.hz-train is booted out (both take the same
+  lock, ~/.cache/hz-train/train.lock, so two ticks never decide at once: the second says `skip:` and exits 0).
+  `sm daemon train` is ONE tick; launchd starts it every 600 s, as it started the old tick. A tick starts the runner of
+  each active release detached (`sm daemon train` with the run option and the version, in its own session under its version lock), so the tick itself
+  ends at once and a release of an hour never stops the next tick.
+  State, locks, logs: the files the old train used, ~/.cache/hz-train/ (vX.Y.Z.json/.lock/.log, train.json, next-vX.json).
+  The cadence floor HZ_TRAIN_EVERY=120 of the old job is the setting release_train_every_minutes here. The train's
+  checkout is the setting release_train_checkout (the user config); the train hands it to each release as release_dir.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>io.github.helmut-hoffer-von-ankershoffen.sm-train</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/USER/.local/bin/sm</string>
+    <string>daemon</string>
+    <string>train</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>/Users/USER/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>HOME</key><string>/Users/USER</string>
+    <key>SM_PROJECT__PLUGIN</key><string>heinzel</string>
+    <key>SM_HEINZEL__RELEASE_TRAIN_EVERY_MINUTES</key><string>120</string>
+  </dict>
+  <key>WorkingDirectory</key><string>/Users/USER/Code/heinzel-management</string>
+  <key>RunAtLoad</key><true/>
+  <key>StartInterval</key><integer>600</integer>
+  <key>StandardOutPath</key><string>/Users/USER/Library/Logs/hz-train.log</string>
+  <key>StandardErrorPath</key><string>/Users/USER/Library/Logs/hz-train.log</string>
+</dict>
+</plist>

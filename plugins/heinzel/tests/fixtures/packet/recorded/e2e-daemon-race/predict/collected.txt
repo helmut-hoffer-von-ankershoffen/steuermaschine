@@ -1,0 +1,2 @@
+browser: collected head tree == local focused JUnit; resulting tree identical
+python: collected head tree == local focused JUnit; resulting tree identical

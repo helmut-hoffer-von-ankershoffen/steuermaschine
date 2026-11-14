@@ -1,0 +1,36 @@
+{
+ "after": [
+  {
+   "branch": "fix/e2e-details-journeys-2",
+   "dir": "/Users/<user>/Code/tmp-pr-fill/admit-B/e2e-details-2/m-437bb247",
+   "head": "7dc85604ba06bbb9154313d9883ced6b62cf9bdd",
+   "parent": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+   "predicted": "da1362306815dc5ea47d691e66ff307ac05097a6",
+   "tree": "cdf43831327ecf82e2ae872dff7522817e1a2861"
+  }
+ ],
+ "branch": "fix/e2e-daemon-restart-race",
+ "collector": "/Users/<user>/Code/tmp-pr-fill/admit-A/bin/collect_cases.py",
+ "collector_sha256": "c258a531e09d0291397becf1c36473f86b014a060a5a5e90567f8e0a93e05cb7",
+ "core_repo": "/Users/<user>/Code/tmp-e2e-details/scratch-core",
+ "head": "5e409527037b01f4fd7ad525bbfc13a39f37b7ae",
+ "kind": "predict",
+ "lanes": [
+  "browser",
+  "python"
+ ],
+ "main": "da1362306815dc5ea47d691e66ff307ac05097a6",
+ "main_tree": "cdf43831327ecf82e2ae872dff7522817e1a2861",
+ "manifest_sha256": "db8026a21a5dd960db2d5e81609375793a2edbe9ca4d44cd17718f0182524519",
+ "packet_sha256": "39292a2c6c8e361c8a1fdc2189d7066be263eaaac7550ab5ed2c4bce71ad1029",
+ "parent_main": "437bb247d164d5c5140e5acab1518ba6ea54bb3e",
+ "predicted_main": "da1362306815dc5ea47d691e66ff307ac05097a6",
+ "predicted_main_tree": "cdf43831327ecf82e2ae872dff7522817e1a2861",
+ "python": "/Users/<user>/Code/heinzel-e2e-details/.venv/bin/python",
+ "python_version": "3.14.8",
+ "review": "e2e-daemon-race/predict/REVIEW.md",
+ "review_root": "/Users/<user>/Code/tmp-pr-fill/admit-B",
+ "schema": 1,
+ "tree": "19eb6081b4a90f18de56bd7e84d14c7c38c84e62",
+ "worktree": "/Users/<user>/Code/heinzel-e2e-details"
+}

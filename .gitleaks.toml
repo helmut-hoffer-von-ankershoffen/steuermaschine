@@ -1,0 +1,7 @@
+# gitleaks defaults, plus recorded test fixtures whose "tokens" are digests and commit SHAs, not credentials.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "recorded release freeze tokens (digests), branch->commit SHA maps, and a removed test's literal error text"
+paths = ['''^plugins/heinzel/tests/fixtures/(release|go)/''', '''^plugins/heinzel/tests/test_native_rehearse\.py$''']

@@ -1,0 +1,34 @@
+Focused tests (python)	UNKNOWN STEP	﻿2026-11-12T08:51:47.2944734Z Current runner version: '2.338.2'
+Focused tests (python)	UNKNOWN STEP	2026-11-12T08:51:47.2963028Z ##[group]Runner Image Provisioner
+Focused tests (python)	UNKNOWN STEP	2026-11-12T08:51:47.2963531Z Hosted Compute Agent
+Focused tests (python)	UNKNOWN STEP	2026-11-12T08:52:07.5651270Z ##[group]Run if [ "${RUNNER_OS:-}" = macOS ]; then
+Focused tests (python)	UNKNOWN STEP	2026-11-12T08:52:07.5651603Z ^[[36;1mif [ "${RUNNER_OS:-}" = macOS ]; then^[[0m
+Focused tests (python)	UNKNOWN STEP	2026-11-12T08:52:07.5651909Z ^[[36;1m  test "$(uname -m)" = arm64 || { echo '::error::macOS CI requires Apple silicon (arm64)'; exit 1; }^[[0m
+Focused tests (python)	UNKNOWN STEP	2026-11-12T08:52:07.5652187Z ^[[36;1mfi^[[0m
+Focused tests (python)	UNKNOWN STEP	2026-11-12T08:52:07.5652493Z ^[[36;1mprintf 'url=data:application/json;base64,%s\n' "$(base64 < "$ACTION_PATH/uv-manifest.json" | tr -d '\r\n')" >> "$GITHUB_OUTPUT"^[[0m
+Focused tests (python)	UNKNOWN STEP	2026-11-12T08:52:31.4980773Z .........................................................                [100%]
+Focused tests (python)	UNKNOWN STEP	2026-11-12T08:52:31.4981064Z 417 passed in 17.06s
+Focused tests (python)	UNKNOWN STEP	2026-11-12T08:52:33.4879187Z Traceback (most recent call last):
+Focused tests (python)	UNKNOWN STEP	2026-11-12T08:52:33.4884631Z   File ^[[35m"/home/runner/work/heinzel/heinzel/scripts/focused_coverage.py"^[[0m, line ^[[35m336^[[0m, in ^[[35m<module>^[[0m
+Focused tests (python)	UNKNOWN STEP	2026-11-12T08:52:33.4884971Z     ^[[31mmain^[[0m^[[1;31m()^[[0m
+Focused tests (python)	UNKNOWN STEP	2026-11-12T08:52:33.4891719Z     raise CandidateError(message)
+Focused tests (python)	UNKNOWN STEP	2026-11-12T08:52:33.4892042Z ^[[1;35mscripts.release_candidate.CandidateError^[[0m: ^[[35mPR scoped coverage below the 90% report threshold^[[0m
+Focused tests (python)	UNKNOWN STEP	2026-11-12T08:52:33.5042218Z ##[error]Process completed with exit code 1.
+Focused tests (python)	UNKNOWN STEP	2026-11-12T08:52:33.5140367Z Post job cleanup.
+Focused tests (python)	UNKNOWN STEP	2026-11-12T08:52:33.5142952Z ##[start-action display=Run astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e;id=__851c953c-33f4-4786-810f-ee649e4fc4f0.__astral-sh_setup-uv]
+CI OK	UNKNOWN STEP	﻿2026-11-12T08:54:02.9335985Z Current runner version: '2.338.2'
+CI OK	UNKNOWN STEP	2026-11-12T08:54:02.9357389Z ##[group]Runner Image Provisioner
+CI OK	UNKNOWN STEP	2026-11-12T08:54:03.0783738Z ^[[36;1m  case "$result" in^[[0m
+CI OK	UNKNOWN STEP	2026-11-12T08:54:03.0784510Z ^[[36;1m    success | skipped) ;;^[[0m
+CI OK	UNKNOWN STEP	2026-11-12T08:54:03.0785296Z ^[[36;1m    *) echo "A required job ended with: $result"; exit 1 ;;^[[0m
+CI OK	UNKNOWN STEP	2026-11-12T08:54:03.0786048Z ^[[36;1m  esac^[[0m
+CI OK	UNKNOWN STEP	2026-11-12T08:54:03.0786597Z ^[[36;1mdone^[[0m
+CI OK	UNKNOWN STEP	2026-11-12T08:54:03.1011491Z shell: /usr/bin/bash -e {0}
+CI OK	UNKNOWN STEP	2026-11-12T08:54:03.1012611Z env:
+CI OK	UNKNOWN STEP	2026-11-12T08:54:03.1013127Z   UV_FROZEN: 1
+CI OK	UNKNOWN STEP	2026-11-12T08:54:03.1013667Z   FORCE_COLOR: 1
+CI OK	UNKNOWN STEP	2026-11-12T08:54:03.1015741Z   RESULTS: success skipped success
+CI OK	UNKNOWN STEP	2026-11-12T08:54:03.1017947Z ##[endgroup]
+CI OK	UNKNOWN STEP	2026-11-12T08:54:03.1214703Z A required job ended with: failure
+CI OK	UNKNOWN STEP	2026-11-12T08:54:03.1250948Z ##[error]Process completed with exit code 1.
+CI OK	UNKNOWN STEP	2026-11-12T08:54:03.1509709Z Cleaning up orphan processes

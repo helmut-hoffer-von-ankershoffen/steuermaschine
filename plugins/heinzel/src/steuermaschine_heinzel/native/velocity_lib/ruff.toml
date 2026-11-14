@@ -1,0 +1,6 @@
+# The module listed here moved from the old tools (plugins/heinzel/tests/coord_verbatim.py proves it). It is not
+# reformatted or relinted: a changed line would break the move verifier and hide a real change from review.
+line-length = 200
+
+[lint.per-file-ignores]
+"samples.py" = ["ALL"]

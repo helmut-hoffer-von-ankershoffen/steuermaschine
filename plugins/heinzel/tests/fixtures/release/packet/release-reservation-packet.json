@@ -1,0 +1,90 @@
+{
+  "manifest": {
+    "base": "eb2c4529f5b48339733aea09bf2ea5e188b06412",
+    "case_sha256": {
+      "python": "d514b0cbaa331663d81928cb91afde5dde5183bde86d7d4582206cd3835b4f4c"
+    },
+    "changed": {
+      "CHANGELOG.md": "M",
+      "agent-skills/.claude-plugin/plugin.json": "M",
+      "copier.yml": "M",
+      "pyproject.toml": "M",
+      "scripts/acceptance/run_acceptance.py": "M",
+      "uv.lock": "M"
+    },
+    "config_blob": "95d243b3be68dd0ec9608c87a6d0867f110ded3d",
+    "diff_sha256": "0c6fd5ef0d344476ff9a1a2830628e4c2e9a1c9e7cde2705ae672091e70d665d",
+    "event": "push",
+    "execution": {
+      ".github/actions/setup-uv/action.yml": "d67b801a40bf31bbd0cad92a30622ea0096bda48",
+      ".github/actions/setup-uv/uv-manifest.json": "ac9143564027053899c9db6c2c3a6fd37017db89",
+      ".github/workflows/ci.yml": "02acab88439b3e53ce2fb6e12aed1c3988a3f143",
+      "scripts/bootstrap-pyyaml.sh": "4fd84e883bfbb9779230984479dc8bd53a98d8d1",
+      "scripts/ci_workload.py": "2de93e9adc97f5974489b99f219903ac3d1b92f0",
+      "scripts/focused_coverage.py": "903c3560a5df610d06f0f58563164343adbcfb43",
+      "scripts/focused_coverage.py.lock": "661c3449f7d12cada9abac76219243365ffcd902",
+      "scripts/focused_job.py": "528f8e424eea98905c853c6e3e393d7bb9490db3",
+      "scripts/focused_plan.py": "c6fb857320e409b199bf4fbb9a31ef9f85fbf82c",
+      "scripts/pyyaml-build-requirements.txt": "1713dbaf1406b5a3b4b2c5eb91125fd180b22e37",
+      "scripts/release_candidate.py": "5c13ec2fc903b5cd7357fe648fbe81a65340928e",
+      "uv.lock": "20295440d11cf5ed4544562d6029f2d36809ce8b"
+    },
+    "mode": "python-coverage-not-applicable",
+    "production": {},
+    "ref": "refs/heads/main",
+    "schema": 1,
+    "selection": {
+      "python": [
+        "tests/unit/release_summary_test.py",
+        "tests/unit/release_version_test.py",
+        "tests/unit/changelog_history_test.py",
+        "tests/unit/release_notes_test.py",
+        "tests/unit/acceptance_test.py::test_installed_metadata_selects_the_canonical_foreground_command",
+        "tests/unit/acceptance_test.py::test_unrecognized_or_wrong_installed_version_never_starts_foreground",
+        "tests/unit/acceptance_test.py::test_missing_installed_metadata_never_starts_foreground",
+        "tests/unit/changelog_intros_test.py",
+        "tests/unit/changelog_combines_test.py",
+        "tests/unit/scripts_test.py"
+      ]
+    },
+    "tree": "60b0c412d30531268208474cc41dadff0b733faa"
+  },
+  "mode": "release-main-only/v1",
+  "release": {
+    "base": "eb2c4529f5b48339733aea09bf2ea5e188b06412",
+    "commit_log": {
+      "path": "commit-generated.log",
+      "sha256": "2d24d41acee49d198611cbfc49f390d222bb5a73ea6cf7a739054dbc9cd26ecc"
+    },
+    "head": "9ffb5d1b130c8b9be73a721be8bd485e39699cab",
+    "hook_runner": {
+      "path": "/Users/USER/Code/heinzel-focused-param-repeat/.venv/bin/prek",
+      "sha256": "9f30f1d1116efc421cd256879bd395ff97c12145ef0d0690d17fd606151f9a82"
+    },
+    "hooks": {
+      "commit-msg": {
+        "path": "/Users/USER/Code/heinzel-release38-canonical-clone/.git/hooks/commit-msg",
+        "sha256": "f8f683ad8885c5bdc2c635ac7e3f97c0ad591892db972cc9b0d6c1da81d02498"
+      },
+      "pre-commit": {
+        "path": "/Users/USER/Code/heinzel-release38-canonical-clone/.git/hooks/pre-commit",
+        "sha256": "884167717a41e9fdd80ffa43ad912fb8100be6bbedc4769e20b454fed8d1f0c3"
+      },
+      "pre-push": {
+        "path": "/Users/USER/Code/heinzel-release38-canonical-clone/.git/hooks/pre-push",
+        "sha256": "57c1fa7ce8af689c0387e06550481a7ce11484feee48d0ab9c22c3337b660f90"
+      }
+    },
+    "tree": "60b0c412d30531268208474cc41dadff0b733faa",
+    "validator_sha256": "bc4ab4261e9fcf9a36197886823ffa052476877becf1828d181ecba182885501",
+    "version": "0.9.42"
+  },
+  "review": {
+    "changelog_blob": "3af24991e93eca7ed1b77784fdae3483320bdf6e",
+    "manifest_sha256": "db733d06d9fbacbaebcc7218aea59b9272fd71066a0aa676ffa67e6c8b1b4f01",
+    "path": "RELEASE-REVIEW.md",
+    "release_sha256": "a3532b91c5b21ded53f6979e0d99ee13dcfb7e0998499e5f15d3aa35daa31f90",
+    "sha256": "72cf55450aa0c13e86ad5ec6e6e29d3134da9fcf8699f20cd0c39dbb6bf1190b"
+  },
+  "schema": 1
+}

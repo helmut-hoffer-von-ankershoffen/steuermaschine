@@ -1,0 +1,280 @@
+[
+ {
+  "case": 0,
+  "function": "stall_alarm",
+  "result": {
+   "cls": "ALERT",
+   "key": "stall:801",
+   "text": "STALL #801 BLOCKED with green checks for 277 min: required check contexts missing from the PR rollup: merge-gate, coverage-floor; see RCA trap: checks attached to another suite; hz-queue why"
+  }
+ },
+ {
+  "case": 1,
+  "function": "stall_alarm",
+  "result": null
+ },
+ {
+  "case": 2,
+  "function": "stall_alarm",
+  "result": {
+   "cls": "ALERT",
+   "key": "stall:801",
+   "text": "STALL #801 BLOCKED with green checks for 40 min: every required context is green in the rollup; look at reviews, conversations and branch rules; hz-queue why"
+  }
+ },
+ {
+  "case": 3,
+  "function": "stall_alarm",
+  "result": {
+   "cls": "WARN",
+   "key": "stall:plugins 38",
+   "text": "STALL plugins 38 green and unmerged for 40 min, queue waits: merge freeze is on"
+  }
+ },
+ {
+  "case": 4,
+  "function": "stall_alarm",
+  "result": {
+   "cls": "ALERT",
+   "key": "stall:801",
+   "text": "STALL #801 checks complete and green, CLEAN, unmerged for 40 min and the queue records no block; hz-queue why"
+  }
+ },
+ {
+  "case": 5,
+  "function": "stall_alarm",
+  "result": {
+   "cls": "ALERT",
+   "key": "stall:801",
+   "text": "STALL #801 checks complete and green, CLEAN, unmerged for 40 min and the queue records `odd block`; hz-queue why"
+  }
+ },
+ {
+  "case": 6,
+  "function": "stall_alarm",
+  "result": null
+ },
+ {
+  "case": 7,
+  "function": "stall_alarm",
+  "result": null
+ },
+ {
+  "case": 8,
+  "function": "stall_alarm",
+  "result": null
+ },
+ {
+  "case": 9,
+  "function": "main_red_alarm",
+  "result": {
+   "cls": "ALERT",
+   "key": "main-red:5",
+   "text": "MAIN RED run 5 at f19a3782: web-2 (ubuntu-24.04); hz-faillog 5"
+  }
+ },
+ {
+  "case": 10,
+  "function": "main_red_alarm",
+  "result": {
+   "cls": "ALERT",
+   "key": "main-red:5",
+   "text": "MAIN RED run 5 at f19a3782: failed jobs unreadable; hz-faillog 5"
+  }
+ },
+ {
+  "case": 11,
+  "function": "main_red_alarm",
+  "result": null
+ },
+ {
+  "case": 12,
+  "function": "main_red_alarm",
+  "result": null
+ },
+ {
+  "case": 13,
+  "function": "candidate_alarms",
+  "result": [
+   {
+    "cls": "ALERT",
+    "key": "candidate:6:1",
+    "text": "CANDIDATE release/v0.9.40 Acceptance run 6 (run still in progress): 1 failed or cancelled job(s): cli; hz-faillog 6"
+   },
+   {
+    "cls": "ALERT",
+    "key": "candidate:5:1",
+    "text": "CANDIDATE release/v0.9.40 CI run 5: 1 failed or cancelled job(s): web-2 (ubuntu-24.04); hz-faillog 5"
+   }
+  ]
+ },
+ {
+  "case": 14,
+  "function": "candidate_alarms",
+  "result": []
+ },
+ {
+  "case": 15,
+  "function": "admission_alarms",
+  "result": [
+   {
+    "cls": "WARN",
+    "key": "admission-blocked",
+    "text": "ADMISSION blocked by 2 active uncovered run(s) > 20 min: 11 CI on fix/a in_progress 50 min; 12 CI on rehearsal/x queued 30 min; hz-rehearse cancel frees the rehearsal/* runs"
+   }
+  ]
+ },
+ {
+  "case": 16,
+  "function": "admission_alarms",
+  "result": [
+   {
+    "cls": "INFO",
+    "key": "admission-blocked",
+    "text": "ADMISSION idle; a prepare/apply now would wait for 1 active uncovered run(s) > 20 min: 11 CI on main in_progress 50 min"
+   }
+  ]
+ },
+ {
+  "case": 17,
+  "function": "admission_alarms",
+  "result": []
+ },
+ {
+  "case": 18,
+  "function": "slot_alarm",
+  "result": {
+   "cls": "WARN",
+   "key": "registry-slots",
+   "text": "REGISTRY focused slots have 2452 B free (< 4000): retire heads before the next admission; hz-status"
+  }
+ },
+ {
+  "case": 19,
+  "function": "slot_alarm",
+  "result": null
+ },
+ {
+  "case": 20,
+  "function": "slot_alarm",
+  "result": null
+ },
+ {
+  "case": 21,
+  "function": "release_alarm",
+  "result": {
+   "cls": "ALERT",
+   "key": "release:0.9.40:paused",
+   "text": "RELEASE 0.9.40 paused for 120 min: resume with hz-release 0.9.40 or drop the candidate"
+  }
+ },
+ {
+  "case": 22,
+  "function": "release_alarm",
+  "result": {
+   "cls": "ALERT",
+   "key": "release:0.9.40:stuck",
+   "text": "RELEASE 0.9.40 unfinished, receipt unchanged for 45 min and no release/v* run active: hz-release-status"
+  }
+ },
+ {
+  "case": 23,
+  "function": "release_alarm",
+  "result": null
+ },
+ {
+  "case": 24,
+  "function": "release_alarm",
+  "result": null
+ },
+ {
+  "case": 25,
+  "function": "release_alarm",
+  "result": null
+ },
+ {
+  "case": 26,
+  "function": "rehearsal_alarms",
+  "result": [
+   {
+    "cls": "WARN",
+    "key": "rehearsal:open",
+    "text": "REHEARSAL of main f19a378223 open for 300 min: hz-rehearse step, or hz-rehearse cancel"
+   },
+   {
+    "cls": "ALERT",
+    "key": "rehearsal:da13623068",
+    "text": "REHEARSAL RED main da13623068: web-2 run 5, consumer google run 6 | merges since last green (2): #790 fix a; #791 fix b; hz-rehearse status --json"
+   }
+  ]
+ },
+ {
+  "case": 27,
+  "function": "rehearsal_alarms",
+  "result": [
+   {
+    "cls": "ALERT",
+    "key": "rehearsal:da13623068",
+    "text": "REHEARSAL RED main da13623068: failures unreadable | no earlier green rehearsal to compare with; hz-rehearse status --json"
+   }
+  ]
+ },
+ {
+  "case": 28,
+  "function": "rehearsal_alarms",
+  "result": [
+   {
+    "cls": "INFO",
+    "key": "rehearsal:da13623068",
+    "text": "REHEARSAL INCOMPLETE main da13623068: yielded to PR 801; proves nothing, the next tick retries when main moves"
+   }
+  ]
+ },
+ {
+  "case": 29,
+  "function": "rehearsal_alarms",
+  "result": [
+   {
+    "cls": "WARN",
+    "key": "rehearsal:da13623068",
+    "text": "REHEARSAL INCOMPLETE main da13623068: not every lane ran; proves nothing, the next tick retries when main moves"
+   }
+  ]
+ },
+ {
+  "case": 30,
+  "function": "rehearsal_alarms",
+  "result": []
+ },
+ {
+  "case": 31,
+  "function": "rehearsal_alarms",
+  "result": []
+ },
+ {
+  "case": 32,
+  "function": "required_contexts",
+  "result": [
+   "CI OK",
+   "merge-gate"
+  ]
+ },
+ {
+  "case": 33,
+  "function": "required_contexts",
+  "result": [
+   "CI OK",
+   "merge-gate",
+   "coverage-floor"
+  ]
+ },
+ {
+  "case": 34,
+  "function": "required_contexts",
+  "result": [
+   "CI OK",
+   "merge-gate",
+   "coverage-floor"
+  ]
+ }
+]

@@ -1,0 +1,10 @@
+# The modules listed here moved verbatim from the old tools (port/move.py verify proves it). They are not
+# reformatted or relinted: a changed line would break the move verifier and hide a real change from review.
+# edge.py, names.py, resume_ci.py and moved_map.py are checked normally.
+line-length = 160
+
+[lint.per-file-ignores]
+"batch_next.py" = ["ALL"]
+"digest.py" = ["ALL"]
+"plan.py" = ["ALL"]
+"train.py" = ["ALL"]

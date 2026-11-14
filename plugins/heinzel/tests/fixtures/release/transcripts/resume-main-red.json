@@ -1,0 +1,106 @@
+{
+ "exit": 1,
+ "gh_calls": [
+  [
+   "api",
+   "repos/helmut-hoffer-von-ankershoffen/heinzel/git/ref/tags/v0.9.41"
+  ],
+  [
+   "api",
+   "repos/helmut-hoffer-von-ankershoffen/heinzel/releases?per_page=30",
+   "--jq",
+   "[.[] | select(.draft | not) | .tag_name] | .[]"
+  ],
+  [
+   "api",
+   "repos/helmut-hoffer-von-ankershoffen/heinzel/git/ref/tags/v0.9.41"
+  ],
+  [
+   "api",
+   "repos/helmut-hoffer-von-ankershoffen/heinzel/git/ref/tags/v0.9.41"
+  ],
+  [
+   "api",
+   "repos/helmut-hoffer-von-ankershoffen/heinzel/commits/main",
+   "--jq",
+   ".sha"
+  ],
+  [
+   "run",
+   "list",
+   "-R",
+   "helmut-hoffer-von-ankershoffen/heinzel",
+   "--workflow",
+   "ci.yml",
+   "-L",
+   "10",
+   "--json",
+   "databaseId,status,conclusion,createdAt,headSha,displayTitle,attempt",
+   "--branch",
+   "main"
+  ],
+  [
+   "api",
+   "repos/helmut-hoffer-von-ankershoffen/heinzel/actions/runs/900/jobs?per_page=100",
+   "--jq",
+   "[.jobs[]|{name, conclusion, runner: .runner_name, steps: (.steps|length)}]"
+  ]
+ ],
+ "gh_rules": {
+  "api repos/helmut-hoffer-von-ankershoffen/heinzel/actions/runs/900/jobs": {
+   "jobs": [
+    {
+     "conclusion": "failure",
+     "name": "Lint",
+     "runner_id": 7,
+     "steps": [
+      {
+       "name": "run"
+      }
+     ]
+    }
+   ]
+  },
+  "api repos/helmut-hoffer-von-ankershoffen/heinzel/commits/main": "ffffffffffffffffffffffffffffffffffffffff\n",
+  "api repos/helmut-hoffer-von-ankershoffen/heinzel/git/ref/tags/v0.9.41": 404,
+  "api repos/helmut-hoffer-von-ankershoffen/heinzel/releases?per_page=30": "v0.9.40\nv0.9.39\n",
+  "run list": [
+   {
+    "attempt": 1,
+    "conclusion": "failure",
+    "createdAt": "2026-11-12T18:00:00Z",
+    "databaseId": 900,
+    "displayTitle": "feat: x",
+    "headSha": "ffffffffffffffffffffffffffffffffffffffff",
+    "status": "completed"
+   }
+  ]
+ },
+ "name": "resume-main-red",
+ "old_argv": [
+  "0.9.41",
+  "--timeout",
+  "1"
+ ],
+ "pypi": {},
+ "state_after": {
+  "flow/v0.9.41.json": {
+   "bumps": [],
+   "flow": "release-pr",
+   "version": "0.9.41"
+  },
+  "hz-merge-freeze": "",
+  "hz-release.json": {
+   "version": "0.9.41"
+  },
+  "hz-release.lock": ""
+ },
+ "state_before": {},
+ "stderr": [
+  "STOPPED: main tip ffffffff is red (run 900); fix main first. Run the same command again to continue; freeze state is preserved."
+ ],
+ "stdout": [
+  "release v0.9.41",
+  "ok   freeze"
+ ]
+}

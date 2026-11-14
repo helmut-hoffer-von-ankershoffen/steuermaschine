@@ -1,0 +1,2 @@
+<?xml version='1.0' encoding='utf-8'?>
+<testsuites><testsuite name="collected" tests="3"><testcase classname="tests.e2e.daemon_browser_proof_test" name="test_daemon_restart_and_plugin_recovery_browser_contract[daemon-restart-proof.mjs]" /><testcase classname="tests.e2e.daemon_browser_proof_test" name="test_daemon_restart_and_plugin_recovery_browser_contract[plugin-recovery-proof.mjs]" /><testcase classname="tests.e2e.daemon_browser_proof_test" name="test_daemon_browser_fixture_request_guard" /></testsuite></testsuites>
