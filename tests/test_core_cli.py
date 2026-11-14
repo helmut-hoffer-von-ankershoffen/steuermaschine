@@ -355,6 +355,18 @@ def test_review_verdict_in_json_prints_one_document_and_exits_0():
     assert r.providers.store.get_receipt("verdicts", digest)["verdict"] == "approve"
 
 
+def test_a_ci_change_verdict_needs_its_kind_a_model_and_notes():
+    r = rt()
+    sha = "c" * 40
+    r.providers.store.save("review.digests", sha, {"digest": sha, "authors": ["release-driver"], "sources": ["release ci_change"]})
+    assert invoke(r, ["review", "verdict", sha, "--approve", "--reviewer", "r1", "--kind", "nope"]).exit_code == 2
+    weak = invoke(r, ["review", "verdict", sha, "--approve", "--reviewer", "r1", "--kind", "ci_change"])
+    assert weak.exit_code == 2 and "strong review" in weak.stderr
+    out = invoke(r, ["--format", "json", "review", "verdict", sha, "--approve", "--reviewer", "r1", "--kind", "ci_change",
+                     "--model", "opus", "--notes", "read .github/workflows/ci.yml"])
+    assert one_document(out, models.Verdict).kind == "ci_change" and r.providers.store.get_receipt("verdicts", sha)["kind"] == "ci_change"
+
+
 def test_focus_add_and_done_in_json_print_one_document_and_exit_0():
     r = rt()
     doc = one_document(invoke(r, ["--format", "json", "focus", "add", "1.2.3", "--note", "cut"]), models.FocusList)

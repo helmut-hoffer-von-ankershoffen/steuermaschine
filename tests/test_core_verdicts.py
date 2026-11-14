@@ -42,3 +42,17 @@ def test_require_independent_refuses_a_rejection():
     store.put_receipt("verdicts", D, {"verdict": "reject", "reviewer": "r", "notes": "bad"})
     with pytest.raises(Refuse, match="'reject'"):
         verdicts.require_independent(store, D, [], "record it")
+
+
+def test_a_ci_change_verdict_is_needed_where_the_gate_asks_for_one():
+    store = MemoryStore()
+    sha = "c" * 40
+    verdicts.register(store, sha, "release ci_change", "release-driver")
+    store.put_receipt("verdicts", sha, {"digest": sha, "verdict": "approve", "reviewer": "r1"})
+    assert verdicts.require_independent(store, sha, [], "sm review verdict")["reviewer"] == "r1"  # a plain verdict
+    with pytest.raises(Refuse, match="not a ci_change verdict"):
+        verdicts.require_independent(store, sha, [], "sm review verdict", kind=verdicts.CI_CHANGE)
+    other = "b" * 40
+    verdicts.register(store, other, "release ci_change", "release-driver")
+    store.put_receipt("verdicts", other, {"digest": other, "verdict": "approve", "reviewer": "r1", "kind": verdicts.CI_CHANGE})
+    assert verdicts.require_independent(store, other, [], "sm review verdict", kind=verdicts.CI_CHANGE)["kind"] == "ci_change"

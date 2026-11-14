@@ -13,6 +13,8 @@ from .config import environment
 from .engine import Refuse
 
 KIND = "review.digests"
+CI_CHANGE = "ci_change"  # a verdict on a commit whose CI paths changed since the last release: the release gate needs it
+KINDS = ("", CI_CHANGE)  # "": a verdict on prepared bytes (the 04ro gate)
 
 
 def current_agent() -> str:
@@ -39,11 +41,14 @@ def authors_of(store: Any, digest: str, run_states: list[dict[str, Any]]) -> set
     return {a for a in found if a}
 
 
-def require_independent(store: Any, digest: str, run_states: list[dict[str, Any]], recorded: str) -> dict[str, Any]:
-    """The approving verdict receipt for `digest`, or a Refuse naming the command that records it."""
+def require_independent(store: Any, digest: str, run_states: list[dict[str, Any]], recorded: str, kind: str = "") -> dict[str, Any]:
+    """The approving verdict receipt for `digest`, or a Refuse naming the command that records it. With `kind`
+    (`CI_CHANGE`), only a receipt of that kind counts: a verdict on prepared bytes never covers a CI change."""
     receipt = store.get_receipt("verdicts", digest)
     if not receipt:
         raise Refuse(f"no verdict is recorded for {digest}: the digest alone is not a review", recorded)
+    if kind and receipt.get("kind", "") != kind:
+        raise Refuse(f"the verdict for {digest[:12]} is not a {kind} verdict: a review of the CI change itself is needed", recorded)
     if receipt.get("verdict") != "approve":
         raise Refuse(f"the recorded verdict for {digest[:12]} is '{receipt.get('verdict')}' by {receipt.get('reviewer')}: "
                      f"{receipt.get('notes', '')}. Change the work; new bytes get a new review", recorded)

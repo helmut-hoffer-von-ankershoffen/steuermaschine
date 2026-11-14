@@ -330,9 +330,16 @@ def _review(rt: Runtime, app: typer.Typer, hidden: bool = False) -> None:
                 reject: bool = typer.Option(False, "--reject", help="The bytes are wrong: the run stays stopped."),
                 reviewer: str = typer.Option(..., "--reviewer", metavar="NAME", help="Who reviewed; must differ from the run's author."),
                 model: str = typer.Option("", "--model", help="The reviewer's model, recorded as evidence."),
-                notes: str = typer.Option("", "--notes", help="What was checked and what was not."), as_json: bool = JSON) -> None:
+                notes: str = typer.Option("", "--notes", help="What was checked and what was not."),
+                kind: str = typer.Option("", "--kind", metavar="KIND", help="ci_change: a strong review of a commit whose CI paths changed since the last "
+                                         "release (the release gate asks for it; needs --model and --notes naming the paths)."),
+                as_json: bool = JSON) -> None:
         if approve == reject:
             fail("give exactly one of --approve and --reject", USAGE)
+        if kind not in verdicts.KINDS:
+            fail(f"--kind {kind}: expected one of {', '.join(k for k in verdicts.KINDS if k)}", USAGE)
+        if kind == verdicts.CI_CHANGE and not (model.strip() and notes.strip()):
+            fail("a ci_change verdict is a strong review: give --model and --notes naming the CI paths you read", USAGE)
         store = rt.providers.store
         authors = verdicts.authors_of(store, digest, go_mod.run_states(store))
         if not authors:
@@ -340,6 +347,8 @@ def _review(rt: Runtime, app: typer.Typer, hidden: bool = False) -> None:
         if reviewer in authors:
             fail(f"{reviewer} drives the run that produced these bytes: a different agent must review")
         data = {"digest": digest, "verdict": "approve" if approve else "reject", "reviewer": reviewer, "model": model, "notes": notes, "at": rt.providers.clock.now()}
+        if kind:
+            data["kind"] = kind
         try:
             store.put_receipt("verdicts", digest, data)
         except FileExistsError:
