@@ -23,12 +23,13 @@ import json
 from pathlib import Path
 from typing import Any
 
-from steuermaschine import USAGE
+from steuermaschine import USAGE, verdicts
 from steuermaschine.engine import Ctx, Pipeline, Refuse, ReviewStop, Step, Subject, identify_head
 from steuermaschine.github import Gh
 from steuermaschine.native import unit
 
 from ..native import merge_tier
+from ..native.check import command_of as check_command
 from ..native.window import lane_branch
 from .common import SHA, core_repo, need, ok, packet_sha, path_input, prepared_digest, receipt_heads, run, setting, slug
 
@@ -406,6 +407,19 @@ def _remember_packet(ctx: Ctx, directory: Path, sha: str) -> None:
 
 
 def packet_review(ctx: Ctx) -> tuple[str, str, str]:
+    """The packet under review, bound to its head: an approval of the digest needs the head's `sm check` receipt
+    (`steuermaschine.verdicts.need_check`), so no reviewer approves a head whose cheap checks did not run green."""
+    digest, brief, under_review = _packet_review(ctx)
+    if not digest:
+        return digest, brief, under_review
+    facts = ctx.subject.facts
+    command = check_command(facts["worktree"])
+    verdicts.need_check(ctx.providers.store, digest, facts["head"], command)
+    return digest, (brief + f"\nAn approval is recorded only when the head {facts['head'][:12]} has a green check receipt: `{command}` writes it. "
+                    "Without it `sm review verdict --approve` refuses."), under_review
+
+
+def _packet_review(ctx: Ctx) -> tuple[str, str, str]:
     """The digest is recomputed from the packet's bytes on every run: what was reviewed is what admission binds.
 
     A packet whose verdict is a reject is rebuilt here once the selection file changed (k7fj): the rejected packet

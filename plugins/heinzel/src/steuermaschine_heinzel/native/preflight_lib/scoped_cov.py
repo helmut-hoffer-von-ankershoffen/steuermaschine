@@ -46,10 +46,11 @@ def production(sh: Any, wt: Path, base: str = "origin/main") -> list[str]:
     return [p for p in sh(["git", "diff", "--name-only", "--diff-filter=d", base, "HEAD", "--", "src"], cwd=wt)[1].split() if p.endswith(".py")]
 
 
-def run(wt: Path, sel: Path, sh: Any, gate: Any, base: str = "origin/main") -> tuple[int, str]:
+def run(wt: Path, sel: Path, sh: Any, gate: Any, base: str = "origin/main", env: dict[str, str] | None = None) -> tuple[int, str]:
     """Run the selection's python tests under coverage and measure the changed files. -> (exit code, output); the
     output ends with the `SCOPED n% (covered/total) threshold 90` line when there is a result.
-    `sh(argv, cwd=None)` runs one process, `gate(argv, cwd=None, env=None)` one heavy command through the run lock."""
+    `sh(argv, cwd=None)` runs one process, `gate(argv, cwd=None, env=None)` one heavy command through the run lock;
+    `env` is added to the environment of the test run (the coverage core, for one)."""
     try:
         selection = json.loads(Path(sel).read_text())["python"]
     except (OSError, ValueError, KeyError, TypeError) as e:
@@ -60,7 +61,7 @@ def run(wt: Path, sel: Path, sh: Any, gate: Any, base: str = "origin/main") -> t
     with tempfile.TemporaryDirectory() as t:
         data = str(Path(t) / ".coverage")
         rc, out = gate([python, "-m", "coverage", "run", f"--rcfile={wt / 'pyproject.toml'}", "-m", "pytest", "-n", "0", "-q", "-p", "no:cacheprovider", *selection],
-                       cwd=wt, env={"COVERAGE_FILE": data})
+                       cwd=wt, env={**(env or {}), "COVERAGE_FILE": data})
         if rc != 0:
             return rc, out
         target = Path(t) / "cov.json"

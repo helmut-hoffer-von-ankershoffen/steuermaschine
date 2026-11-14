@@ -56,3 +56,31 @@ def test_a_ci_change_verdict_is_needed_where_the_gate_asks_for_one():
     verdicts.register(store, other, "release ci_change", "release-driver")
     store.put_receipt("verdicts", other, {"digest": other, "verdict": "approve", "reviewer": "r1", "kind": verdicts.CI_CHANGE})
     assert verdicts.require_independent(store, other, [], "sm review verdict", kind=verdicts.CI_CHANGE)["kind"] == "ci_change"
+
+
+def test_a_digest_bound_to_a_head_needs_that_heads_green_check_receipt():
+    store = MemoryStore()
+    head, other = "a" * 40, "b" * 40
+    assert verdicts.missing_check(store, D) == ""  # nobody bound the digest to a commit: no receipt is asked for
+    verdicts.register(store, D, "packet", "a1")
+    verdicts.need_check(store, D, head, "tool check WORKTREE")
+    verdicts.need_check(store, D, head, "tool check WORKTREE")  # the same binding again writes nothing
+    assert store.load(verdicts.KIND, D) == {"digest": D, "authors": ["a1"], "sources": ["packet"], "check": {"head": head, "command": "tool check WORKTREE"}}
+    why = verdicts.missing_check(store, D)
+    assert head[:12] in why and "`tool check WORKTREE`" in why and "exactly that commit" in why
+    assert verdicts.record_check(store, other, {"branch": "x"}) is True  # a receipt of another commit does not count
+    assert verdicts.missing_check(store, D) != ""
+    assert verdicts.record_check(store, head, {"branch": "feat/x"}) is True
+    assert store.get_receipt(verdicts.CHECKS, head) == {"branch": "feat/x", "head": head, "green": True}
+    assert verdicts.record_check(store, head, {"branch": "later"}) is False  # written once: the first receipt stays
+    assert store.get_receipt(verdicts.CHECKS, head)["branch"] == "feat/x"
+    assert verdicts.missing_check(store, D) == ""
+
+
+def test_need_check_makes_the_digest_record_and_register_keeps_the_binding():
+    store = MemoryStore()
+    verdicts.need_check(store, D, "a" * 40, "tool check")
+    verdicts.register(store, D, "prepare", "a1")
+    assert store.load(verdicts.KIND, D)["check"]["head"] == "a" * 40 and verdicts.authors_of(store, D, []) == {"a1"}
+    store.put_receipt(verdicts.CHECKS, "a" * 40, {"green": False})  # a receipt that is not green is no receipt
+    assert "no green check receipt" in verdicts.missing_check(store, D)

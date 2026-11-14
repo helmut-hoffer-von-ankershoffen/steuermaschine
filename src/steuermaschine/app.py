@@ -346,6 +346,8 @@ def _review(rt: Runtime, app: typer.Typer, hidden: bool = False) -> None:
             fail(f"no run is waiting for a review of {digest[:12]} and no command registered it (`prepare` does): check the digest in the brief", USAGE)
         if reviewer in authors:
             fail(f"{reviewer} drives the run that produced these bytes: a different agent must review")
+        if approve and (unchecked := verdicts.missing_check(store, digest)):
+            fail(unchecked)
         data = {"digest": digest, "verdict": "approve" if approve else "reject", "reviewer": reviewer, "model": model, "notes": notes, "at": rt.providers.clock.now()}
         if kind:
             data["kind"] = kind
