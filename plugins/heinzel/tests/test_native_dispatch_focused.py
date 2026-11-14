@@ -164,13 +164,29 @@ def test_admission_counts_hosted_runs_and_local_attempts_once(cli, monkeypatch):
 
 
 @pytest.mark.parametrize("status", ["waiting", "in_progress"])
-def test_active_candidate_prevents_start_without_polling_jobs(cli, monkeypatch, status):
+def test_active_candidate_prevents_a_macos_start_without_polling_jobs(cli, monkeypatch, status):
+    """A run that needs macOS never starts beside a candidate, whatever the jobs are: it is refused before any job is read."""
     monkeypatch.setattr(cli, "inventory", lambda endpoint, _: [run(
         1, "release/v0.9.35", status, "ci.yml"
     )] if f"status={status}&" in endpoint else [])
     monkeypatch.setattr(cli, "jobs_of", lambda _: pytest.fail("polled jobs despite an active candidate"))
-    with pytest.raises(SystemExit, match="release/"):
-        cli.admit(lambda _: pytest.fail("started during candidate"), False, True)
+    with pytest.raises(SystemExit, match=r"release/.*needs macOS"):
+        cli.admit(lambda _: pytest.fail("started during candidate"), True, True)
+
+
+@pytest.mark.parametrize(("used", "starts"), [(19, True), (20, False)])
+def test_a_linux_run_beside_a_candidate_reads_the_jobs_and_starts_only_within_the_job_cap(cli, monkeypatch, used, starts):
+    """Intended since the owner rule of 2026-11-14: a Linux run may start beside a candidate, so the jobs are read
+    (the cap is counted in jobs); over the cap it is refused at once, also with --wait."""
+    monkeypatch.setattr(cli, "inventory", lambda endpoint, _: [run(1, "release/v0.9.35", "in_progress", "ci.yml")] if "status=in_progress&" in endpoint else [])
+    polled = []
+    monkeypatch.setattr(cli, "jobs_of", lambda rid: polled.append(rid) or [{"status": "in_progress", "labels": ["ubuntu-24.04"]}] * used)
+    if starts:
+        assert cli.admit(lambda _: "started", False, True) == "started"
+    else:
+        with pytest.raises(SystemExit, match=r"release/\* run is active and 20 active \+ 1 requested jobs exceed the 20-job ceiling"):
+            cli.admit(lambda _: pytest.fail("started over the job cap"), False, True)
+    assert polled == [1]
 
 
 @pytest.mark.parametrize(

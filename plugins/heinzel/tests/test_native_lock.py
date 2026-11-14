@@ -142,10 +142,12 @@ def test_a_stale_slot_record_and_an_ancestor_pid_do_not_admit_a_gate(home):
 def test_no_heavy_command_starts_at_or_above_load_12_and_the_setting_cannot_pass_the_hard_bar(home):
     done = gate("run", "--max-wait", "1", "--", "echo", "ran", home=home, load="12")
     assert done.returncode == 75 and "ran" not in done.stdout and "load 12 is at or above 12: no heavy command starts above it" in done.stderr
-    assert gate("run", "--", "true", home=home, load="11.9").returncode == 0
-    assert gate("run", "--light", "--", "true", home=home, load="30").returncode == 0  # the light lane has no load bar
-    assert gate("run", "--", "true", home=home, load="15", start_load=16).returncode == 0  # the bar is the machine's setting
-    assert gate("run", "--max-wait", "1", "--", "true", home=home, load="45", start_load=100, max_load=100).returncode == 75
+    # one command line each: a command with three short green runs is learned light, and the light lane has no load bar
+    assert gate("run", "--", "echo", "below", home=home, load="11.9").returncode == 0
+    assert gate("run", "--light", "--", "echo", "light", home=home, load="30").returncode == 0  # the light lane has no load bar
+    assert gate("run", "--", "echo", "own bar", home=home, load="15", start_load=16).returncode == 0  # the bar is the machine's setting
+    hard = gate("run", "--max-wait", "1", "--", "echo", "hard", home=home, load="45", start_load=100, max_load=100)
+    assert hard.returncode == 75 and "load 45 is at or above 40" in hard.stderr
     text = gate("status", home=home, load="12").stdout
     assert "start bar: no heavy start at or above load 12 (NO heavy command starts now)" in text and "1 of the 3 heavy slots reserved for a focus head" in text
 
