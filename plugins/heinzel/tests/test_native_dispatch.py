@@ -451,9 +451,9 @@ def test_a_second_command_for_the_same_head_waits_and_leaves_the_first_ones_turn
 
 def test_a_second_head_waits_for_the_window_with_exit_75_and_pushes_nothing(rt, lanes):
     runtime = rt(commands=remote())
-    window.the_window(runtime).enter("fix/other", "b" * 40, 2, in_flight=0, owner="other", pid=1, host="elsewhere")
+    window.the_window(runtime).enter("fix/other", "b" * 40, 4, in_flight=0, owner="other", pid=1, host="elsewhere")  # 4 of the 5 runs
     done = invoke(runtime, ["head", "validate", ".", "--max-wait", "0"])
-    assert done.exit_code == 75 and "fix/other bbbbbbbbb holds the window" in done.stderr and "Nothing was pushed" in done.stderr
+    assert done.exit_code == 75 and "hold the window: fix/other" in done.stderr and "Nothing was pushed" in done.stderr
     assert runtime.providers.commands.git == [] and lanes["started"] == []
     status = invoke(runtime, ["ci", "window", "status"]).stdout
     assert "active   fix/other bbbbbbbbb" in status and "waiting  1. feat/x aaaaaaaaa (2 runs)" in status

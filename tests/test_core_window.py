@@ -1,4 +1,4 @@
-"""The validation window: one head at a time, one request per branch, the cap, and the rule against a PR head's commit."""
+"""The validation window: as many heads at once as fit under the cap, one request per branch, and the rule against a PR head's commit."""
 
 from steuermaschine.testing import FakeClock, MemoryStore
 from steuermaschine.window import Rules, Window, sha_uses, throwaway_branch
@@ -11,14 +11,19 @@ def window(cap=5, alive=lambda turn: None, **rules):
     return Window(MemoryStore(), clock, Rules(cap=cap, **rules), "test", alive=alive), clock
 
 
-def test_the_first_head_goes_and_holds_the_window_until_it_leaves():
-    w, _ = window()
+def test_two_heads_run_in_parallel_inside_the_cap_and_a_third_waits_at_it():
+    """Owner 2026-11-14: several heads at once while all their runs fit under the cap."""
+    w, _ = window(cap=5)
     assert w.enter("fix/one", A, 2, in_flight=0).state == "go"
     assert w.enter("fix/one", A, 2, in_flight=2).state == "go"  # the holder asking again is still the holder
-    second = w.enter("fix/two", B, 2, in_flight=2)
-    assert second.state == "wait" and second.holder == "fix/one" and second.position == 1 and "holds the window" in second.reason
+    assert w.enter("fix/two", B, 2, in_flight=2).state == "go"  # 2 + 2 <= 5: in parallel
+    assert [t.branch for t in w.status().actives] == ["fix/one", "fix/two"]
+    third = w.enter("fix/three", C, 2, in_flight=1)  # the runs the holders asked for count although only 1 shows yet
+    assert third.state == "wait" and "4 runs in flight + 2 wanted > cap 5" in third.reason and "2 head(s) hold the window" in third.reason
     assert w.leave("fix/one", A) is True
-    assert w.enter("fix/two", B, 2, in_flight=0).state == "go"
+    assert w.enter("fix/three", C, 2, in_flight=2).state == "go"
+    text = "\n".join(w.status().render())
+    assert "as many heads at once as fit" in text and "active   fix/two" in text and "active   fix/three" in text
 
 
 def test_three_builders_at_the_cap_are_served_one_after_another_in_order():
@@ -35,13 +40,13 @@ def test_three_builders_at_the_cap_are_served_one_after_another_in_order():
 
 
 def test_a_newer_head_of_a_branch_takes_the_waiting_place_of_the_older_one():
-    w, _ = window()
+    w, _ = window(cap=2)
     w.enter("fix/one", A, 1, in_flight=0)
     assert w.enter("fix/two", B, 2, in_flight=1).state == "wait"
-    newer = w.enter("fix/two", C, 3, in_flight=1)
+    newer = w.enter("fix/two", C, 2, in_flight=1)
     assert newer.replaced == B and newer.position == 1
     waiting = w.status().waiting
-    assert len(waiting) == 1 and waiting[0].head == C and waiting[0].runs == 3
+    assert len(waiting) == 1 and waiting[0].head == C and waiting[0].runs == 2
     again = w.enter("fix/one", B, 1, in_flight=1)  # a new head of the branch that holds the window waits for its own older head
     assert again.state == "wait" and "older head of this branch" in again.reason
 
@@ -53,7 +58,7 @@ def test_more_runs_than_the_cap_never_enter_the_line():
 
 
 def test_a_holder_that_never_left_is_passed_after_its_lease_and_a_silent_waiter_is_dropped():
-    w, clock = window(lease_minutes=10, waiting_minutes=5)
+    w, clock = window(cap=1, lease_minutes=10, waiting_minutes=5)
     w.enter("fix/one", A, 1, in_flight=0)
     w.enter("fix/two", B, 1, in_flight=1)
     clock.sleep(6 * 60)
@@ -65,13 +70,13 @@ def test_a_holder_that_never_left_is_passed_after_its_lease_and_a_silent_waiter_
 
 
 def test_leaving_the_line_gives_up_the_place_and_status_renders():
-    w, _ = window()
+    w, _ = window(cap=1)
     w.enter("fix/one", A, 1, in_flight=0)
     w.enter("fix/two", B, 1, in_flight=1)
     assert w.leave("fix/two", B) is False
     text = "\n".join(w.status().render())
-    assert "active   fix/one aaaaaaaaa" in text and "waiting  " not in text and "cap 5" in text
-    assert w.enter("x", C, 1, 0).render() == ["wait: fix/one aaaaaaaaa holds the window"]
+    assert "active   fix/one aaaaaaaaa" in text and "waiting  " not in text and "cap 1" in text
+    assert w.enter("x", C, 1, 0).render() == ["wait: 1 runs in flight + 1 wanted > cap 1 (1 head(s) hold the window: fix/one)"]
 
 
 def test_sha_uses_names_every_other_use_of_a_commit():
@@ -84,7 +89,7 @@ def test_sha_uses_names_every_other_use_of_a_commit():
 
 
 def test_a_second_command_for_the_same_head_waits_and_cannot_end_the_first_ones_turn():
-    w, _ = window()
+    w, _ = window(cap=2)
     assert w.enter("fix/one", A, 2, 0, owner="first", pid=11, host="here").state == "go"
     second = w.enter("fix/one", A, 2, 2, owner="second", pid=12, host="here")
     assert second.state == "wait" and "already being validated by another command (pid 11 on here)" in second.reason
@@ -97,7 +102,7 @@ def test_a_second_command_for_the_same_head_waits_and_cannot_end_the_first_ones_
 
 def test_a_holder_whose_command_is_gone_is_passed_and_names_what_it_left_behind():
     dead = set()
-    w, _ = window(alive=lambda turn: turn.owner not in dead)
+    w, _ = window(cap=2, alive=lambda turn: turn.owner not in dead)
     w.enter("fix/one", A, 2, 0, owner="first", pid=11, host="here")
     w.note("first", {"validation_branch": "validation/fix-one-aaaaaaaa", "commit": C})
     w.note("someone-else", {"x": "y"})  # only the holder writes its notes
@@ -184,7 +189,7 @@ def test_holds_of_several_commands_are_kept_apart():
 
 def test_a_waiter_whose_pid_is_gone_is_skipped_marked_and_never_gets_the_turn():
     dead = set()
-    w, _ = window(alive=lambda row: False if row.pid in dead else None)
+    w, _ = window(cap=1, alive=lambda row: False if row.pid in dead else None)
     w.enter("fix/one", A, 1, in_flight=0, owner="one", pid=1)
     w.enter("fix/dead", B, 1, in_flight=0, owner="dead", pid=2)
     w.enter("fix/three", C, 1, in_flight=0, owner="three", pid=3)
@@ -206,3 +211,38 @@ def test_release_hold_removes_a_stale_hold_and_refuses_a_live_or_unknown_owner_w
     assert not w.release_hold("a").withdrawn and not w.release_hold("b").withdrawn
     assert w.release_hold("c").withdrawn and "no admission hold" in w.release_hold("c").reason  # c is dead: its hold was ignored and now removed
     assert w.release_hold("a", force=True).withdrawn and [h.label for h in w.status().holds] == ["two"]
+
+
+def test_an_admission_or_release_hold_stops_new_heads_even_with_room_under_the_cap():
+    """The rule against hosted CI next to a running release candidate or admission stays: room is not enough."""
+    w, _ = window(cap=5)
+    assert w.enter("fix/one", A, 1, in_flight=0, owner="one").state == "go"
+    w.hold("release", "release admit apply 0.9.44", pid=1, host="h")
+    blocked = w.enter("fix/two", B, 1, in_flight=1, owner="two")
+    assert blocked.state == "wait" and blocked.held_by == ["release admit apply 0.9.44"]
+
+
+def test_one_request_per_branch_holds_with_several_holders():
+    w, _ = window(cap=5)
+    assert w.enter("fix/one", A, 1, in_flight=0, owner="a").state == "go"
+    assert w.enter("fix/two", B, 1, in_flight=1, owner="b").state == "go"
+    same = w.enter("fix/two", C, 1, in_flight=2, owner="c")  # a newer head of a branch that holds: it waits for the older one
+    assert same.state == "wait" and "older head of this branch" in same.reason
+
+
+def test_release_with_several_holders_names_the_one():
+    state = {"alive": True}
+    w, _ = window(cap=5, alive=lambda turn: state["alive"])
+    w.enter("fix/one", A, 1, 0, owner="first", pid=11, host="here")
+    w.enter("fix/two", B, 1, 1, owner="second", pid=12, host="here")
+    assert "name the one to release" in w.release(force=True).reason
+    assert "does not hold the window" in w.release(branch="fix/x").reason
+    forced = w.release(force=True, branch="fix/two")
+    assert forced.released and forced.turn.branch == "fix/two" and [t.branch for t in w.status().actives] == ["fix/one"]
+
+
+def test_a_document_of_an_older_release_with_one_holder_is_read():
+    w, clock = window()
+    now = clock.now()
+    w.store.save(w.kind, "state", {"active": {"branch": "fix/old", "head": A, "runs": 1, "requested": now, "asked": now, "started": now}, "waiting": []})
+    assert [t.branch for t in w.status().actives] == ["fix/old"] and w.status().active.branch == "fix/old"

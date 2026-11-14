@@ -41,7 +41,7 @@ def test_a_dead_waiter_leaves_the_line_by_itself(rt, alive):  # noqa: F811
     runtime = rt()
     w = window.the_window(runtime)
     alive.update({1, 3})
-    assert w.enter("fix/holder", "1" * 40, 1, 0, owner="h", pid=1, host=HERE).state == "go"
+    assert w.enter("fix/holder", "1" * 40, 5, 0, owner="h", pid=1, host=HERE).state == "go"
     assert w.enter("fix/dead", "2" * 40, 1, 0, owner="d", pid=2, host=HERE).position == 1
     assert w.enter("fix/far", "4" * 40, 1, 0, owner="f", pid=4, host="elsewhere").state == "wait"
     assert [turn.branch for turn in w.status().waiting] == ["fix/far"]  # pid 2 is gone; elsewhere cannot be checked
@@ -53,7 +53,7 @@ def test_drop_takes_a_dead_waiter_for_anyone_and_refuses_the_holder_and_unknown_
     runtime = rt()
     w = window.the_window(runtime)
     alive.update({1})
-    w.enter("fix/holder", "1" * 40, 1, 0, owner="h", pid=1, host=HERE)
+    w.enter("fix/holder", "1" * 40, 5, 0, owner="h", pid=1, host=HERE)
     w.enter("fix/dead", "2" * 40, 1, 0, owner="d", pid=2, host=HERE)
     holder = invoke(runtime, ["ci", "window", "drop", "fix/holder"])
     assert holder.exit_code == 1 and "holds the window, it does not wait" in holder.stderr and "sm ci window release" in holder.stderr
@@ -69,7 +69,7 @@ def test_a_live_waiter_is_dropped_only_by_its_owner_and_its_command_is_stopped(r
     w = window.the_window(runtime)
     alive.update({1, 7})
     starts[7] = "Sat Nov 14 09:00:00 2026"
-    w.enter("fix/holder", "1" * 40, 1, 0, owner="h", pid=1, host=HERE)
+    w.enter("fix/holder", "1" * 40, 5, 0, owner="h", pid=1, host=HERE)
     w.enter("feat/x", "a" * 40, 2, 0, owner="mine", pid=7, host=HERE)
     window.remember_waiter(runtime, "mine", str(Path(".").resolve()), 7)
     stranger = invoke(runtime, ["ci", "window", "drop", "aaaaaaa"])
@@ -91,7 +91,7 @@ def test_a_waiter_that_ended_before_the_stop_is_still_dropped(rt, alive, monkeyp
     w = window.the_window(runtime)
     alive.update({1, 7})
     starts[7] = "Sat Nov 14 09:00:00 2026"
-    w.enter("fix/holder", "1" * 40, 1, 0, owner="h", pid=1, host=HERE)
+    w.enter("fix/holder", "1" * 40, 5, 0, owner="h", pid=1, host=HERE)
     w.enter("feat/x", "a" * 40, 2, 0, owner="mine", pid=7, host=HERE)
     window.remember_waiter(runtime, "mine", str(Path(".").resolve()), 7)
 
@@ -109,7 +109,7 @@ def test_a_worktree_at_the_same_head_or_a_reused_pid_is_not_ownership(rt, alive,
     w = window.the_window(runtime)
     alive.update({1, 7})
     starts[7] = "Sat Nov 14 09:00:00 2026"
-    w.enter("fix/holder", "1" * 40, 1, 0, owner="h", pid=1, host=HERE)
+    w.enter("fix/holder", "1" * 40, 5, 0, owner="h", pid=1, host=HERE)
     w.enter("feat/x", "a" * 40, 2, 0, owner="mine", pid=7, host=HERE)
     unrecorded = invoke(runtime, ["ci", "window", "drop", "feat/x", "--worktree", "."])
     assert unrecorded.exit_code == 1 and "an unrecorded worktree" in unrecorded.stderr and stopped == []
