@@ -1,11 +1,17 @@
 """Pure decisions for `sm ci one` (unit-tested, no I/O): which run and jobs to re-run, which focused selection to
 dispatch, and whether runner capacity allows it now.
 
-Rules: never main or release/* without --force; never while a release/* run is active;
-never more than 5 focused runs (re-runs plus focused-job dispatches) in flight; respect GitHub's 20-job
-ceiling and the 4 concurrent Apple-silicon (macOS ARM) runners.
+Rules: never main or release/* without --force; never more than 5 focused runs (re-runs plus focused-job
+dispatches) in flight; respect the account's job ceiling and its concurrent Apple-silicon (macOS ARM) runners.
+
+Beside a release candidate (an active release/* run), since 2026-11-14: a run that needs no macOS runner may start,
+as long as all jobs together stay within the job ceiling; a run that needs macOS waits. Hosted machines are isolated
+from each other, so a Linux run takes nothing from the candidate but a place under the ceiling; the macOS runners are
+the scarce part, and the candidate gets them. The two numbers are the account's, not a repository's: `Caps`, filled
+from the settings `ci_job_cap` and `ci_macos_cap` (`dispatch.DispatchSettings`).
 """
 import re
+from dataclasses import dataclass
 
 from steuermaschine import window
 
@@ -13,8 +19,16 @@ MAX_FOCUSED = 5
 MAX_REPEAT = 60  # rounds in one focused job (core focused_job.py MAX_REPEAT)
 MAX_RERUN_REPEAT = 10  # sequential re-runs of one CI job
 DEFAULT_REPEAT = 10
-JOB_CEILING = 20
+JOB_CEILING = 20  # the defaults of `Caps`; the account's real numbers come from the settings
 ARM_LIMIT = 4
+
+
+@dataclass(frozen=True)
+class Caps:
+    """What the GitHub account runs at once: all jobs together, and the macOS/ARM jobs among them."""
+
+    jobs: int = JOB_CEILING
+    macos: int = ARM_LIMIT
 ACTIVE = ("queued", "in_progress", "waiting", "pending", "requested")
 WAITING = frozenset(ACTIVE) - {"in_progress"}
 LANES = ("cli", "supervised", "web-1", "web-2")
@@ -102,16 +116,26 @@ def is_arm(labels):
     return any("macos" in label or label.endswith("-arm") for label in labels or [])
 
 
-def capacity_refusal(active_runs, active_jobs, focused_inflight, wants_arm, *, new_jobs=1, new_arm_jobs=None):
+def capacity_refusal(active_runs, active_jobs, focused_inflight, wants_arm, *, new_jobs=1, new_arm_jobs=None, caps=None):
     """active_runs: run identity, status and headBranch; active_jobs: run_id, status and labels;
-    focused_inflight: focused runs still active. A release/* run is never overridden, not even by --force.
+    focused_inflight: focused runs still active; caps: the account's `Caps` (none: the defaults).
 
-    The 20-job ceiling and the 4 macOS/ARM runners are respected by priority, not by never starting: PR CI keeps the
-    ceiling saturated most of the day, and one focused job queues behind it like any PR job. So a saturated ceiling
+    Beside an active release/* run a run that needs macOS is refused, and --force does not lift it: the candidate
+    gets the macOS runners. A run that needs none may start while all jobs together, the requested ones included,
+    stay within the job ceiling; the ceiling is strict then, whether or not main waits.
+
+    Otherwise the job ceiling and the macOS/ARM runners are respected by priority, not by never starting: PR CI keeps
+    the ceiling saturated most of the day, and one focused job queues behind it like any PR job. So a saturated ceiling
     (or ARM pool) refuses only while a main CI run or one of its jobs is waiting; otherwise the job is queued and
     capacity_note() says how many are ahead."""
-    if any(protected_release(r) for r in active_runs if r.get("status") in ACTIVE):
-        return "refusing: a release/* run is active; a focused run would compete with the candidate"
+    caps = caps or Caps()
+    arm_wanted = int(wants_arm) if new_arm_jobs is None else new_arm_jobs
+    candidate = any(protected_release(r) for r in active_runs if r.get("status") in ACTIVE)
+    if candidate and arm_wanted:
+        return "refusing: a release/* run is active; a run that needs macOS would compete with the candidate for the macOS runners"
+    if candidate and len(active_jobs) + new_jobs > caps.jobs:
+        return (f"refusing: a release/* run is active and {len(active_jobs)} active + {new_jobs} requested jobs exceed the {caps.jobs}-job ceiling; "
+                "the candidate first")
     if focused_inflight >= MAX_FOCUSED:
         return f"refusing: {focused_inflight} focused runs already in flight (max {MAX_FOCUSED}); `sm ci one status`"
     main_runs = [run for run in active_runs if run.get("headBranch") == "main" and run.get("status") in ACTIVE]
@@ -119,20 +143,20 @@ def capacity_refusal(active_runs, active_jobs, focused_inflight, wants_arm, *, n
     main_queued = any(run["status"] in WAITING for run in main_runs) or any(
         job.get("run_id") in main_ids and job.get("status") in WAITING for job in active_jobs
     )
-    if main_queued and len(active_jobs) + new_jobs > JOB_CEILING:
-        return f"refusing: {len(active_jobs)} active + {new_jobs} requested exceed the {JOB_CEILING}-job ceiling; main first"
+    if main_queued and len(active_jobs) + new_jobs > caps.jobs:
+        return f"refusing: {len(active_jobs)} active + {new_jobs} requested exceed the {caps.jobs}-job ceiling; main first"
     arm = sum(1 for j in active_jobs if is_arm(j.get("labels")))
-    new_arm_jobs = int(wants_arm) if new_arm_jobs is None else new_arm_jobs
-    if main_queued and new_arm_jobs and arm + new_arm_jobs > ARM_LIMIT:
-        return f"refusing: {arm} active + {new_arm_jobs} requested macOS/ARM jobs exceed {ARM_LIMIT}; main first"
+    if main_queued and arm_wanted and arm + arm_wanted > caps.macos:
+        return f"refusing: {arm} active + {arm_wanted} requested macOS/ARM jobs exceed {caps.macos}; main first"
     return ""
 
 
-def capacity_note(active_jobs, wants_arm):
+def capacity_note(active_jobs, wants_arm, caps=None):
     """One line on how full the runners are, for a job that will queue."""
+    caps = caps or Caps()
     arm = sum(1 for j in active_jobs if is_arm(j.get("labels")))
-    if len(active_jobs) >= JOB_CEILING or (wants_arm and arm >= ARM_LIMIT):
-        return f"queued behind {len(active_jobs)} jobs ({arm} macOS/ARM; ceiling {JOB_CEILING}, ARM {ARM_LIMIT}); no main CI waiting"
+    if len(active_jobs) >= caps.jobs or (wants_arm and arm >= caps.macos):
+        return f"queued behind {len(active_jobs)} jobs ({arm} macOS/ARM; ceiling {caps.jobs}, ARM {caps.macos}); no main CI waiting"
     return ""
 
 

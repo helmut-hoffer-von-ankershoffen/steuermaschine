@@ -81,7 +81,7 @@ ROWS = [
     ToolMapRow(tool="hz-handoff", path="doc handoff", owner="heinzel-native-coord", note="open-work snapshot, then commit, pull and push of the tracking files; every step is checked"),
     ToolMapRow(tool="hz-hour", path="doc hour", owner="heinzel-native-coord", note="hourly update draft from the text of read-only commands (setting hour_facts); runs the handoff unless --no-handoff; flips no ruleset"),
     ToolMapRow(tool="hz-velocity", path="doc velocity", owner="heinzel-native-coord", note="throughput samples; --record-eligible became doc velocity-record", also=["doc velocity-record"]),
-    ToolMapRow(tool="hz-gate", path="gate run", owner="heinzel-native-ops", core=True, note="the lock for heavy local runs and pushes", also=["gate status"]),
+    ToolMapRow(tool="hz-gate", path="gate run", owner="heinzel-native-ops", core=True, note="the lock for heavy local runs and pushes", also=["gate status", "gate wait"]),
     ToolMapRow(tool="hz-gate-status", path="gate status", owner="heinzel-native-ops", core=True, note="who holds the gate"),
     ToolMapRow(tool="hz-lim", path="lim", owner="heinzel-native-ops", core=True, note="output limiter"),
     ToolMapRow(tool="hz-guard", path="guard git", owner="heinzel-native-ops", note="the Bash PreToolUse hook of Claude Code"),

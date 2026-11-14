@@ -173,7 +173,8 @@ def in_flight(lanes: int = 0, wants_arm: bool = False) -> int:
     """Focused runs in flight, counted as the start itself counts them: GitHub's own inventory of active runs of the
     focused workflow plus the tracked receipts, whoever started them. Refuses (SystemExit, as the library does) when
     the inventory is uncertain, when a start in doubt is unreconciled, or when the whole lane set could not start now
-    for another reason than the cap (a release run, the job ceiling while main waits)."""
+    for another reason than the cap (a macOS lane beside a release run, the job ceiling while main waits). A Linux
+    lane set beside a release candidate passes here; each lane's own start then checks the job ceiling."""
     with focused.admission_lock():
         pending = focused.STATE.with_suffix(".pending")
         if pending.exists():
@@ -186,7 +187,7 @@ def in_flight(lanes: int = 0, wants_arm: bool = False) -> int:
                 runs[run["id"]] = {**run, "headBranch": run["head_branch"]}
         tracked = {row["run"] for row in focused.rows(strict=True) if row.get("result") is None}
         count = len(tracked | {rid for rid, run in runs.items() if focused.workflow_path(run) == f".github/workflows/{c.WORKFLOW}"})
-        if lanes and (why := c.capacity_refusal(runs.values(), [], 0, wants_arm)):  # a release run: no lane would start
+        if lanes and (why := c.capacity_refusal(runs.values(), [], 0, wants_arm, caps=focused.CAPS)):  # macOS beside a release run: no lane would start
             raise SystemExit(why)
         return count
 

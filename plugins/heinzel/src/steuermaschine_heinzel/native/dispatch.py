@@ -33,6 +33,10 @@ class DispatchSettings(BaseModel):
                                                                "beside it. Default: dispatch/focused-runs.jsonl in the project's state home.")
     dispatch_scratch_dir: Path | None = Field(None, description="Where the temporary worktree of a throwaway commit goes. Default: dispatch/scratch in the "
                                                                 "project's state home.")
+    ci_job_cap: int = Field(c.JOB_CEILING, ge=1, description="Jobs the GitHub account runs at once, all repositories together. A hosted run beside a release "
+                                                                 "candidate starts only while all jobs stay within it.")
+    ci_macos_cap: int = Field(c.ARM_LIMIT, ge=0, description="macOS/ARM jobs the GitHub account runs at once. A run that needs one never starts beside a "
+                                                                 "release candidate.")
 
 
 class JobResult(Model):
@@ -131,8 +135,14 @@ def bound(rt, lines: list[str], problems: list[str]) -> focused.Edge:
     edge = focused.Edge(commands=rt.providers.commands, clock=rt.providers.clock, store=rt.providers.store,
                         journal=lambda text: journal(rt, text), out=lines.append, err=say)
     focused.bind(edge, str(s.get("repo") or ""), path("dispatch_state_file", "focused-runs.jsonl"), Path(str(clone)).expanduser() if clone else Path("core-clone-not-set"),
-                 path("dispatch_scratch_dir", "scratch"))
+                 path("dispatch_scratch_dir", "scratch"), caps(s))
     return edge
+
+
+def caps(settings) -> c.Caps:
+    """The account's caps from the settings; a missing value is the default."""
+    jobs, macos = settings.get("ci_job_cap") if settings else None, settings.get("ci_macos_cap") if settings else None
+    return c.Caps(jobs=c.JOB_CEILING if jobs is None else int(jobs), macos=c.ARM_LIMIT if macos is None else int(macos))
 
 
 def call(action: str, fn, args: SimpleNamespace, next_cmd: str) -> FocusedRun:
@@ -169,8 +179,9 @@ CI_ONE = Group("ci one", H(
     "starts one hosted run on the branch; with --throwaway pushes validation/<name>-<sha8> first (and deletes it with --cleanup); writes a receipt.",
     "sm ci one dispatch fix/clock --test tests/e2e/web_ui_test.py::test_pair --repeat 10 --throwaway --wait --cleanup",
     "sm ci one status   (the tally `k/n green` comes when the run is done)",
-    "Guards: never main or release/* without --force; never while a release/* run is active; at most 5 focused runs in flight;\n"
-    "at the 20-job ceiling or 4 macOS/ARM jobs it refuses while main CI waits. --wait waits for a slot (30 min), then for the result (45 min).\n"
+    "Guards: never main or release/* without --force; beside an active release/* run only a run that needs no macOS, within the\n"
+    "job ceiling; at most 5 focused runs in flight; at the job ceiling (ci_job_cap) or the macOS/ARM cap (ci_macos_cap) it refuses\n"
+    "while main CI waits. --wait waits for a slot (30 min), then for the result (45 min).\n"
     "SHA guard (exit 2, --force does not lift it): refuses a branch whose tip is the head of an open PR, a pull_request key of the\n"
     "focused plan registry, or the tip of a remote branch outside validation/*, bisect/*, rehearsal/*. The required checks attach\n"
     "by SHA to the OLDEST check suite of a commit: a dispatch on a PR head leaves that PR BLOCKED with every check green (#790).\n"

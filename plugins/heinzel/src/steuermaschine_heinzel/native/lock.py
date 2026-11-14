@@ -3,7 +3,10 @@ and for the plugin's own gated runs (`lock_of`), on `steuermaschine.runlock`. Th
 `steuermaschine.commands.gate.POLICY` (plugin.py, `sm_provider_extras`).
 
 The policy is the former lock's: at most three heavy runs, none at or above load 40, a second one only below load 20,
-nine workers shared by the running gates, four light runs, and the refusal of full local suites. It adopts the
+nine workers shared by the running gates, four light runs, and the refusal of full local suites. On top of it, the
+scheduling of 2026-11-14 (all three are settings): no heavy start at or above load 10 (`lock_start_load`; the load
+that made the timed pre-push session fail), the last heavy slot reserved for the focus head (`lock_reserved_slots`),
+and the push lane (`lock_push_lane`): a push that is not documentation only is exclusive by itself. It adopts the
 former lock's files (settings `lock_directory`, `lock_prefix`), so a run started the old way and one started here
 exclude each other for as long as both exist.
 """
@@ -18,8 +21,9 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 from steuermaschine import USAGE
+from steuermaschine.commands.gate import with_focus
 from steuermaschine.native import runtime
-from steuermaschine.runlock import Policy, Refusal, RunLock, git_tree_state
+from steuermaschine.runlock import PUSH_COMMANDS, Policy, Refusal, RunLock, git_tree_state
 
 from .. import state as statedir  # the plugin's state paths
 from .lock_lib import refuse
@@ -37,7 +41,10 @@ class LockSettings(BaseModel):
     lock_prefix: str = Field("gate", description="File name prefix of the run lock (`gate.lock`, `gate.heavy.1.lock` ...).")
     lock_max_load: float = Field(40.0, description="No gated command starts at or above this 1-minute load.")
     lock_heavy_slots: int = Field(3, description="Heavy commands that may run at once.")
-    lock_extra_slot_load: float = Field(20.0, description="A second heavy command starts only below this load.")
+    lock_extra_slot_load: float = Field(20.0, description="A second heavy command starts only below this load; with lock_start_load set it is the start bar of a focus head.")
+    lock_start_load: float = Field(10.0, ge=0, description="No heavy command starts at or above this 1-minute load (0: off). A focus head's test run goes by lock_extra_slot_load.")
+    lock_reserved_slots: int = Field(1, ge=0, description="Heavy slots only a focus head (`sm focus add WORKTREE`) takes; one slot always stays open to everyone.")
+    lock_push_lane: bool = Field(True, description="A push that is not documentation only is exclusive: it waits for an idle machine and no heavy command starts beside it.")
     lock_cpu_budget: int = Field(9, description="Test workers shared by all running heavy commands.")
     lock_light_slots: int = Field(4, description="Light commands that may run at once.")
     lock_history: Path | None = Field(None, description="One JSON line per gated command, either lane (times, exit, tree, caller, failure class); none: gate-history.jsonl in the state directory.")
@@ -87,6 +94,8 @@ def policy(settings: Mapping, commands, clock, allow_full: bool = False, cwd: st
                   max_load=min(MAX_LOAD, float(setting(settings, "lock_max_load"))), heavy_slots=max(1, min(HEAVY_SLOTS, int(setting(settings, "lock_heavy_slots")))),
                   heavy_slot_limit=HEAVY_SLOTS, extra_slot_load=float(setting(settings, "lock_extra_slot_load")),
                   cpu_budget=int(setting(settings, "lock_cpu_budget")), worker_caps=WORKER_CAPS, light_slots=int(setting(settings, "lock_light_slots")),
+                  start_load=min(MAX_LOAD, max(0.0, float(setting(settings, "lock_start_load")))), reserved_slots=max(0, int(setting(settings, "lock_reserved_slots"))),
+                  exclusive_commands=PUSH_COMMANDS if setting(settings, "lock_push_lane") else (),
                   held_env="HZ_GATE_HELD", history=expand("lock_history"), refusals=(full_suite,),
                   is_light=lambda argv: docs_only_push(commands, argv), tree_state=git_tree_state(commands))
 
@@ -94,4 +103,4 @@ def policy(settings: Mapping, commands, clock, allow_full: bool = False, cwd: st
 def lock_of(allow_full: bool = False) -> RunLock:
     rt = runtime()
     table, commands, clock = rt.settings, rt.providers.commands, rt.providers.clock
-    return RunLock(policy(table, commands, clock, allow_full, os.getcwd()), commands, clock, say=rt.say)
+    return RunLock(with_focus(policy(table, commands, clock, allow_full, os.getcwd()), rt.providers.store), commands, clock, say=rt.say)
