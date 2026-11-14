@@ -233,6 +233,17 @@ class Group:
     help: str
 
 
+@dataclass(frozen=True)
+class Alias:
+    """A second name for a command group: `Alias("work", "beads")` mounts the group `beads` as `work` as well. The
+    commands are the same objects, so the review gate, the writers' lock and the help are the original's.
+    `Alias("work focus", "focus")` mounts a group below an alias that was declared before it."""
+
+    path: str
+    target: str
+    help: str = ""
+
+
 def native(path: str, *, help: str, writes: bool = False, tick: bool = False, replaces: tuple[str, ...] = (), review: str = "",
            files: tuple[str, ...] = (), exempt: str = "") -> Callable[[F], F]:
     def mark(fn: F) -> F:
@@ -247,7 +258,7 @@ def collect(*modules: Any) -> list[Any]:
     out = []
     for module in modules:
         for value in vars(module).values():
-            if isinstance(value, Group):
+            if isinstance(value, Group | Alias):
                 out.append(value)
             elif getattr(value, "__sm_native__", None) is not None and getattr(value, "__module__", None) == module.__name__:
                 out.append(value.__sm_native__)
@@ -363,6 +374,29 @@ def build(commands: list[Any], rt: Any, emit: Callable[..., Any], fail: Callable
         group_for(words[:-1]).command(words[-1], help=cmd.help, short_help=cmd.help.replace("\b", "").strip().splitlines()[0],
                                       context_settings=ctx_settings)(_command(cmd, rt, emit, fail))
     return app
+
+
+def mount_aliases(root: Any, commands: list[Any]) -> None:
+    """Mount every `Alias` in `commands` on the Click group `root`, in the order given. A target that is missing is skipped."""
+    import copy
+
+    for alias in (c for c in commands if isinstance(c, Alias)):
+        target = root.commands.get(alias.target)
+        if target is None or not hasattr(target, "commands"):
+            continue
+        *parents, name = alias.path.split()
+        parent = root
+        for word in parents:
+            parent = parent.commands.get(word)
+            if parent is None or not hasattr(parent, "commands"):
+                break
+        else:
+            twin = copy.copy(target)
+            twin.name, twin.commands = name, dict(target.commands)
+            if alias.help:
+                twin.help = alias.help
+                twin.short_help = alias.help.replace("\b", "").strip().splitlines()[0]
+            parent.commands[name] = twin
 
 
 def _group_command(run: Callable[..., Any]) -> Callable[..., Any]:
