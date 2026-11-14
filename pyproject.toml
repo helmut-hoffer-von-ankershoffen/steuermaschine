@@ -1,15 +1,39 @@
 [project]
 name = "steuermaschine"
-version = "0.0.1"
+version = "0.0.2"
 description = "The artificial helmsman: a coordinator CLI that steers work from a change to a live release, for AI agents and a human owner."
-readme = "README.md"
+readme = "PYPI.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.12"
+keywords = ["cli", "typer", "pluggy", "agents", "release", "ci", "merge-queue", "workflows"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
+    "Topic :: Software Development :: Build Tools",
+    "Typing :: Typed",
+]
 dependencies = ["typer>=0.15", "pydantic>=2.7", "pydantic-settings>=2.6", "pluggy>=1.5"]
 
 [project.scripts]
 steuermaschine = "steuermaschine.app:main"
 sm = "steuermaschine.app:main"
 sm-guard = "steuermaschine.guardhook:main"  # the Bash hook: standard library only, safe when sm cannot load
+
+[project.urls]
+Homepage = "https://github.com/helmut-hoffer-von-ankershoffen/steuermaschine"
+Documentation = "https://github.com/helmut-hoffer-von-ankershoffen/steuermaschine#readme"
+Source = "https://github.com/helmut-hoffer-von-ankershoffen/steuermaschine"
+Changelog = "https://github.com/helmut-hoffer-von-ankershoffen/steuermaschine/blob/main/CHANGELOG.md"
+Issues = "https://github.com/helmut-hoffer-von-ankershoffen/steuermaschine/issues"
 
 [dependency-groups]
 dev = [

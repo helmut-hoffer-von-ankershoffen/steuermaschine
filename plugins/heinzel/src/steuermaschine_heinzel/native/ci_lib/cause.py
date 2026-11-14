@@ -12,7 +12,7 @@ ELECTRON_CHECKSUM_GATEWAY = re.compile(
     r"HTTPError: Response code (?:502|503|504) \([^\r\n]*\) for "
     r"https://github\.com/electron/electron/releases/download/v\d+\.\d+\.\d+/SHASUMS256\.txt(?:\s|$)"
 )
-TESTY = re.compile(r"^E\s{2,}|\bFAILED\b.*::|AssertionError|error TS\d+|\d+ failed", re.M)
+TESTY = re.compile(r"(?:^E\s{2,})|\bFAILED\b.*::|AssertionError|error TS\d+|\d+ failed", re.M)
 PLAYWRIGHT_DEPS_TIMEOUT = re.compile(
     r"subprocess\.TimeoutExpired: Command '[^\r\n]*, '-m', 'playwright', 'install', "
     r"'chromium', 'webkit', '--with-deps'\]' timed out after \d+ seconds"

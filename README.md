@@ -5,120 +5,90 @@
 [![CodeQL](https://github.com/helmut-hoffer-von-ankershoffen/steuermaschine/actions/workflows/codeql.yml/badge.svg)](https://github.com/helmut-hoffer-von-ankershoffen/steuermaschine/actions/workflows/codeql.yml)
 [![PyPI](https://img.shields.io/pypi/v/steuermaschine)](https://pypi.org/project/steuermaschine/)
 [![Python](https://img.shields.io/badge/python-3.12%2B-blue)](pyproject.toml)
-<!-- SonarQube Cloud: the project is private, so its badges need a project badge token. Owner: SonarQube Cloud >
-     project > Information > Badges, copy the token, and replace BADGE_TOKEN below (all three). -->
-[![Quality Gate](https://sonarcloud.io/api/project_badges/measure?project=helmut-hoffer-von-ankershoffen_steuermaschine&metric=alert_status&token=BADGE_TOKEN)](https://sonarcloud.io/summary/overall?id=helmut-hoffer-von-ankershoffen_steuermaschine)
-[![Security](https://sonarcloud.io/api/project_badges/measure?project=helmut-hoffer-von-ankershoffen_steuermaschine&metric=security_rating&token=BADGE_TOKEN)](https://sonarcloud.io/summary/overall?id=helmut-hoffer-von-ankershoffen_steuermaschine)
-[![Reliability](https://sonarcloud.io/api/project_badges/measure?project=helmut-hoffer-von-ankershoffen_steuermaschine&metric=reliability_rating&token=BADGE_TOKEN)](https://sonarcloud.io/summary/overall?id=helmut-hoffer-von-ankershoffen_steuermaschine)
+[![Quality Gate](https://sonarcloud.io/api/project_badges/measure?project=helmut-hoffer-von-ankershoffen_steuermaschine&metric=alert_status)](https://sonarcloud.io/summary/overall?id=helmut-hoffer-von-ankershoffen_steuermaschine)
+[![Maintainability](https://sonarcloud.io/api/project_badges/measure?project=helmut-hoffer-von-ankershoffen_steuermaschine&metric=sqale_rating)](https://sonarcloud.io/summary/overall?id=helmut-hoffer-von-ankershoffen_steuermaschine)
+[![Security](https://sonarcloud.io/api/project_badges/measure?project=helmut-hoffer-von-ankershoffen_steuermaschine&metric=security_rating)](https://sonarcloud.io/summary/overall?id=helmut-hoffer-von-ankershoffen_steuermaschine)
+[![Reliability](https://sonarcloud.io/api/project_badges/measure?project=helmut-hoffer-von-ankershoffen_steuermaschine&metric=reliability_rating)](https://sonarcloud.io/summary/overall?id=helmut-hoffer-von-ankershoffen_steuermaschine)
 
-`sm` is a reusable coordinator that steers a change from commit to live release for projects in which AI agents do
-the work. It keeps resumable state per head (a commit on a work branch) and per release, always knows the one next
-command, and stops at review points where only the owner or an independent reviewer may continue. The core knows no
-project; pipelines, providers, gates and traps come from plugins (core plus plugins, wired with pluggy).
+`sm` steers a change from commit to live release in projects where AI agents do the work. It keeps resumable state for each head (a commit on a work branch) and each release, always names the one next command, and stops where only an independent reviewer or the owner may continue.
 
-The name: not a Steuermann or Steuerfrau, a human helmsman, but the artificial one: a Maschine that steers. The
-owner sets the destination and decides at the review stops.
+The name: not a Steuermann, a human helmsman, but a Maschine that steers. The owner sets the destination.
 
-## Status
+## Why
 
-Pre-release and private. Version 0.0.1. Every command is native; no command starts an old script
-(`sm tools gaps --wrapped` prints 0, `sm tools gaps` the rows not ported yet). The binding goal for the first
-release is [docs/DEFINITION-OF-DONE.md](docs/DEFINITION-OF-DONE.md). The plugin API (`steuermaschine.API_VERSION`)
-may still change.
+An agent that ships a change has to remember a pipeline: which check comes first, which run to wait for, what must never be done twice. It forgets this at every context reset. `sm` holds that knowledge instead:
+
+- **One next command.** Bare `sm` prints where the project stands, the command to type now, and the mistake most likely at this step.
+- **Resumable.** State lives per head and per release. The same command continues where it stopped.
+- **Dry by default.** A step that writes outside the machine runs only with `--live`.
+- **Review stops.** A pipeline halts at a digest until someone other than the author records a verdict.
+- **Built for agents.** Every command has help in one fixed form and prints exactly one JSON document with `--format json`.
+
+The core knows no project. Pipelines, providers, gates and traps come from plugins.
 
 ## Install
 
-From a clone, for now (PyPI later, project name `steuermaschine`):
+Supported on macOS and Linux with Python 3.12 to 3.15.
 
 ```sh
-git clone <repository-url> steuermaschine && cd steuermaschine
-uv tool install .          # puts `sm` and `steuermaschine` on your PATH
+uv tool install steuermaschine     # puts `sm` and `steuermaschine` on your PATH
 ```
 
-For development use `uv sync` and `bin/sm-dev` instead (see Development).
+This installs the core. A project needs a plugin and a `steuermaschine.toml` that names it.
 
-## Quick start (toy plugin, no account needed)
+## Try it
+
+The toy plugin simulates a forge and CI in one JSON file, so this needs no account. It lives in this repository:
 
 ```sh
+git clone https://github.com/helmut-hoffer-von-ankershoffen/steuermaschine && cd steuermaschine
 uv sync && export PATH="$PWD/.venv/bin:$PATH"
+
 mkdir /tmp/toy && cd /tmp/toy && git init -q -b main && git commit -q --allow-empty -m init
 printf '[project]\nname = "toy-demo"\nplugin = "toy"\n' > steuermaschine.toml
 git checkout -q -b feat/hello && echo hi > hello.txt && git add hello.txt && git commit -q -m hello
+
 sm                         # PHASE idle
-sm head ship .             # dry run: stops before the first write outside this machine, prints what it would do
-sm head ship . --live      # pushes, opens the PR, then WAITING on CI
+sm head ship .             # dry run: prints what it would do
+sm head ship . --live      # pushes, opens the PR, then waits for CI
 sm sim ci green .          # play the outside world: CI turns green
-sm head ship . --live      # continues where it stopped: merge, tag, finished
+sm head ship . --live      # continues: merge, tag, finished
 ```
 
-Run the `uv sync` line in the clone, the rest in the scratch directory. The toy's forge and CI are a simulation in
-`.sim/world.json`; the engine, state, dry run, waiting and resuming are real. State lives under
-`~/.local/state/steuermaschine/<project>` (`STEUERMASCHINE_HOME` moves it).
+## The core verbs
 
-## The `go` contract
+| Command | What it answers or does |
+|---|---|
+| `sm` / `sm go` | Where the project stands and the one next command. Read-only |
+| `sm head ...` | Take one head through the project's pipeline |
+| `sm release ...` | Take one version through the release pipeline |
+| `sm review verdict` / `list` | Record or list an independent verdict on an exact digest |
+| `sm pr ...`, `sm ci ...` | One pull request, the CI runs, and why something does not merge |
+| `sm focus ...` | The heads or versions the owner declared the critical path |
+| `sm alarm ...` | Stalls and failures that need someone now |
+| `sm gate run -- CMD` | Run a heavy local command under the machine's run lock |
+| `sm lim CMD` | Run a command and print only what matters |
+| `sm self ...` | Configuration, plugins, help lint, the command tree, JSON schemas |
 
-Bare `sm` (same as `sm go`) is read-only and prints, in this order:
+Every command explains itself with `--help`: purpose, when to use it, what it changes, an example, what comes next. `sm self tree` prints the whole tree.
 
-- `PHASE`: where the project stands.
-- `NEXT`: the one command to type now.
-- `TRAP`: the mistake that is most likely at exactly this step. Read it before you run NEXT.
+`sm go` prints `PHASE`, `NEXT` and `TRAP`, and `WAITING` when the run waits on CI or a reviewer.
 
-`WAITING` appears when the run waits on the outside world (CI, a reviewer); run the same command again later.
-Exit codes: 0 done or a planned stop, 1 refused, 2 usage, 3 alarm, 70 tool error or plugin not loaded, 75 waiting.
-Every command has `--format json` with exactly one document and a published schema (`sm self schema`).
+Exit codes: 0 done or a planned stop, 1 refused, 2 usage, 3 alarm, 70 tool error or plugin not loaded, 75 waiting (run the same command again).
 
-## The review gate
+## Heinzelmännchen
 
-- A command that writes outside this machine, or changes state other commands act on, is a write command.
-- Write commands stay closed (exit 70, naming the review file) until an independent review approves them.
-- The approval names the exact digest of the reviewed code unit: the module, its `*_lib` package and every
-  first-party file it imports, transitively. Any edit to one of them voids it, also an edit to the core.
-- The reviewer is never the author: `sm review verdict DIGEST --approve --reviewer NAME` records it.
-- `sm self reviews` lists every write command, its unit, its digest and its state.
+`sm` was built to run the delivery of Heinzelmännchen (`heinzel` on PyPI): admission of heads, a merge queue, release candidates and the checks after a release. That logic is the plugin in `plugins/heinzel`. It is the reference for a large plugin and is not published as a package of its own.
 
-- `bin/promote` refuses a build in which a gated write command is not approved: promoting it would switch that
-  command off.
+## Write a plugin
 
-Writes that a pipeline step makes also need `--live`; without it a run stops with a dry-run plan. A pipeline
-(`sm head admit`, `sm release cut` in the Heinzelmännchen plugin) runs each step as a native command through that
-command's own gate, and stops at its review points until a different agent approved the digest.
+A plugin is an object with functions marked `@hookimpl`. The core calls the ones it implements: settings, pipelines, gates, traps, providers for the forge and CI, and native commands that return a typed result model. Register it as an entry point in the group `steuermaschine.plugins` and name it in `steuermaschine.toml`. Several plugins stack as layers.
 
-## Writing a plugin
+Start from `examples/toy` (a whole plugin in one file) and `examples/layer` (a second plugin on top of the first). `sm self hooks` lists the hook specifications. `steuermaschine.testing` has fakes and a conformance kit. The plugin API (`steuermaschine.API_VERSION`) may still change before 1.0.
 
-A plugin is an object (or module) with functions marked `@hookimpl`; the core calls the ones it implements:
-`sm_api_version`, `sm_settings`, `sm_pipelines`, `sm_gates`, `sm_traps`, providers such as `sm_forge` and `sm_ci`,
-`sm_native` (commands: `@native` functions that return a result model) and more. Every command follows the help
-contract (`sm self lint`, strict) and prints one typed JSON document with `--format json`. Register it as an
-entry point in group `steuermaschine.plugins` and name it in the project's
-`steuermaschine.toml` (`plugin = "..."`, or `plugins = ["base", "outer"]`; later entries are outer layers).
-`sm self hooks` lists the specifications, `sm self plugins` the loaded stack. Start from `examples/toy` (a complete
-plugin in one file), `examples/layer` (a second plugin layered on the first), `src/steuermaschine/hookspecs.py` and
-section 5 of [docs/DESIGN.md](docs/DESIGN.md). Test with `steuermaschine.testing` (`fake_providers`, `invoke`,
-conformance kit).
+## Links
 
-## Development
-
-```sh
-uv sync                    # workspace: core, plugins/heinzel, examples/toy, examples/layer
-uv run pytest              # all tests, sandboxed (see docs/INTEGRATION.md section 8.5)
-bin/sm-dev ...             # run the development tree
-bin/check                  # the quality gate: tests, coverage >= 90, help lint, typos, ruff, mypy strict,
-                           # pyright, dead code, the plugin's debt ratchet (docs/debt.json); --fast skips coverage
-bin/promote --check        # everything a promote would test, without switching
-bin/promote                # build the committed HEAD into the stable install and switch to it
-bin/rollback               # switch the stable install back to the previous release (again: forward)
-```
-
-A stable install differs from the development tree: `sm` on the PATH runs a commit built with `git archive` into
-its own directory and virtual environment, non-editable, and nothing in it points at the checkout. Only
-`bin/promote` changes it, so editing or breaking the tree never breaks the live tool.
-
-## Docs
-
-- [docs/DESIGN.md](docs/DESIGN.md): purpose, pipelines as state machines, providers, plugins, help contract, output.
-- [docs/INTEGRATION.md](docs/INTEGRATION.md): the contract for every change handed to the integrator.
-- [docs/DEFINITION-OF-DONE.md](docs/DEFINITION-OF-DONE.md): the binding goal for the first release.
-- [docs/NATIVE-PORT.md](docs/NATIVE-PORT.md) and [docs/GAPS.md](docs/GAPS.md): how the old tools were ported.
-- [docs/RUNBOOK-release-cut.md](docs/RUNBOOK-release-cut.md): a release with `sm release cut`.
-- [docs/SWITCH-queue-daemon.md](docs/SWITCH-queue-daemon.md): switching the live queue daemon.
-- [AGENTS.md](AGENTS.md): instructions for coding agents working in this repository.
+- [docs/DESIGN.md](docs/DESIGN.md): pipelines as state machines, providers, plugins, the help contract, output.
+- [AGENTS.md](AGENTS.md): how to work on this repository.
+- [CHANGELOG.md](CHANGELOG.md)
+- [LICENSE](LICENSE): MIT.

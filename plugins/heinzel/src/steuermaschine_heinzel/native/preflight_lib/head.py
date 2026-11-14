@@ -360,7 +360,7 @@ def lock_by_contract(c: Ctx, plugins: Path | None) -> tuple[dict[int, dict[str, 
 
 def consumer_ref(ci_yml: str) -> str | None:
     """The plugins commit the Core `consumer-check` job tests against."""
-    m = re.search(r"^  consumer-check:\n(.*?)(?=^  [\w-]+:\n|\Z)", ci_yml, re.M | re.S)
+    m = re.search(r"^  consumer-check:\n(.*?)(?=(?:^  [\w-]+:\n)|\Z)", ci_yml, re.M | re.S)
     if not m:
         return None
     ref = re.search(r"repository:\s*\S+/heinzel-plugins\s*\n\s*ref:\s*([0-9a-f]{40}|[\w./-]+)", m[1])

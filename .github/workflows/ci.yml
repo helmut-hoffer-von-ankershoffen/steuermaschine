@@ -19,7 +19,7 @@ jobs:
           enable-cache: true
       - name: Install gitleaks
         run: |
-          curl -sSfL -o gitleaks.tgz https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
+          curl --proto '=https' --tlsv1.2 -sSfL -o gitleaks.tgz https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
           echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  gitleaks.tgz" | sha256sum -c -
           tar -xzf gitleaks.tgz -C /usr/local/bin gitleaks && rm gitleaks.tgz
       - run: make install
@@ -34,10 +34,10 @@ jobs:
             if [ "$GITHUB_REF" = refs/heads/main ]; then echo "::error::PRIVATE_TERMS secret missing"; exit 1; fi
             echo "::notice::PRIVATE_TERMS not available; term guard skipped"; exit 0
           fi
-          uv run --script scripts/check_confidentiality.py --require
+          uv run --no-build --script scripts/check_confidentiality.py --require
           case "$BEFORE" in ""|0000000000000000000000000000000000000000) BEFORE=$(git merge-base origin/main HEAD) ;; esac
           if [ "$GITHUB_REF" = refs/heads/main ]; then range=HEAD; else range="$BEFORE..HEAD"; fi
-          uv run --script scripts/check_confidentiality.py --require --messages "$range"
+          uv run --no-build --script scripts/check_confidentiality.py --require --messages "$range"
       - name: Conventional Commits (the commits this push or PR adds)
         env:
           BEFORE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
@@ -68,6 +68,32 @@ jobs:
         if: steps.sonar.outputs.token != 'true'
         run: echo "::notice::SonarQube Cloud skipped - the SONAR_TOKEN secret is not set"
 
+  test:
+    # The supported Pythons, as in heinzel's CI: 3.12 to 3.15 on Linux on every run, plus macOS on main. The `check`
+    # job above is the full gate (lint, types, coverage, secrets) on 3.12; these cells run the suite only.
+    name: Test (${{ matrix.os }}, Python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: ${{ github.event_name == 'pull_request' }}
+      matrix:
+        os: [ubuntu-24.04]
+        python: ["3.12", "3.13", "3.14", "3.15"]
+        include: ${{ fromJSON(github.event_name == 'push' && github.ref == 'refs/heads/main' && '[{"os":"macos-latest","python":"3.12"}]' || '[]') }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.13.5"
+          python-version: ${{ matrix.python }}
+          enable-cache: true
+      # PyYAML (a commitizen dependency, unused by the tests) has no wheel for 3.15 yet: skip it instead of building.
+      - run: uv sync --all-packages --locked --no-build --no-install-package pyyaml
+      - name: Tests
+        run: env -u GITHUB_ACTIONS -u FORCE_COLOR -u PY_COLORS uv run --no-sync pytest -q -p no:cacheprovider
+
   badge:
     # The coverage badge: an SVG on the orphan branch `badges`, shown by the README as a repository file (works for a
     # private repository, no external account).
@@ -86,7 +112,7 @@ jobs:
         run: |
           pct=$(python3 -c "import xml.etree.ElementTree as E; r=E.parse('coverage.xml').getroot().get; print(int(100*(int(r('lines-covered'))+int(r('branches-covered')))/(int(r('lines-valid'))+int(r('branches-valid')))))")
           color=$([ "$pct" -ge 90 ] && echo brightgreen || { [ "$pct" -ge 75 ] && echo yellow || echo red; })
-          curl -sSfL -o coverage.svg "https://img.shields.io/badge/coverage-${pct}%25-${color}"
+          curl --proto '=https' --tlsv1.2 -sSfL -o coverage.svg "https://img.shields.io/badge/coverage-${pct}%25-${color}"
           git init -q badges && mv coverage.svg badges/ && cd badges
           git config user.name "github-actions[bot]" && git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout -q -b badges && git add coverage.svg && git commit -q -m "ci: coverage ${pct}%"

@@ -93,6 +93,7 @@ def test_imports_nothing_but_the_standard_library(guard, tmp_path):
     env = {**os.environ, "PYTHONPATH": str(tmp_path / "lib")}
     done = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, env=env, timeout=30, check=True)
     foreign = {m.split(".")[0] for m in done.stdout.split()} - set(sys.stdlib_module_names) - {"steuermaschine", "__main__"}
+    foreign -= {"sitecustomize", "usercustomize"}  # loaded by `site` at interpreter start (Homebrew Pythons), not by the hook
     assert foreign == set(), foreign
 
 
