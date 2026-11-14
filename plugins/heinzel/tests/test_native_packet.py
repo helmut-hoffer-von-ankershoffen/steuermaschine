@@ -102,7 +102,7 @@ def test_size_of_a_real_branch_in_text_and_json_equals_the_moved_report(core):  
     out = invoke(rt, ["head", "size", "feature", "--base", core["base"]])
     assert out.exit_code == 0 and out.stdout.splitlines() == printed and printed[-1] == "FITS"
     size = document(invoke(rt, ["--format", "json", "head", "size", f"{core['repo']}:feature", "--core", "/nowhere", "--base", core["base"]]), ops.SizeResult)
-    assert size.fits and size.union == {"python": 1} and size.limits == {"python": 3, "production": 100} and size.production == 1
+    assert size.fits and size.union == {"python": 1} and size.limits == {"python": None, "production": None} and size.production == 1
     assert size.branches[0].head == core["head"] and size.branches[0].files == 2 and size.branches[0].production == ["src/heinzel/mod.py"]
     assert size.base == core["base"] and size.lines == printed
 
@@ -124,11 +124,12 @@ def test_size_refuses_a_conflicting_wave_and_names_the_branch_to_move(core):  # 
     assert out.exit_code == 1 and "refused: git rev-parse failed" in out.stderr
 
 
-def test_size_over_a_limit_names_the_lane(core):  # noqa: F811
-    facts = {"a": {"branch": "a", "head": HEAD, "conflict": "", "changed": {"x": "M"}, "selection": {"web": [f"web/a{i}.test.ts" for i in range(3)]},
+def test_size_has_no_lane_maximum(core):  # noqa: F811
+    """Owner 2026-11-14 (PRs of any size): a web lane far over the base's old MAX_IDS fits."""
+    facts = {"a": {"branch": "a", "head": HEAD, "conflict": "", "changed": {"x": "M"}, "selection": {"web": [f"web/a{i}.test.ts" for i in range(300)]},
                    "production": [], "protected": [], "reasons": []}}
     size = ops.size_wave(["a"], core["repo"], core["base"], lambda repo, base, branch, policy: facts[branch], lambda repo, facts: [])
-    assert not size.fits and size.problems == ["union web: 3 > 2"] and size.move == "a" and size.exit_code == 1 and size.limits["web"] == 2
+    assert size.fits and size.problems == [] and size.exit_code == 0 and size.limits["web"] is None
 
 
 # ----------------------------------------------------------------------------- head floor

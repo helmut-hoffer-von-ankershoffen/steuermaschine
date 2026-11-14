@@ -5,7 +5,7 @@ import types
 import pytest
 from packet_paths import tool  # noqa: F401  (the fixture that imports a moved module)
 
-LIMITS = {"python": 32, "default": 10, "production": 100}
+LIMITS = {"python": None, "default": None, "production": None}  # owner 2026-11-14: PRs of any size, no lane or file maximum
 
 
 def fact(branch, *, python=(), web=(), browser=(), production=(), protected=(), changed=(), conflict=""):
@@ -24,20 +24,18 @@ def test_wave_that_fits_is_accepted(tool):
     assert problems == [] and over == {} and len(lanes["web"]) == 10
 
 
-def test_union_over_the_web_limit_is_refused_and_names_a_branch(tool):
+def test_no_lane_has_a_maximum_and_300_ids_fit(tool):
     wave = tool("wave_size")
-    facts = [fact("a", web=ids("a", 6)), fact("b", web=ids("b", 6)), fact("c", python=["tests/c_test.py"])]
-    problems, over, *_ = wave.evaluate(facts, LIMITS)
-    assert over == {"web": (12, 10)} and problems == ["union web: 12 > 10"]
-    assert wave.to_move(facts, LIMITS) in {"a", "b"} and wave.to_move(facts, LIMITS) != "c"
+    facts = [fact("a", web=ids("a", 160)), fact("b", web=ids("b", 160)), fact("c", python=[f"tests/t{i}_test.py" for i in range(320)])]
+    problems, over, lanes, _ = wave.evaluate(facts, LIMITS)
+    assert problems == [] and over == {} and len(lanes["web"]) == 320 and len(lanes["python"]) == 320
+    assert wave.limits_of(types.SimpleNamespace(vitest_all=None)) == {"python": None, "default": None, "production": None, "vitest_all": None}
 
 
-def test_shared_ids_count_once_and_python_limit_is_32(tool):
+def test_shared_ids_count_once(tool):
     wave = tool("wave_size")
     same = ids("s", 8)
     assert wave.evaluate([fact("a", web=same), fact("b", web=same)], LIMITS)[0] == []
-    many = [f"tests/t{i}_test.py" for i in range(33)]
-    assert wave.evaluate([fact("a", python=many)], LIMITS)[1] == {"python": (33, 32)}
 
 
 WHOLE = {**LIMITS, "vitest_all": "web/ALL"}
@@ -49,22 +47,20 @@ def test_whole_vitest_suite_counts_as_one_web_id(tool):
     problems, over, lanes, _ = wave.evaluate(facts, WHOLE)
     assert problems == [] and over == {} and lanes["web"] == {"web/ALL"}
     text = "\n".join(wave.report(facts, [], WHOLE))
-    assert "web=1 (whole suite)" in text and "web=1/10 (whole suite)" in text
+    assert "web=1 (whole suite)" in text and "union: web=1 (whole suite)" in text
 
 
-def test_web_union_over_the_cap_becomes_the_whole_suite_only_with_the_base_sentinel(tool):
+def test_many_web_files_stay_files_and_only_the_sentinel_is_the_whole_suite(tool):
     wave = tool("wave_size")
     facts = [fact("a", web=ids("a", 6)), fact("b", web=ids("b", 6))]
-    assert wave.evaluate(facts, WHOLE)[2]["web"] == {"web/ALL"} and wave.evaluate(facts, WHOLE)[0] == []
-    assert wave.evaluate(facts, LIMITS)[1] == {"web": (12, 10)}  # older base: still over the limit
-    browser = [fact("a", browser=ids("a", 6)), fact("b", browser=ids("b", 6))]
-    assert wave.evaluate(browser, WHOLE)[1] == {"browser": (12, 10)}  # only the Vitest lane has a whole suite
+    assert len(wave.evaluate(facts, WHOLE)[2]["web"]) == 12 and wave.evaluate(facts, WHOLE)[0] == []
+    assert wave.evaluate([fact("a", web=["web/ALL"]), *facts], WHOLE)[2]["web"] == {"web/ALL"}
 
 
-def test_production_limit_and_conflict_are_problems(tool):
+def test_many_production_files_fit_and_a_conflict_is_a_problem(tool):
     wave = tool("wave_size")
-    big = [f"src/heinzel/m{i}.py" for i in range(101)]
-    assert wave.evaluate([fact("a", production=big)], LIMITS)[1] == {"production": (101, 100)}
+    big = [f"src/heinzel/m{i}.py" for i in range(301)]
+    assert wave.evaluate([fact("a", production=big)], LIMITS)[:2] == ([], {})
     assert wave.evaluate([fact("a", conflict="base")], LIMITS)[0] == ["a: conflicts with the base (base)"]
 
 
@@ -84,14 +80,13 @@ def test_run_exit_codes_with_fakes(tool, monkeypatch):
         def commit(self, rev): return "b" * 40
 
     class Policy:
-        python_max_ids, max_ids, protected = 32, 10, ()
+        protected = ()
 
-    monkeypatch.setattr(wave, "fm", types.SimpleNamespace(Repo=Repo, Policy=lambda repo, base: Policy(), MAX_COVERED_FILES=100))
+    monkeypatch.setattr(wave, "fm", types.SimpleNamespace(Repo=Repo, Policy=lambda repo, base: Policy()))
     out = []
     gathered = {"a": fact("a", web=ids("a", 6)), "b": fact("b", web=ids("b", 6))}
     gather = lambda repo, base, branch, policy: gathered[branch]
-    assert wave.run(["/x/core:a", "/x/core:b"], "/x", "origin/main", out.append, gather, lambda r, f: []) == 1
-    assert any(line.startswith("REFUSED") for line in out) and any(line.startswith("MOVE ") for line in out)
+    assert wave.run(["/x/core:a", "/x/core:b"], "/x", "origin/main", out.append, gather, lambda r, f: []) == 0  # 12 web ids: no maximum
     out.clear()
     assert wave.run(["a"], "/x", "origin/main", out.append, gather, lambda r, f: []) == 0 and out[-1] == "FITS"
     out.clear()
