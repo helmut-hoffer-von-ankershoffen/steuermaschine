@@ -212,7 +212,8 @@ def _git_env() -> dict[str, str]:
     return child_environment(drop_prefixes=("GIT_",))
 
 
-def _git(repo: str | Path, *args: str, stdin: bytes | None = None) -> bytes:
+def git_read(repo: str | Path, *args: str, stdin: bytes | None = None) -> bytes:
+    """Run one read-only git command in the Core clone, GIT_* stripped; a failure refuses (CandidateError)."""
     git = shutil.which("git")
     require(git, "git is not installed")
     done = subprocess.run([str(git), "-C", str(repo), *args], input=stdin, capture_output=True,
@@ -224,7 +225,7 @@ def _git(repo: str | Path, *args: str, stdin: bytes | None = None) -> bytes:
 def blobs_at(repo: str | Path, commit: str, paths: set[str]) -> dict[str, bytes]:
     """The bytes of `paths` at `commit` from git objects in two processes (ls-tree, cat-file --batch); a symlink is
     its link text, as `git show` prints it. A path that is absent or not a blob (a gitlink) refuses."""
-    listing = _git(repo, "ls-tree", "-r", "-z", "--full-tree", commit)
+    listing = git_read(repo, "ls-tree", "-r", "-z", "--full-tree", commit)
     ids: dict[str, str] = {}
     for row in listing.split(b"\0"):
         if not row:
@@ -238,7 +239,7 @@ def blobs_at(repo: str | Path, commit: str, paths: set[str]) -> dict[str, bytes]
     missing = sorted(paths - set(ids))
     require(not missing, f"{missing[0] if missing else ''} missing at {commit}")
     order = sorted(ids)
-    out = _git(repo, "cat-file", "--batch", stdin="".join(f"{ids[p]}\n" for p in order).encode())
+    out = git_read(repo, "cat-file", "--batch", stdin="".join(f"{ids[p]}\n" for p in order).encode())
     found, at = {}, 0
     for path in order:
         end = out.index(b"\n", at)
@@ -299,11 +300,11 @@ def ci_changes(repo: str | Path, base: str, head: str) -> tuple[str, ...]:
         return ("base and head must be exact commits",)
     try:
         policy = at_commit_git(repo, base)
-    except CandidateError as exc:
+    except (CandidateError, OSError, ValueError, subprocess.SubprocessError) as exc:
         return (f"no reviewed release policy at base {base}: {exc}",)
     try:
-        raw = _git(repo, "diff", "--raw", "--no-renames", "--no-ext-diff", "--no-textconv", "-z", base, head, "--")
-    except (CandidateError, OSError, subprocess.SubprocessError) as exc:
+        raw = git_read(repo, "diff", "--raw", "--no-renames", "--no-ext-diff", "--no-textconv", "-z", base, head, "--")
+    except (CandidateError, OSError, ValueError, subprocess.SubprocessError) as exc:
         return (f"diff {base[:12]}..{head[:12]} unreadable: {exc}",)
     fields = raw.split(b"\0")
     if fields and fields[-1] == b"":

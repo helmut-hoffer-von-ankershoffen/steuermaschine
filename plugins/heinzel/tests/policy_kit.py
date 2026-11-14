@@ -8,7 +8,6 @@ integration). The plugin reads whichever shape the checked commit's manifest nam
 from __future__ import annotations
 
 import base64
-import hashlib
 import json
 import os
 import subprocess
@@ -67,11 +66,8 @@ def expected_jobs(event: str, shape: str = "old") -> dict[str, str]:
     return dict.fromkeys(success, "success") | dict.fromkeys(skipped, "skipped")
 
 
-def manifest(shape: str = "old", *, workflow_blob: bytes | None = None, recorder_blob: bytes | None = None,
-             extra: dict[str, bytes] | None = None, **override) -> dict:
-    """One manifest as Core's generator writes it, describing the given workflow and recorder bytes."""
-    workflow = workflow_bytes() if workflow_blob is None else workflow_blob
-    recorder = recorder_bytes() if recorder_blob is None else recorder_blob
+def manifest(shape: str = "old", **override) -> dict:
+    """One manifest as Core's generator writes it."""
     jobs = {}
     for event in ("pull_request", "workflow_dispatch"):
         inventory = expected_jobs(event, shape)
@@ -79,8 +75,6 @@ def manifest(shape: str = "old", *, workflow_blob: bytes | None = None, recorder
                        "skipped": sorted(n for n, c in inventory.items() if c == "skipped")}
     data = {
         "policy": 1, "repository": REPOSITORY, "workflow": WORKFLOW, "recorder": RECORDER,
-        "sources": {WORKFLOW: hashlib.sha256(workflow).hexdigest(), RECORDER: hashlib.sha256(recorder).hexdigest(),
-                    **{path: hashlib.sha256(blob).hexdigest() for path, blob in (extra or {}).items()}},
         "aggregate": "CI OK", "expected_jobs": jobs,
         "quarantine": {"registry": "Quarantine registry", "plan": "Quarantine plan",
                        "runs": ["Quarantine (macos-latest)", "Quarantine (ubuntu-24.04)"], "idle": "Quarantine (${{ matrix.os }})"},
@@ -88,7 +82,7 @@ def manifest(shape: str = "old", *, workflow_blob: bytes | None = None, recorder
         "lanes": {name: {"kind": kind, "python": python, "runner": runner} for name, (runner, python, kind) in LANES.items()},
         "required_contexts": ["CI OK", "coverage-floor", "merge-gate"],
         "focused_job": "Focused tests ({lane})",
-        "not_ci": ["*.md", "docs/**"],
+        "not_ci": {"except": ["docs/conftest.md"], "match": ["*.md", "docs/**"]},
     }
     return data | override
 
@@ -102,8 +96,7 @@ def files(shape: str = "old", *, workflow_blob: bytes | None = None, recorder_bl
     """The three files of a Core commit: the workflow, the recorder and the manifest describing them."""
     workflow = workflow_bytes() if workflow_blob is None else workflow_blob
     recorder = recorder_bytes() if recorder_blob is None else recorder_blob
-    raw = (encode(manifest(shape, workflow_blob=workflow, recorder_blob=recorder, extra=extra, **override))
-           if policy is None else policy)
+    raw = encode(manifest(shape, **override)) if policy is None else policy
     return {WORKFLOW: workflow, RECORDER: recorder, **(extra or {}), PATH: raw}
 
 
@@ -134,7 +127,7 @@ def git_repo(root: Path, blobs: dict[str, bytes], extra: dict[str, bytes] | None
     return root, head.stdout.strip()
 
 
-def policy(*, commit: str = "c" * 40, sources: dict[str, str] | None = None, jobs: dict[str, str] | None = None,
+def policy(*, commit: str = "c" * 40, jobs: dict[str, str] | None = None,
            shape: str = "old", **override):
     """A Policy object directly (no manifest round trip), for readers whose other inputs are fakes."""
     from steuermaschine_heinzel.native.queue_lib import core_policy
@@ -144,11 +137,12 @@ def policy(*, commit: str = "c" * 40, sources: dict[str, str] | None = None, job
     q = data["quarantine"]
     fields = dict(
         commit=commit, repository=REPOSITORY, workflow=WORKFLOW, recorder=RECORDER,
-        sources=dict(data["sources"] if sources is None else sources), aggregate="CI OK", jobs=inventory,
+        aggregate="CI OK", jobs=inventory,
         quarantine=core_policy.Quarantine(q["registry"], q["plan"], frozenset(q["runs"]), q["idle"]),
         test_jobs=frozenset(data["test_jobs"]),
         lanes={name: core_policy.Lane(**lane) for name, lane in data["lanes"].items()},
         required_contexts=frozenset(data["required_contexts"]),
-        focused_job=data["focused_job"], not_ci=tuple(data["not_ci"]),
+        focused_job=data["focused_job"], not_ci=tuple(data["not_ci"]["match"]),
+        ci_except=frozenset(data["not_ci"]["except"]),
     )
     return core_policy.Policy(**(fields | override))
