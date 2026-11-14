@@ -1,6 +1,6 @@
 # steuermaschine: design
 
-Status: 2026-11-14, `integration/sm-dod`. The parts marked **built** are in this repository; the rest is design. Every
+Status: 2026-11-14, `main`. The parts marked **built** are in this repository; the rest is design. Every
 command is native: no command starts an old script.
 The command is `sm`; `steuermaschine` is the same program under its full name.
 

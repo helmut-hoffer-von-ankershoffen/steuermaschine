@@ -62,7 +62,7 @@ Two different things carry the word.
 
 **Verdicts on code** decide whether a commit of sm may go live. `bin/promote` switches only a commit with one
 independent verdict on that exact commit, recorded outside the tree (`$SM_STABLE/verdicts/<commit>`) by
-`bin/promote_verdict.py record`, run by the reviewer as itself (`STEUERMASCHINE_AGENT` must equal `--reviewer`). The
+`bin/promote_verdict.py record`, run by the reviewer as itself (`STEUERMASCHINE_AGENT`, when set, must equal `--reviewer`). The
 verdict names the commit and the base the reviewer diffed from (the live release). Both the candidate's checker and
 the live release's checker must accept it. All agents share one git identity, so independence also rests on the
 coordinator dispatching a different agent. Write commands check nothing at run time. `sm self reviews` lists the gate

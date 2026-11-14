@@ -564,7 +564,7 @@ def _self(rt: Runtime, app: typer.Typer) -> None:
         "no write path still needs that verdict; CI covers the rest. Run it with the candidate's own sm (bin/sm-dev) when\n"
         "the candidate adds write commands: the reach is computed from the code of the sm that runs.",
         "Use when you review a candidate for bin/promote, and before you ask for that review.", "nothing (read-only; it runs git diff in REPO).",
-        f"{PROG} self reviews --repo ~/Code/steuermaschine --base 4aa7aa2",
+        f"{PROG} self reviews --repo . --base v1.2.3",
         "read the diff, then record the verdict: bin/promote_verdict.py record --reviewer NAME COMMIT"))
     def reviews(repo: str = typer.Option(".", "--repo", metavar="DIR", help="The checkout of the candidate; its HEAD is the candidate."),
                 base: str = typer.Option("", "--base", metavar="REV", help="Where the diff starts (default: the commit the live stable release was built from)."),
