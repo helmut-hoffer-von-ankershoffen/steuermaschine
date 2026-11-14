@@ -17,6 +17,9 @@ jobs:
           version: "0.13.5"
           python-version: "3.15"
           enable-cache: true
+      - name: Public history guard (every pushed or proposed commit descends from the public root)
+        # The private history before the public root must never reach this repository (scripts/public-root).
+        run: python3 scripts/check_public_root.py --head "${{ github.event.pull_request.head.sha || github.sha }}"
       - name: Install gitleaks
         run: |
           curl --proto '=https' --tlsv1.2 -sSfL -o gitleaks.tgz https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
