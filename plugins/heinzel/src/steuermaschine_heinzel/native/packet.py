@@ -92,14 +92,14 @@ def head_manifest(
 
 
 @native("head size", writes=False, replaces=("hz-wave-size",), help=H(
-    "Size one admission wave: test ids per lane, production files, overlaps and merge conflicts, against the limits.",
-    "Use before building packets for more than one head, and when a single head might be over a lane limit.",
+    "Size one admission wave: test ids per lane, production files, overlaps and merge conflicts.",
+    "Use before building packets for more than one head, to see what they share and whether they conflict.",
     "nothing (read-only).",
     "sm head size fix/a ~/Code/heinzel-b:fix/b --base origin/main",
     "sm head packet preopen BRANCH --main SHA ... for each head that fits",
-    "Each argument is a branch, optionally WORKTREE:BRANCH. Limits come from the base: web and browser lanes 10 test ids,\n"
-    "python 32, 100 production files; with the base's whole-suite sentinel a web lane over its limit counts as the one id\n"
-    "web/ALL. Exit 1: the wave does not fit or a merge conflicts; the output names the branch to move out."))
+    "Each argument is a branch, optionally WORKTREE:BRANCH. No lane and no production count has a maximum (PRs of any\n"
+    "size); with the base's whole-suite sentinel a web lane holding it counts as the one id web/ALL. Exit 1: a merge\n"
+    "conflicts; the output names the branch to move out."))
 def head_size(
     branches: list[str] = typer.Argument(..., metavar="[WORKTREE:]BRANCH...", help="The heads of the wave."),
     core: Path | None = typer.Option(None, "--core", help="Core repository for arguments without a worktree (default: setting core_repo_dir)."),
