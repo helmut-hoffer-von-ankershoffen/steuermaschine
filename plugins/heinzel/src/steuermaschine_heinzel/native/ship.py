@@ -17,7 +17,7 @@ from steuermaschine.models import Model
 from steuermaschine.native import Group, native, runtime
 from steuermaschine.plugins import old_variable
 
-from . import queue_hold
+from . import branch_owner, queue_hold
 from .admission_lib import identity
 from .queue_lib import hzlib
 from .ship_lib import deps, pr, push_gate, ship
@@ -176,6 +176,7 @@ def head_pr(
         queue_hold.refuse_while_held(f"sm head pr {bead} --live")
     conf = deps.configure()
     commands = runtime().providers.commands
+    branch_owner.guard_write(commands, worktree, record=live)  # one writer per branch: another agent's branch is refused, naming its owner
     # the repository is the one the worktree's origin names (a plugins worktree opens a plugins PR), else the configured one
     forge = GitHub(commands, repo=identity.repo_of_checkout(commands, str(Path(worktree).expanduser().resolve())) or str(conf.get("repo") or hzlib.CORE))
     done = pr.open_pr(worktree, bead, title, body_file, reason, commands=commands, forge=forge, live=live,

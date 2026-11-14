@@ -13,6 +13,7 @@ from . import (
     agents,
     alarm,
     asks,
+    branches,
     briefs,
     check,
     ci_classify,
@@ -65,7 +66,7 @@ from . import (
 )
 
 MODULES: list[Any] = [
-    admission, affected, agents, alarm, asks, briefs, check, ci_classify, ci_evidence, ci_ops, ci_read, ci_triage, combine,
+    admission, affected, agents, alarm, asks, branches, briefs, check, ci_classify, ci_evidence, ci_ops, ci_read, ci_triage, combine,
     coord, dispatch, docs, flakes, go, guards, handoff, junit, leakwatch, loadguard, loops, lock, merge_ledger, merge_ready, merges, mini, packet,
     plugin_gallery, preflight, queue, queue_hold, queue_main, refill, rehearse, rejudge, release, release_admit, release_read, ship, ship_driver, skills, slots, status, sweep,
     tasks, tick, train, velocity, why, window, work,

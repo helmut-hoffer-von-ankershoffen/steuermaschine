@@ -598,3 +598,19 @@ def test_the_ship_step_of_a_plugins_pr_gets_the_plugins_key():
     assert identity.known_repo("https://github.com/Helmut-Hoffer-von-Ankershoffen/heinzel-plugins.git") == PLUGINS
     assert identity.known_repo("git@github.com:someone/plugins.git") is None
 
+
+def test_head_pr_refuses_another_agents_branch_naming_the_owner_and_nothing_is_published(rt, gh, worktree, monkeypatch, tmp_path):
+    """nn5m: one writer per branch, enforced by the tool."""
+    from steuermaschine_heinzel import state as statedir
+    from steuermaschine_heinzel.native import branch_owner
+
+    monkeypatch.setattr(statedir, "path", lambda name, under=None: tmp_path / "owners" / name)
+    gh.on("rev-parse --git-common-dir", str(tmp_path / ".git") + "\n")
+    gh.on("rev-parse --abbrev-ref HEAD", "fix/x\n")
+    monkeypatch.setenv("SM_AGENT", "agent-1")
+    out = invoke(rt, ["head", "pr", "abc", "fix: x", "--body-file", str(worktree)])  # a dry run by the first writer: nothing recorded
+    assert out.exit_code == 0 and not (tmp_path / "owners").exists(), out
+    branch_owner.claim(gh, Path("."), "agent-1")  # the first writer owns it
+    monkeypatch.setenv("SM_AGENT", "agent-2")
+    out = invoke(rt, ["head", "pr", "abc", "fix: x", "--body-file", str(worktree), "--live"])
+    assert out.exit_code == 1 and "belongs to agent agent-1" in out.stderr and not published(gh), out
