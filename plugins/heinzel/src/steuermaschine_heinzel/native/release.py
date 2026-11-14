@@ -31,13 +31,12 @@ from steuermaschine.native import native, runtime
 from steuermaschine.protocols import Busy
 
 from .queue_lib import hzlib
-from .release_lib import approved
 from .release_lib.binding import moved
 from .release_lib.names import translate
 
 # The review unit: the release library, EVERY reviewed source file the pins are computed from (they are data, not
 # `.py`, so they are named one by one: replacing one of them is a re-pin and must void the verdict), the queue library.
-UNIT = ("release_lib", *(f"release_lib/{approved.DIRECTORY.name}/{name}" for name in sorted(approved.FILES.values())), "queue_lib")
+UNIT = ("release_lib", "queue_lib")
 EXACT = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
 STEP = re.compile(r"^ok {3}(?P<name>.+?)(?P<already> \(already\))?$")
 

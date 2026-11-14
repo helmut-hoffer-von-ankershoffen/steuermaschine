@@ -86,17 +86,19 @@ def test_compare_is_the_admission_rule(tmp_path, capsys):
 def test_collect_lists_the_cases_of_an_exact_tree_without_running_them(wave, capsys):  # noqa: F811
     sel, out, work = wave["sel-a"], wave["tmp"] / "collected.xml", wave["tmp"] / "work"
     tree = _git(wave["repo"], "rev-parse", f"{wave['a']}^{{tree}}")
-    assert cc.main(["collect", "--repo", str(wave["repo"]), "--tree", tree, "--selection", str(sel), "--lane", "python", "-o", str(out), "--work", str(work)]) == 0
+    assert cc.main(["collect", "--repo", str(wave["repo"]), "--tree", tree, "--selection", str(sel), "--lane", "python", "--kind", "pytest", "-o", str(out), "--work", str(work)]) == 0
     assert cc.read_junit(out) == [("tests.unit.a_test", "test_one"), ("tests.unit.a_test", "test_two")]
     assert f"python {tree[:12]} 2 cases digest {cc.digest(cc.read_junit(out))}" in capsys.readouterr().err
     assert list(work.iterdir()) == []  # the extracted tree is removed
     base = _git(wave["repo"], "rev-parse", f"{wave['main']}^{{tree}}")
-    assert cc.collect(wave["repo"], base, {"python": ["tests/unit/a_test.py"]}, "python", sys.executable, None, work) == [("tests.unit.a_test", "test_one")]
-    for lane, selection, message in (("fuzz", {"fuzz": ["x"]}, "unknown lane fuzz"), ("python", {}, "has no selection"), ("web", {"web": ["web/a.test.ts"]}, "--node-modules is required"),
-                                     ("python", {"python": ["tests/unit/absent_test.py"]}, "collection failed")):
+    assert cc.collect(wave["repo"], base, {"python": ["tests/unit/a_test.py"]}, "python", sys.executable, None, work, "pytest") == [("tests.unit.a_test", "test_one")]
+    for lane, kind, selection, message in (("fuzz", "managed", {"fuzz": ["x"]}, "unknown lane kind managed for lane fuzz"), ("python", "pytest", {}, "has no selection"),
+                                           ("web", "vitest", {"web": ["web/a.test.ts"]}, "--node-modules is required"),
+                                           ("python", "pytest", {"python": ["tests/unit/absent_test.py"]}, "collection failed")):
         with pytest.raises(cc.CollectError, match=message):
-            cc.collect(wave["repo"], base, selection, lane, sys.executable, None, work)
-    assert cc.main(["collect", "--repo", str(wave["repo"]), "--tree", base, "--selection", str(sel), "--lane", "fuzz", "-o", str(out), "--work", str(work)]) == 1
+            cc.collect(wave["repo"], base, selection, lane, sys.executable, None, work, kind)
+    with pytest.raises(SystemExit):  # the kind is required: the caller reads it from Core's release policy
+        cc.main(["collect", "--repo", str(wave["repo"]), "--tree", base, "--selection", str(sel), "--lane", "python", "-o", str(out), "--work", str(work)])
 
 
 def test_the_web_lane_runs_the_selected_vitest_files_or_the_whole_suite(wave):  # noqa: F811
@@ -109,8 +111,8 @@ def test_the_web_lane_runs_the_selected_vitest_files_or_the_whole_suite(wave):  
     _git(wave["repo"], "commit", "-qm", "web")
     tree, work = _git(wave["repo"], "rev-parse", "HEAD^{tree}"), wave["tmp"] / "work"
     work.mkdir()
-    assert cc.collect(wave["repo"], tree, {"web": ["web/src/a.test.ts"]}, "web", sys.executable, modules, work) == [("src/a.test.ts", "suite > case")]
-    whole = cc.collect(wave["repo"], tree, {"web": ["web/ALL"]}, "web", sys.executable, modules, work)
+    assert cc.collect(wave["repo"], tree, {"web": ["web/src/a.test.ts"]}, "web", sys.executable, modules, work, "vitest") == [("src/a.test.ts", "suite > case")]
+    whole = cc.collect(wave["repo"], tree, {"web": ["web/ALL"]}, "web", sys.executable, modules, work, "vitest")
     assert whole == [("src/a.test.ts", "suite > case"), ("src/b.test.ts", "suite > case")]  # the sentinel: no file filter
 
 
@@ -141,9 +143,11 @@ def test_cases_collect_in_text_and_json_under_the_run_lock(rt, wave):  # noqa: F
 def test_cases_collect_refuses_when_the_collection_fails(rt, wave):  # noqa: F811
     out = wave["tmp"] / "none.xml"
     done = invoke(rt, ["head", "cases", "collect", "--repo", str(wave["repo"]), "--tree", wave["a"], "--selection", str(wave["sel-a"]), "--lane", "fuzz", "-o", str(out)])
-    assert done.exit_code == 1 and "collecting fuzz on" in done.stderr and "failed (exit 1)" in done.stderr and done.stdout == "" and not out.exists()
+    assert done.exit_code == 1 and "collecting fuzz on" in done.stderr and "not a focused lane of Core's release policy" in done.stderr and done.stdout == "" and not out.exists()
+    done = invoke(rt, ["head", "cases", "collect", "--repo", str(wave["repo"]), "--tree", wave["a"], "--selection", str(wave["sel-a"]), "--lane", "managed", "-o", str(out)])
+    assert done.exit_code == 1 and "kind managed, which the case collector cannot list" in done.stderr and not out.exists()
     done = invoke(runtime_for(wave, wave["repo"]), ["head", "cases", "collect", "--tree", "0" * 40, "--selection", str(wave["sel-a"]), "--lane", "python", "-o", str(out)])
-    assert done.exit_code == 1 and f"collecting python on {'0' * 12} failed" in done.stderr  # --repo defaults to the setting core_repo_dir
+    assert done.exit_code == 1 and f"collecting python on {'0' * 12}: no Core tree" in done.stderr  # --repo defaults to the setting core_repo_dir
 
 
 def test_a_command_without_a_core_repository_refuses_and_names_the_setting(rt):  # noqa: F811

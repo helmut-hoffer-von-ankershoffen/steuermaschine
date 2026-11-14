@@ -41,12 +41,11 @@ from steuermaschine.protocols import Busy
 from .. import environment
 from .queue_lib import edge as base
 from .queue_lib import hzlib
-from .release_lib import approved
 from .train_lib import edge, legacy, resume_ci
 from .train_lib.names import translate
 
 # the reviewed candidate sources too: the train's releases run them, so a re-pin voids this verdict as it voids the release's
-UNIT = ("train_lib", "queue_lib", "release_lib", *(f"release_lib/{approved.DIRECTORY.name}/{name}" for name in sorted(approved.FILES.values())))
+UNIT = ("train_lib", "queue_lib", "release_lib")
 PLAN_UNIT = ("train_lib/plan.py", "train_lib/digest.py", "train_lib/edge.py", "train_lib/names.py")  # what `release train plan` executes
 VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
 DEFERRED = "heinzel.ci_ops.deferred"  # the list of deferred runs `sm ci defer` records (key `runs`) and `sm ci deferred` prints

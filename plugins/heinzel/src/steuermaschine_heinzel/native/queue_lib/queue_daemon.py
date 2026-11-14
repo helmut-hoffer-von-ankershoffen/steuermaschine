@@ -72,6 +72,7 @@ from . import known_main_infra  # noqa: E402
 from ..admission_lib import repair_main  # noqa: E402
 from . import main_batch  # noqa: E402
 from . import main_checkpoint  # noqa: E402
+from . import release_candidate as rc  # noqa: E402
 from . import main_plan  # noqa: E402
 from . import release_flow  # noqa: E402
 from ... import state as statedir  # the plugin's state paths
@@ -515,19 +516,31 @@ def attempt_jobs(run_id: int, attempt: int) -> list[dict] | None:
     return jobs
 
 
-def full_pass(jobs: list[dict] | None) -> bool:
-    """Every job completed green and the full matrix (CI OK, ubuntu and macOS unit/integration cells) succeeded."""
+def reviewed_policy(sha: str):
+    """Core's reviewed release policy at main commit `sha` (core_policy), or None when it is absent or garbled."""
+    from . import core_policy
+
+    def read(path: str):
+        value = hzlib.ghj("api", f"repos/{hzlib.CORE}/{path}", default=None)
+        rc.require(value is not None, f"{path} unreadable")
+        return value
+
+    try:
+        return core_policy.at_commit_api(read, sha)
+    except rc.CandidateError:
+        return None
+
+
+def full_pass(jobs: list[dict] | None, sha: str) -> bool:
+    """Every job completed green and the full matrix succeeded: the aggregate and every Test cell Core's reviewed
+    release policy at `sha` names. No policy at that commit: not a full pass (fail closed)."""
     if not jobs or any(j.get("status") != "completed" or j.get("conclusion") not in ("success", "skipped", "neutral") for j in jobs):
         return False
+    policy = reviewed_policy(sha)
+    if policy is None:
+        return False
     names = {j["name"] for j in jobs if j.get("conclusion") == "success"}
-    versions = ("3.12", "3.13", "3.14", "3.15")
-    levels = ("unit", "integration")
-    required = {"CI OK"}
-    required.update(f"Test (macos-latest, Python {v}, {level})" for v in versions for level in levels)
-    # Linux cells: one per Python, or (since core #592) one per Python and level; either layout must be complete.
-    linux = all(f"Test (ubuntu-24.04, Python {v})" in names
-                or all(f"Test (ubuntu-24.04, Python {v}, {level})" in names for level in levels) for v in versions)
-    return linux and required.issubset(names)
+    return {policy.aggregate, *policy.test_jobs}.issubset(names)
 
 
 def later_main_passes() -> bool:
@@ -545,7 +558,7 @@ def later_main_passes() -> bool:
     run = hzlib.ghj("api", f"repos/{hzlib.CORE}/actions/runs/{done[0]['databaseId']}", default={}) or {}
     if not isinstance(run, dict) or type(run.get("run_attempt")) is not int or run.get("run_attempt") != 1 or run.get("status") != "completed" or run.get("head_sha") != done[0]["headSha"] or run.get("conclusion") != "success":
         return False
-    if not full_pass(attempt_jobs(done[0]["databaseId"], 1)):
+    if not full_pass(attempt_jobs(done[0]["databaseId"], 1), done[0]["headSha"]):
         return False
     comparison = hzlib.ghj("api", f"repos/{hzlib.CORE}/compare/{pinned.get('headSha')}...{done[0]['headSha']}", default={}) or {}
     return isinstance(comparison, dict) and comparison.get("status") == "ahead"
@@ -768,16 +781,17 @@ def rerun_restoration() -> dict:
         return {}  # an UNKNOWN attempt-1 failure keeps the old rule: only a first-attempt full pass restores
     repaired = set(beads.values()) == {REPAIRED}
     # A repaired main never ran its tests on attempt 1 (no plan); attempt 2 is its first focused run, judged by CI OK.
-    if not (full_pass(second) or (repaired and focused_pass(second))):
+    if not (full_pass(second, sha) or (repaired and focused_pass(second, sha))):
         return {}
     return {"run": rid, "sha": sha, "jobs": failed, "beads": sorted(set(beads.values())), **({"repaired": True} if repaired else {})}
 
 
-def focused_pass(jobs: list[dict] | None) -> bool:
-    """Every job completed green and the aggregate CI OK succeeded (a focused main: the owning lanes only)."""
+def focused_pass(jobs: list[dict] | None, sha: str) -> bool:
+    """Every job completed green and the policy's aggregate succeeded (a focused main: the owning lanes only)."""
     if not jobs or any(j.get("status") != "completed" or j.get("conclusion") not in GREEN_JOB for j in jobs):
         return False
-    return any(j["name"] == "CI OK" and j.get("conclusion") == "success" for j in jobs)
+    policy = reviewed_policy(sha)
+    return policy is not None and any(j["name"] == policy.aggregate and j.get("conclusion") == "success" for j in jobs)
 
 
 def restored_by_rerun() -> bool:

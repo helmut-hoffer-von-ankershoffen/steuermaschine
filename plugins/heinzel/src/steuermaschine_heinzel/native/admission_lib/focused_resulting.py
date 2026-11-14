@@ -13,11 +13,12 @@ from urllib.parse import quote
 
 from . import focused_admit as a
 from . import focused_update as git
+from ..queue_lib import core_policy
+from ..queue_lib.release_candidate import CandidateError
 from steuermaschine.config import search_path
 
 MODE = 'resulting-main-only/v1'
 APP = 15368
-CONTEXTS = {'CI OK', 'merge-gate', 'coverage-floor'}
 JUDGE = '.github/workflows/merge-gate.yml'
 CI = '.github/workflows/ci.yml'
 STEP_COVERAGE = 'Verify the original workload and applicable coverage evidence'
@@ -75,7 +76,15 @@ def load_packet(path, review_root, pr):
     return packet, raw
 
 
-def _rules(rt, base):
+def _policy(rt, base):
+    """Core's reviewed release policy at the protected main commit: the required contexts and the CI aggregate."""
+    try:
+        return core_policy.at_commit_api(lambda path: rt.api(f'repos/{rt.repo}/{path}'), base)
+    except CandidateError as exc:
+        raise a.AdmissionError(f'no reviewed release policy at main {base}: {exc}') from exc
+
+
+def _rules(rt, base, policy):
     branch = rt.api(f'repos/{rt.repo}/branches/main')
     require(branch.get('name') == 'main' and branch.get('protected') is True
             and branch['commit']['sha'] == base, 'protected main identity changed')
@@ -95,7 +104,7 @@ def _rules(rt, base):
         raise a.AdmissionError('effective branch rules exceed pagination bound')
     encoded = [a.canonical(row) for row in rows]
     require(rows and len(set(encoded)) == len(rows), 'missing or duplicated effective branch rules')
-    contexts = set()
+    contexts, required = set(), set(policy.required_contexts)
     for row in rows:
         if row['type'] != 'required_status_checks':
             continue
@@ -106,11 +115,11 @@ def _rules(rt, base):
                 'effective required checks are strict or unknown')
         for check in parameters['required_status_checks']:
             name, integration = check['context'], check.get('integration_id')
-            require(name in CONTEXTS and name not in contexts and (
-                integration == APP or (name == 'CI OK' and integration is None)
+            require(name in required and name not in contexts and (
+                integration == APP or (name == policy.aggregate and integration is None)
             ), 'unexpected required context or integration')
             contexts.add(name)
-    require(contexts == CONTEXTS, 'required context inventory changed')
+    require(contexts == required, 'required context inventory changed')
     return digest(a.canonical(sorted(row.decode() for row in encoded)))
 
 
@@ -138,22 +147,22 @@ def _pull(rt, original):
     return {'head': pull['head']['sha'], 'branch': branch, 'title': pull['title']}
 
 
-def _checks(rt, original):
+def _checks(rt, original, policy):
     path = f"repos/{rt.repo}/commits/{original['head']}/check-runs?filter=latest"
     rows = rt.pages(path, 'check_runs')
-    checks = {}
+    checks, required = {}, set(policy.required_contexts)
     for row in rows:
         name = row['name']
-        if name not in CONTEXTS:
+        if name not in required:
             continue
         require(name not in checks and positive(row.get('id')) and row['head_sha'] == original['head']
                 and row['app']['id'] == APP and row['status'] == 'completed' and row['conclusion'] == 'success',
                 'required check is ambiguous or not genuine green evidence')
         checks[name] = row['id']
-        if name == 'CI OK':
+        if name == policy.aggregate:
             require(row['details_url'] == (f"https://github.com/{rt.repo}/actions/runs/{original['ci_run']}"
                                           f"/job/{row['id']}"), 'CI OK is not from the original workload')
-    require(set(checks) == CONTEXTS and len(set(checks.values())) == len(CONTEXTS), 'missing required check evidence')
+    require(set(checks) == required and len(set(checks.values())) == len(required), 'missing required check evidence')
     return checks
 
 
@@ -180,8 +189,9 @@ def live_proof(rt, packet):
     root = f'repos/{rt.repo}'
     require(rt.api(f'{root}/git/ref/heads/main')['object']['sha'] == base, 'protected main changed')
     pull = _pull(rt, original)
-    rules = _rules(rt, base)
-    checks = _checks(rt, original)
+    policy = _policy(rt, base)
+    rules = _rules(rt, base, policy)
+    checks = _checks(rt, original, policy)
     ci = _run(rt, original, judge=False)
     judge = _run(rt, original, judge=True)
     latest = rt.api(f"{root}/actions/workflows/{ci['workflow_id']}/runs?head_sha={original['head']}"
@@ -204,9 +214,10 @@ def judgment_steps(rt, packet, live):
     original, judge = packet['original'], live['judge']
     root = f'repos/{rt.repo}'
     ci = live['ci']
+    aggregate = _policy(rt, packet['manifest']['base']).aggregate
     ci_jobs = rt.pages(f"{root}/actions/runs/{ci['id']}/attempts/1/jobs", 'jobs')
-    ci_ok = [job for job in ci_jobs if job['name'] == 'CI OK']
-    require(len(ci_ok) == 1 and ci_ok[0]['id'] == live['checks']['CI OK']
+    ci_ok = [job for job in ci_jobs if job['name'] == aggregate]
+    require(len(ci_ok) == 1 and ci_ok[0]['id'] == live['checks'][aggregate]
             and ci_ok[0]['run_id'] == ci['id'] and ci_ok[0]['run_attempt'] == 1
             and ci_ok[0]['head_sha'] == original['head'] and ci_ok[0]['status'] == 'completed'
             and ci_ok[0]['conclusion'] == 'success', 'current CI OK is not the original attempt job')

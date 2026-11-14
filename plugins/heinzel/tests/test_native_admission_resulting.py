@@ -9,6 +9,7 @@ import sys
 import types
 import zipfile
 
+import policy_kit as kit
 import pytest
 
 from test_native_admission_slots import env, s
@@ -70,6 +71,7 @@ def original(env):
         f'{root}/check-runs/{JOB}': dict(id=JOB, name='Merge gates', head_sha=JUDGE_SHA, app={'id': r.APP},
                                        check_suite={'id': 10}, status='completed', conclusion='success'),
         **{f"{root}/check-runs/{row['id']}": copy.deepcopy(row) for row in checks},
+        **{f'{root}/{path}': answer for path, answer in kit.contents_routes(MAIN, kit.files('new')).items()},  # Core's policy at main
     }
     pages = {
         f'{root}/commits/{HEAD}/check-runs?filter=latest': checks,
@@ -93,7 +95,8 @@ def original(env):
 
 @pytest.mark.parametrize('defect', ['strict', 'classic', 'app', 'missing-rule', 'fork', 'pr-head', 'id', 'main',
                                     'latest', 'ci-attempt', 'judge-attempt', 'check-app', 'check-failed',
-                                    'check-url', 'check-duplicate', 'artifact-expired', 'artifact-foreign'])
+                                    'check-url', 'check-duplicate', 'artifact-expired', 'artifact-foreign',
+                                    'policy-missing', 'policy-tampered', 'policy-contexts'])
 def test_current_green_proof_refuses_drift(original, defect):
     f = original
     if defect == 'strict': f.rule['parameters']['strict_required_status_checks_policy'] = True
@@ -113,6 +116,11 @@ def test_current_green_proof_refuses_drift(original, defect):
     elif defect == 'check-duplicate': f.checks.append(dict(f.checks[1], id=123))
     elif defect == 'artifact-expired': f.artifact['expired'] = True
     elif defect == 'artifact-foreign': f.artifact['workflow_run']['id'] = 123
+    elif defect == 'policy-missing': f.api[f'{f.root}/contents/{kit.PATH}?ref={MAIN}'] = None
+    elif defect == 'policy-tampered': f.api[f'{f.root}/contents/{kit.WORKFLOW}?ref={MAIN}'] = kit.contents(b'tampered\n')
+    elif defect == 'policy-contexts':  # the ruleset still requires coverage-floor; main's policy does not
+        f.api.update({f'{f.root}/{path}': answer for path, answer in kit.contents_routes(
+            MAIN, kit.files('new', required_contexts=['CI OK', 'merge-gate'])).items()})
     with pytest.raises(a.AdmissionError):
         r.live_proof(f.rt, f.packet)
     assert not f.rt.writes

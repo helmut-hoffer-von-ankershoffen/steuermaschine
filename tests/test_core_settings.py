@@ -60,18 +60,17 @@ PLUGIN = NATIVE.parent
 STANDALONE = {
     "main_checkpoint_reader.py",  # run as `python -I FILE`: clears the git variables of its own process (a write)
     "collect_cases.py",  # run as `python -I FILE` without the package: hands its environment on to git and pytest
-    "release_candidate.py",  # the reviewed recorder, pinned byte for byte (APPROVED_SOURCES): reads the Actions run identity
 }
 
 
-def test_the_vendored_recorder_reads_the_environment_only_in_its_actions_entry_points():
+def test_the_candidate_reader_reads_no_environment():
+    """The candidate reader keeps no Actions entry point of Core's recorder: Core's facts come from its release policy."""
     import inspect
 
     from steuermaschine_heinzel.native.queue_lib import release_candidate
 
-    for name, fn in inspect.getmembers(release_candidate, inspect.isfunction):
-        if fn.__module__ == release_candidate.__name__ and name not in {"context", "record", "select_release"}:
-            assert "os.environ" not in inspect.getsource(fn), name
+    assert "os.environ" not in inspect.getsource(release_candidate)
+    assert not hasattr(release_candidate, "record") and not hasattr(release_candidate, "expected_jobs")
 
 
 def test_the_plugin_reads_the_environment_only_through_typed_models():

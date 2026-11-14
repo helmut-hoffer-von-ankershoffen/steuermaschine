@@ -6,6 +6,7 @@ import io
 import json
 import zipfile
 
+import policy_kit as kit
 import pytest
 
 from steuermaschine_heinzel.native.queue_lib import hzlib
@@ -19,7 +20,8 @@ BASE = "4" * 40
 TREE = "5" * 40
 RUN = 900
 PR = 55
-SRC = dict(mc.CHECKPOINT_SOURCES[-1])
+SRC = {kit.WORKFLOW: "0" * 64, kit.RECORDER: "0" * 64}
+REVIEWED = {}  # the sources of the release head's policy
 
 
 def config():
@@ -61,10 +63,11 @@ def world(monkeypatch, proof=None, **patch):
     jobs = [{"name": "tests", "run_id": RUN, "run_attempt": 1, "head_sha": HEAD, "status": "completed", "conclusion": "success", "runner_id": 3, "steps": [1]},
             {"name": "optional", "run_id": RUN, "run_attempt": 1, "head_sha": HEAD, "status": "completed", "conclusion": "skipped"}]
     monkeypatch.setattr(rc, "release_version", lambda *a: "0.9.41")
-    monkeypatch.setattr(rc, "source_bytes", lambda api, path, ref: SRC_BYTES.get(path, b""))
+    monkeypatch.setattr(rc, "source_bytes", lambda api, path, ref, pinned: SRC_BYTES.get(path, b""))
     monkeypatch.setattr(rc, "job_inventory", lambda api, run_id: jobs)
-    monkeypatch.setattr(rc, "quarantine_lane", lambda jobs, run_id, head: jobs)
-    monkeypatch.setattr(rc, "expected_jobs", lambda event: {"tests": "success", "optional": "skipped"})
+    monkeypatch.setattr(rc, "quarantine_lane", lambda jobs, run_id, head, policy: jobs)
+    monkeypatch.setattr(mc.core_policy, "at_commit_api", lambda api, sha: kit.policy(
+        commit=sha, sources=dict(REVIEWED), jobs={"tests": "success", "optional": "skipped"}))
     return data, raw, jobs
 
 
@@ -75,7 +78,8 @@ SRC_BYTES = {}
 def pins(monkeypatch):
     """Make the fake source bytes hash to the reviewed pins."""
     fake = {path: f"source of {path}".encode() for path in SRC}
-    monkeypatch.setattr(mc, "CHECKPOINT_SOURCES", ({path: hashlib.sha256(raw).hexdigest() for path, raw in fake.items()},))
+    REVIEWED.clear()
+    REVIEWED.update({path: hashlib.sha256(raw).hexdigest() for path, raw in fake.items()})
     SRC_BYTES.clear()
     SRC_BYTES.update(fake)
     SRC.clear()
@@ -195,17 +199,18 @@ def test_merged_candidate_source_pin_and_workload_refusals(monkeypatch):
     with pytest.raises(rc.CandidateError, match="not independently reviewed"):
         run_candidate(data, raw)
     monkeypatch.setitem(SRC_BYTES, rc.WORKFLOW, f"source of {rc.WORKFLOW}".encode())
-    monkeypatch.setattr(mc, "CHECKPOINT_SOURCES", ({rc.WORKFLOW: SRC[rc.WORKFLOW]},))
+    monkeypatch.setitem(REVIEWED, kit.RECORDER, None)
+    del REVIEWED[kit.RECORDER]  # a policy object naming one pinned file only (a parsed manifest never does)
     partial = {rc.WORKFLOW: SRC[rc.WORKFLOW]}
     data, raw, jobs = world(monkeypatch, proof=good_proof(sources=partial))
     with pytest.raises(rc.CandidateError, match="incomplete candidate source pins"):
         run_candidate(data, raw, config={**config(), "sources": partial})
-    monkeypatch.setattr(mc, "CHECKPOINT_SOURCES", (dict(SRC),))
+    REVIEWED.update(SRC)
     data, raw, jobs = world(monkeypatch)
-    monkeypatch.setattr(rc, "quarantine_lane", lambda jobs, run_id, head: jobs[:1])
+    monkeypatch.setattr(rc, "quarantine_lane", lambda jobs, run_id, head, policy: jobs[:1])
     with pytest.raises(rc.CandidateError, match="workload inventory differs"):
         run_candidate(data, raw)
-    monkeypatch.setattr(rc, "quarantine_lane", lambda jobs, run_id, head: jobs)
+    monkeypatch.setattr(rc, "quarantine_lane", lambda jobs, run_id, head, policy: jobs)
     for change in ({"conclusion": "failure"}, {"run_attempt": 2}, {"head_sha": "x"}, {"status": "queued"}):
         data, raw, jobs = world(monkeypatch)
         jobs[0].update(change)

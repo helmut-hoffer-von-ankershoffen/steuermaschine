@@ -20,9 +20,12 @@ def triage(beads, shows, merged):
     return out
 
 
-def approved_sources(path=None):
-    from ..release_lib import candidate_policy as p
-    return p.APPROVED_SOURCES
+def approved_sources(ref):
+    """The pins of Core's reviewed release policy at REF (scripts/release_policy.json there; never a local copy)."""
+    from ..queue_lib import core_policy
+    commit = sh("git", "-C", CORE_DIR, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}").strip()
+    raw = edge.run(["git", "-C", CORE_DIR, "show", f"{commit}:{core_policy.PATH}"], capture_output=True).stdout if commit else b""
+    return core_policy.parse(raw, commit).sources
 
 
 def sha(data):
@@ -37,7 +40,7 @@ def find_approved_blob(history, want):
 def skeleton(name, old, new, want, got):
     return (f"Review request: pin update for {name}\n  approved {want[:12]} (commit {old})\n  executed {got[:12]} (ref {new})\n"
             f"  Q1: does the diff above weaken a check or widen what the candidate trusts? yes/no with reasons\n"
-            f"  Q2: is every changed line needed for the release? Then update APPROVED_SOURCES in tools/release_candidate_policy.py")
+            f"  Q2: is every changed line needed for the release? Then regenerate scripts/release_policy.json in Core")
 
 
 def sh(*a):
@@ -56,7 +59,14 @@ def cmd_triage(a):
 
 
 def cmd_pin(a):
-    for name, want in approved_sources().items():
+    from ..queue_lib.release_candidate import CandidateError
+    try:
+        pins = approved_sources(a.ref)
+    except CandidateError as exc:
+        print(f"no reviewed release policy at {a.ref}: {exc}", file=sys.stderr)
+        return 1
+    for name, want in pins.items():
+        print(f"pin  {name} {want}")
         got_b = edge.run(["git", "-C", CORE_DIR, "show", f"{a.ref}:{name}"], capture_output=True).stdout
         if sha(got_b) == want:
             print(f"ok   {name}"); continue
@@ -83,8 +93,8 @@ def main(argv=None):
     p = argparse.ArgumentParser(prog="sm release after", description=__doc__)
     s = p.add_subparsers(dest="c", required=True)
     s.add_parser("overdue-triage", help="list overdue beads whose referenced PRs are merged").set_defaults(f=cmd_triage)
-    q = s.add_parser("pin-diagnose", help="compare executed pinned files at REF with APPROVED_SOURCES, print diff and review skeleton")
+    q = s.add_parser("pin-diagnose", help="compare the pinned files at REF with the digests of Core's release policy at REF, print diff and review skeleton")
     q.add_argument("ref", nargs="?", default="origin/main"); q.set_defaults(f=cmd_pin)
     r = s.add_parser("post-publish", help="print the release-post-publish checklist"); r.add_argument("version"); r.set_defaults(f=cmd_post)
-    a = p.parse_args(argv); a.f(a)
+    a = p.parse_args(argv); return a.f(a) or 0
 

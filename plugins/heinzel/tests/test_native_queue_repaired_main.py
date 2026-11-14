@@ -5,6 +5,7 @@ Replays run 43452895000 at f6e3b02b on a scripted `gh`."""
 
 import json
 
+import policy_kit as kit
 import pytest
 from test_native_queue_main_commands import CORE, gh, nothing_real, rt  # noqa: F401  (fixtures)
 
@@ -45,6 +46,8 @@ def script(gh, attempt=1, conclusion="failure"):  # noqa: F811
     gh.on(f"api repos/{CORE}/actions/runs/{RUN}/attempts/1/jobs?per_page=100", jobs(1))
     gh.on(f"api repos/{CORE}/actions/runs/{RUN}/attempts/2/jobs?per_page=100",
           jobs(2, paths="success", ok="success", lane="success"))
+    for path, answer in kit.contents_routes(SHA, kit.files("new")).items():  # Core's release policy at main
+        gh.on(f"api repos/{CORE}/{path}", answer)
 
 
 def dry(rt):  # noqa: F811
@@ -134,7 +137,7 @@ def _full_rule(monkeypatch, gh):  # noqa: F811
     monkeypatch.setattr(module.hzlib, "resolve_main_runs", lambda runs, **kw: runs)
     monkeypatch.setattr(module, "load", lambda: {"main_reruns": {}})
     assert module.rerun_restoration() == {}
-    assert not module.focused_pass(None) and not module.focused_pass(jobs(1)["jobs"])
+    assert not module.focused_pass(None, SHA) and not module.focused_pass(jobs(1)["jobs"], SHA)
 
 
 def _answer(gh, args, default):  # noqa: F811

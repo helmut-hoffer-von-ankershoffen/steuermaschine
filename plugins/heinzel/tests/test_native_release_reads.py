@@ -9,6 +9,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
+import policy_kit as kit
 import pytest
 
 from steuermaschine.app import Runtime
@@ -18,7 +19,6 @@ from steuermaschine.plugins import stack_of
 from steuermaschine.protocols import Result
 from steuermaschine.testing import fake_providers, invoke
 from steuermaschine_heinzel.native import release_read as area
-from steuermaschine_heinzel.native.release_lib import approved
 from steuermaschine_heinzel.plugin import plugin
 
 REAL = Path(__file__).parent / "fixtures" / "release"
@@ -218,40 +218,41 @@ def test_verify_mini_calls_the_read_only_check_of_the_live_service(rt, monkeypat
 
 # ----------------------------------------------------------------------------- pins
 def core_checkout(path: Path, workflow: bytes) -> None:
+    """Core with three commits: no policy yet; a policy describing its files; the workflow changed, the policy not."""
     def git(*args):
         subprocess.run(["git", "-C", str(path), *args], check=True, capture_output=True)
 
     (path / ".github/workflows").mkdir(parents=True)
     (path / "scripts").mkdir()
     subprocess.run(["git", "init", "-q", "-b", "main", str(path)], check=True, capture_output=True)
-    for step, content in enumerate((approved.blob(".github/workflows/ci.yml"), workflow)):
-        (path / ".github/workflows/ci.yml").write_bytes(content)
-        (path / "scripts/release_candidate.py").write_bytes(approved.blob("scripts/release_candidate.py"))
+    reviewed = kit.files("new")
+    for step, content in enumerate((reviewed[kit.WORKFLOW], reviewed[kit.WORKFLOW], workflow)):
+        (path / kit.WORKFLOW).write_bytes(content)
+        (path / kit.RECORDER).write_bytes(reviewed[kit.RECORDER])
+        if step:
+            (path / kit.PATH).write_bytes(reviewed[kit.PATH])
         git("add", "-A")
         git("-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-q", "--allow-empty", "-m", f"step {step}")
 
 
-def test_pins_match_the_reviewed_files_and_a_changed_workflow_prints_the_diff_and_a_review_request(rt):
-    reviewed = approved.blob(".github/workflows/ci.yml")
-    core_checkout(rt.home / "core", reviewed + b"# one more line\n")
+def test_pins_are_the_policy_at_the_ref_and_a_changed_workflow_prints_the_diff_and_a_review_request(rt):
+    reviewed = kit.files("new")
+    core_checkout(rt.home / "core", reviewed[kit.WORKFLOW] + b"# one more line\n")
     out, found = doc(rt, area.ReleasePins, "release", "pins", "HEAD~1")
     assert out.exit_code == 0 and [p.matches for p in found.pins] == [True, True] and found.lines == ["ok   .github/workflows/ci.yml", "ok   scripts/release_candidate.py"]
+    assert found.source == "HEAD~1:scripts/release_policy.json"
     out, found = doc(rt, area.ReleasePins, "release", "pins", "HEAD")
     assert out.exit_code == 1 and [p.matches for p in found.pins] == [False, True]
-    assert found.pins[0].approved == approved.pins()[".github/workflows/ci.yml"] and len(found.pins[0].executed) == 12
+    assert found.pins[0].approved == kit.manifest("new")["sources"][kit.WORKFLOW] and len(found.pins[0].executed) == 12
     text = "\n".join(found.lines)
     assert "+# one more line" in text and "Review request: pin update for .github/workflows/ci.yml" in text
-    assert "release_lib/approved_sources/" in text and "hz-" not in text and "tools/release_candidate_policy.py" not in text
+    assert "regenerate scripts/release_policy.json in Core" in text and "hz-" not in text and "approved_sources" not in text
 
 
-def test_the_pins_are_the_hashes_of_the_reviewed_files_and_the_policy_uses_them():
-    import hashlib
-
-    from steuermaschine_heinzel.native.queue_lib import release_candidate
-    from steuermaschine_heinzel.native.release_lib import candidate_policy
-
-    assert candidate_policy.APPROVED_SOURCES == approved.pins() == {path: hashlib.sha256(approved.file(path).read_bytes()).hexdigest() for path in approved.FILES}
-    assert set(approved.FILES) == {release_candidate.WORKFLOW, release_candidate.RECORDER}
+def test_pins_refuse_a_ref_without_a_release_policy(rt):
+    core_checkout(rt.home / "core", b"x\n")
+    out = invoke(rt, ["release", "pins", "HEAD~2"])
+    assert out.exit_code == 1 and "release_policy.json missing" in out.stdout + out.stderr
 
 
 # ----------------------------------------------------------------------------- after, notes-audit, assets

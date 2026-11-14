@@ -1,6 +1,7 @@
 """go: main CI is labelled by what it actually ran (focused CI is never shown as the full candidate), and the next
 view drops suggestions for PRs that are closed or merged now (heinzel-management-iy04)."""
 
+import policy_kit as kit
 import pytest
 
 from steuermaschine_heinzel.native.go_lib import decide, probes, views
@@ -21,9 +22,35 @@ def test_the_workload_comes_from_the_jobs_that_ran(jobs, expected):
     assert decide.workload(jobs, FULL) == expected
 
 
-def test_the_full_candidate_set_is_the_pinned_readers_success_inventory():
-    full = probes.full_candidate_jobs()
-    assert "Coverage" in full and "CI OK" in full and not any(name.startswith("Focused tests") for name in full)
+class _World:
+    repo = "o/heinzel"
+
+    def __init__(self, answers):
+        self.answers = answers
+
+    def gh_json(self, args, timeout=12):
+        return self.answers.get(args[1].removeprefix(f"repos/{self.repo}/"))
+
+
+def test_the_full_candidate_set_is_the_success_inventory_of_the_commits_release_policy():
+    sha = "a" * 40
+    world = _World(kit.contents_routes(sha, kit.files("new")))
+    full = probes.full_candidate_jobs(world, sha)
+    assert full == {n for n, c in kit.expected_jobs("workflow_dispatch", "new").items() if c == "success"}
+    assert "CI OK" in full and not any(name.startswith("Focused tests") for name in full)
+    assert probes.full_candidate_jobs(_World({}), sha) is None  # no policy at that commit: the workload is unknown
+
+
+def test_main_workload_is_unknown_without_a_policy_at_main(monkeypatch):
+    sha = "a" * 40
+    runs = [{"databaseId": 7, "workflowName": "CI", "event": "push", "headBranch": "main", "headSha": sha,
+             "status": "completed", "conclusion": "success"}]
+    jobs = {"actions/runs/7/jobs?per_page=100": {"jobs": [{"name": n, "conclusion": "success"}
+                                                          for n in kit.expected_jobs("workflow_dispatch", "new")]}}
+    world = _World(jobs)
+    assert probes.probe_main_workload(world, {"main": {"sha": sha}, "runs": runs}) == {"run": 7, "workload": "unknown"}
+    world.answers.update(kit.contents_routes(sha, kit.files("new")))
+    assert probes.probe_main_workload(world, {"main": {"sha": sha}, "runs": runs})["run"] == 7
 
 
 def state(workload, run=7):

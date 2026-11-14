@@ -56,7 +56,9 @@ def test_a_pipeline_digest_covers_its_own_code_not_the_commands_it_runs():
     # Deliberate widenings (coordinator decision, 2026-11-14): native/pr_owned.py (m598, imported by
     # admission_lib/focused_slots.py) and native/release_window.py (the release-window guard, imported by window.py)
     # are in these digests on purpose; the modules stay where they are. Raised from 23 and 43.
-    assert len(by_path["release cut"].files) <= 24 and len(by_path["head admit"].files) <= 45
+    # core-ci-facts, 2026-11-14: admission_lib/focused_resulting.py reads the required contexts from Core's release
+    # policy (queue_lib/core_policy.py and the release_candidate.py it imports, two leaf modules). Raised from 24 and 45.
+    assert len(by_path["release cut"].files) <= 26 and len(by_path["head admit"].files) <= 47
 
 
 def test_a_change_to_a_kernel_file_voids_every_verdict_and_a_leaf_change_one_unit():

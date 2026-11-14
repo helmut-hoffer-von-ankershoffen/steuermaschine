@@ -142,32 +142,34 @@ def test_the_review_unit_is_the_command_module_the_release_library_and_the_queue
 
     for cmd in (c for c in native.commands() if getattr(c, "path", "").startswith(("release resume", "release drop", "release plugin"))):
         names = {str(path.relative_to(Path(area.__file__).parent)) for path in cmd.code_files()}
-        assert {"release.py", "release_lib/runner.py", "release_lib/candidate_policy.py", "release_lib/approved.py", "release_lib/moved_map.py", "queue_lib/hzlib.py",
+        assert {"release.py", "release_lib/runner.py", "release_lib/candidate_policy.py", "queue_lib/core_policy.py", "release_lib/moved_map.py", "queue_lib/hzlib.py",
                 "queue_lib/merge_train.py", "queue_lib/release_candidate.py"} <= names
         assert not any(name.startswith("release_read") for name in names)
 
 
-def test_a_repin_voids_every_release_verdict_because_the_reviewed_sources_are_in_the_review_unit(tmp_path):
+def test_the_release_verdicts_cover_the_policy_reader_and_no_copy_of_core_is_kept(tmp_path):
+    """The pins are Core's reviewed release policy at the checked commit: the plugin keeps no copy of Core's files, and
+    the reader of that policy (queue_lib/core_policy.py) is in the review unit of every release write command."""
     import hashlib
 
     from steuermaschine_heinzel import native
-    from steuermaschine_heinzel.native.release_lib import approved
+    from steuermaschine_heinzel.native.queue_lib import core_policy
 
-    on_disk = sorted(p for p in approved.DIRECTORY.iterdir() if p.is_file())
-    assert on_disk == sorted(approved.file(path) for path in approved.FILES) and len(on_disk) == 2  # no reviewed file that the table does not name
+    lib = Path(core_policy.__file__).resolve().parent.parent / "release_lib"
+    assert not (lib / "approved_sources").exists() and not (lib / "approved.py").exists()
+    reader = Path(core_policy.__file__).resolve()
     writes = [c for c in native.commands() if getattr(c, "writes", False) and c.path in ("release resume", "release plugin", "release drop")]  # not the admission route (release admit ...): its own unit
     assert {c.path for c in writes} >= {"release resume", "release plugin", "release drop"}
     for cmd in writes:
-        files = cmd.code_files()
-        assert all(path in files for path in on_disk), cmd.path
-        # the digest is over names and bytes of these files: one changed byte in a reviewed source is another digest
+        assert reader in cmd.code_files(), cmd.path
+        # the digest is over names and bytes of these files: one changed byte in the reader is another digest
         def digest(changed=None, cmd=cmd):  # over the unit and every first-party file it imports, each under its label
             total = hashlib.sha256()
             for path, label in zip(cmd.review_files(), cmd.labels(), strict=True):
                 total.update(label.encode() + b"\0" + path.read_bytes() + (b"#" if path == changed else b"") + b"\0")
             return total.hexdigest()
 
-        assert digest() == cmd.code_digest() and all(digest(path) != cmd.code_digest() for path in on_disk), cmd.path
+        assert digest() == cmd.code_digest() and digest(reader) != cmd.code_digest(), cmd.path
         assert cmd.review_file == ("release-drop.md" if cmd.path == "release drop" else "daemon-train.md" if cmd.path.startswith("release train ") else "release-resume.md")
 
 
