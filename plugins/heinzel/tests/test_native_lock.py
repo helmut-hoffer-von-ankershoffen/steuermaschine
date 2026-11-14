@@ -139,15 +139,15 @@ def test_a_stale_slot_record_and_an_ancestor_pid_do_not_admit_a_gate(home):
     assert done.returncode == 0 and "acquired after" in done.stderr  # it took the slot itself; the record alone admitted nothing
 
 
-def test_no_heavy_command_starts_at_or_above_load_10_and_the_setting_cannot_pass_the_hard_bar(home):
-    done = gate("run", "--max-wait", "1", "--", "echo", "ran", home=home, load="10")
-    assert done.returncode == 75 and "ran" not in done.stdout and "load 10 is at or above 10: no heavy command starts above it" in done.stderr
-    assert gate("run", "--", "true", home=home, load="9.9").returncode == 0
+def test_no_heavy_command_starts_at_or_above_load_12_and_the_setting_cannot_pass_the_hard_bar(home):
+    done = gate("run", "--max-wait", "1", "--", "echo", "ran", home=home, load="12")
+    assert done.returncode == 75 and "ran" not in done.stdout and "load 12 is at or above 12: no heavy command starts above it" in done.stderr
+    assert gate("run", "--", "true", home=home, load="11.9").returncode == 0
     assert gate("run", "--light", "--", "true", home=home, load="30").returncode == 0  # the light lane has no load bar
     assert gate("run", "--", "true", home=home, load="15", start_load=16).returncode == 0  # the bar is the machine's setting
     assert gate("run", "--max-wait", "1", "--", "true", home=home, load="45", start_load=100, max_load=100).returncode == 75
     text = gate("status", home=home, load="12").stdout
-    assert "start bar: no heavy start at or above load 10 (NO heavy command starts now)" in text and "1 of the 3 heavy slots reserved for a focus head" in text
+    assert "start bar: no heavy start at or above load 12 (NO heavy command starts now)" in text and "1 of the 3 heavy slots reserved for a focus head" in text
 
 
 def test_the_last_slot_is_kept_for_the_focus_head(home):
@@ -186,7 +186,7 @@ def test_a_push_takes_the_push_lane_unless_the_setting_turns_it_off(home):
     finally:
         first.kill()
     loud = gate("run", "--max-wait", "1", "--", "git", "push", home=home, extra=path, load="12")
-    assert loud.returncode == 75 and "load 12 is at or above 10" in loud.stderr
+    assert loud.returncode == 75 and "load 12 is at or above 12" in loud.stderr
 
 
 def runtime(tmp_path):

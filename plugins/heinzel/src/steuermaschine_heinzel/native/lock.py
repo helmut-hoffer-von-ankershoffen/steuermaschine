@@ -4,7 +4,7 @@ and for the plugin's own gated runs (`lock_of`), on `steuermaschine.runlock`. Th
 
 The policy is the former lock's: at most three heavy runs, none at or above load 40, a second one only below load 20,
 nine workers shared by the running gates, four light runs, and the refusal of full local suites. On top of it, the
-scheduling of 2026-11-14 (all three are settings): no heavy start at or above load 10 (`lock_start_load`; the load
+scheduling of 2026-11-14 (all three are settings): no heavy start at or above load 12 (`lock_start_load`; the load
 that made the timed pre-push session fail), the last heavy slot reserved for the focus head (`lock_reserved_slots`),
 and the push lane (`lock_push_lane`): a push that is not documentation only is exclusive by itself. It adopts the
 former lock's files (settings `lock_directory`, `lock_prefix`), so a run started the old way and one started here
@@ -42,7 +42,7 @@ class LockSettings(BaseModel):
     lock_max_load: float = Field(40.0, description="No gated command starts at or above this 1-minute load.")
     lock_heavy_slots: int = Field(3, description="Heavy commands that may run at once.")
     lock_extra_slot_load: float = Field(20.0, description="A second heavy command starts only below this load; with lock_start_load set it is the start bar of a focus head.")
-    lock_start_load: float = Field(10.0, ge=0, description="No heavy command starts at or above this 1-minute load (0: off). A focus head's test run goes by lock_extra_slot_load.")
+    lock_start_load: float = Field(12.0, ge=0, description="No heavy command starts at or above this 1-minute load (0: off). A focus head's test run goes by lock_extra_slot_load.")
     lock_reserved_slots: int = Field(1, ge=0, description="Heavy slots only a focus head (`sm focus add WORKTREE`) takes; one slot always stays open to everyone.")
     lock_push_lane: bool = Field(True, description="A push that is not documentation only is exclusive: it waits for an idle machine and no heavy command starts beside it.")
     lock_cpu_budget: int = Field(9, description="Test workers shared by all running heavy commands.")
