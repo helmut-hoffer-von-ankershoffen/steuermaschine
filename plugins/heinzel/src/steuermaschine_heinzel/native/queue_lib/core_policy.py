@@ -1,21 +1,19 @@
 """Heinzel's reviewed CI facts, read from the exact Core commit being checked: never typed into this plugin.
 
-Core keeps a generated manifest, `scripts/release_policy.json`, next to its candidate recorder (a Core test regenerates
-it and compares bytes). It names the pinned files (every file the candidate
-executes that the workflow reaches, the workflow and the recorder always among them) and their sha256, the full candidate job inventory per event, the
-quarantine lane jobs, the Test cells a full main pass needs, the focused lanes, the required status contexts, the
+Core keeps a generated manifest, `scripts/release_policy.json`, next to its candidate recorder (Core's CI regenerates
+it and refuses one that drifted). It names the workflow and the recorder, the full candidate job inventory per event,
+the quarantine lane jobs, the Test cells a full main pass needs, the focused lanes, the required status contexts, the
 focused-lane job name template and the paths Core classifies as definitely not CI.
 
-Trust: the manifest is read only from the commit (git object or the contents API at that SHA), never from a working
-tree, the environment or this repository. It must describe its own commit: the `sources` digests must equal the
-sha256 of the pinned blobs at that same commit, so a manifest edited without its sources (or the reverse) is refused.
-A commit without the manifest, an unknown version, an unknown or missing key, a wrong type: refused, no fallback.
+Trust: what binds the facts is the commit itself and its recorded review verdict, not a checksum. The manifest is read
+only from that commit (git objects or the contents API at that SHA), never from a working tree, the environment or
+this repository. A commit without the manifest, an unknown version, an unknown or missing key, a wrong type: refused,
+no fallback. `ci_changes(base, head)` says whether a change touches CI, by the not-CI paths of the BASE's manifest.
 """
 
 from __future__ import annotations
 
 import fnmatch
-import hashlib
 import json
 import re
 import shutil
@@ -33,18 +31,27 @@ if TYPE_CHECKING:
 
 PATH = "scripts/release_policy.json"
 VERSION = 1
-MAX_BYTES = 256 * 1024
-MAX_SOURCES = 200  # every file the candidate executes that the workflow reaches, workflow and recorder included
+MAX_BYTES = 4 * 1024 * 1024
+MAX_PATH = 1024  # bytes of one path, UTF-8
 EVENTS = ("pull_request", "workflow_dispatch")
 KEYS = frozenset((
-    "policy", "repository", "workflow", "recorder", "sources", "aggregate", "expected_jobs", "quarantine", "test_jobs",
+    "policy", "repository", "workflow", "recorder", "aggregate", "expected_jobs", "quarantine", "test_jobs",
     "lanes", "required_contexts", "focused_job", "not_ci",
 ))
 QUARANTINE_KEYS = frozenset(("registry", "plan", "runs", "idle"))
 LANE_KEYS = frozenset(("runner", "python", "kind"))
+NOT_CI_KEYS = frozenset(("except", "match"))
 SHA = re.compile(r"[0-9a-f]{40}")
-DIGEST = re.compile(r"[0-9a-f]{64}")
-REPO_PATH = re.compile(r"(?!/)(?!.*(?:^|/)\.\.?(?:/|$))[A-Za-z0-9._/-]{1,200}")
+CONTROL = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def repo_path(value: object) -> bool:
+    """A path as `git ls-files` prints it: relative, POSIX, no empty, "." or ".." segment, no control character."""
+    return (isinstance(value, str) and 0 < len(value.encode("utf-8", "surrogatepass")) <= MAX_PATH
+            and not CONTROL.search(value) and not value.startswith("/")
+            and all(part not in ("", ".", "..") for part in value.split("/")))
+
+
 REPOSITORY = re.compile(r"[A-Za-z0-9-]+/[A-Za-z0-9._-]+")
 
 
@@ -71,7 +78,6 @@ class Policy:
     repository: str
     workflow: str
     recorder: str
-    sources: dict[str, str]
     aggregate: str
     jobs: dict[str, dict[str, str]]
     quarantine: Quarantine
@@ -80,6 +86,7 @@ class Policy:
     required_contexts: frozenset[str]
     focused_job: str
     not_ci: tuple[str, ...]
+    ci_except: frozenset[str]
 
     def expected_jobs(self, event: str) -> dict[str, str]:
         """The complete candidate inventory of `event`: job name -> its required conclusion."""
@@ -87,18 +94,18 @@ class Policy:
         return dict(self.jobs[event])
 
     @property
-    def recorded_sources(self) -> dict[str, str]:
-        """What the candidate's own proof records: the digests of the workflow and the recorder only. The other
-        pinned files are bound by the proof's source commit, whose blobs the readers compare with every pin."""
-        return {self.workflow: self.sources[self.workflow], self.recorder: self.sources[self.recorder]}
+    def pinned(self) -> tuple[str, str]:
+        """The files a candidate's own proof names: the workflow and the recorder."""
+        return (self.workflow, self.recorder)
 
     def focused_job_name(self, lane: str) -> str:
         """The PR job name of focused `lane` (Core's template, e.g. "Focused tests ({lane})")."""
         return self.focused_job.replace("{lane}", lane)
 
     def is_not_ci(self, path: str) -> bool:
-        """True when Core classifies the repo-relative POSIX `path` as definitely not CI (fnmatchcase: `*` crosses `/`)."""
-        return any(fnmatch.fnmatchcase(path, glob) for glob in self.not_ci)
+        """True when Core classifies the repo-relative POSIX `path` as definitely not CI: a match glob fits it
+        (fnmatchcase: `*` crosses `/`) and it is not one of the literal except paths."""
+        return path not in self.ci_except and any(fnmatch.fnmatchcase(path, glob) for glob in self.not_ci)
 
     def lane_kind(self, lane: str) -> str | None:
         found = self.lanes.get(lane)
@@ -151,16 +158,9 @@ def parse(raw: bytes, commit: str) -> Policy:
     require(REPOSITORY.fullmatch(repository), "release policy repository malformed")
     workflow, recorder = _text(data["workflow"], "workflow"), _text(data["recorder"], "recorder")
     require(
-        REPO_PATH.fullmatch(workflow) and REPO_PATH.fullmatch(recorder) and workflow != recorder
+        repo_path(workflow) and repo_path(recorder) and workflow != recorder
         and workflow.startswith(".github/workflows/"),
         "release policy pinned paths malformed",
-    )
-    sources = data["sources"]
-    require(
-        isinstance(sources, dict) and 2 <= len(sources) <= MAX_SOURCES and {workflow, recorder} <= set(sources)
-        and all(isinstance(k, str) and REPO_PATH.fullmatch(k) for k in sources)
-        and all(isinstance(v, str) and DIGEST.fullmatch(v) for v in sources.values()),
-        "missing reviewed CI source pins",
     )
     aggregate = _text(data["aggregate"], "aggregate")
     jobs = _jobs(data["expected_jobs"])
@@ -187,37 +187,24 @@ def parse(raw: bytes, commit: str) -> Policy:
     rest = focused.replace("{lane}", "")
     require(focused.count("{lane}") == 1 and "{" not in rest and "}" not in rest,
             "release policy focused job is not a {lane} template")
-    not_ci = tuple(_names(data["not_ci"], "not-CI globs"))
+    raw_not_ci = data["not_ci"]
+    require(isinstance(raw_not_ci, dict) and set(raw_not_ci) == NOT_CI_KEYS, "release policy not_ci malformed")
+    not_ci = tuple(_names(raw_not_ci["match"], "not-CI globs"))
     require(all(not g.startswith("/") and not re.search(r"(?:^|/)\.\.(?:/|$)", g) for g in not_ci),
             "release policy not-CI glob is not repository-relative")
-    return Policy(commit, repository, workflow, recorder, dict(sources), aggregate, jobs, quarantine, test_jobs, lanes,
-                  contexts, focused, not_ci)
-
-
-def verified(raw: bytes, commit: str, blob: Callable[[str], bytes]) -> Policy:
-    """Parse the manifest and require it to describe its own commit: each pin is the sha256 of that commit's blob.
-
-    Raises:
-        CandidateError: Garbled manifest, or a pinned file at the commit differs from the manifest's digest.
-    """
-    policy = parse(raw, commit)
-    for path, digest in policy.sources.items():
-        require(hashlib.sha256(blob(path)).hexdigest() == digest,
-                f"release policy at {commit} does not describe its own {path}")
-    return policy
+    ci_except = frozenset(_names(raw_not_ci["except"], "not-CI exceptions", empty=True))
+    require(all(repo_path(p) and not set(p) & set("[*?") for p in ci_except),
+            "release policy not-CI exception is not a literal repository path")
+    return Policy(commit, repository, workflow, recorder, aggregate, jobs, quarantine, test_jobs, lanes, contexts,
+                  focused, not_ci, ci_except)
 
 
 def at_commit_api(get: Callable[[str], Any], commit: str) -> Policy:
     """The manifest of `commit`, through the contents API at that exact SHA (the candidate readers' transport)."""
     require(isinstance(commit, str) and SHA.fullmatch(commit), "release policy needs an exact Core commit")
-
-    def read(path: str) -> bytes:
-        require(REPO_PATH.fullmatch(path), "invalid release policy source request")
-        blob = contents_bytes(get, path, commit, f"{path} missing at {commit}")
-        require(blob is not None, f"{path} missing at {commit}")
-        return blob  # type: ignore[return-value]
-
-    return verified(read(PATH), commit, read)
+    raw = contents_bytes(get, PATH, commit, f"{PATH} missing at {commit}")
+    require(raw is not None, f"{PATH} missing at {commit}")
+    return parse(raw, commit)  # type: ignore[arg-type]
 
 
 def _git_env() -> dict[str, str]:
@@ -225,20 +212,48 @@ def _git_env() -> dict[str, str]:
     return child_environment(drop_prefixes=("GIT_",))
 
 
-def at_commit_git(repo: str | Path, commit: str) -> Policy:
-    """The manifest of `commit` from the git objects of a local Core clone (`git show COMMIT:PATH`), never its tree."""
-    require(isinstance(commit, str) and SHA.fullmatch(commit), "release policy needs an exact Core commit")
+def _git(repo: str | Path, *args: str, stdin: bytes | None = None) -> bytes:
     git = shutil.which("git")
     require(git, "git is not installed")
+    done = subprocess.run([str(git), "-C", str(repo), *args], input=stdin, capture_output=True,
+                          check=False, timeout=120, env=_git_env())
+    require(done.returncode == 0, f"git {args[0]} failed in the Core clone")
+    return done.stdout
 
-    def read(path: str) -> bytes:
-        require(REPO_PATH.fullmatch(path), "invalid release policy source request")
-        done = subprocess.run([str(git), "-C", str(repo), "show", f"{commit}:{path}"],  # noqa: S603 - fixed git, no shell
-                              capture_output=True, check=False, timeout=30, env=_git_env())
-        require(done.returncode == 0, f"{path} missing at {commit}")
-        return done.stdout
 
-    return verified(read(PATH), commit, read)
+def blobs_at(repo: str | Path, commit: str, paths: set[str]) -> dict[str, bytes]:
+    """The bytes of `paths` at `commit` from git objects in two processes (ls-tree, cat-file --batch); a symlink is
+    its link text, as `git show` prints it. A path that is absent or not a blob (a gitlink) refuses."""
+    listing = _git(repo, "ls-tree", "-r", "-z", "--full-tree", commit)
+    ids: dict[str, str] = {}
+    for row in listing.split(b"\0"):
+        if not row:
+            continue
+        meta, _, name = row.partition(b"\t")
+        mode, kind, oid = meta.decode().split(" ")
+        path = name.decode("utf-8", "surrogateescape")
+        if path in paths:
+            require(kind == "blob" and mode in ("100644", "100755", "120000"), f"{path} at {commit} is not a file")
+            ids[path] = oid
+    missing = sorted(paths - set(ids))
+    require(not missing, f"{missing[0] if missing else ''} missing at {commit}")
+    order = sorted(ids)
+    out = _git(repo, "cat-file", "--batch", stdin="".join(f"{ids[p]}\n" for p in order).encode())
+    found, at = {}, 0
+    for path in order:
+        end = out.index(b"\n", at)
+        oid, kind, size = out[at:end].decode().split(" ")
+        require(oid == ids[path] and kind == "blob", f"{path} at {commit} unreadable")
+        start = end + 1
+        found[path] = out[start:start + int(size)]
+        at = start + int(size) + 1
+    return found
+
+
+def at_commit_git(repo: str | Path, commit: str) -> Policy:
+    """The manifest of `commit` from the git objects of a local Core clone, never its working tree."""
+    require(isinstance(commit, str) and SHA.fullmatch(commit), "release policy needs an exact Core commit")
+    return parse(blobs_at(repo, commit, {PATH})[PATH], commit)
 
 
 def at_tree_git(repo: str | Path, treeish: str) -> Policy:
@@ -246,7 +261,7 @@ def at_tree_git(repo: str | Path, treeish: str) -> Policy:
     git = shutil.which("git")
     require(git, "git is not installed")
     require(isinstance(treeish, str) and re.fullmatch(r"[0-9a-f]{4,40}", treeish), "invalid Core tree")
-    done = subprocess.run([str(git), "-C", str(repo), "rev-parse", "--verify", "--quiet", f"{treeish}^{{tree}}"],  # noqa: S603
+    done = subprocess.run([str(git), "-C", str(repo), "rev-parse", "--verify", "--quiet", f"{treeish}^{{tree}}"],
                           capture_output=True, check=False, timeout=30, text=True, env=_git_env())
     tree = done.stdout.strip() if done.returncode == 0 else ""
     require(SHA.fullmatch(tree), f"no Core tree {treeish}")
@@ -266,3 +281,52 @@ def collected_kind(repo: str | Path, treeish: str, lane: str) -> str:
     require(kind is not None, f"lane {lane} is not a focused lane of Core's release policy at {treeish}")
     require(kind in COLLECTED_KINDS, f"lane {lane} has kind {kind}, which the case collector cannot list")
     return kind  # type: ignore[return-value]
+
+
+SPECIAL_MODES = frozenset(("120000", "160000"))  # a symlink or a gitlink: never "not CI", whatever its path
+
+
+def ci_changes(repo: str | Path, base: str, head: str) -> tuple[str, ...]:
+    """Why the change from `base` to `head` touches Core's CI: one line per reason, empty when it does not.
+
+    The not-CI paths are those of the manifest at BASE (`git show BASE:scripts/release_policy.json`), never the head's:
+    a change cannot declare itself harmless. Diff: `git diff --raw --no-renames -z BASE HEAD` in the Core clone, GIT_*
+    variables stripped; a rename is a delete and an add. Fail closed, never raising: an unreadable diff, no manifest at
+    base, an empty or garbled diff, a non-UTF-8 path, a symlink or gitlink mode on either side and every path the base
+    does not list as not CI are each a reason.
+    """
+    if not (isinstance(base, str) and SHA.fullmatch(base) and isinstance(head, str) and SHA.fullmatch(head)):
+        return ("base and head must be exact commits",)
+    try:
+        policy = at_commit_git(repo, base)
+    except CandidateError as exc:
+        return (f"no reviewed release policy at base {base}: {exc}",)
+    try:
+        raw = _git(repo, "diff", "--raw", "--no-renames", "--no-ext-diff", "--no-textconv", "-z", base, head, "--")
+    except (CandidateError, OSError, subprocess.SubprocessError) as exc:
+        return (f"diff {base[:12]}..{head[:12]} unreadable: {exc}",)
+    fields = raw.split(b"\0")
+    if fields and fields[-1] == b"":
+        fields.pop()
+    if not fields or len(fields) % 2:
+        return (f"diff {base[:12]}..{head[:12]} is empty or garbled",)
+    reasons = []
+    for meta, name in zip(fields[::2], fields[1::2], strict=True):
+        parts = meta.decode("ascii", "replace").split(" ")
+        try:
+            path = name.decode("utf-8")
+        except UnicodeDecodeError:
+            reasons.append(f"{name!r}: not a UTF-8 path")
+            continue
+        if len(parts) != 5 or not parts[0].startswith(":"):
+            reasons.append(f"{path}: garbled diff entry")
+        elif SPECIAL_MODES & {parts[0][1:], parts[1]}:
+            reasons.append(f"{path}: symlink or submodule")
+        elif not policy.is_not_ci(path):
+            reasons.append(f"{path}: CI path (not listed as not CI at base {base[:12]})")
+    return tuple(reasons)
+
+
+def ci_changed(repo: str | Path, base: str, head: str) -> bool:
+    """True when the change from `base` to `head` touches Core's CI (see ci_changes; any doubt is True)."""
+    return bool(ci_changes(repo, base, head))

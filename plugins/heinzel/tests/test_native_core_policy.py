@@ -83,27 +83,65 @@ def test_a_pinned_file_that_differs_from_the_policy_digest_is_refused(path):
 EXTRA = {".github/actions/setup-uv/action.yml": b"runs: {}\n", "scripts/focused_plan.py": b"LANES = {}\n"}
 
 
-def test_every_file_the_workflow_reaches_is_pinned_and_checked_at_the_commit():
+def test_every_pinned_file_is_checked_at_the_commit(tmp_path):
     policy = core_policy.at_commit_api(api(kit.files("new", extra=EXTRA)), C)
     assert set(policy.sources) == {kit.WORKFLOW, kit.RECORDER, *EXTRA}
     assert policy.recorded_sources == {k: policy.sources[k] for k in (kit.WORKFLOW, kit.RECORDER)}
     blobs = kit.files("new", extra=EXTRA)
     blobs["scripts/focused_plan.py"] = b"LANES = {'x': 1}\n"
+    repo, commit = kit.git_repo(tmp_path / "core", blobs)
     with pytest.raises(CandidateError, match=r"does not describe its own scripts/focused_plan\.py"):
-        core_policy.at_commit_api(api(blobs), C)
+        core_policy.at_commit_git(repo, commit)
 
 
 def test_a_file_over_the_contents_limit_is_read_as_its_git_blob():
     big = b"lock: 1\n" * 200_000  # over the contents API's 1 MB
-    blobs = kit.files("new", extra={"web/pnpm-lock.yaml": big})
+    blobs = kit.files("new", workflow_blob=big)
     routes = kit.contents_routes(C, blobs)
     blob_id = "9" * 40
-    routes[f"contents/web/pnpm-lock.yaml?ref={C}"] = {"type": "file", "encoding": "none", "content": "", "sha": blob_id}
+    routes[f"contents/{kit.WORKFLOW}?ref={C}"] = {"type": "file", "encoding": "none", "content": "", "sha": blob_id}
     routes[f"git/blobs/{blob_id}"] = kit.contents(big)
-    assert "web/pnpm-lock.yaml" in core_policy.at_commit_api(routes.get, C).sources
+    assert core_policy.at_commit_api(routes.get, C).workflow == kit.WORKFLOW
     routes[f"git/blobs/{blob_id}"] = {"encoding": "utf-8", "content": "x"}
     with pytest.raises(CandidateError, match="missing at"):
         core_policy.at_commit_api(routes.get, C)
+
+
+TEMPLATE = {"starter/[% if layout == 'standalone' %].github[% endif %]/workflows/ci.yml.jinja": b"on: push\n",
+            "template/[[ _copier_conf.answers_file ]].jinja": b"x\n", "docs/a b=c.md": b"d\n"}
+
+
+def test_the_git_reader_checks_every_tracked_file_the_policy_pins_in_one_batch(tmp_path):
+    import os
+    import subprocess
+
+    repo = tmp_path / "core"
+    link = {"starter/link": b"../template"}  # a symlink: its pin is the sha256 of its link text
+    blobs = kit.files("new", extra={**TEMPLATE, **link})
+    del blobs["starter/link"]
+    repo, _ = kit.git_repo(repo, blobs)
+    os.symlink("../template", repo / "starter/link")
+    subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-qm", "link"], check=True)
+    commit = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"], check=True, capture_output=True, text=True).stdout.strip()
+    policy = core_policy.at_commit_git(repo, commit)
+    assert set(TEMPLATE) | set(link) <= set(policy.sources)
+    tampered = kit.files("new", extra={**TEMPLATE, "docs/a b=c.md": b"changed\n"}, policy=kit.files("new", extra=TEMPLATE)[kit.PATH])
+    repo2, commit2 = kit.git_repo(tmp_path / "core2", tampered)
+    with pytest.raises(CandidateError, match=r"does not describe its own docs/a b=c\.md"):
+        core_policy.at_commit_git(repo2, commit2)
+    absent = kit.files("new", policy=kit.files("new", extra=TEMPLATE)[kit.PATH])
+    repo3, commit3 = kit.git_repo(tmp_path / "core3", absent)
+    with pytest.raises(CandidateError, match="missing at"):
+        core_policy.at_commit_git(repo3, commit3)
+
+
+def test_the_api_reader_checks_the_recorded_pair_only():
+    blobs = kit.files("new", extra=TEMPLATE)
+    routes = kit.contents_routes(C, blobs)
+    for path in TEMPLATE:  # never read: one request per file would be thousands
+        del routes[f"contents/{path}?ref={C}"]
+    assert set(TEMPLATE) <= set(core_policy.at_commit_api(routes.get, C).sources)
 
 
 def test_a_pinned_file_missing_at_the_commit_is_refused():
@@ -128,7 +166,6 @@ GARBLED = {
     "version as text": _raw(policy="1"),
     "unknown key": kit.encode(kit.manifest() | {"extra": 1}),
     "missing key": kit.encode({k: v for k, v in kit.manifest().items() if k != "lanes"}),
-    "extra pinned file": _raw(sources=kit.manifest()["sources"] | {"x.py": "0" * 64}),
     "short digest": _raw(sources={kit.WORKFLOW: "0" * 63, kit.RECORDER: "0" * 64}),
     "workflow outside workflows": _raw(workflow="ci.yml", sources={"ci.yml": "0" * 64, kit.RECORDER: "0" * 64}),
     "escaping path": _raw(recorder="../x.py", sources={kit.WORKFLOW: "0" * 64, "../x.py": "0" * 64}),
@@ -148,6 +185,10 @@ GARBLED = {
     "repository malformed": _raw(repository="no-slash"),
     "too many sources": _raw(sources=kit.manifest()["sources"] | {f"s/{i}.py": "0" * 64 for i in range(core_policy.MAX_SOURCES)}),
     "dot segment source": _raw(sources=kit.manifest()["sources"] | {"scripts/./x.py": "0" * 64}),
+    "empty segment source": _raw(sources=kit.manifest()["sources"] | {"scripts//x.py": "0" * 64}),
+    "control character source": _raw(sources=kit.manifest()["sources"] | {"scripts/x\ty.py": "0" * 64}),
+    "overlong source": _raw(sources=kit.manifest()["sources"] | {"a" * 1025: "0" * 64}),
+    "manifest pins itself": _raw(sources=kit.manifest()["sources"] | {kit.PATH: "0" * 64}),
     "absolute source": _raw(sources=kit.manifest()["sources"] | {"/etc/passwd": "0" * 64}),
     "recorder not pinned": _raw(sources={kit.WORKFLOW: "0" * 64, "x.py": "0" * 64}),
     "focused job without lane": _raw(focused_job="Focused tests"),

@@ -127,8 +127,8 @@ def source_evidence(run_id, attempt):
     require(type(pr_number) is int and pr_number > 0, 'capacity route requires canonical PR evidence')
     source = proof.get('source_commit')
     require(strict.valid_sha(source), 'invalid tested source identity')
-    pins = reviewed(proof.get('head')).sources
-    blobs = {path: base64.b64encode(strict.source_bytes(get, path, source, pins)).decode() for path in pins}
+    workflow = reviewed(proof.get('head')).workflow  # read for its needs graph (dependency_closure), never as a pin
+    blobs = {workflow: base64.b64encode(strict.source_bytes(get, workflow, source, (workflow,))).decode()}
     result = {'run': run, 'jobs': jobs, 'artifact': artifact, 'artifact_zip': base64.b64encode(raw).decode(),
               'proof': proof, 'pr': get(f'pulls/{pr_number}'), 'head': get(f'commits/{proof.get("head")}'),
               'source': get(f'commits/{source}'), 'blobs': blobs}
@@ -156,15 +156,11 @@ def identity(data, version, run_id, attempt):
     require(type(proof.get('schema')) is int and proof['schema'] == 1 and proof.get('repository') == strict.REPOSITORY
             and proof.get('event') == 'pull_request' and proof.get('version') == version
             and type(proof.get('run_id')) is int and proof['run_id'] == run_id
-            and type(proof.get('run_attempt')) is int and proof['run_attempt'] == 1
-            and proof.get('sources') == policy.recorded_sources, 'source proof protocol differs')
+            and type(proof.get('run_attempt')) is int and proof['run_attempt'] == 1, 'source proof protocol differs')
     require(head.get('sha') == proof['head'] and head.get('commit', {}).get('tree', {}).get('sha') == proof['tree']
             and source.get('sha') == proof['source_commit'] and source.get('commit', {}).get('tree', {}).get('sha') == proof['tree']
             and [p.get('sha') for p in source.get('parents', [])] == [proof['base'], proof['head']], 'source tree/parents differ')
-    require(set(data['blobs']) == set(policy.sources), 'source fingerprint inventory differs')
-    for path, pin in policy.sources.items():
-        require(hashlib.sha256(base64.b64decode(data['blobs'][path], validate=True)).hexdigest() == pin,
-                'executed source differs from reviewed pins')
+    require(set(data['blobs']) == {policy.workflow}, 'executed workflow missing from the evidence')
     return proof
 
 

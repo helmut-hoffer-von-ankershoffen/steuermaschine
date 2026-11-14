@@ -25,7 +25,7 @@ def approved_sources(ref):
     from ..queue_lib import core_policy
     commit = sh("git", "-C", CORE_DIR, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}").strip()
     raw = edge.run(["git", "-C", CORE_DIR, "show", f"{commit}:{core_policy.PATH}"], capture_output=True).stdout if commit else b""
-    return core_policy.parse(raw, commit).sources
+    return core_policy.parse(raw, commit).recorded_sources
 
 
 def sha(data):
