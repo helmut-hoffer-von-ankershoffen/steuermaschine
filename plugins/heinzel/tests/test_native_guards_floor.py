@@ -200,7 +200,8 @@ def test_the_floor_is_standard_library_only_and_names_no_old_tool_in_its_texts()
 # --- no new write step while bin/promote switches the live sm ------------------------------------------------------------
 
 STEPS = ["sm head apply prepare.out", "sm --format json head prepare wt", "/Users/x/.local/bin/sm release admit 0.9.41",
-         "cd /w && sm head validate . --lanes web-1", "steuermaschine release resume 0.9.41", "sm gate run -- sm head admit x", "sm release cut 0.9.42 --live"]
+         "cd /w && sm head validate . --lanes web-1", "steuermaschine release resume 0.9.41", "sm gate run -- sm head admit x", "sm release cut 0.9.42 --live",
+         "sm ship ~/Code/wt --live --wait 30", "sm --format json ship wt", "cd /w && sm gate run -- sm ship wt"]
 
 
 @pytest.mark.parametrize("command", STEPS)
@@ -219,13 +220,14 @@ def test_the_floor_and_bin_promote_name_the_same_write_steps(tmp_path):
     """One list in two languages: every WRITE_STEPS pair is a busy step for bin/promote and bin/rollback, and the bash
     pattern names no step the floor lets start during a switch."""
     lib = Path(__file__).resolve().parents[3] / "bin" / "promote_lib.sh"
-    pattern = re.search(r"\(head \(([a-z|]+)\)\|release \(([a-z|]+)\)\)", lib.read_text())
-    assert pattern, "busy_steps in bin/promote_lib.sh no longer has the form (head (...)|release (...))"
+    pattern = re.search(r"\(head \(([a-z|]+)\)\|release \(([a-z|]+)\)\|([a-z]+)\( \|\$\)\)", lib.read_text())
+    assert pattern, "busy_steps in bin/promote_lib.sh no longer has the form (head (...)|release (...)|ship( |$))"
     in_bash = {("head", v) for v in pattern.group(1).split("|")} | {("release", v) for v in pattern.group(2).split("|")}
+    in_bash |= {(pattern.group(3),)}  # a top-level verb: one word
     assert in_bash == guard_floor.WRITE_STEPS
 
 
-@pytest.mark.parametrize("command", ["sm head size wt", "sm release status", "sm head pr abc t --live", "cat sm head apply", "sm go"])
+@pytest.mark.parametrize("command", ["sm head size wt", "sm head ship 801", "sm shipping", "sm release status", "sm head pr abc t --live", "cat sm head apply", "sm go"])
 def test_reads_and_other_commands_run_during_a_switch(command):
     pending = Path.home() / ".cache" / "sm-promote-switch-pending"
     pending.parent.mkdir(parents=True, exist_ok=True)

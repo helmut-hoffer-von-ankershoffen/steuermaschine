@@ -38,8 +38,10 @@ SWITCH_BLOCKED = ("Blocked: bin/promote is switching the live sm (pid {pid}); no
 
 PENDING = (".cache", "sm-promote-switch-pending")  # under the home directory; bin/promote writes its pid there
 SM_PROGRAMS = {"sm", "steuermaschine", "sm-dev"}
+ONE_WORD_STEPS = {"ship"}  # top-level verbs that are a write step by themselves: `sm ship WORKTREE` (not `group verb`)
 WRITE_STEPS = {("head", "prepare"), ("head", "apply"), ("head", "admit"), ("head", "validate"), ("release", "admit"), ("release", "resume"),
-               ("release", "cut")}  # the same steps as busy_steps in bin/promote_lib.sh (a test holds them equal)
+               ("release", "cut"),
+               ("ship",)}  # the same steps as busy_steps in bin/promote_lib.sh (a test holds them equal)
 
 # The former git hook, verbatim.
 GIT = re.compile(r"\bgit\b[^;&|\n]*?\b(push|commit)\b[^;&|\n]*")
@@ -175,11 +177,13 @@ def switch_pending() -> int | None:
     return pid
 
 
-def sm_step(words: list[str], start: int) -> tuple[str, str] | None:
-    """The command path (two words) of an sm call whose program is words[start], skipping `--format X`."""
+def sm_step(words: list[str], start: int) -> tuple[str, ...] | None:
+    """The command path (two words; one for a top-level verb in ONE_WORD_STEPS) of an sm call whose program is words[start], skipping `--format X`."""
     rest = words[start + 1:]
     while rest and rest[0].startswith("--format"):
         rest = rest[1:] if "=" in rest[0] else rest[2:]
+    if rest and rest[0] in ONE_WORD_STEPS:
+        return (rest[0],)
     return (rest[0], rest[1]) if len(rest) >= 2 else None
 
 

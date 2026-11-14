@@ -160,3 +160,12 @@ Unit code unchanged. The digest moved only through shared core files: config.py 
 COVERS: daemon loadguard
 REVIEWED: sha256=fd47f3a4a3c4370fa231d89214e14ddc989eaa2f9b2900f7b7e78c62c5abf72a
 VERDICT: APPROVE
+
+## Re-verdict at feat/sm-ship d05ef01 (2026-11-14)
+
+Independent reviewer; wrote none of this code. Unit code unchanged. The digest moved only through guard_floor.py:
+`sm ship` is now a one-word write step that the switch refusal blocks while a promote switches the live sm. The
+existing two-word steps are unchanged. This command does nothing differently.
+COVERS: daemon loadguard
+REVIEWED: sha256=063a7f69232b372dcb4631a69cc9fb27c6643fed58cba1127fb40c9bb3451862
+VERDICT: APPROVE

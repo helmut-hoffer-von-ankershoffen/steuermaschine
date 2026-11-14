@@ -4,7 +4,7 @@
 # The admission and release steps that must not see the live `sm` change under them, as `ps` lines (at most 5).
 # The same steps as WRITE_STEPS of the plugin's guard_floor.py; tests/test_promote_script.py holds the two equal.
 busy_steps() {
-  ps -axo pid=,command= | grep -E '(steuermaschine|/sm|sm-dev)( --format[ =][a-z]+)? (head (prepare|apply|admit|validate)|release (admit|resume|cut))|hz-focused-admit (prepare|apply)|hz-release( |$)|hz_focused_admit' | grep -v grep | head -5
+  ps -axo pid=,command= | grep -E '(steuermaschine|/sm|sm-dev)( --format[ =][a-z]+)? (head (prepare|apply|admit|validate)|release (admit|resume|cut)|ship( |$))|hz-focused-admit (prepare|apply)|hz-release( |$)|hz_focused_admit' | grep -v grep | head -5
 }
 
 # wait_idle MAX_SECONDS POLL_SECONDS: 0 once no step runs; 1 when one still runs after MAX_SECONDS (its lines on stdout).
