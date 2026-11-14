@@ -280,55 +280,6 @@ def release_verify(version: str | None = typer.Argument(None, metavar="[VERSION]
     return result
 
 
-# ----------------------------------------------------------------------------- release pins
-class PinRow(Model):
-    path: str = Field(description="The pinned file, by its path in the core repository.")
-    approved: str = Field(description="sha256 of the reviewed content.")
-    executed: str = Field("", description="First 12 characters of the sha256 at REF when it differs.")
-    matches: bool
-
-
-class ReleasePins(Model):
-    """The pinned candidate sources at a ref against their reviewed content."""
-
-    ref: str
-    source: str = Field(description="Where the pins come from: Core's reviewed release policy at REF.")
-    pins: list[PinRow]
-    lines: list[str] = []
-
-    def render(self) -> list[str]:
-        return self.lines
-
-    @property
-    def exit_code(self) -> int:
-        return 0 if all(p.matches for p in self.pins) else 1
-
-
-@native("release pins", replaces=("hz-chores",), help=H(
-    "Compare the pinned candidate sources at a ref with their reviewed content; print the diff and a review request.",
-    "Use after any merge that touches the candidate workflow or its recorder, and when a candidate is refused for its source.",
-    "nothing (read-only); it reads the core checkout with git.",
-    "sm release pins origin/main", "an independent review of the diff, then regenerate Core's scripts/release_policy.json",
-    "The pins are the sha256 digests in Core's reviewed release policy (scripts/release_policy.json) at REF, never a copy\n"
-    "in this plugin. Exit 1 when a pinned file differs at REF or REF has no release policy."))
-def release_pins(ref: str = typer.Argument("origin/main", metavar="[REF]", help="A ref of the core checkout.")) -> ReleasePins:
-    required_core_checkout("release pins")
-    chores = moved("release_read_lib.chores")
-    code, out, err = captured(chores.main, ["pin-diagnose", ref])
-    if code:
-        raise Refuse("; ".join(translated(err)) or "the pins could not be compared", "sm release pins --help", code=code)
-    pins, rows = {}, {}
-    for text in out:
-        if found := re.fullmatch(r"pin  (\S+) ([0-9a-f]{64})", text):
-            pins[found[1]] = found[2]
-        elif found := re.fullmatch(r"DIFF (\S+): executed ([0-9a-f]{12}) != approved [0-9a-f]{12}", text):
-            rows[found[1]] = found[2]
-    if not pins:
-        raise Refuse(f"no pinned files in Core's release policy at {ref}", "sm release pins --help", code=1)
-    return ReleasePins(ref=ref, source=f"{ref}:scripts/release_policy.json", lines=translated([t for t in out if not t.startswith("pin  ")]),
-                       pins=[PinRow(path=path, approved=pin, executed=rows.get(path, ""), matches=path not in rows) for path, pin in pins.items()])
-
-
 # ----------------------------------------------------------------------------- release after
 class ReleaseAfter(Model):
     """The checklist after a release was published."""

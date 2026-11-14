@@ -217,42 +217,9 @@ def test_verify_mini_calls_the_read_only_check_of_the_live_service(rt, monkeypat
 
 
 # ----------------------------------------------------------------------------- pins
-def core_checkout(path: Path, workflow: bytes) -> None:
-    """Core with three commits: no policy yet; a policy describing its files; the workflow changed, the policy not."""
-    def git(*args):
-        subprocess.run(["git", "-C", str(path), *args], check=True, capture_output=True)
-
-    (path / ".github/workflows").mkdir(parents=True)
-    (path / "scripts").mkdir()
-    subprocess.run(["git", "init", "-q", "-b", "main", str(path)], check=True, capture_output=True)
-    reviewed = kit.files("new")
-    for step, content in enumerate((reviewed[kit.WORKFLOW], reviewed[kit.WORKFLOW], workflow)):
-        (path / kit.WORKFLOW).write_bytes(content)
-        (path / kit.RECORDER).write_bytes(reviewed[kit.RECORDER])
-        if step:
-            (path / kit.PATH).write_bytes(reviewed[kit.PATH])
-        git("add", "-A")
-        git("-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-q", "--allow-empty", "-m", f"step {step}")
-
-
-def test_pins_are_the_policy_at_the_ref_and_a_changed_workflow_prints_the_diff_and_a_review_request(rt):
-    reviewed = kit.files("new")
-    core_checkout(rt.home / "core", reviewed[kit.WORKFLOW] + b"# one more line\n")
-    out, found = doc(rt, area.ReleasePins, "release", "pins", "HEAD~1")
-    assert out.exit_code == 0 and [p.matches for p in found.pins] == [True, True] and found.lines == ["ok   .github/workflows/ci.yml", "ok   scripts/release_candidate.py"]
-    assert found.source == "HEAD~1:scripts/release_policy.json"
-    out, found = doc(rt, area.ReleasePins, "release", "pins", "HEAD")
-    assert out.exit_code == 1 and [p.matches for p in found.pins] == [False, True]
-    assert found.pins[0].approved == kit.manifest("new")["sources"][kit.WORKFLOW] and len(found.pins[0].executed) == 12
-    text = "\n".join(found.lines)
-    assert "+# one more line" in text and "Review request: pin update for .github/workflows/ci.yml" in text
-    assert "regenerate scripts/release_policy.json in Core" in text and "hz-" not in text and "approved_sources" not in text
-
-
-def test_pins_refuse_a_ref_without_a_release_policy(rt):
-    core_checkout(rt.home / "core", b"x\n")
-    out = invoke(rt, ["release", "pins", "HEAD~2"])
-    assert out.exit_code == 1 and "release_policy.json missing" in out.stdout + out.stderr
+def test_the_pins_command_is_gone(rt):
+    """No checksum of Core's files is kept or compared: the release commit and its ci_change verdict bind them."""
+    assert invoke(rt, ["release", "pins"]).exit_code != 0
 
 
 # ----------------------------------------------------------------------------- after, notes-audit, assets
@@ -343,8 +310,8 @@ def test_the_assets_cache_is_replaced_atomically(tmp_path, monkeypatch):
     assert json.loads(cache.read_text())["results"][0]["name"] == "b" and os.listdir(cache.parent) == ["assets.json"]
 
 
-@pytest.mark.parametrize("argv", [["release", "assets"], ["release", "pins", "origin/main"]])
-def test_without_the_core_checkout_setting_assets_and_pins_refuse_and_name_the_key(tmp_path, monkeypatch, gh, argv):
+@pytest.mark.parametrize("argv", [["release", "assets"]])
+def test_without_the_core_checkout_setting_assets_refuses_and_names_the_key(tmp_path, monkeypatch, gh, argv):
     """No machine path is a default: unset, the command refuses (usage error) and probes or reads nothing."""
     monkeypatch.setenv("HOME", str(tmp_path))
     settings, _ = stack_of(plugin).validate({"heinzel": {"release_assets_cache": str(tmp_path / "assets.json")}}, Path("."))

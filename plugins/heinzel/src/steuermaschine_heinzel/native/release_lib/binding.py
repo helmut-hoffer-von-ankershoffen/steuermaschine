@@ -24,7 +24,7 @@ class ReleaseSettings(BaseModel):
 
     release_dir: Path | None = Field(None, description="The checkout in which a release PR is prepared: clean, on main, with the push hooks. Was the environment variable "
                                                         "HZ_RELEASE_DIR of the step runner. Default: /private/tmp/heinzel-air-release.")
-    release_core_checkout: Path | None = Field(None, description="A checkout of the core repository that is only read: `release pins` reads the pinned files at a ref, "
+    release_core_checkout: Path | None = Field(None, description="A checkout of the core repository that is only read: it reads the release tag history and Core's release policy at a commit."
                                                                   "`release assets` reads its tool and requirement lists. No default: unset, both commands refuse and name this key.")
     release_train_state_dir: Path | None = Field(None, description="The release train's state directory: one file, lock and log per version, the cadence file. Default: train/ in "
                                                                     "the project's state directory.", json_schema_extra=old_variable("HZ_TRAIN_STATE_DIR"))

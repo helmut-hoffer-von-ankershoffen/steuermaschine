@@ -39,7 +39,7 @@ def test_adapter_passes_frozen_head_tree_and_reviewed_pins_to_the_public_reader(
     monkeypatch.setattr(release_candidate, "discover", lambda get, head: 99 if head == HEAD else pytest.fail("wrong head"))
     def verify(get, download, expected, pins):
         assert expected == release_candidate.ExpectedCandidate(99, 17, HEAD, TREE)
-        assert pins.commit == HEAD and pins.sources == kit.manifest()["sources"]
+        assert pins.commit == HEAD and pins.workflow == kit.WORKFLOW
         return {"run_id": 99, "run_attempt": 1, "head": HEAD, "tree": TREE}
     monkeypatch.setattr(release_candidate, "verify", verify)
     assert policy.verify_pr(17)["run_id"] == 99
@@ -66,8 +66,8 @@ def test_verify_pr_refuses_a_release_head_without_a_reviewed_policy(monkeypatch)
     monkeypatch.setattr(release_candidate, "verify", lambda get, download, expected, pins: seen.update(pins=pins) or {})
     policy.verify_pr(17)
     assert seen["pins"].commit == HEAD and len(seen["pins"].test_jobs) == 4
-    answers.update(kit.contents_routes(HEAD, kit.files("new", workflow_blob=b"tampered\n", policy=kit.files("new")[kit.PATH])))
-    with pytest.raises(release_candidate.CandidateError, match="does not describe its own"):
+    answers.update(kit.contents_routes(HEAD, kit.files("new", policy=b"{garbled\n")))
+    with pytest.raises(release_candidate.CandidateError, match="not valid JSON"):
         policy.verify_pr(17)
 
 
@@ -236,43 +236,27 @@ def test_verify_pr_reads_jobs_through_the_api_check_run_filter(monkeypatch):
     assert seen["ok"]
 
 
-@pytest.mark.parametrize("variant", ["reviewed", "stale_workflow", "wrong_workflow", "wrong_recorder"])
-def test_source_repin_checks_actual_executed_bytes_before_candidate_validation(monkeypatch, variant):
-    """New workflow passes the source boundary; stale/wrong inputs fail closed."""
+def test_the_candidate_reader_compares_no_source_checksum(monkeypatch):
+    """The reviewed head and its tree bind the executed sources: verify reads no source blob."""
     import io
     import json
     import zipfile
 
-    sources = {kit.WORKFLOW: kit.workflow_bytes(), kit.RECORDER: kit.recorder_bytes()}
-    pins = dict(kit.manifest()["sources"])
-    if variant == "stale_workflow":
-        pins[kit.WORKFLOW] = "d1c7e3bc603901954ffaa3616bb1e1c003bc2ec82677c70cf4276eba26a4548c"
-    if variant == "wrong_workflow":
-        sources[kit.WORKFLOW] += b"\n# unexpected change\n"
-    if variant == "wrong_recorder":
-        sources[kit.RECORDER] += b"\n# unexpected change\n"
-    pins = kit.policy(commit=HEAD, sources=pins)
-    proof = {key: HEAD for key in ("source_commit", "head", "base", "tree")}
+    proof = {key: HEAD for key in ("source_commit", "head", "base", "tree")} | {"sources": {"anything": "else"}}
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w") as archive:
         archive.writestr(release_candidate.PROOF_FILE, json.dumps(proof))
-    artifact = {"id": 1, "name": release_candidate.ARTIFACT, "expired": False,
-                "workflow_run": {"id": 99, "head_sha": HEAD}}
+    artifact = {"id": 1, "name": release_candidate.ARTIFACT, "expired": False, "workflow_run": {"id": 99, "head_sha": HEAD}}
+
     def get(path):
+        assert not path.startswith("contents/"), path
         if path == "actions/runs/99":
             return {"status": "completed"}
         if path == "actions/runs/99/artifacts?per_page=100":
             return {"total_count": 1, "artifacts": [artifact]}
         return {}
+
     monkeypatch.setattr(release_candidate, "job_inventory", lambda *_: [])
-    monkeypatch.setattr(release_candidate, "source_bytes", lambda _get, path, _ref, _pinned: sources[path])
-    reached = []
-    monkeypatch.setattr(release_candidate, "validate", lambda *_: reached.append(True) or {"source_boundary": "passed"})
+    monkeypatch.setattr(release_candidate, "validate", lambda *_: {"source_boundary": "passed"})
     expected = release_candidate.ExpectedCandidate(99, 17, HEAD, TREE)
-    if variant == "reviewed":
-        assert release_candidate.verify(get, lambda _: buffer.getvalue(), expected, pins) == {"source_boundary": "passed"}
-        assert reached == [True]
-    else:
-        with pytest.raises(release_candidate.CandidateError, match="executed CI source differs"):
-            release_candidate.verify(get, lambda _: buffer.getvalue(), expected, pins)
-        assert reached == []
+    assert release_candidate.verify(get, lambda _: buffer.getvalue(), expected, kit.policy(commit=HEAD)) == {"source_boundary": "passed"}

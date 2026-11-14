@@ -15,7 +15,6 @@ SPECIAL: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"hz-train (tick|run)\b"), "sm daemon train"),
     (re.compile(r"hz-train\b"), "sm release train"),
     (re.compile(r"hz-chores overdue-triage\b"), "sm beads sweep"),
-    (re.compile(r"hz-chores pin-diagnose\b"), "sm release pins"),
     (re.compile(r"hz-chores post-publish\b"), "sm release after"),
     (re.compile(r"hz-ci-resume-after-tag\b"), "sm release train resume-ci"),
     (re.compile(r"hz-verify-mini\b"), "sm release verify --mini"),

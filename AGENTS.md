@@ -98,4 +98,4 @@ Conventional Commits, one area per commit, subject at most 72 characters. End th
 - Edit a verdict line or `tests/gate_known.json` by hand.
 - Change release commands while a release is in flight.
 - Change repository settings, or open or merge a pull request, unless asked.
-- Hard-code another repository's facts (job names, counts, lanes, contexts, file bytes or digests). Read them from that repository's reviewed policy at the exact commit being checked (for Heinzel: `scripts/release_policy.json`, through `queue_lib/core_policy.py`), never from a working tree, the environment or a copy here.
+- Hard-code another repository's facts (job names, counts, lanes, contexts, file bytes or digests). Read them from that repository's reviewed policy at the exact commit being checked (for Heinzel: `scripts/release_policy.json`, through `queue_lib/core_policy.py`), never from a working tree, the environment or a copy here. The commit and its review verdict bind them, not a checksum; a CI change is judged by the not-CI paths of the base (`core_policy.ci_changes`).

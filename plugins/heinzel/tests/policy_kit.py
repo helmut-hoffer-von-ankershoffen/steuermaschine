@@ -35,7 +35,7 @@ def workflow_bytes() -> bytes:
 
 
 def recorder_bytes() -> bytes:
-    return (FIXTURES / "release_candidate.py.txt").read_bytes()
+    return b"# the candidate recorder of a test Core\n"
 
 
 def test_cells(shape: str) -> list[str]:

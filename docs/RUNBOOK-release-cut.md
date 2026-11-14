@@ -10,7 +10,7 @@ by hand is adopted. Without `--live` it stops before the first step that writes 
 every step and what it changes, and runs nothing.
 
 ```
-pins -> notes -> packet -> admit prepare -> admission review (STOP) -> admit apply* -> publish review (STOP) -> resume* -> verify
+ci change -> notes -> packet -> admit prepare -> admission review (STOP) -> admit apply* -> publish review (STOP) -> resume* -> verify
 ```
 
 `*` writes outside this machine and runs only with `--live`. `STOP`: a different agent must approve a digest.
@@ -57,7 +57,7 @@ The cut runs these commands itself; use them one by one only to repair a stuck s
 
 | Step | Command |
 |---|---|
-| pins | `sm release pins REF`: compares the pinned candidate sources with their reviewed copies; exit 1 needs a review |
+| ci change | the release commit against the last published tag, by the not-CI paths of the tag's `scripts/release_policy.json`: a CI change needs `sm review verdict SHA --approve --kind ci_change --reviewer NAME --model M --notes "paths read"` on the exact release commit; no checksum stands in for that review |
 | notes | `sm release notes-audit --base origin/main`: every member of a combined PR is named in the notes |
 | admit prepare | `sm release admit prepare PACKET.json --core-repo WORKTREE --review-root ROOT [--nonconsumers FILE]` |
 | digest | `sm head hash PACKET_DIR/prepare.out` |

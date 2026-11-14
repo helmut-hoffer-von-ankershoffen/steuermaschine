@@ -5,7 +5,6 @@ import subprocess
 import zipfile
 from types import SimpleNamespace
 
-import policy_kit as kit
 import pytest
 
 from steuermaschine_heinzel.native.queue_lib import hzlib
@@ -15,7 +14,6 @@ from steuermaschine_heinzel.native.queue_lib import release_candidate as rc
 HEAD = "a" * 40
 BASE = "b" * 40
 TREE = "c" * 40
-SRC = kit.manifest()["sources"]
 
 
 def test_require_and_canonical():
@@ -50,7 +48,7 @@ def test_timed_phase_reports_on_success_and_on_refusal():
 
 
 def config(**more):
-    return {"schema": 1, "pr": 5, "run": 9, "core_repo": "/core", "sources": dict(SRC), **more}
+    return {"schema": 2, "pr": 5, "run": 9, "core_repo": "/core", **more}
 
 
 def test_read_config_accepts_only_the_reviewed_shape(tmp_path):
@@ -60,7 +58,7 @@ def test_read_config_accepts_only_the_reviewed_shape(tmp_path):
     path = mc.config_path(state)
     path.write_text(json.dumps(config()))
     assert mc.read_config(state) == config()
-    for bad in (config(schema=2), config(pr=0), config(run="9"), config(core_repo="relative"), config(sources={"x": "y"}), config(sources=[1]), {"schema": 1}, [1], config(pr=True)):
+    for bad in (config(schema=1), config(pr=0), config(run="9"), config(core_repo="relative"), config(sources={"x": "y"}), {"schema": 1}, [1], config(pr=True)):
         path.write_text(json.dumps(bad))
         with pytest.raises(rc.CandidateError, match="differs from independently reviewed"):
             mc.read_config(state)
@@ -257,12 +255,11 @@ def proof():
 def test_establish_writes_only_when_applied(tmp_path, monkeypatch):
     monkeypatch.setattr(hzlib, "merge_frozen", lambda legacy=None: False)
     monkeypatch.setattr(mc, "verify_configured", lambda config, pin: proof())
-    monkeypatch.setattr(mc, "release_pins", lambda number: dict(SRC))
     state = tmp_path / "state" / "queue.json"
     assert mc.establish(state, {}, 5, 9, tmp_path) == proof() and not mc.config_path(state).exists()
     assert mc.establish(state, {}, 5, 9, tmp_path, apply=True) == proof()
     written = json.loads(mc.config_path(state).read_text())
-    assert written["pr"] == 5 and written["core_repo"] == str(tmp_path.resolve()) and written["sources"] == SRC
+    assert written["pr"] == 5 and written["core_repo"] == str(tmp_path.resolve()) and written["schema"] == 2 and "sources" not in written
     assert [p.name for p in state.parent.iterdir()] == ["queue.checkpoint.json"]
     monkeypatch.setattr(hzlib, "merge_frozen", lambda legacy=None: True)
     with pytest.raises(rc.CandidateError, match=r"freeze or release hold is set|is present"):
@@ -275,7 +272,6 @@ def test_establish_writes_only_when_applied(tmp_path, monkeypatch):
 
 def test_establish_refuses_symlinked_targets(tmp_path, monkeypatch):
     monkeypatch.setattr(hzlib, "merge_frozen", lambda legacy=None: False)
-    monkeypatch.setattr(mc, "release_pins", lambda number: dict(SRC))
     monkeypatch.setattr(mc, "verify_configured", lambda config, pin: proof())
     real = tmp_path / "real"
     real.mkdir()
@@ -312,12 +308,3 @@ def test_permits_paths(tmp_path, monkeypatch, capsys):
     mc.config_path(state).unlink()
     mc.config_path(state).symlink_to(tmp_path / "missing")
     assert mc.permits(state, {}) is False and "refused" in capsys.readouterr().err
-
-
-def test_release_pins_are_the_policy_sources_at_the_release_head(monkeypatch):
-    answers = {"pulls/5": {"head": {"sha": HEAD}}, **kit.contents_routes(HEAD, kit.files("new"))}
-    monkeypatch.setattr(mc, "get", lambda path: answers[path])
-    assert mc.release_pins(5) == kit.manifest("new")["sources"]
-    answers["pulls/5"] = {"head": {}}
-    with pytest.raises(rc.CandidateError, match="release head missing"):
-        mc.release_pins(5)

@@ -21,11 +21,10 @@ TREE = "5" * 40
 RUN = 900
 PR = 55
 SRC = {kit.WORKFLOW: "0" * 64, kit.RECORDER: "0" * 64}
-REVIEWED = {}  # the sources of the release head's policy
 
 
 def config():
-    return {"schema": 1, "pr": PR, "run": RUN, "core_repo": "/core", "sources": dict(SRC)}
+    return {"schema": 2, "pr": PR, "run": RUN, "core_repo": "/core"}
 
 
 def archive_bytes(proof):
@@ -63,27 +62,11 @@ def world(monkeypatch, proof=None, **patch):
     jobs = [{"name": "tests", "run_id": RUN, "run_attempt": 1, "head_sha": HEAD, "status": "completed", "conclusion": "success", "runner_id": 3, "steps": [1]},
             {"name": "optional", "run_id": RUN, "run_attempt": 1, "head_sha": HEAD, "status": "completed", "conclusion": "skipped"}]
     monkeypatch.setattr(rc, "release_version", lambda *a: "0.9.41")
-    monkeypatch.setattr(rc, "source_bytes", lambda api, path, ref, pinned: SRC_BYTES.get(path, b""))
     monkeypatch.setattr(rc, "job_inventory", lambda api, run_id: jobs)
     monkeypatch.setattr(rc, "quarantine_lane", lambda jobs, run_id, head, policy: jobs)
     monkeypatch.setattr(mc.core_policy, "at_commit_api", lambda api, sha: kit.policy(
-        commit=sha, sources=dict(REVIEWED), jobs={"tests": "success", "optional": "skipped"}))
+        commit=sha, jobs={"tests": "success", "optional": "skipped"}))
     return data, raw, jobs
-
-
-SRC_BYTES = {}
-
-
-@pytest.fixture(autouse=True)
-def pins(monkeypatch):
-    """Make the fake source bytes hash to the reviewed pins."""
-    fake = {path: f"source of {path}".encode() for path in SRC}
-    REVIEWED.clear()
-    REVIEWED.update({path: hashlib.sha256(raw).hexdigest() for path, raw in fake.items()})
-    SRC_BYTES.clear()
-    SRC_BYTES.update(fake)
-    SRC.clear()
-    SRC.update({path: hashlib.sha256(raw).hexdigest() for path, raw in fake.items()})
 
 
 def run_candidate(data, raw, **kw):
@@ -144,7 +127,7 @@ def test_merged_candidate_artifact_refusals(monkeypatch, change, message):
         run_candidate(data, raw)
 
 
-def test_merged_candidate_refuses_a_duplicated_artifact_and_unreviewed_pins(monkeypatch):
+def test_merged_candidate_refuses_a_duplicated_artifact_and_a_head_without_a_policy(monkeypatch):
     data, raw, _jobs = world(monkeypatch)
     block = data[f"actions/runs/{RUN}/artifacts?per_page=100"]
     block["artifacts"] = block["artifacts"] * 2
@@ -152,8 +135,13 @@ def test_merged_candidate_refuses_a_duplicated_artifact_and_unreviewed_pins(monk
     with pytest.raises(rc.CandidateError, match="missing or duplicated"):
         run_candidate(data, raw)
     data, raw, _jobs = world(monkeypatch)
-    with pytest.raises(rc.CandidateError, match="unreviewed historical candidate source pins"):
-        run_candidate(data, raw, config={**config(), "sources": {"x": "y"}})
+
+    def no_policy(api, sha):
+        raise rc.CandidateError(f"scripts/release_policy.json missing at {sha}")
+
+    monkeypatch.setattr(mc.core_policy, "at_commit_api", no_policy)
+    with pytest.raises(rc.CandidateError, match="release_policy.json missing"):
+        run_candidate(data, raw)
 
 
 def test_merged_candidate_archive_and_proof_refusals(monkeypatch):
@@ -167,7 +155,7 @@ def test_merged_candidate_archive_and_proof_refusals(monkeypatch):
         run_candidate(data, other)
     for proof, message in ((good_proof(head="zz"), "malformed candidate source proof"), (good_proof(schema=2), "source identity or reviewed pins differ"),
                            (good_proof(pr=1), "source identity"), (good_proof(version="9"), "source identity"), (good_proof(base="6" * 40), "source identity"),
-                           (good_proof(sources={"x": "y"}), "source identity"), (good_proof(run_attempt=2), "source identity"), (good_proof(event="push"), "source identity")):
+                           (good_proof(run_attempt=2), "source identity"), (good_proof(event="push"), "source identity")):
         data, raw, _jobs = world(monkeypatch, proof=proof)
         with pytest.raises(rc.CandidateError, match=message):
             run_candidate(data, raw)
@@ -193,19 +181,7 @@ def test_merged_candidate_commit_refusals(monkeypatch, patch, message):
         run_candidate(data, raw)
 
 
-def test_merged_candidate_source_pin_and_workload_refusals(monkeypatch):
-    data, raw, jobs = world(monkeypatch)
-    monkeypatch.setitem(SRC_BYTES, rc.WORKFLOW, b"tampered")
-    with pytest.raises(rc.CandidateError, match="not independently reviewed"):
-        run_candidate(data, raw)
-    monkeypatch.setitem(SRC_BYTES, rc.WORKFLOW, f"source of {rc.WORKFLOW}".encode())
-    monkeypatch.setitem(REVIEWED, kit.RECORDER, None)
-    del REVIEWED[kit.RECORDER]  # a policy object naming one pinned file only (a parsed manifest never does)
-    partial = {rc.WORKFLOW: SRC[rc.WORKFLOW]}
-    data, raw, jobs = world(monkeypatch, proof=good_proof(sources=partial))
-    with pytest.raises(rc.CandidateError, match="incomplete candidate source pins"):
-        run_candidate(data, raw, config={**config(), "sources": partial})
-    REVIEWED.update(SRC)
+def test_merged_candidate_workload_refusals(monkeypatch):
     data, raw, jobs = world(monkeypatch)
     monkeypatch.setattr(rc, "quarantine_lane", lambda jobs, run_id, head, policy: jobs[:1])
     with pytest.raises(rc.CandidateError, match="workload inventory differs"):

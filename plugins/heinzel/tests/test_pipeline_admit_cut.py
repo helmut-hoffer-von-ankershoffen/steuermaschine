@@ -28,9 +28,9 @@ from steuermaschine_heinzel.native.preflight import HeadPreflight
 from steuermaschine_heinzel.native.queue import QueueChanged, QueueEntry, QueueList
 from steuermaschine_heinzel.native.release import ReleaseRun
 from steuermaschine_heinzel.native.release_admit_lib.release_ops import ReleasePrepareResult
-from steuermaschine_heinzel.native.release_read import NotesAudit, ReleasePins, ReleaseVerify, SurfaceCheck
+from steuermaschine_heinzel.native.release_read import NotesAudit, ReleaseVerify, SurfaceCheck
 from steuermaschine_heinzel.native.ship import HeadResult
-from steuermaschine_heinzel.pipelines import common
+from steuermaschine_heinzel.pipelines import common, release_cut
 from steuermaschine_heinzel.plugin import plugin
 
 HEAD = "e9c943810ea75cfad155a431a2f168b2a9559828"
@@ -43,8 +43,10 @@ BRANCH = "fix/update-all"
 @pytest.fixture(autouse=True)
 def clean_overrides():
     common.OVERRIDE.clear()
+    changes = release_cut.changes_since_release
     yield
     common.OVERRIDE.clear()
+    release_cut.changes_since_release = changes
 
 
 def runtime(tmp_path: Path, gh: FakeGh | None = None, vcs: FakeVcs | None = None, reviewed: bool = True, core: str | None = None) -> Runtime:
@@ -240,12 +242,13 @@ def test_a_red_preflight_refuses_with_its_failures_and_hosted_lanes_need_validat
 class CutFakes:
     def __init__(self, tmp_path: Path):
         self.tmp, self.calls, self.resumes = tmp_path, [], []
-        common.OVERRIDE.update({"release pins": self.pins, "release notes-audit": self.notes, "release admit prepare": self.prepare,
+        release_cut.changes_since_release = self.ci  # restored by clean_overrides
+        common.OVERRIDE.update({"release notes-audit": self.notes, "release admit prepare": self.prepare,
                                 "release admit apply": self.apply, "release resume": self.resume, "release verify": self.verify})
 
-    def pins(self, **kw):
-        self.calls.append("pins")
-        return ReleasePins(ref=kw["ref"], source="approved_sources", pins=[])
+    def ci(self, core, head):
+        self.calls.append("ci change")
+        return "7" * 40, ()  # no CI path changed since the last tag: no ci_change verdict needed
 
     def notes(self, **kw):
         self.calls.append("notes")
@@ -289,7 +292,7 @@ def test_the_0940_recut_stops_twice_survives_a_failed_compose_and_verifies(tmp_p
 
     first = cut(rt, *sets)
     assert first["status"] == "review" and first["review"]["step"] == "admission review" and first["review"]["file"].endswith("prepare.out")
-    assert fakes.calls == ["pins", "notes", "admit prepare"]
+    assert fakes.calls == ["ci change", "notes", "admit prepare"]
     verdict(rt, first["review"]["sha256"])
     applied = cut(rt, "--approved", first["review"]["sha256"], "--live")
     assert applied["status"] == "review", applied["phase"]

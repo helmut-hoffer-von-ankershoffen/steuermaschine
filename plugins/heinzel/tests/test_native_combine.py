@@ -22,8 +22,8 @@ NOW = 1762589400.0  # 2026-11-08 08:10Z
 
 @pytest.fixture(autouse=True)
 def pinned_from_policy(monkeypatch):
-    """The pinned files are the sources of Core's release policy at main; here the kit's, without a GitHub read."""
-    pins = tuple(sorted(kit.manifest()["sources"]))
+    """The pinned files are the workflow and recorder of Core's release policy at main; here the kit's, no GitHub read."""
+    pins = tuple(sorted((kit.WORKFLOW, kit.RECORDER)))
     monkeypatch.setattr(hc, "PINNED", pins)
     monkeypatch.setattr(hc, "approved_sources", lambda gh, repo: pins)
 

@@ -8,12 +8,12 @@ import pytest
 
 from steuermaschine_heinzel.native.combine_lib import combine as c
 
-PINS = tuple(sorted(kit.manifest()["sources"]))
+PINS = tuple(sorted((kit.WORKFLOW, kit.RECORDER)))
 
 
 @pytest.fixture(autouse=True)
 def pinned_from_policy(monkeypatch):
-    """The pinned files are the sources of Core's release policy at main; here the kit's, without a GitHub read."""
+    """The pinned files are the workflow and recorder of Core's release policy at main; here the kit's, no GitHub read."""
     monkeypatch.setattr(c, "PINNED", PINS)
     monkeypatch.setattr(c, "approved_sources", lambda gh, repo: PINS)
 
@@ -72,7 +72,7 @@ def test_unknown_pinned_files_refuse_every_member(monkeypatch):
     assert "pinned files unknown" in c.refusal(member(1), "web")
 
 
-def test_pinned_files_are_the_sources_of_the_policy_at_core_main(monkeypatch):
+def test_pinned_files_are_the_workflow_and_recorder_of_the_policy_at_core_main(monkeypatch):
     monkeypatch.undo()
     head = "e" * 40
     answers = {"repos/o/core/commits/main": {"sha": head},
