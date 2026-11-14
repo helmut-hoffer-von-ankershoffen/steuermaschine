@@ -3,7 +3,7 @@
 It adds no step of its own. It derives the inputs `head admit` asks for (the selection, the review root, the Core
 repository), hands them to the `head admit` pipeline unchanged and, after the queue step, can wait for the PR to merge.
 An input given with `--set` (now or earlier: the pipeline remembers them) is never replaced by a derived one. The stops
-are those of `head admit`; the review gate of the pipeline and of every step it runs still holds.
+are those of `head admit`.
 """
 
 from __future__ import annotations
@@ -15,12 +15,12 @@ from typing import Any
 
 import typer
 
-from steuermaschine import INTERNAL, config
+from steuermaschine import config
 from steuermaschine.engine import Engine, Options, Refuse, Report, Wait
 from steuermaschine.github import Gh
 from steuermaschine.helpdoc import H
 from steuermaschine.models import Model
-from steuermaschine.native import gate_problem, native, runtime, switch_pending
+from steuermaschine.native import native, runtime, switch_pending
 
 from .. import state as statedir
 from ..pipelines.common import core_repo, run
@@ -185,8 +185,6 @@ def ship(worktree: str = typer.Argument(..., metavar="WORKTREE", help="The clean
          wait: int | None = typer.Option(None, "--wait", min=1, metavar="MINUTES", help="After the queue step, wait up to MINUTES for the PR to merge.")) -> ShipResult:
     rt = runtime()
     pl = pipeline()
-    if problem := gate_problem(pl.unit, rt.project):
-        raise Refuse(problem + "; nothing was run", "sm self reviews", code=INTERNAL)
     subject = identify(rt.providers, rt.settings, worktree)
     store = rt.providers.store
     kept = _given(store, pl, subject.key, set_)

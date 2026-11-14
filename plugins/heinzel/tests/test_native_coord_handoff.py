@@ -1,12 +1,11 @@
 """`sm doc handoff` and `sm doc hour`, and the core's digest. git and gh are the fake process runner's: no test
 commits or pushes anything."""
-# ruff: noqa: F811  (a fixture imported from coord_kit is also a test parameter)
 
 import json
 import os
 
 import typer
-from coord_kit import NOW, app_runtime, ok, unreviewed  # noqa: F401  (fixtures)
+from coord_kit import NOW, app_runtime, ok
 
 from steuermaschine import digest
 from steuermaschine.engine import Refuse, Wait
@@ -126,13 +125,6 @@ def test_a_failed_step_after_the_checks_stops_the_handoff_and_names_the_step(tmp
         c, repo = world(tmp_path, fail=step)
         done = invoke(rt_of(tmp_path, c, repo), ["doc", "handoff"])
         assert done.exit_code == 1 and f"fatal: {step} refused" in done.stderr and later not in verbs(c)
-
-
-def test_handoff_and_hour_are_off_until_reviewed(tmp_path, unreviewed):
-    for args, name in ((["doc", "handoff"], "doc-handoff.md"), (["doc", "hour", "--no-handoff"], "doc-hour.md")):
-        c, repo = world(tmp_path)
-        done = invoke(rt_of(tmp_path, c, repo, allow=False), args)
-        assert done.exit_code == 70 and f"reviews/{name}" in done.stderr and not c.calls
 
 
 def test_hour_without_handoff_gathers_facts_drafts_and_writes_nothing(tmp_path):

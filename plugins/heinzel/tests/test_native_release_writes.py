@@ -137,19 +137,6 @@ def test_the_transcripts_cover_a_freeze_a_receipt_and_two_github_writes():
 
 
 # ----------------------------------------------------------------------------- the commands themselves
-def test_a_write_command_without_an_approved_review_refuses(tmp_path, monkeypatch):
-    from steuermaschine.native import NativeCommand
-
-    # an unreviewed state, set explicitly: the test must not depend on what reviews/release-*.md says today
-    monkeypatch.setattr(NativeCommand, "review_state", lambda self: ("open", "no verdict"))
-    gh = FakeGh()
-    rt = make(tmp_path, monkeypatch, gh, reviewed=False)
-    for args in (["release", "resume", "0.9.41"], ["release", "drop", "0.9.41", "--reason", "red candidate"], ["release", "plugin", "audio"]):
-        out = invoke(rt, args)
-        assert out.exit_code == 70 and "review" in out.stderr, (args, out)
-    assert gh.calls == [] and list((tmp_path / ".cache").iterdir()) == []
-
-
 def test_the_review_unit_is_the_command_module_the_release_library_and_the_queue_library():
     from steuermaschine_heinzel import native
 

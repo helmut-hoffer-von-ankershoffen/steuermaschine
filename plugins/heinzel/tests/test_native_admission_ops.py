@@ -392,16 +392,6 @@ def test_head_hash_refuses_a_file_that_is_not_json(tmp_path):
     assert done.exit_code == 1 and "focused admission refused" in (done.stdout + done.stderr)
 
 
-def test_head_apply_is_unavailable_without_a_review_verdict(tmp_path, monkeypatch):
-    from steuermaschine.native import NativeCommand
-
-    # an unreviewed state, set explicitly: the test must not depend on what reviews/head-apply.md says today
-    monkeypatch.setattr(NativeCommand, "review_state", lambda self: ("missing", f"reviews/{self.review_file} is missing"))
-    packet, prepared, _ = stored(tmp_path)
-    done = invoke(runtime(), ["head", "apply", str(packet), "--approved", ops.canonical_sha256(prepared)])
-    assert done.exit_code == 70 and "head-apply.md" in (done.stdout + done.stderr)
-
-
 def test_head_apply_command_reaches_the_guards_when_tests_allow_it(tmp_path):
     packet, prepared, _ = stored(tmp_path, pr=5)
     sha = ops.canonical_sha256(prepared)

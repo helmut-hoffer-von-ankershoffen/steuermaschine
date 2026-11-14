@@ -4,6 +4,7 @@
     fan_in(reaches)               file -> the review files whose digest covers it
     kernel(reaches)               the files in every digest: a change to one of them voids every verdict
     voided_by(reaches, changed)   the review files a change to these files voids
+    reached_by(reaches, changed)  write path -> the changed files its code covers (`sm self reviews`)
     parsed_once()                 while open, the digest walk parses each file once (for a listing of every unit)
 
 The digest itself stays `native.NativeCommand.code_digest`; this module answers the questions around it with the same
@@ -95,6 +96,18 @@ def voided_by(reaches: Iterable[Reach], changed: Iterable[str]) -> list[str]:
     names = [Path(c).as_posix() for c in changed]
     hit = {unit.review for unit in reaches if any(c == f or c.endswith("/" + f) for f in unit.files for c in names)}
     return sorted(hit)
+
+
+def reached_by(reaches: Iterable[Reach], changed: Iterable[str]) -> dict[str, list[str]]:
+    """Write path -> the files of `changed` its code covers, for every write path the change reaches, in the order of
+    `reaches`. A changed file matches as in `voided_by`: a package path, or a path that ends with one."""
+    names = [Path(c).as_posix() for c in changed]
+    out: dict[str, list[str]] = {}
+    for unit in reaches:
+        hit = sorted({c for c in names for f in unit.files if c == f or c.endswith("/" + f)})
+        if hit:
+            out[unit.path] = hit
+    return out
 
 
 @contextlib.contextmanager

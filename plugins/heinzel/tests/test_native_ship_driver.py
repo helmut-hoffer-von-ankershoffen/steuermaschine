@@ -132,16 +132,6 @@ def test_a_stop_of_the_pipeline_is_returned_as_it_is_and_never_waits(tmp_path, m
     assert result.status == "review" and result.next == "sm ship WT" and not result.merged
 
 
-def test_the_pipeline_review_gate_is_checked_first(tmp_path, monkeypatch):
-    rt = runtime(tmp_path)
-    monkeypatch.setattr(ship_driver, "gate_problem", lambda cmd, project: "`sm head admit` writes and its independent review is open")
-    fake = FakeEngine()
-    monkeypatch.setattr(ship_driver, "engine", lambda: fake)
-    with native(rt), pytest.raises(Refuse, match="nothing was run"):
-        ship_driver.ship(worktree(tmp_path), live=False, approved="", author="", set_=None, wait=None)
-    assert not fake.calls
-
-
 # ----------------------------------------------------------------------------- --wait
 def waiting(tmp_path, monkeypatch, view, listing, minutes=10):
     rt = runtime(tmp_path, gh=FakeGh().on("pr view 7", view))

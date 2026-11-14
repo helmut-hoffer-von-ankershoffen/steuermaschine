@@ -220,25 +220,6 @@ def test_a_new_head_in_the_worktree_supersedes_the_old_run(tmp_path):
     assert {r["key"]: r["status"] for r in rows}[HEAD] == "superseded"
 
 
-def test_the_pipeline_and_each_composed_write_are_under_the_review_gate(tmp_path, monkeypatch):
-    from steuermaschine.native import NativeCommand
-
-    monkeypatch.setattr(NativeCommand, "review_state", lambda self: ("open", f"reviews/{self.review_file} has no verdict (test)"))  # whatever the shipped review files say
-    rt, wt = runtime(tmp_path, reviewed=False), tmp_path / "wt"
-    wt.mkdir()
-    AdmitFakes(tmp_path)
-    off = invoke(rt, ["head", "admit", str(wt), *inputs(tmp_path)])
-    assert off.exit_code == 70 and "`sm head admit` writes and its independent review is open" in off.stderr
-    rows = {r["path"]: r for r in report(invoke(rt, ["--format", "json", "self", "reviews"]))}
-    assert rows["head admit"]["state"] == rows["release cut"]["state"] == "open"
-    assert "steuermaschine/engine.py" in rows["head admit"]["files"]  # the digest follows imports into core
-
-    from steuermaschine.native import NativeRuntime, using
-
-    with using(NativeRuntime(rt.providers, rt.settings, rt.project)), pytest.raises(Exception, match=r"head apply. writes and its independent review"):
-        common.run("head apply", packet=tmp_path / "p.json", approved="0" * 64)  # an override never opens a shut gate
-
-
 def test_a_red_preflight_refuses_with_its_failures_and_hosted_lanes_need_validation(tmp_path):
     rt, wt = runtime(tmp_path), tmp_path / "wt"
     wt.mkdir()

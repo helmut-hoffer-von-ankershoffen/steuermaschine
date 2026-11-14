@@ -155,8 +155,8 @@ class Project:
     stall_minutes: float = 15.0
     raw_settings: dict[str, Any] = field(default_factory=dict)  # plugin name -> its table, file layers merged, not yet validated
     plugins: list[Any] = field(default_factory=list)  # every loaded plugin, base first
-    # Tests only, and only as a constructor argument: no setting, environment variable or file can reach it
-    # (config.load never passes it). It lets a test run a native write command without a review verdict.
+    # Unused: nothing checks a per-command review at run time any more (one verdict per promoted commit, bin/promote).
+    # Kept only so the tests that still pass it construct; it goes with the review files and `review=`/`files=`.
     allow_unreviewed: bool = False
     format: str = "text"
     layers: list[Any] = field(default_factory=list)  # [(source name, dict)] highest first, for `sm self config`

@@ -243,17 +243,6 @@ def test_status_in_text_and_json_and_exit_1_when_the_last_verdict_is_red(rt, wor
     assert invoke(rt(), ["release", "rehearse", "status"]).exit_code == 0 and rehearse.open_rehearsal(rt.store)["main"] == MAIN
 
 
-def test_write_commands_are_off_until_their_review_is_approved(rt, world, monkeypatch):
-    from steuermaschine.native import NativeCommand
-
-    monkeypatch.setattr(NativeCommand, "review_state", lambda self: ("open", f"reviews/{self.review_file} has no verdict"))
-    for argv in (["release", "rehearse", "start"], ["release", "rehearse", "step"], ["release", "rehearse", "consumers"], ["release", "rehearse", "cancel"],
-                 ["daemon", "rehearse"]):
-        off = invoke(rt(reviewed=False), argv)
-        assert off.exit_code == 70 and "writes and its independent review is open" in off.stderr and "nothing was run" in off.stderr, argv
-    assert world.calls == [] and world.local == [] and state(rt) == {}
-
-
 # ----------------------------------------------------------------------------- start, step, cancel: the exact calls
 def test_start_then_step_make_exactly_these_external_calls_in_this_order(rt, world, tmp_path):
     queue(tmp_path, ("393", "merged"))

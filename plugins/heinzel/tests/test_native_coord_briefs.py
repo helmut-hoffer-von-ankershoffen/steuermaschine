@@ -1,10 +1,9 @@
 """`sm beads brief` and `sm head review-brief`. The assertions of the former brief tests moved here; git, ps and lsof
 are the fake process runner's."""
-# ruff: noqa: F811  (a fixture imported from coord_kit is also a test parameter)
 
 import json
 
-from coord_kit import app_runtime, home, native_runtime, ok, unreviewed  # noqa: F401  (fixtures)
+from coord_kit import app_runtime, home, native_runtime, ok  # noqa: F401  (fixtures)
 
 from steuermaschine.native import using
 from steuermaschine.protocols import Result
@@ -103,13 +102,10 @@ def test_brief_refuses_over_load_40_and_an_empty_force_reason(tmp_path):
         assert done.exit_code == 1 and "load 55.0 is over 40" in done.stderr
 
 
-def test_brief_reports_a_git_refusal_and_is_off_until_reviewed(tmp_path, unreviewed):
+def test_brief_reports_a_git_refusal(tmp_path):
     c = world(tmp_path, worktree_fails="fatal: a branch named 'feat/logo' already exists")
     done = invoke(app_runtime(tmp_path, **rt_of(tmp_path, c)), ["beads", "brief", "logo", "feat/logo"])
     assert done.exit_code == 1 and "worktree failed: fatal: a branch named" in done.stderr
-    c = world(tmp_path)
-    done = invoke(app_runtime(tmp_path, allow=False, **rt_of(tmp_path, c)), ["beads", "brief", "logo", "feat/logo"])
-    assert done.exit_code == 70 and "reviews/beads-brief.md" in done.stderr and not c.calls
 
 
 def test_the_load_can_be_given_by_the_caller(tmp_path):

@@ -1,4 +1,4 @@
-"""What both pipelines share: run a native command as a step (through its review gate), turn its result into a
+"""What both pipelines share: run a native command as a step, turn its result into a
 detail line, a `Refuse` or a `Wait`, and read the few facts the probes need."""
 
 from __future__ import annotations
@@ -8,22 +8,21 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from steuermaschine import INTERNAL, USAGE, WAITING
+from steuermaschine import USAGE, WAITING
 from steuermaschine.engine import Ctx, Refuse, Wait
-from steuermaschine.native import call, gate_problem, runtime
+from steuermaschine.native import call, runtime
 
 from .. import state as statedir  # the plugin's state paths
 
-# Tests replace a native command's function here (path -> callable taking the same keyword arguments). The review
-# gate is still the registered command's: an override never opens a shut gate.
+# Tests replace a native command's function here (path -> callable taking the same keyword arguments).
 OVERRIDE: dict[str, Callable[..., Any]] = {}
 SHA = re.compile(r"[0-9a-f]{40}")
 
 
 def command(path: str) -> Any:
     """The registered native command at PATH. Looked up in the registry by name, not imported: the commands a
-    pipeline composes are their own review units, checked by their own gate when they run, so a change to one of them
-    voids that command's verdict, not the pipeline's."""
+    pipeline composes are their own write units, so `sm self reviews` names a change to one of them as reaching that
+    command, not the pipeline."""
     import importlib
 
     registry = importlib.import_module(__package__.rsplit(".", 1)[0] + ".native")
@@ -34,13 +33,10 @@ def command(path: str) -> Any:
 
 
 def run(path: str, **kwargs: Any) -> Any:
-    """Run `sm PATH` in process with these options and return its result model, whatever its exit code. The
-    registered command's review gate decides first, also for a test's override."""
+    """Run `sm PATH` in process with these options and return its result model, whatever its exit code."""
     cmd = command(path)
     if path not in OVERRIDE:
         return call(cmd, **kwargs)
-    if problem := gate_problem(cmd, runtime().project):
-        raise Refuse(problem + "; nothing was run", "sm self reviews", INTERNAL)
     return OVERRIDE[path](**kwargs)
 
 

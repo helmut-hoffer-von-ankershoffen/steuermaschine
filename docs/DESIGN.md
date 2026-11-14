@@ -248,14 +248,13 @@ they use the core defaults: lock files and logs below the project's state direct
 window's `Rules()` in the namespace `core`. A plugin that needs a different command, not only different values, registers a native command at
 the same path; it replaces the core's, and its own review file gates it.
 
-What a layer can NOT do: open a review gate. A native write command runs only when its own package's review file
-approves the digest of its own code; no plugin, layer, setting or environment variable replaces that. A layer that
-replaces a write command's path brings its own review unit and review file.
+A layer that replaces a write command's path brings its own write unit: `sm self reviews` names it when a change
+reaches its code. Review happens once per promoted commit (section 8, "The review gate"), not per command at run time.
 
 `sm self plugins` prints the loaded stack with each plugin's position (base, middle, outermost), hooks and
 wrappers. Proof: `examples/toy` (a project plugin with a pipeline and one native write command) and `examples/layer`
 (a layer that adds a gate, a step and a wrapper and replaces one trap); `examples/layer/tests/test_layer_stack.py`
-runs `sm --help`, bare `sm`, `sm self reviews` and the write command's review gate for the core alone, core + toy,
+runs `sm --help`, bare `sm`, `sm self reviews` and the write command for the core alone, core + toy,
 and core + toy + layer; `examples/layer/tests/test_layer_on_heinzel.py` loads the layer alone and outside the
 Heinzelmännchen plugin (`plugins = ["heinzel", "layer"]`): load order, both settings tables, the layer's trap and gate
 next to heinzel's, its wrapper vetoing a step before heinzel or the core sees it, and an outer plugin's extra
@@ -403,13 +402,26 @@ run has not completed.
 
 ### The review gate
 
-A write command (`writes=True`, a pipeline, a core writer) is off until its review file ends with
-`VERDICT: APPROVE` for the exact digest of its unit. The digest covers the module, its `*_lib` package and every
-first-party file the unit imports, transitively (core included), in package-path order: a change to core voids the
-verdict of every unit that imports it. `exempt=` holds only for a path on the core allowlist `native.EXEMPT_PATHS`
-(`gate run`). `sm self lint` flags a `writes=` that disagrees with the Changes line. `bin/promote` refuses a
-candidate on which a gated write command is not approved (`bin/review_gate.py`); `bin/promote-allow.toml` may
-exempt a unit with a reason, an owner and an expiry, never a queue, daemon, head or release command.
+One independent verdict per promoted commit. `bin/promote` refuses unless `$SM_STABLE/verdicts/<commit>` (written
+by `bin/promote_verdict.py record`, outside every repository) names the exact candidate commit, the commit the live
+release was built from as the base the reviewer diffed from, and a reviewer; its last line is `VERDICT: APPROVE`.
+Both the candidate's checker and the live release's checker must accept it (only the first release with a checker
+is judged by its own copy alone). It checks again right before the switch, in case the live release moved while it
+waited. No option or setting skips it.
+
+What the independence check can and cannot do: it refuses a reviewer whose name or email is a git identity of the
+commits in between (author, committer, Co-Authored-By), and a receipt whose `recorded-by` ($STEUERMASCHINE_AGENT of
+the recording process) is not its reviewer. Every agent commits under one git identity and runs under one uid, so it
+cannot tell one agent from another: independence rests on the coordinator dispatching a different agent as the
+reviewer. The apply verdict binds to agent ids of the runs that produced the bytes; this check does not. Also
+still the candidate's own code: `bin/promote` and `bin/promote_lib.sh`; a reviewer reads every change to
+`bin/promote*`, `bin/rollback` and `bin/check` first (`sm self reviews` lists them as GATE CODE). Write code run from
+a checkout (`bin/sm-dev`, `uv run`) is not reviewed; only the stable install is. Write commands do not check
+anything at run time; they still need `--live` where they write outside this machine. `sm self reviews` tells the
+reviewer which write paths the diff reaches (the code a write unit covers: its module, its `*_lib` package and the
+first-party files it imports, `steuermaschine.reviewgraph`). `sm self lint` flags a `writes=` that disagrees with
+the Changes line. The per-command review files and `bin/review_gate.py` are no longer read; they are deleted next.
+The apply verdict of a head or release (`sm review verdict`, `verdicts.require_independent`) is a separate gate.
 
 ## 9. Running it without breaking it (built: `bin/promote`, `bin/rollback`)
 
@@ -421,8 +433,8 @@ The live `sm` was broken twice on its first night because development and use sh
   directory without a project file and from another repository's worktree; the commands builders need; core alone
   only on purpose; a broken plugin must fail loudly), comparison of read-only commands with the running version
   (differences need `--accept-diff`), refusal while an admission or release step runs, then an atomic switch.
-- After the smoke list, the review gate: every gated write command of the candidate must be approved at its
-  digest (section 8), or promoting would switch it off.
+- After the smoke list, the verdict: one independent verdict on the candidate commit, diffed from the live
+  release (section 8).
 - `bin/rollback` switches back. Development runs as `bin/sm-dev`.
 
 `bin/promote` contains this machine's smoke list. It belongs in the plugin as data (open).

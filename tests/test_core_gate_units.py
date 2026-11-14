@@ -1,25 +1,25 @@
-"""The review gate after the 2026-11-13 review: digests that follow imports, every writer under the gate (core's own
-writers and pipelines too), read-only derived from `writes=`, and the engine's review stops, running steps and
-superseded runs."""
+"""Write units: what a write path's code covers (imports followed into core), every writer running without a
+per-command review file (one verdict per promoted commit replaced it), `sm self reviews` naming the write paths a diff
+reaches, read-only derived from `writes=`, and the engine's review stops, running steps and superseded runs."""
 
 import importlib
 import json
 import sys
-from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
-from steuermaschine import API_VERSION, INTERNAL, OK
+from steuermaschine import API_VERSION, OK, USAGE
 from steuermaschine import native as native_mod
-from steuermaschine.app import Runtime, core_units
+from steuermaschine.app import Runtime, core_units, write_units
 from steuermaschine.config import Project, Settings
 from steuermaschine.engine import Engine, Options, Pipeline, ReviewStop, Step, Subject
 from steuermaschine.helpdoc import H, disagrees
 from steuermaschine.hookspecs import hookimpl
-from steuermaschine.native import NativeCommand, collect, unit
+from steuermaschine.native import collect, unit
 from steuermaschine.plugins import stack_of
-from steuermaschine.testing import fake_providers, invoke
+from steuermaschine.protocols import Result
+from steuermaschine.testing import FakeCommands, fake_providers, invoke
 
 
 @pytest.fixture
@@ -72,46 +72,82 @@ def test_the_digest_follows_imports_across_lib_packages_and_into_core(package):
     assert cmd.code_digest() != before  # a change two imports away voids the verdict
 
 
-def test_only_the_allowlisted_run_lock_may_be_exempt_any_other_exempt_writer_stays_gated(package):
+def git_fake(changed: str, rc: int = 0) -> FakeCommands:
+    """git in /repo: BASE resolves to b*40, HEAD to h*40, and the diff names `changed`."""
+    commands = FakeCommands()
+    commands.on(["git", "-C", "/repo", "rev-parse"], lambda argv: Result(rc, ("h" if argv[-1] == "HEAD^{commit}" else "b") * 40 + "\n", "bad revision" if rc else ""))
+    commands.on(["git", "-C", "/repo", "diff"], Result(0, changed, ""))
+    return commands
+
+
+def runtime_of(plugin, commands: FakeCommands | None = None) -> Runtime:
+    return Runtime(Project(name="p", plugin="unitpkg", root=Path("."), plugins=["unitpkg"]), stack_of(plugin), Settings({}),
+                   _providers=fake_providers(commands=commands or FakeCommands()))
+
+
+def test_every_writer_runs_without_a_review_file_and_only_the_allowlisted_run_lock_is_exempt(package):
     _, _, plugin = package
-    stack = stack_of(plugin)
-    rt = Runtime(Project(name="p", plugin="unitpkg", root=Path("."), plugins=["unitpkg"]), stack, Settings({}), _providers=fake_providers())
-    assert invoke(rt, ["unit", "write"]).exit_code == INTERNAL
-    locked = invoke(rt, ["unit", "lock"])  # declares exempt=, but its path is not on the core's allowlist
-    assert locked.exit_code == INTERNAL and "independent review is" in locked.stderr and locked.stdout == ""
+    rt = runtime_of(plugin)
+    assert invoke(rt, ["unit", "write"]).stdout == "did: written\n"  # no review file exists in the package
+    assert invoke(rt, ["unit", "lock"]).stdout == "did: locked\n"
     assert invoke(rt, ["gate", "run"]).stdout == "did: ran\n"
-    rows = {r["path"]: r for r in json.loads(invoke(rt, ["--format", "json", "self", "reviews"]).stdout)}
-    assert rows["gate run"]["state"] == "exempt" and "the run lock" in rows["gate run"]["detail"]
-    assert rows["unit lock"]["state"] == "missing" and rows["unit write"]["state"] == "missing"
     tree = {r["path"]: r for r in json.loads(invoke(rt, ["--format", "json", "self", "tree"]).stdout)}
     assert tree["sm unit write"]["read_only"] is False and tree["sm unit lock"]["read_only"] is False and tree["sm go"]["read_only"] is True
+    assert frozenset({"gate run"}) == native_mod.EXEMPT_PATHS  # exempt from the writers' lock, unchanged
+    lock, gate = (next(c for c in native_mod.registered(rt) if c.path == p) for p in ("unit lock", "gate run"))
+    assert native_mod.is_exempt(gate) and not native_mod.is_exempt(lock)
+    assert not hasattr(native_mod, "gate_problem")
 
 
-def test_gate_problem_honours_exempt_only_for_allowlisted_paths():
-    class Cmd:
-        writes = True
-        exempt = "any reason"
-
-        def __init__(self, path):
-            self.path = path
-
-        def review_state(self):
-            return "missing", "no review file"
-
-    assert frozenset({"gate run"}) == native_mod.EXEMPT_PATHS
-    assert native_mod.gate_problem(Cmd("gate run"), None) == ""
-    assert "independent review is missing" in native_mod.gate_problem(Cmd("queue drop"), None)
-    assert not native_mod.is_exempt(type("NoFlag", (), {"path": "gate run", "exempt": ""})())
+def test_self_reviews_names_the_write_paths_the_diff_reaches(package):
+    _, _, plugin = package
+    rt = runtime_of(plugin, git_fake("plugins/x/src/unitpkg/other_lib/deep.py\ndocs/README.md\n"))
+    done = invoke(rt, ["--format", "json", "self", "reviews", "--repo", "/repo", "--base", "v1"])
+    found = json.loads(done.stdout)
+    assert done.exit_code == OK and (found["base"], found["head"]) == ("b" * 40, "h" * 40)
+    reached = {r["path"]: r["files"] for r in found["reached"]}
+    assert reached["unit write"] == ["plugins/x/src/unitpkg/other_lib/deep.py"]  # two imports away from area.py
+    assert found["unreached"] == ["docs/README.md"] and "focus add" not in reached
+    text = invoke(rt, ["self", "reviews", "--repo", "/repo", "--base", "v1"]).stdout
+    assert "write path(s) reached" in text and "reached  sm unit write" in text and "in no write path (1): docs/README.md" in text
 
 
-def test_the_cores_own_writers_are_under_the_gate(monkeypatch):
-    # The shipped review files may approve these units; the gate itself is tested against an unapproved review.
-    monkeypatch.setattr(NativeCommand, "review_state", lambda self: ("open", "no verdict (test)"))
+def test_self_reviews_lists_changes_to_the_promote_gate_first(package):
+    _, _, plugin = package
+    rt = runtime_of(plugin, git_fake("bin/promote\nbin/promote_lib.sh\nbin/promote_verdict.py\nbin/rollback\nbin/sm-dev\n"))
+    found = json.loads(invoke(rt, ["--format", "json", "self", "reviews", "--repo", "/repo", "--base", "v1"]).stdout)
+    assert found["gate"] == ["bin/promote", "bin/promote_lib.sh", "bin/promote_verdict.py", "bin/rollback"] and found["unreached"] == ["bin/sm-dev"]
+    text = invoke(rt, ["self", "reviews", "--repo", "/repo", "--base", "v1"]).stdout.splitlines()
+    assert text[1].startswith("GATE CODE (read first") and "bin/promote_verdict.py" in text[1]
+
+
+def test_self_reviews_says_when_the_diff_reaches_no_write_path(package):
+    _, _, plugin = package
+    rt = runtime_of(plugin, git_fake("docs/README.md\n"))
+    found = json.loads(invoke(rt, ["--format", "json", "self", "reviews", "--repo", "/repo", "--base", "v1"]).stdout)
+    assert found["reached"] == [] and found["unreached"] == ["docs/README.md"]
+    assert "reaches no write path: CI covers it; the promote still needs one verdict" in invoke(rt, ["self", "reviews", "--repo", "/repo", "--base", "v1"]).stdout
+
+
+def test_self_reviews_starts_at_the_live_release_and_refuses_without_one(package, tmp_path, monkeypatch):
+    _, _, plugin = package
+    commands = git_fake("")
+    rt = runtime_of(plugin, commands)
+    monkeypatch.delenv("STEUERMASCHINE_RELEASE", raising=False)
+    done = invoke(rt, ["self", "reviews", "--repo", "/repo"])
+    assert done.exit_code == USAGE and "give --base REV" in done.stderr
+    (tmp_path / "stable" / "releases" / "0123456789ab").mkdir(parents=True)
+    (tmp_path / "stable" / "current").symlink_to("releases/0123456789ab")
+    monkeypatch.setenv("STEUERMASCHINE_RELEASE", str(tmp_path / "stable" / "current"))
+    assert invoke(rt, ["self", "reviews", "--repo", "/repo"]).exit_code == OK
+    assert ["git", "-C", "/repo", "rev-parse", "--verify", "0123456789ab^{commit}"] in commands.calls
+    bad = invoke(runtime_of(plugin, git_fake("", rc=128)), ["self", "reviews", "--repo", "/repo", "--base", "nope"])
+    assert bad.exit_code == USAGE and "cannot resolve nope and HEAD" in bad.stderr
+
+
+def test_the_cores_own_writers_run_without_a_review_file_and_are_write_units():
     rt = Runtime(Project(name="p", plugin="none", root=Path(".")), None, {}, {}, fake_providers())
-    for argv in (["focus", "add", "x"], ["focus", "done", "x"], ["ci", "cancel", "7"]):
-        done = invoke(rt, argv)
-        assert done.exit_code == INTERNAL and "independent review is" in done.stderr and "nothing was run" in done.stderr, argv
-    assert rt.providers.store.load("focus", "list") is None
+    assert invoke(rt, ["focus", "add", "x"]).exit_code == OK
     assert {u.path for u in core_units()} == {"review verdict", "focus add", "focus done", "alarm ack", "self migrate-state", "ci cancel"}
     for u in core_units():  # app.py (or github/cli.py) and the core files it imports, named relative to the unit's module
         assert len(u.code_digest()) == 64 and ("engine.py" in u.labels() if u.path != "ci cancel" else "cli.py" in u.labels()), u.path
@@ -195,7 +231,7 @@ def test_superseding_takes_the_older_runs_lock_and_waits_while_it_is_held():
     assert p.store.load("runs.head.demo", old)["status"] == "superseded"
 
 
-def test_a_pipeline_with_a_unit_is_shut_until_it_is_reviewed():
+def test_a_pipeline_with_a_unit_runs_without_a_review_file_and_is_a_write_unit():
     p = fake_providers()
     pl = two_stops(p, ("1" * 64, "2" * 64))
 
@@ -210,15 +246,9 @@ def test_a_pipeline_with_a_unit_is_shut_until_it_is_reviewed():
         def sm_pipelines(self, settings):
             return [pl]
 
-    stack = stack_of(Plugin())
-    shut = Runtime(Project(name="p", plugin="demo", root=Path("."), plugins=["demo"]), stack, Settings({}), _providers=p)
-    done = invoke(shut, ["head", "demo", "/wt"])
-    assert done.exit_code == INTERNAL and "`sm head demo` writes and its independent review is" in done.stderr
-    assert invoke(shut, ["head", "demo", "/wt", "--plan"]).exit_code == OK  # the plan writes nothing and stays open
-    rows = {r["path"] for r in json.loads(invoke(shut, ["--format", "json", "self", "reviews"]).stdout)}
-    assert "head demo" in rows
-    opened = Runtime(replace(shut.project, allow_unreviewed=True), stack, Settings({}), _providers=p)
-    assert invoke(opened, ["head", "demo", "/wt"]).exit_code == OK
+    rt = Runtime(Project(name="p", plugin="demo", root=Path("."), plugins=["demo"]), stack_of(Plugin()), Settings({}), _providers=p)
+    assert invoke(rt, ["head", "demo", "/wt"]).exit_code == OK  # it stops at its first review stop, a planned stop
+    assert "head demo" in {u.path for u in write_units(rt)}
 
 
 def test_imported_files_are_ordered_by_package_path_not_install_location(tmp_path):

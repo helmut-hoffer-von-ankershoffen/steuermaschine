@@ -140,10 +140,10 @@ def test_refuse_and_wait_become_exit_codes_and_in_json_an_error_object():
     assert out.exit_code == 75 and json.loads(out.stdout)["code"] == 75 and "CI" in json.loads(out.stdout)["hint"]
 
 
-def test_a_write_command_is_off_until_its_review_is_approved():
+def test_a_write_command_runs_without_a_per_command_review_file():
+    """Review is one verdict per promoted commit (bin/promote_verdict.py); nothing checks a review file at run time."""
     out = invoke(rt(), ["demo", "write", "x"])
-    assert out.exit_code == 70 and "independent review is missing" in out.stderr and "reviews/demo-write.md" in out.stderr and "nothing was run" in out.stderr
-    assert invoke(rt(allow_unreviewed=True), ["demo", "write", "x"]).stdout == "did: x\n"  # a constructor argument, for tests
+    assert (out.exit_code, out.stdout) == (0, "did: x\n")
 
 
 @pytest.fixture
@@ -180,22 +180,11 @@ def reviewed_package(tmp_path, monkeypatch):
     return package, module.gated_write.__sm_native__, Gated()
 
 
-def test_the_verdict_must_be_the_exact_last_line_and_name_the_code_it_approved(reviewed_package):
+def test_no_review_file_is_read_at_run_time(reviewed_package):
     package, cmd, _ = reviewed_package
-    review = package / "reviews" / "gated-write.md"
-    digest = cmd.code_digest()
-    assert len(digest) == 64 and [p.name for p in cmd.code_files()] == ["area.py", "__init__.py"]
-    for text, state in (("looked at it\n", "open"),
-                        (f"REVIEWED: sha256={digest}\nVERDICT: REJECT\n", "open"),
-                        (f"REVIEWED: sha256={digest}\nVERDICT: APPROVE by me, mostly\n", "open"),  # not exactly the line
-                        (f"REVIEWED: sha256={digest}\nVERDICT: APPROVE\nPS: one more thing\n", "open"),  # not the last line
-                        ("VERDICT: APPROVE\n", "stale"),  # names no code
-                        (f"REVIEWED: sha256={'0' * 64}\nVERDICT: APPROVE\n", "stale"),
-                        (f"what I checked\n\nREVIEWED: sha256={digest}\nVERDICT: APPROVE\n\n", "approved")):
-        review.write_text(text)
-        assert cmd.review_state()[0] == state, text
-    (package / "area_lib" / "__init__.py").write_text("VALUE = 2\n")  # the code changes after the approval
-    assert cmd.review_state()[0] == "stale" and not cmd.reviewed()
+    (package / "reviews" / "gated-write.md").write_text("VERDICT: REJECT\n")  # a stale or rejecting file changes nothing
+    assert not hasattr(cmd, "review_state") and not hasattr(cmd, "reviewed")
+    assert len(cmd.code_digest()) == 64 and [p.name for p in cmd.code_files()] == ["area.py", "__init__.py"]
 
 
 def test_an_explicit_review_unit_limits_the_digest_to_the_files_the_command_executes(reviewed_package):
@@ -229,55 +218,23 @@ def test_a_write_command_that_imports_a_library_outside_its_review_unit_is_found
     assert lint.review_unit_gaps(replace(cmd, files=("area_lib", "other_lib"))) == []
 
 
-def test_no_environment_variable_and_no_settings_file_can_switch_the_review_gate_off(reviewed_package, tmp_path, monkeypatch, capsys):
-    """Through the real entry point, as an agent would try it."""
+def test_a_write_command_runs_through_the_real_entry_point_without_a_review_file(reviewed_package, tmp_path, monkeypatch, capsys):
     from steuermaschine import app, plugins
 
     _, _, plugin = reviewed_package
     plugins.register(plugin)
     work = tmp_path / "work"
     work.mkdir()
-    conf = tmp_path / "xdg" / "steuermaschine"
-    conf.mkdir(parents=True)
+    (tmp_path / "xdg" / "steuermaschine").mkdir(parents=True)
+    (tmp_path / "xdg" / "steuermaschine" / "config.toml").write_text('[project]\nname = "p"\nplugin = "gated"\n')
     monkeypatch.chdir(work)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     monkeypatch.setenv("STEUERMASCHINE_HOME", str(tmp_path / "state"))
     for var in ("STEUERMASCHINE_PLUGIN", "STEUERMASCHINE_PROJECT", "SM_FORMAT"):
         monkeypatch.delenv(var, raising=False)
-    plain = '[project]\nname = "p"\nplugin = "gated"\n'
-
-    def run():
-        with pytest.raises(SystemExit) as stop:
-            app.main(["gated", "write"])
-        return stop.value.code, capsys.readouterr()
-
-    (conf / "config.toml").write_text(plain)
-    for name in ("SM_ALLOW_UNREVIEWED_WRITES", "SM_ALLOW_UNREVIEWED", "SM_PROJECT__ALLOW_UNREVIEWED", "SM_GATED__ALLOW_UNREVIEWED"):
-        monkeypatch.setenv(name, "1")
-        code, out = run()
-        assert code == 70 and "written" not in out.out, name  # refused by the gate, or loudly as an unknown setting: never run
-        monkeypatch.delenv(name)
-    for where in (conf / "config.toml", work / "steuermaschine.toml"):
-        for text in (plain + "allow_unreviewed = true\n", "allow_unreviewed_writes = true\n" + plain, plain + "\n[native]\nallow_unreviewed = true\n"):
-            where.write_text(text)
-            code, out = run()
-            assert code == 70 and "written" not in out.out, (where.name, text)
-        where.write_text(plain)
-    code, out = run()
-    assert code == 70 and "independent review is missing" in out.err
-    assert app.runtime().project.allow_unreviewed is False
-
-
-def test_self_reviews_lists_write_commands_with_state_and_digest(reviewed_package):
-    package, cmd, plugin = reviewed_package
-    stack = stack_of(plugin)
-    r = Runtime(Project(name="p", plugin="gated", root=Path("."), plugins=["gated"]), stack, Settings({}), _providers=fake_providers())
-    rows = json.loads(invoke(r, ["--format", "json", "self", "reviews"]).stdout)
-    row = next(row for row in rows if row["path"] == "gated write")
-    assert (row["path"], row["state"], row["digest"]) == ("gated write", "missing", cmd.code_digest())
-    assert {"review verdict", "focus add", "focus done", "alarm ack", "ci cancel"} <= {row["path"] for row in rows}  # the core's writers are listed too
-    (package / "reviews" / "gated-write.md").write_text(f"REVIEWED: sha256={cmd.code_digest()}\nVERDICT: APPROVE\n")
-    assert invoke(r, ["gated", "write"]).stdout == "did: written\n"
+    with pytest.raises(SystemExit) as stop:
+        app.main(["gated", "write"])
+    assert stop.value.code == 0 and "written" in capsys.readouterr().out
 
 
 def test_a_tick_command_gets_loop_and_repeats_with_the_clock():

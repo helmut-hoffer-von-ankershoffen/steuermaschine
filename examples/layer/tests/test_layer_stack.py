@@ -4,8 +4,8 @@
     plugins = ["toy"]               the project plugin (examples/toy)
     plugins = ["toy", "layer"]      the layer on top (examples/layer): LATER ENTRIES ARE OUTER LAYERS
 
-For each stack: `sm --help`, bare `sm` (go), `sm self reviews` and the review gate of the one write command
-(`sm sim reset`, which the toy registers with writes=True and which has no approved review).
+For each stack: `sm --help`, bare `sm` (go), `sm self reviews` (which write paths a diff reaches) and the one write
+command (`sm sim reset`, which the toy registers with writes=True; it runs without a per-command review file).
 """
 
 import json
@@ -13,7 +13,7 @@ import subprocess
 
 import pytest
 
-from steuermaschine import INTERNAL, app
+from steuermaschine import app
 
 STACKS = {"core": '["none"]', "project": '["toy"]', "layered": '["toy", "layer"]'}
 
@@ -86,43 +86,43 @@ def test_the_layers_go_report_hook_runs_only_when_the_layer_is_loaded(project, c
     assert "change freeze" not in sm(capsys)[1]
 
 
-def test_self_reviews_lists_the_projects_write_command_in_every_stack_that_has_it(project, capsys):
-    core_units = {"reviews/core-local-writers.md", "reviews/ci-cancel.md", "reviews/lim.md", "reviews/gate-run.md"}  # the core's own writers, in every stack
-    project("core")
-    code, out, _ = sm(capsys, "--format", "json", "self", "reviews")
-    assert code == 0 and {r["file"] for r in json.loads(out)} == core_units
-    rows = {}
-    for stack in ("project", "layered"):
-        project(stack)
-        code, out, _ = sm(capsys, "--format", "json", "self", "reviews")
-        assert code == 0
-        rows[stack] = [(r["path"], r["file"], r["state"], r["digest"], r["files"]) for r in json.loads(out) if r["file"] not in core_units]
-    path, file, state, digest, files = rows["project"][0]
-    assert (path, file, state) == ("sim reset", "reviews/sim-reset.md", "missing") and "reset.py" in files and len(digest) == 64
-    assert rows["layered"] == rows["project"]  # a layer changes neither the review unit nor its digest
+def test_self_reviews_names_the_projects_write_command_when_a_diff_reaches_it(project, capsys):
+    for stack in ("core", "project", "layered"):
+        repo = project(stack)
+        mod = repo / "examples" / "toy" / "src" / "steuermaschine_toy" / "reset.py"
+        mod.parent.mkdir(parents=True, exist_ok=True)
+        mod.write_text(f"# {stack}\n")
+        git(repo, "add", str(mod))
+        git(repo, "commit", "-q", "-m", f"touch reset in {stack}")
+        code, out, err = sm(capsys, "--format", "json", "self", "reviews", "--base", "HEAD~1")
+        found = json.loads(out)
+        assert code == 0, err
+        reached = {r["path"]: r["files"] for r in found["reached"]}
+        assert found["changed"] == ["examples/toy/src/steuermaschine_toy/reset.py"]
+        if stack == "core":  # the core alone has no sim command: the change reaches no write path
+            assert reached == {} and found["unreached"] == found["changed"]
+        else:  # a layer changes nothing about which code a write path covers
+            assert reached == {"sim reset": ["examples/toy/src/steuermaschine_toy/reset.py"]} and found["unreached"] == [], stack
 
 
-def test_the_write_command_is_refused_by_its_review_gate_and_runs_nothing(project, capsys, tmp_path):
+def test_the_write_command_runs_in_every_stack_that_has_it(project, capsys, tmp_path):
     world = tmp_path / "repo" / ".sim" / "world.json"
     project("core")
     code, _, err = sm(capsys, "sim", "reset")
     assert code == 2 and "sim" in err  # the core alone has no such command
     for stack in ("project", "layered"):
-        repo = project(stack)
+        project(stack)
         world.parent.mkdir(exist_ok=True)
         world.write_text('{"ci": {"abc": "green"}, "prs": [], "remote": {}, "tags": {}}\n')
         code, out, err = sm(capsys, "sim", "reset")
-        assert code == INTERNAL and "independent review is missing" in err and "reviews/sim-reset.md" in err and "nothing was run" in err, stack
-        assert '"abc"' in world.read_text() and out == "", stack  # the world is untouched
-        code, out, _ = sm(capsys, "--format", "json", "sim", "reset")
-        assert code == INTERNAL and json.loads(out)["code"] == INTERNAL
-        assert repo.exists()
+        assert code == 0 and "cleared ci" in out, (stack, err)
+        assert '"abc"' not in world.read_text(), stack
 
 
-def test_the_layer_wraps_engine_steps_but_cannot_open_the_review_gate(project, capsys, monkeypatch):
+def test_the_layer_wraps_engine_steps_but_not_a_native_write_command(project, capsys, monkeypatch):
     """The layer's `sm_step_run` wrapper is the outermost around every pipeline step; a native write command is
-    not a pipeline step, so no layer setting runs it without its review."""
+    not a pipeline step, so no layer setting stops or changes it."""
     project("layered")
     for name in ("SM_LAYER__FROZEN", "SM_LAYER__WINDOW_OPEN"):
         monkeypatch.setenv(name, "false")
-        assert sm(capsys, "sim", "reset")[0] == INTERNAL
+        assert sm(capsys, "sim", "reset")[0] == 0

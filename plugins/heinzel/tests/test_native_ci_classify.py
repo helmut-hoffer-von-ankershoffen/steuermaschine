@@ -33,15 +33,6 @@ def service(monkeypatch, reply=(200, ANSWER, None)):
     return posts
 
 
-def test_without_its_review_the_command_does_not_run(tmp_path, monkeypatch):
-    # an unreviewed state, set explicitly: the test must not depend on what the review file says today
-    from steuermaschine.native import NativeCommand
-    monkeypatch.setattr(NativeCommand, "review_state", lambda self: ("open", "no verdict"))
-    posts, fake = service(monkeypatch), FakeGh()
-    out = invoke(runtime_for(tmp_path, fake, reviewed=False, ci_classifier=True, ci_classifier_key=KEY), ["ci", "classify", str(RUN)])
-    assert out.exit_code == 70 and "review" in out.stderr and posts == [] and fake.calls == []
-
-
 def test_off_by_default_nothing_is_sent_and_no_key_is_read(tmp_path, monkeypatch):
     posts, fake = service(monkeypatch), FakeGh().on("--log-failed", LOG)
     out = invoke(runtime_for(tmp_path, fake), ["ci", "classify", str(RUN)])

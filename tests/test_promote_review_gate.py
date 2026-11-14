@@ -1,6 +1,7 @@
 """bin/review_gate.py: the review gate of a promote (Fable B1). Every gated write command of the candidate must be
 approved; an allow-list entry needs unit, reason, owner and expiry, and never covers a daemon, queue, head or release
-command."""
+command. bin/promote no longer runs it (one commit verdict instead: bin/promote_verdict.py); it goes with the
+review files."""
 
 from __future__ import annotations
 
@@ -54,11 +55,3 @@ def test_an_expired_or_incomplete_entry_refuses(tmp_path):
     incomplete = '[[allow]]\nunit = "reviews/note.md"\nreason = "x"\n'
     done = run(tmp_path, [row("note", "reviews/note.md")], incomplete)
     assert done.returncode == 1 and "lacks owner, expires" in done.stderr
-
-
-def test_promote_runs_the_gate_and_the_shipped_allow_list_is_empty():
-    promote = (GATE.parent / "promote").read_text()
-    assert 'bin/review_gate.py" "$reviews_json" "$rel/src/bin/promote-allow.toml"' in promote
-    assert promote.index("review_gate.py") < promote.index('[ "$check" = 0 ] ||')  # --check shows the gate too
-    shipped = (GATE.parent / "promote-allow.toml").read_text()
-    assert "[[allow]]" not in [line.strip() for line in shipped.splitlines() if not line.startswith("#")]

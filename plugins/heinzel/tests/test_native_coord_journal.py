@@ -1,12 +1,11 @@
 """`sm note`, `sm beads stamp`, `sm beads stamp-released` and the two functions other areas import. The assertions of
 the former note and stamp tests moved here; processes are the fakes' (no bd, no gh, no git, no network)."""
-# ruff: noqa: F811  (a fixture imported from coord_kit is also a test parameter)
 
 import json
 import re
 
 import pytest
-from coord_kit import NOW, app_runtime, home, native_runtime, ok, unreviewed  # noqa: F401  (fixtures)
+from coord_kit import NOW, app_runtime, home, native_runtime, ok  # noqa: F401  (fixtures)
 
 from steuermaschine import journal as core_journal
 from steuermaschine.native import using
@@ -40,12 +39,6 @@ def test_note_json_is_one_document_of_the_model(tmp_path):
     done = invoke(app_runtime(tmp_path), ["--format", "json", "note", "a", "b"])
     doc = s.Noted.model_validate(json.loads(done.stdout))
     assert doc.line.endswith(" a b") and doc.document == str(tmp_path / "AGENTS.md")
-
-
-def test_note_is_off_until_its_review_is_approved(tmp_path, unreviewed):
-    done = invoke(app_runtime(tmp_path, allow=False), ["note", "x"])
-    assert done.exit_code == 70 and "reviews/note.md" in done.stderr
-    assert not (tmp_path / "AGENTS.md").exists()
 
 
 def test_the_function_note_writes_the_same_line_format_and_returns_it(tmp_path):
@@ -212,13 +205,6 @@ def test_beads_stamp_released_command_in_text_and_json(tmp_path):
     assert done.stdout.splitlines() == ["would stamp heinzel-management-a: released_in: v0.1.0 released_at=P", "sweep: 1 bead(s) stamped released"]
     done = invoke(app_runtime(tmp_path, world(beads=beads)), ["--format", "json", "beads", "stamp-released", "--version", "0.1.0"])
     assert s.StampSweep.model_validate(json.loads(done.stdout)).stamped == 1
-
-
-def test_write_commands_of_the_journal_are_off_until_reviewed(tmp_path, unreviewed):
-    for args, name in ((["beads", "stamp", "abc", "--merged", "5"], "beads-stamp.md"), (["beads", "stamp-released"], "beads-stamp-released.md")):
-        c = world()
-        done = invoke(app_runtime(tmp_path, c, allow=False), args)
-        assert done.exit_code == 70 and f"reviews/{name}" in done.stderr and not c.calls
 
 
 # ----------------------------------------------------------------------------- configuration

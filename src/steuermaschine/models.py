@@ -165,15 +165,23 @@ class PluginRow(Model):
     wrappers: list[str] = []
 
 
-class ReviewRow(Model):
-    """One native write command and the state of its independent review."""
+class ReachedPath(Model):
+    """One write path a change reaches, and the changed files its code covers."""
 
     path: str
-    file: str
-    state: str  # approved | open | stale | missing | exempt (a writer the gate cannot hold; the detail says why)
-    detail: str = ""
-    digest: str = ""  # sha256 of the code the verdict must name
     files: list[str] = []
+
+
+class ReviewReach(Model):
+    """What the diff since the last promoted commit reaches (`self reviews`): the write paths whose code it changes,
+    so the one independent reviewer of the promote knows what to read first."""
+
+    base: str  # the commit the diff starts at: the last promoted one, or --base
+    head: str  # the candidate commit
+    changed: list[str] = []  # every file the diff changes, as git names it
+    gate: list[str] = []  # changed files of the promote gate itself (bin/promote*, bin/rollback, bin/check): read them first
+    reached: list[ReachedPath] = []
+    unreached: list[str] = []  # changed files no write path's code covers: tests, docs, read-only code (CI covers them)
 
 
 class HookRow(Model):
@@ -275,5 +283,5 @@ class LintFindings(RootModel[list[str]]):
 
 
 MODELS: dict[str, type[BaseModel]] = {m.__name__: m for m in (
-    Error, Alarm, GoReport, RunReport, RunState, StepRow, ToolMapRow, ToolGaps, EffectiveConfig, PluginRow, HookRow, ReviewRow, Nothing, Verdict,
+    Error, Alarm, GoReport, RunReport, RunState, StepRow, ToolMapRow, ToolGaps, EffectiveConfig, PluginRow, HookRow, ReviewReach, Nothing, Verdict,
     ReviewWait, FocusList, AlarmAcks, StateMigration, ModelNames, JsonSchema, GateRow, TreeRow, LintFindings)}

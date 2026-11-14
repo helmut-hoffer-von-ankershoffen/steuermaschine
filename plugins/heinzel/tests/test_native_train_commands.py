@@ -330,17 +330,9 @@ def test_the_former_deferred_list_is_read_only_and_tolerant(tmp_path):
 
 
 # ----------------------------------------------------------------------------- gates
-def test_the_write_commands_refuse_without_an_approved_review_and_status_does_not(tmp_path, monkeypatch):
-    from steuermaschine.native import NativeCommand
-
-    # an unreviewed state, set explicitly: the test must not depend on what reviews/daemon-train.md says today
-    monkeypatch.setattr(NativeCommand, "review_state", lambda self: ("open", f"the last line of reviews/{self.review_file} is not exactly the verdict line"))
+def test_status_and_plan_only_read(tmp_path, monkeypatch):
     gh = FakeGh()
     rt = make(tmp_path, monkeypatch, gh, reviewed=False)
-    for args in (["daemon", "train"], ["release", "train", "clear", "0.9.36"], ["release", "train", "next"], ["release", "train", "next", "--start"],
-                 ["release", "train", "resume-ci"]):
-        out = invoke(rt, args)
-        assert out.exit_code == 70 and "review" in out.stderr, (args, out)
     assert invoke(rt, ["release", "train", "status"]).exit_code == 0 and gh.calls == []
     assert invoke(rt, ["release", "train", "plan", "1"]).exit_code == 0
 

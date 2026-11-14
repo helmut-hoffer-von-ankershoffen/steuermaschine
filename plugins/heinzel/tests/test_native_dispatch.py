@@ -94,16 +94,6 @@ def test_status_without_runs_and_with_a_paused_admission(rt, tmp_path):
     assert "9 dispatch dispatch e2e web-2 [3/3 green] (since 21:00)" in text and "admission paused" in text
 
 
-def test_write_commands_are_off_until_their_review_is_approved(rt, monkeypatch):
-    from steuermaschine.native import NativeCommand
-
-    monkeypatch.setattr(NativeCommand, "review_state", lambda self: ("open", f"reviews/{self.review_file} has no verdict"))
-    for argv in (["ci", "one", "dispatch", "validation/clock", "--suite", "web-2"], ["ci", "one", "rerun", "589"], ["head", "validate", "."],
-                 ["ci", "window", "run", "."], ["ci", "window", "release"]):
-        off = invoke(rt(reviewed=False), argv)
-        assert off.exit_code == 70 and "writes and its independent review is open" in off.stderr and "nothing was run" in off.stderr, argv
-
-
 def test_the_review_units_and_files_of_the_write_commands():
     by_path = {cmd.path: cmd for cmd in (fn.__sm_native__ for fn in (dispatch.ci_one_dispatch, dispatch.ci_one_rerun, window.head_validate,
                                                                      window.ci_window_run, window.ci_window_release))}

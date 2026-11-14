@@ -1,12 +1,11 @@
 """`sm doc ask`, `sm doc asks`, `sm doc asks-ack`. The assertions of the former ask and audit tests moved here; the
 transcript fixture is the old test's (synthetic records in the transcript's shape)."""
-# ruff: noqa: F811  (a fixture imported from coord_kit is also a test parameter)
 
 import json
 import os
 
 import pytest
-from coord_kit import NOW, app_runtime, home, native_runtime, unreviewed  # noqa: F401  (fixtures)
+from coord_kit import NOW, app_runtime, home, native_runtime  # noqa: F401  (fixtures)
 
 from steuermaschine import journal as core_journal
 from steuermaschine.native import using
@@ -87,14 +86,6 @@ def test_doc_ask_command_text_json_and_refusals(tmp_path):
     (tmp_path / "AGENTS.md").write_text("## no table here\n")
     done = invoke(app_runtime(tmp_path), ["doc", "ask", "x"])
     assert done.exit_code == 1 and "no asks table" in done.stderr and (tmp_path / "AGENTS.md").read_text() == "## no table here\n"
-
-
-def test_the_write_commands_are_off_until_reviewed(tmp_path, unreviewed):
-    (tmp_path / "AGENTS.md").write_text(TABLE)
-    for args, name in ((["doc", "ask", "x"], "doc-ask.md"), (["doc", "asks-ack", "2026-01-01T10:09:00.000Z"], "doc-asks-ack.md")):
-        done = invoke(app_runtime(tmp_path, allow=False), args)
-        assert done.exit_code == 70 and f"reviews/{name}" in done.stderr
-    assert (tmp_path / "AGENTS.md").read_text() == TABLE
 
 
 # ----------------------------------------------------------------------------- the audit

@@ -539,18 +539,6 @@ def test_pr_refuses_a_long_title_an_empty_body_ci_meta_problems_and_a_push_gate_
     assert not any("git push" in " ".join(c) for c in gh.calls)
 
 
-def test_a_write_command_of_this_area_refuses_without_an_approved_review(rt, gh, monkeypatch):
-    from steuermaschine.native import NativeCommand
-
-    # an unreviewed state, set explicitly: the test must not depend on what reviews/head-*.md says today
-    monkeypatch.setattr(NativeCommand, "review_state", lambda self: ("open", "no verdict"))
-    rt.project.allow_unreviewed = False
-    for argv in (["head", "ship", "801"], ["head", "pr", "abc", "fix: x", "--live"]):
-        out = invoke(rt, argv)
-        assert out.exit_code == 70 and "review" in out.stderr, argv
-    assert not gh.calls and keys(rt) == []
-
-
 @pytest.mark.parametrize("live", [False, True])
 @pytest.mark.parametrize("field", ["title", "body", "branch", "subject", "adopted title", "adopted body"])
 def test_pr_never_prints_a_term_from_any_field(rt, gh, tmp_path, worktree, checked, monkeypatch, field, live):
