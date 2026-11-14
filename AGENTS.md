@@ -2,14 +2,16 @@
 
 You work on `steuermaschine` (`sm`), a Typer CLI that steers changes from commit to live release. Where a rule here blocks you, say so in your hand-over; do not work around it.
 
-## Two repositories
+## One repository
 
-- **`steuermaschine-dev`** is private and is where all work happens. Every clone and worktree has it as `origin`.
-- **`steuermaschine`** is public and holds snapshot commits only: one new commit per published version, whose tree is a proven -dev commit.
+All work happens here, in the public `steuermaschine` repository: branch from `origin/main`, open a pull request,
+merge after CI and review. The earlier private history is archived and never comes back: the public history starts at
+the commit in `scripts/public-root`, and both the pre-push hook and CI refuse any commit that does not descend from it
+(`scripts/check_public_root.py`). Push branches only; tags come from releases.
 
-Never merge, cherry-pick or push a -dev commit, branch, tag or ref to the public repository. Its history carries private identities. Publishing is a separate procedure that the coordinator runs: leak-check the tree, build one snapshot commit on the public main, push it as a fast-forward, tag from the public repository.
-
-Everything in the tree becomes public with the next snapshot. Write nothing into it that must stay private.
+Everything you commit is public at once. Write nothing that must stay private: no names, emails, home paths
+(`~/...` instead), machine names or private repository names. `scripts/check_confidentiality.py` (tree and
+`--messages`) and gitleaks run in CI on every push and pull request. Commit with the GitHub noreply identity.
 
 ## Layout
 
@@ -87,7 +89,7 @@ Conventional Commits, one area per commit, subject at most 72 characters. End th
 
 ## Never
 
-- Push to the public repository, or to `main` or the integration branch of -dev.
+- Push to `main` (only the integrator does, after CI and review), push a tag, or push anything from the archived private history (the hooks refuse it).
 - Edit the stable install; it changes only through `bin/promote` and `bin/rollback`.
 - Edit a verdict line or `tests/gate_known.json` by hand.
 - Change release commands while a release is in flight.
