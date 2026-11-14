@@ -29,7 +29,7 @@ class SkillsSettings(BaseModel):
     skills_link_dirs: list[str] = Field([], description="Directories that get one symbolic link per skill (the agents' skill directories).")
     # old name kept: agent types of the skills on disk
     skills_allow_words: list[str] = Field(["hz-builder", "hz-chore"], description="Words that look like old tool names and are not (agent types, flags).")
-    skills_unlisted_ok: list[str] = Field(["self", "tools", "review", "focus"], description="Command paths (and everything below them) that no skill has to name.")
+    skills_unlisted_ok: list[str] = Field(["self", "tools", "review", "focus", "work"], description="Command paths (and everything below them) that no skill has to name.")
 
 
 SKILLS = Group("doc skills", H(

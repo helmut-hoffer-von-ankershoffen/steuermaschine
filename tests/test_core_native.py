@@ -407,3 +407,21 @@ def test_a_native_command_finds_the_registered_commands_through_its_runtime():
     assert invoke(rt(), ["demo", "list"]).exit_code == 0
     assert {"demo list", "demo write", "daemon demo"} <= set(PEERS)  # the stack's registry, without importing it
     assert NativeRuntime(fake_providers(), {}, None).commands() == []  # a bare runtime knows no commands
+
+
+def test_an_alias_mounts_a_group_under_a_second_name_and_skips_a_missing_target():
+    import typer.main
+
+    from steuermaschine.native import Alias, mount_aliases
+
+    app, beads, focus = typer.Typer(), typer.Typer(), typer.Typer()
+    beads.command("run")(lambda: None)
+    focus.command("list")(lambda: None)
+    app.add_typer(beads, name="beads")
+    app.add_typer(focus, name="focus")
+    root = typer.main.get_command(app)
+    run = root.commands["beads"].commands["run"]
+    mount_aliases(root, [Alias("work", "beads", "work: both.\nmore"), Alias("work focus", "focus"), Alias("gone", "nothing")])
+    assert root.commands["work"].commands["run"] is run and set(root.commands["work"].commands) == {"run", "focus"}
+    assert root.commands["work"].short_help == "work: both."
+    assert set(root.commands["beads"].commands) == {"run"} and "gone" not in root.commands

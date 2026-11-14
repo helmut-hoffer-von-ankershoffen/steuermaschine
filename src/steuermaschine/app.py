@@ -713,6 +713,7 @@ def command_tree(rt: Runtime) -> Any:
     if native_app is not None:  # after the Typer apps: a native command replaces whatever has its path; groups merge
         built = typer.main.get_command(native_app)
         _merge_deep(root, built)
+        native_mod.mount_aliases(root, natives(rt))
         rt.plugin_paths |= {c.path.split()[0] for c in (rt.plugin.native(rt.settings) if rt.plugin else [])} - RESERVED
     dispatch.add_format_option(root, choose_format)  # `--format` after the command, for every command of every layer
     return root
