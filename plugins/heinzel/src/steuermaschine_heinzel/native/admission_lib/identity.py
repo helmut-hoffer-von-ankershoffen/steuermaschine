@@ -8,6 +8,8 @@ The moved code refers to this module as `hzlib`, the name it had, so its lines s
 
 from __future__ import annotations
 
+import re
+
 OWNER = "helmut-hoffer-von-ankershoffen"
 CORE = f"{OWNER}/heinzel"
 PLUGINS = f"{OWNER}/heinzel-plugins"
@@ -22,3 +24,22 @@ def split_key(tokens: list[str] | str) -> tuple[str, str, str]:
     if prefix not in SHORT or not number.isdigit():
         raise ValueError(f"not a PR: {' '.join(words)}")
     return SHORT[prefix], number, f"{prefix} #{number}" if prefix else number
+
+
+def known_repo(url: str) -> str | None:
+    """The project repository (a value of SHORT) that a git remote URL names, or None: read from the remote, not typed."""
+    path = re.sub(r"^[a-z+]+://[^/]+/|^[^@/]+@[^:]+:", "", url.strip()).removesuffix("/").removesuffix(".git")
+    found = {v.lower(): v for v in SHORT.values()}
+    return found.get(path.lower())
+
+
+def repo_of_checkout(commands, cwd: str | None = None) -> str | None:
+    """The project repository the checkout at `cwd` (default: the current directory) has as origin; None when it has none or an unknown one."""
+    done = commands.run(["git", "remote", "get-url", "origin"], cwd=cwd, timeout=20)
+    return known_repo(done.out) if not done.rc else None
+
+
+def pr_key(repo: str, number: int | str) -> str:
+    """The PR key `split_key` reads: the bare number for the core repository, else `WORD NUMBER` (`plugins 38`)."""
+    word = next((w for w, r in SHORT.items() if w and r.lower() == repo.lower()), "")
+    return f"{word} {number}" if word and repo.lower() != CORE.lower() else str(number)

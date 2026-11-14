@@ -26,6 +26,13 @@ from ..admission_lib import identity
 CORE = identity.CORE
 PLUGINS = identity.PLUGINS
 split_key = identity.split_key
+
+
+def checkout_repo() -> str | None:
+    """The project repository of the current directory's origin (a bare PR number there means that repository)."""
+    return identity.repo_of_checkout(EDGE.commands) if EDGE.commands is not None else None
+
+
 RUN_URL = re.compile(r"/runs/(\d+)")
 FAILED = ("FAILURE", "CANCELLED", "TIMED_OUT")
 TEST = re.compile(r"FAILED (\S+::\S+)|^\s*FAIL\s+(\S+ > .+)$|^\s*\d+\) (\[[^\]]+\] › .+?)(?: \(\d|$)|✘\s+\d+ (\[[^\]]+\] › .+?)(?: \(\d|$)")  # noqa: RUF001
