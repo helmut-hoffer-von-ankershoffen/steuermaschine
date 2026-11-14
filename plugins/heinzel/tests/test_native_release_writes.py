@@ -145,25 +145,25 @@ def test_the_release_writers_reach_the_command_module_the_release_library_and_th
     assert len(found) >= 3
     for unit in found:
         names = {name.removeprefix("steuermaschine_heinzel/native/") for name in unit.files}
-        assert {"release.py", "release_lib/runner.py", "release_lib/candidate_policy.py", "release_lib/approved.py", "release_lib/moved_map.py", "queue_lib/hzlib.py",
+        assert {"release.py", "release_lib/runner.py", "release_lib/candidate_policy.py", "queue_lib/core_policy.py", "release_lib/moved_map.py", "queue_lib/hzlib.py",
                 "queue_lib/merge_train.py", "queue_lib/release_candidate.py"} <= names, unit.path
         assert not any(name.startswith("release_read") for name in names), unit.path
 
 
-def test_a_repin_reaches_every_release_writer_because_the_reviewed_sources_are_in_their_reach():
+def test_the_policy_reader_reaches_every_release_writer_and_no_copy_of_core_is_kept():
+    """The pins are Core's reviewed release policy at the checked commit: the plugin keeps no copy of Core's files, and
+    a change to the reader of that policy (queue_lib/core_policy.py) reaches every release write command."""
     from steuermaschine.reviewgraph import reach, reached_by
     from steuermaschine_heinzel import native
-    from steuermaschine_heinzel.native.release_lib import approved
+    from steuermaschine_heinzel.native.queue_lib import core_policy
 
-    on_disk = sorted(p for p in approved.DIRECTORY.iterdir() if p.is_file())
-    assert on_disk == sorted(approved.file(path) for path in approved.FILES) and len(on_disk) == 2  # no reviewed file that the table does not name
+    lib = Path(core_policy.__file__).resolve().parent.parent / "release_lib"
+    assert not (lib / "approved_sources").exists() and not (lib / "approved.py").exists()
     wanted = {"release resume", "release plugin", "release drop"}  # not the admission route (release admit ...): its own unit
     found = reach(c for c in native.commands() if getattr(c, "writes", False) and c.path in wanted)
     assert {unit.path for unit in found} == wanted
-    for source in on_disk:  # the reviewed sources are data files: no import names them, the whole release library is reached
-        changed = f"plugins/heinzel/src/steuermaschine_heinzel/native/release_lib/{approved.DIRECTORY.name}/{source.name}"
-        assert set(reached_by(found, [changed])) == wanted, source.name
-        assert reached_by(found, [f".github/workflows/{source.name}"]) == {}  # a file of the same name elsewhere is another file
+    reader = "plugins/heinzel/src/steuermaschine_heinzel/native/queue_lib/core_policy.py"
+    assert set(reached_by(found, [reader])) == wanted
 
 
 def typed(rt, monkeypatch, *args):

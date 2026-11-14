@@ -320,7 +320,7 @@ def head_cases_collect(
     repo: Path | None = typer.Option(None, "--repo", help="Git repository holding the tree (default: setting core_repo_dir)."),
     tree: str = typer.Option(..., "--tree", help="The exact tree (or commit) to collect on."),
     selection: Path = typer.Option(..., "--selection", help="JSON {lane: [test ids]}."),
-    lane: str = typer.Option(..., "--lane", help="The lane of the selection to collect: python, python312, macos, browser or web."),
+    lane: str = typer.Option(..., "--lane", help="The lane of the selection to collect: one of the focused lanes of Core's release policy at TREE."),
     output: Path = typer.Option(..., "--output", "-o", help="The JUnit file to write."),
     python: str | None = typer.Option(None, "--python", help="Interpreter with the checkout's test dependencies (default: this command's own)."),
     node_modules: Path | None = typer.Option(None, "--node-modules", help="web/node_modules for the web lane."),

@@ -9,9 +9,8 @@ import subprocess
 import zipfile
 from datetime import datetime
 
-from ..queue_lib import hzlib
+from ..queue_lib import core_policy, hzlib
 from ..queue_lib import release_candidate as strict
-from . import candidate_policy as policy
 from . import edge  # moved: records, processes and what used to be separate scripts
 
 SCHEMA = 'candidate-capacity-audit/v1'
@@ -99,6 +98,12 @@ def annotations(job):
     raise InvalidCapacity('annotation inventory exceeds bound')
 
 
+def reviewed(head):
+    """Core's reviewed release policy at the exact release head: the pins and the inventory (never a local copy)."""
+    require(strict.valid_sha(head), 'invalid release head identity')
+    return core_policy.at_commit_api(get, head)
+
+
 def source_evidence(run_id, attempt):
     run = get(f'actions/runs/{run_id}/attempts/{attempt}')
     candidates = paged(f'actions/workflows/ci.yml/runs?head_sha={run.get("head_sha")}', 'workflow_runs')
@@ -122,7 +127,8 @@ def source_evidence(run_id, attempt):
     require(type(pr_number) is int and pr_number > 0, 'capacity route requires canonical PR evidence')
     source = proof.get('source_commit')
     require(strict.valid_sha(source), 'invalid tested source identity')
-    blobs = {path: base64.b64encode(strict.source_bytes(get, path, source)).decode() for path in policy.APPROVED_SOURCES}
+    pins = reviewed(proof.get('head')).sources
+    blobs = {path: base64.b64encode(strict.source_bytes(get, path, source, pins)).decode() for path in pins}
     result = {'run': run, 'jobs': jobs, 'artifact': artifact, 'artifact_zip': base64.b64encode(raw).decode(),
               'proof': proof, 'pr': get(f'pulls/{pr_number}'), 'head': get(f'commits/{proof.get("head")}'),
               'source': get(f'commits/{source}'), 'blobs': blobs}
@@ -134,12 +140,13 @@ def source_evidence(run_id, attempt):
 def identity(data, version, run_id, attempt):
     """Independently authenticate the unmodified source protocol, without invoking strict.validate/verify."""
     run, proof, pr, head, source = (data[key] for key in ('run', 'proof', 'pr', 'head', 'source'))
+    require(all(strict.valid_sha(proof.get(k)) for k in ('head', 'tree', 'base', 'source_commit')), 'invalid proof identities')
+    policy = reviewed(proof['head'])
     require(type(run.get('id')) is int and run['id'] == run_id and type(run.get('run_attempt')) is int
             and run['run_attempt'] == attempt and run.get('status') == 'completed', 'wrong capacity run/attempt')
     require(run.get('repository', {}).get('full_name') == strict.REPOSITORY
             and run.get('head_repository', {}).get('full_name') == strict.REPOSITORY
-            and run.get('path') == strict.WORKFLOW and run.get('event') == 'pull_request', 'wrong repository/workflow/event')
-    require(all(strict.valid_sha(proof.get(k)) for k in ('head', 'tree', 'base', 'source_commit')), 'invalid proof identities')
+            and run.get('path') == policy.workflow and run.get('event') == 'pull_request', 'wrong repository/workflow/event')
     require(pr.get('state') == 'open' and pr.get('draft') is False and type(pr.get('number')) is int
             and proof.get('pr') == pr['number'] and pr.get('head', {}).get('sha') == proof['head']
             and pr.get('base', {}).get('sha') == proof['base'], 'release PR/base changed')
@@ -150,12 +157,12 @@ def identity(data, version, run_id, attempt):
             and proof.get('event') == 'pull_request' and proof.get('version') == version
             and type(proof.get('run_id')) is int and proof['run_id'] == run_id
             and type(proof.get('run_attempt')) is int and proof['run_attempt'] == 1
-            and proof.get('sources') == policy.APPROVED_SOURCES, 'source proof protocol differs')
+            and proof.get('sources') == policy.recorded_sources, 'source proof protocol differs')
     require(head.get('sha') == proof['head'] and head.get('commit', {}).get('tree', {}).get('sha') == proof['tree']
             and source.get('sha') == proof['source_commit'] and source.get('commit', {}).get('tree', {}).get('sha') == proof['tree']
             and [p.get('sha') for p in source.get('parents', [])] == [proof['base'], proof['head']], 'source tree/parents differ')
-    require(set(data['blobs']) == set(policy.APPROVED_SOURCES), 'source fingerprint inventory differs')
-    for path, pin in policy.APPROVED_SOURCES.items():
+    require(set(data['blobs']) == set(policy.sources), 'source fingerprint inventory differs')
+    for path, pin in policy.sources.items():
         require(hashlib.sha256(base64.b64decode(data['blobs'][path], validate=True)).hexdigest() == pin,
                 'executed source differs from reviewed pins')
     return proof
@@ -213,7 +220,7 @@ def never_acquired(job, rows, head):
 def original(data, version, run_id):
     proof = identity(data, version, run_id, 1)
     require(data['run'].get('conclusion') in ('failure', 'cancelled'), 'original attempt was not a terminal failure')
-    inventory = strict.expected_jobs('pull_request')
+    inventory = reviewed(proof['head']).expected_jobs('pull_request')
     jobs = data['jobs']
     require(len(jobs) == len(inventory) and {j.get('name') for j in jobs} == set(inventory)
             and len({j.get('id') for j in jobs}) == len(jobs), 'original full candidate inventory differs')
@@ -258,7 +265,7 @@ def collect_original(version, run_id):
 
 def dependency_closure(data, eligible):
     """Parse the authenticated, reviewed simple needs syntax; unknown syntax never authorizes replay."""
-    text = base64.b64decode(data['blobs'][strict.WORKFLOW], validate=True).decode()
+    text = base64.b64decode(data['blobs'][reviewed(data['proof']['head']).workflow], validate=True).decode()
     jobs, current = {}, None
     for line in text.splitlines():
         match = re.fullmatch(r'  ([a-z][a-z0-9-]*):', line)
@@ -399,7 +406,7 @@ def verify_composite(audit, version, token, run_id, request_at):
             'attempt creation clocks differ from request intent')
     require(second['proof'] == first['proof'] and second['artifact'] == first['artifact']
             and second['artifact_zip'] == first['artifact_zip'], 'original source proof was replaced')
-    inventory = strict.expected_jobs('pull_request')
+    inventory = reviewed(proof['head']).expected_jobs('pull_request')
     before = {j['name']: j for j in first['jobs']}
     requested = {j['name'] for j in first['jobs'] if j['id'] in eligible} | set(audit['closure'])
     rows = second['jobs']

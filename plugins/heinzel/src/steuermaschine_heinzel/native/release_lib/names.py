@@ -27,7 +27,7 @@ SPECIAL: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"~/\.cache/hz-train/(v[0-9.]+\.(?:json|log))"), r"the train's \1"),
     (re.compile(r"~/\.cache/hz-train/"), "the train's state directory"),
     (re.compile(r"~/\.cache/hz-assets-health\.json"), "the probe cache"),
-    (re.compile(r"tools/release_candidate_policy\.py"), "release_lib/approved_sources/ (replace the reviewed file)"),
+    (re.compile(r"tools/release_candidate_policy\.py"), "Core's scripts/release_policy.json (regenerate it in Core)"),
 )
 BY_TOOL = sorted(((row.tool, row.path) for row in ROWS if row.path), key=lambda item: -len(item[0]))
 LEFT = re.compile(r"(?<![/.\w-])hz-([a-z][a-z-]*)")  # never inside a path: a file is named as it is on disk

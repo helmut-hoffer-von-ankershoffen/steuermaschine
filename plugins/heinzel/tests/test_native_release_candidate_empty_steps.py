@@ -67,7 +67,7 @@ def test_the_release_gate_reader_proves_empty_steps_jobs_by_their_log(monkeypatc
     never = JOB | {"id": 3, "name": "Coverage", "runner_id": 0}
     page = {"total_count": 3, "jobs": [JOB, other, never]}
     monkeypatch.setattr(candidate_policy, "job_log", lambda job_id: b"ok\n" if job_id == JOB["id"] else pytest.fail("log of a job with steps or without a runner"))
-    reader = candidate_policy.without_api_check_runs(lambda path: page)
+    reader = candidate_policy.without_api_check_runs(lambda path: page, frozenset({"merge-gate", "coverage-floor"}))
     jobs = reader(f"actions/runs/{RUN}/attempts/1/jobs?per_page=100&page=1")["jobs"]
     assert [bool(job["steps"]) for job in jobs] == [True, True, False]
     assert jobs[0]["steps"][0]["name"] == job_proof.LOG_PROVEN and jobs[1] is other and jobs[2] is never

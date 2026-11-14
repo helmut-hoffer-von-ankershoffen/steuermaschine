@@ -6,10 +6,11 @@ import subprocess
 from ..queue_lib import hzlib
 from ..queue_lib import release_candidate
 from ..queue_lib import job_proof
+from ..queue_lib import core_policy
 from . import edge  # moved: records, processes and what used to be separate scripts
 
-# Source qualification only: update together after reviewing any Core workflow/protocol change.
-APPROVED_SOURCES = edge.approved_pins()  # moved: the pins are the hashes of the reviewed files in approved_sources/
+# Source qualification: the pins and the job inventory are Core's reviewed release policy at the exact release head
+# (queue_lib/core_policy), never a copy in this plugin.
 
 # Tag-on-green-main (core ADR 0144): the executed sources of the release commit's main push run. None until the core
 # change that records and verifies the push shape is independently reviewed and vendored here; verify_commit refuses.
@@ -17,23 +18,25 @@ TAG_ON_MAIN_SOURCES: dict | None = None
 
 # Owner waiver (owner 2026-11-07, v0.9.29): one candidate job that failed on attempt 1 by an in-date KNOWN flake and
 # passed when only the failed jobs were rerun (attempt 2). Everything else stays first-attempt evidence.
-AGGREGATE = "CI OK"
 HARD = ("failure", "timed_out", "startup_failure")
 BEAD = re.compile(r"[a-z0-9]{3}")
 
 
-# Core merge-gate.yml (workflow_run after CI) POSTs these two check runs on the PR head through the github-actions app.
-# GitHub may attach them to the CI run's own check suite; the Actions jobs API then lists them as jobs of the candidate
-# run (v0.9.32, run 42480597872). They are API check runs, never CI workload: drop only those, by exact name and shape.
-API_CHECK_RUNS = frozenset(("merge-gate", "coverage-floor"))
+# Core merge-gate.yml (workflow_run after CI) POSTs check runs on the PR head through the github-actions app: the
+# required contexts of Core's release policy other than the CI aggregate. GitHub may attach them to the CI run's own
+# check suite; the Actions jobs API then lists them as jobs of the candidate run (v0.9.32, run 42480597872). They are
+# API check runs, never CI workload: drop only those, by exact name and shape.
+def api_check_runs(policy: core_policy.Policy) -> frozenset[str]:
+    """The API-posted check runs of `policy`: its required contexts except the CI aggregate job."""
+    return policy.required_contexts - {policy.aggregate}
 
 
-def _is_api_check_run(job: object, run_id: int) -> bool:
+def _is_api_check_run(job: object, run_id: int, names: frozenset[str]) -> bool:
     """True only for a check run POSTed through the API: exact name, no runner, no steps, no labels, no job URL."""
     if not isinstance(job, dict) or type(job.get("id")) is not int:
         return False
     url = job.get("html_url")
-    return (job.get("name") in API_CHECK_RUNS
+    return (job.get("name") in names
             and job.get("runner_id") is None and job.get("runner_name") is None
             and job.get("steps") == [] and job.get("labels") == []
             and job.get("run_id") == run_id
@@ -41,7 +44,7 @@ def _is_api_check_run(job: object, run_id: int) -> bool:
             and f"/actions/runs/{run_id}/job/" not in str(job.get("check_run_url", "")) + str(url))
 
 
-def without_api_check_runs(get):
+def without_api_check_runs(get, names: frozenset[str]):
     """A reader whose first-attempt job inventory omits only merge-gate/coverage-floor API check runs.
 
     The raw pages go through the reviewed reader's job_inventory first (totals, pagination, unique IDs), so the
@@ -55,7 +58,7 @@ def without_api_check_runs(get):
         if found.group(2) != "1":
             raise release_candidate.CandidateError("candidate job pagination after the filtered inventory")
         run_id = int(found.group(1))
-        jobs = [job_proof.log_proven(job, run_id, job_log) for job in release_candidate.job_inventory(get, run_id) if not _is_api_check_run(job, run_id)]
+        jobs = [job_proof.log_proven(job, run_id, job_log) for job in release_candidate.job_inventory(get, run_id) if not _is_api_check_run(job, run_id, names)]
         if not jobs:
             raise release_candidate.CandidateError("candidate job inventory is only API check runs")
         return {"total_count": len(jobs), "jobs": jobs}
@@ -100,13 +103,14 @@ def verify_pr(number: int, waiver: dict | None = None) -> dict:
     tree = commit.get("commit", {}).get("tree", {}).get("sha", "")
     if not isinstance(tree, str) or not release_candidate.SHA.fullmatch(tree):
         raise release_candidate.CandidateError("release PR has no exact source tree")
+    policy = core_policy.at_commit_api(_api, head)  # the reviewed facts of the exact release head, read first
     record = None
     if waiver is not None:
-        get, record = waived_view(get, head, waiver, hzlib.classify_attempt)
-    get = without_api_check_runs(get)
+        get, record = waived_view(get, head, waiver, hzlib.classify_attempt, aggregate=policy.aggregate)
+    get = without_api_check_runs(get, api_check_runs(policy))
     run_id = release_candidate.discover(get, head)
     expected = release_candidate.ExpectedCandidate(run_id, number, head, tree)
-    evidence = release_candidate.verify(get, download, expected, APPROVED_SOURCES)
+    evidence = release_candidate.verify(get, download, expected, policy)
     if record is not None:
         evidence = evidence | {"owner_waiver": record}
     return evidence
@@ -132,13 +136,14 @@ def verify_commit(sha: str, waiver: dict | None = None) -> dict:
     tree = commit.get("commit", {}).get("tree", {}).get("sha", "")
     if not isinstance(tree, str) or not release_candidate.SHA.fullmatch(tree):
         raise release_candidate.CandidateError("release commit has no exact source tree")
+    policy = core_policy.at_commit_api(_api, sha)
     record = None
     if waiver is not None:
-        get, record = waived_view(get, sha, waiver, hzlib.classify_attempt, event="push")
-    get = without_api_check_runs(get)
+        get, record = waived_view(get, sha, waiver, hzlib.classify_attempt, event="push", aggregate=policy.aggregate)
+    get = without_api_check_runs(get, api_check_runs(policy))
     run_id = release_candidate.discover(get, sha, "push")
     expected = release_candidate.ExpectedCandidate(run_id, None, sha, tree)
-    evidence = release_candidate.verify(get, download, expected, TAG_ON_MAIN_SOURCES)
+    evidence = release_candidate.verify(get, download, expected, policy)
     if record is not None:
         evidence = evidence | {"owner_waiver": record}
     return evidence
@@ -159,11 +164,11 @@ def _jobs(get, run_id: int, attempt: int) -> list[dict]:
     return data["jobs"]
 
 
-def waived_view(get, head: str, waiver: dict, classify, event: str | None = None) -> tuple:
+def waived_view(get, head: str, waiver: dict, classify, event: str | None = None, *, aggregate: str) -> tuple:
     """Check the waiver against live evidence, then return a reader that shows attempt 1 with only the waived jobs
     replaced by their passing attempt-2 outcome, plus the record for the receipt. Refuses anything else."""
     job, bead, quote = (waiver.get(k) for k in ("job", "bead", "owner_quote"))
-    _require(isinstance(job, str) and job and job != AGGREGATE, "a single named job is required")
+    _require(isinstance(job, str) and job and job != aggregate, "a single named job is required")
     _require(isinstance(bead, str) and BEAD.fullmatch(bead), "bead id must be 3 lowercase characters")
     _require(isinstance(quote, str) and len(quote.strip()) >= 10, "the owner's own words are required")
     only = f"&event={event}" if event else ""
@@ -180,7 +185,7 @@ def waived_view(get, head: str, waiver: dict, classify, event: str | None = None
              and first.get("head_sha") == head and first.get("status") == "completed", "attempt 1 identity")
     one, two = _jobs(get, run_id, 1), _jobs(get, run_id, 2)
     failed = {j["name"] for j in one if j.get("conclusion") in HARD or j.get("conclusion") == "cancelled"}
-    _require(failed - {AGGREGATE} == {job}, f"attempt 1 failed jobs {sorted(failed)} are not exactly the waived job")
+    _require(failed - {aggregate} == {job}, f"attempt 1 failed jobs {sorted(failed)} are not exactly the waived job")
     by_name = {j["name"]: j for j in two}
     for name in failed:
         rerun = by_name.get(name)

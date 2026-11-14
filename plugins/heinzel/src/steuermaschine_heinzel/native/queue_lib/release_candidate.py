@@ -6,39 +6,31 @@
 
 from __future__ import annotations
 
-import argparse
 import base64
 import hashlib
 import io
 import json
-import os
 import re
-import shutil
-import subprocess
-import sys
-import tomllib
 import zipfile
 from dataclasses import dataclass
 from datetime import datetime
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from . import edge  # moved: records, processes and what used to be separate scripts
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterable
+
+    from .core_policy import Policy
 
 REPOSITORY = "helmut-hoffer-von-ankershoffen/heinzel"
+# Where the candidate runs are listed before any policy is read; every check compares with the policy's workflow.
 WORKFLOW = ".github/workflows/ci.yml"
-RECORDER = "scripts/release_candidate.py"
 ARTIFACT = "release-candidate-source"
 PROOF_FILE = "release-candidate.json"
 VERSION = re.compile(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)")
 SHA = re.compile(r"[0-9a-f]{40}")
 DIGEST = re.compile(r"[0-9a-f]{64}")
 MAX_JOBS = 1000
-PR_PAGE_SIZE = 100
 MAX_PROOF = 64 * 1024
-CONSUMERS = ("atlassian", "clock", "example", "github", "google", "resource", "tailscale", "theme", "weather", "zoom")
 
 
 class CandidateError(ValueError):
@@ -63,19 +55,6 @@ class ExpectedCandidate:
     pr_number: int
     head: str
     tree: str
-
-
-def command(argv: list[str]) -> bytes:
-    """Run fixed read-only source/API commands through installed tools without a shell."""
-    require(argv[0] in {"git", "gh"}, "unsupported release evidence tool")
-    executable = shutil.which(argv[0])
-    require(executable, "release evidence tool is not installed")
-    return edge.run(  # noqa: S603 - fixed installed git/gh, no shell; callers validate all source identities
-        [str(executable), *argv[1:]],
-        capture_output=True,
-        check=True,
-        timeout=30,
-    ).stdout
 
 
 def valid_sha(value: object) -> bool:
@@ -106,68 +85,6 @@ def release_version(event: str, repository: str, ref: str, payload: dict[str, An
     return version
 
 
-def dispatch_pull(
-    head: str,
-    ref: str,
-    get: Callable[[str], Any],
-) -> dict[str, Any]:
-    """Find the unique open canonical release PR for an exact candidate dispatch."""
-    require(valid_sha(head), "candidate dispatch requires the exact source head")
-    pulls = get(f"commits/{head}/pulls?per_page={PR_PAGE_SIZE}")
-    require(isinstance(pulls, list) and len(pulls) < PR_PAGE_SIZE, "candidate pull request lookup may be truncated")
-    matches = [
-        pr
-        for pr in pulls
-        if pr["state"] == "open"
-        and pr["draft"] is False
-        and pr["head"]["sha"] == head
-        and pr["head"]["ref"] == ref
-        and valid_sha(pr["base"]["sha"])
-        and release_version("pull_request", REPOSITORY, "", {"pull_request": pr})
-    ]
-    require(len(matches) == 1, "dispatch has no unique canonical open release PR")
-    return matches[0]
-
-
-def select_release() -> bool:
-    """Recognize a canonical non-draft candidate without executing any focused code."""
-    event, repository, ref, payload = context()
-    if not release_version(event, repository, ref, payload):
-        return False
-    if event == "pull_request":
-        pr = payload["pull_request"]
-        require(
-            pr.get("state") == "open"
-            and pr.get("draft") is False
-            and valid_sha(pr["head"].get("sha"))
-            and valid_sha(pr["base"].get("sha"))
-            and pr["head"]["sha"] != pr["base"]["sha"],
-            "candidate requires an exact open non-draft release PR",
-        )
-    else:
-
-        def get(path: str) -> Any:  # noqa: ANN401 - the GitHub JSON response is validated at the source boundary
-            return json.loads(command(["gh", "api", f"repos/{REPOSITORY}/{path}"]))
-
-        dispatch_pull(os.environ["GITHUB_SHA"], ref, get)
-    return True
-
-
-def context() -> tuple[str, str, str, dict[str, Any]]:
-    """Read only the public Actions event identity, never a token or workflow grant."""
-    return (
-        os.environ.get("GITHUB_EVENT_NAME", ""),
-        os.environ.get("GITHUB_REPOSITORY", ""),
-        os.environ.get("GITHUB_REF_NAME", ""),
-        json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text()),
-    )
-
-
-def git(*args: str) -> str:
-    """Read source identity without changing the checkout or executing its product code."""
-    return command(["git", *args]).decode().strip()
-
-
 def unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     """Refuse a source artifact that hides repeated provenance fields behind duplicate JSON keys."""
     result = {}
@@ -177,100 +94,7 @@ def unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return result
 
 
-def record(root: Path) -> dict[str, Any]:
-    """Record the checked-out tree and independently queried PR head tree before the full candidate is consumed."""
-    event, repository, ref, payload = context()
-    version = release_version(event, repository, ref, payload)
-    require(version, "not an owner-repository canonical release candidate")
-    source = git("rev-parse", "HEAD")
-    require(source == os.environ.get("GITHUB_SHA"), "checkout differs from the Actions event SHA")
-    tree = git("rev-parse", "HEAD^{tree}")
-    if event == "pull_request":
-        head = payload["pull_request"]["head"]["sha"]
-        base = payload["pull_request"]["base"]["sha"]
-        number = payload["pull_request"]["number"]
-    else:
-        head, base, number = source, git("merge-base", "HEAD", "origin/main"), None
-    require(SHA.fullmatch(head) and SHA.fullmatch(base), "invalid source commit identity")
-    require(git("rev-parse", f"{head}^{{tree}}") == tree, "tested merge tree differs from the exact release head tree")
-    require(
-        tomllib.loads((root / "pyproject.toml").read_text())["project"]["version"] == version,
-        "project version differs from the release branch",
-    )
-    return {
-        "schema": 1,
-        "repository": repository,
-        "event": event,
-        "version": version,
-        "pr": number,
-        "head": head,
-        "base": base,
-        "source_commit": source,
-        "tree": tree,
-        "run_id": int(os.environ["GITHUB_RUN_ID"]),
-        "run_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"]),
-        "sources": {path: hashlib.sha256((root / path).read_bytes()).hexdigest() for path in (WORKFLOW, RECORDER)},
-    }
-
-
-def expected_jobs(event: str) -> dict[str, str]:
-    """Name the complete reviewed full-candidate workload, including all twelve Python and eight E2E cells."""
-    require(event in ("pull_request", "workflow_dispatch"), "unsupported candidate event")
-    success = {
-        "Main batch admission",
-        "Changed paths",
-        "Secret scan",
-        "Dependency audit",
-        "Coverage",
-        "Optional source plugins",
-        "Plugin SDK candidate",
-        "Lint, contracts and types",
-        "Performance tests",
-        "Heinzel Notifier (macOS app)",
-        "macOS-specific tests",
-        "Public contract consumers",
-        "Build",
-        "Plugin template",
-        "Release candidate source",
-        "CI OK",
-        *[f"make setup ({runner})" for runner in ("ubuntu-24.04", "ubuntu-24.04-arm", "macos-latest")],
-        *[
-            f"Test ({runner}, Python 3.{minor}, {level})"
-            for runner in ("ubuntu-24.04", "macos-latest")
-            for minor in range(12, 16)
-            for level in ("unit", "integration")
-        ],
-        *[
-            f"End-to-end {suite} ({runner})"
-            for suite in ("supervised", "cli", "web-1", "web-2")
-            for runner in ("ubuntu-24.04", "macos-latest")
-        ],
-        *[f"Electron ({runner})" for runner in ("ubuntu-24.04", "macos-latest")],
-        *[f"Consumer (heinzel-{name})" for name in CONSUMERS],
-    }
-    skipped = {
-        "Main batch focused scope (${{ needs.admission.outputs.base }})",
-        "Main batch delegated to ${{ needs.admission.outputs.run }}",
-        "Site tests",
-        "Focused tests (${{ matrix.lane }})",
-        "macOS smoke",
-        "Source plugin (${{ matrix.name }})",
-        *[
-            f"Stop after {name} failure"
-            for name in ("commits", "dependency-review", "secrets", "audit", "setup", "lint")
-        ],
-    }
-    (success if event == "pull_request" else skipped).update(("Conventional commits", "Dependency review"))
-    return dict.fromkeys(success, "success") | dict.fromkeys(skipped, "skipped")
-
-
-QUARANTINE_REGISTRY = "Quarantine registry"
-QUARANTINE_PLAN = "Quarantine plan"
-QUARANTINE_RUNS = frozenset({"Quarantine (ubuntu-24.04)", "Quarantine (macos-latest)"})
-QUARANTINE_IDLE = "Quarantine (${{ matrix.os }})"
-
-
-def quarantine_lane(jobs: list[dict[str, Any]], run_id: object, head: str) -> list[dict[str, Any]]:
+def quarantine_lane(jobs: list[dict[str, Any]], run_id: object, head: str, policy: Policy) -> list[dict[str, Any]]:
     """Check the quarantine lane's jobs and return the others for the exact inventory.
 
     The lane (tests/quarantine.toml, scripts/quarantine.py) is absent from a workflow that predates it. Otherwise the
@@ -281,7 +105,8 @@ def quarantine_lane(jobs: list[dict[str, Any]], run_id: object, head: str) -> li
     Raises:
         CandidateError: The lane's jobs are incomplete, duplicated, rerun or the registry check did not pass.
     """
-    names = {QUARANTINE_REGISTRY, QUARANTINE_PLAN, QUARANTINE_IDLE, *QUARANTINE_RUNS}
+    lane_jobs = policy.quarantine
+    names = {lane_jobs.registry, lane_jobs.plan, lane_jobs.idle, *lane_jobs.runs}
     lane = [job for job in jobs if job.get("name") in names]
     if not lane:
         return jobs
@@ -289,15 +114,15 @@ def quarantine_lane(jobs: list[dict[str, Any]], run_id: object, head: str) -> li
     require(
         found
         in (
-            sorted({QUARANTINE_REGISTRY, QUARANTINE_PLAN, *QUARANTINE_RUNS}),
-            sorted({QUARANTINE_REGISTRY, QUARANTINE_PLAN, QUARANTINE_IDLE}),
+            sorted({lane_jobs.registry, lane_jobs.plan, *lane_jobs.runs}),
+            sorted({lane_jobs.registry, lane_jobs.plan, lane_jobs.idle}),
         ),
         "missing, extra or duplicated quarantine lane jobs",
     )
     for job in lane:
         # A lane job that hit its time limit ends cancelled; it still never blocks the candidate.
-        allowed = {"success"} if job["name"] == QUARANTINE_REGISTRY else {"success", "failure", "skipped", "cancelled"}
-        if job["name"] == QUARANTINE_IDLE:
+        allowed = {"success"} if job["name"] == lane_jobs.registry else {"success", "failure", "skipped", "cancelled"}
+        if job["name"] == lane_jobs.idle:
             allowed = {"skipped"}
         require(
             job.get("run_id") == run_id
@@ -338,8 +163,12 @@ def job_inventory(get: Callable[[str], Any], run_id: int) -> list[dict[str, Any]
     raise CandidateError(message)
 
 
-def validate(evidence: dict[str, Any], expected: ExpectedCandidate, approved_sources: dict[str, str]) -> dict[str, Any]:
-    """Consume real completed first-attempt evidence only, without aliasing checks or replacing any main gate."""
+def validate(evidence: dict[str, Any], expected: ExpectedCandidate, policy: Policy) -> dict[str, Any]:
+    """Consume real completed first-attempt evidence only, without aliasing checks or replacing any main gate.
+
+    Every fact of Core's CI (pinned files, their digests, the job inventory) comes from `policy`, the reviewed
+    manifest read at the exact release head (core_policy), never from this plugin."""
+    approved_sources = policy.sources
     run, jobs, proof, pr, source, head = (evidence[key] for key in ("run", "jobs", "proof", "pr", "source", "head"))
     expected_head = expected.head
     expected_tree = expected.tree
@@ -348,7 +177,9 @@ def validate(evidence: dict[str, Any], expected: ExpectedCandidate, approved_sou
         "invalid expected head or tree",
     )
     require(
-        set(approved_sources) == {WORKFLOW, RECORDER}
+        policy.commit == expected_head
+        and policy.repository == REPOSITORY
+        and {policy.workflow, policy.recorder} <= set(approved_sources)
         and all(DIGEST.fullmatch(value) for value in approved_sources.values()),
         "missing reviewed CI source pins",
     )
@@ -363,7 +194,7 @@ def validate(evidence: dict[str, Any], expected: ExpectedCandidate, approved_sou
     require(
         run.get("repository", {}).get("full_name") == REPOSITORY
         and run.get("head_repository", {}).get("full_name") == REPOSITORY
-        and run.get("path") == WORKFLOW,
+        and run.get("path") == policy.workflow,
         "wrong candidate repository or workflow",
     )
     require(
@@ -391,7 +222,7 @@ def validate(evidence: dict[str, Any], expected: ExpectedCandidate, approved_sou
         and proof.get("head") == expected_head
         and proof.get("tree") == expected_tree
         and proof.get("version") == version
-        and proof.get("sources") == approved_sources,
+        and proof.get("sources") == policy.recorded_sources,
         "candidate source artifact differs from reviewed run or release identity",
     )
     require(proof.get("base") == pr.get("base", {}).get("sha"), "release base changed after candidate execution")
@@ -415,8 +246,8 @@ def validate(evidence: dict[str, Any], expected: ExpectedCandidate, approved_sou
             proof.get("pr") is None and proof.get("source_commit") == expected_head,
             "dispatch source differs from the exact release head",
         )
-    jobs = quarantine_lane(jobs, run["id"], expected_head)
-    inventory = expected_jobs(event)
+    jobs = quarantine_lane(jobs, run["id"], expected_head, policy)
+    inventory = policy.expected_jobs(event)
     require(
         len(jobs) == len(inventory) and {job.get("name") for job in jobs} == set(inventory),
         "missing, extra or short-matrix candidate jobs",
@@ -494,22 +325,35 @@ def discover(get: Callable[[str], Any], expected_head: str) -> int:
     raise CandidateError(message)
 
 
-def source_bytes(get: Callable[[str], Any], path: str, ref: str) -> bytes:
-    """Decode an exact official source blob, never a moving branch or an unchecked path."""
-    require(path in (WORKFLOW, RECORDER) and SHA.fullmatch(ref), "invalid reviewed source request")
+def contents_bytes(get: Callable[[str], Any], path: str, ref: str, missing: str) -> bytes | None:
+    """One file at an exact commit through the contents API; None when the API has no file there.
+
+    A file over the contents API's 1 MB limit comes back without content (encoding "none"); it is then read as the git
+    blob the same answer names, by its id (the id is the content's own hash).
+    """
     data = get(f"contents/{path}?ref={ref}")
-    require(
-        isinstance(data, dict) and data.get("encoding") == "base64" and data.get("type") == "file",
-        "source blob missing",
-    )
+    if not isinstance(data, dict) or data.get("type") != "file":
+        return None
+    if data.get("encoding") == "none" and data.get("content") == "" and isinstance(data.get("sha"), str) and SHA.fullmatch(data["sha"]):
+        data = get(f"git/blobs/{data['sha']}")
+        require(isinstance(data, dict) and data.get("encoding") == "base64", missing)
+    require(data.get("encoding") == "base64" and isinstance(data.get("content"), str), missing)
     return base64.b64decode("".join(data["content"].split()), validate=True)
+
+
+def source_bytes(get: Callable[[str], Any], path: str, ref: str, pinned: Iterable[str]) -> bytes:
+    """Decode an exact official source blob, never a moving branch or an unchecked path (only a `pinned` one)."""
+    require(path in tuple(pinned) and SHA.fullmatch(ref), "invalid reviewed source request")
+    blob = contents_bytes(get, path, ref, "source blob missing")
+    require(blob is not None, "source blob missing")
+    return blob  # type: ignore[return-value]
 
 
 def verify(
     get: Callable[[str], Any],
     download: Callable[[int], bytes],
     expected: ExpectedCandidate,
-    approved_sources: dict[str, str],
+    policy: Policy,
 ) -> dict[str, Any]:
     """Read every original job and the unique same-run source artifact, then re-fetch the terminal run identity."""
     run_id, pr_number, expected_head = expected.run_id, expected.pr_number, expected.head
@@ -556,61 +400,14 @@ def verify(
     pr = get(f"pulls/{pr_number}")
     head = get(f"commits/{expected_head}")
     source = get(f"commits/{proof['source_commit']}")
-    for path, digest in approved_sources.items():
+    for path, digest in policy.sources.items():
         require(
-            hashlib.sha256(source_bytes(get, path, proof["source_commit"])).hexdigest() == digest,
+            hashlib.sha256(source_bytes(get, path, proof["source_commit"], policy.sources)).hexdigest() == digest,
             "executed CI source differs from independent review",
         )
     require(get(f"actions/runs/{run_id}") == run, "candidate run changed during evidence collection")
     return validate(
         {"run": run, "jobs": inventory, "proof": proof, "pr": pr, "source": source, "head": head},
         expected,
-        approved_sources,
+        policy,
     )
-
-
-def main() -> int:
-    """Select full release CI, record its real checkout, or verify one externally selected immutable run."""
-    parser = argparse.ArgumentParser(description=__doc__)
-    commands = parser.add_subparsers(dest="command", required=True)
-    select = commands.add_parser("select")
-    select.add_argument("--output", type=Path, required=True)
-    recording = commands.add_parser("record")
-    recording.add_argument("--output", type=Path, required=True)
-    checking = commands.add_parser("verify")
-    checking.add_argument("--run-id", type=int, required=True)
-    checking.add_argument("--pr", type=int, required=True)
-    checking.add_argument("--head", required=True)
-    checking.add_argument("--tree", required=True)
-    checking.add_argument("--workflow-sha256", required=True)
-    checking.add_argument("--recorder-sha256", required=True)
-    args = parser.parse_args()
-    if args.command == "select":
-        selected = select_release()
-        with args.output.open("a") as output:
-            output.write(f"full_release={str(selected).lower()}\n")
-    elif args.command == "verify":
-
-        def get(path: str) -> Any:  # noqa: ANN401 - the GitHub JSON response is validated at the evidence boundary
-            return json.loads(command(["gh", "api", f"repos/{REPOSITORY}/{path}"]))
-
-        def download(artifact_id: int) -> bytes:
-            return command(["gh", "api", f"repos/{REPOSITORY}/actions/artifacts/{artifact_id}/zip"])
-
-        result = verify(
-            get,
-            download,
-            ExpectedCandidate(args.run_id, args.pr, args.head, args.tree),
-            {WORKFLOW: args.workflow_sha256, RECORDER: args.recorder_sha256},
-        )
-        print(json.dumps(result, indent=2))
-    else:
-        proof = record(Path.cwd())
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        with args.output.open("x") as output:
-            output.write(json.dumps(proof, indent=2) + "\n")
-    return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())

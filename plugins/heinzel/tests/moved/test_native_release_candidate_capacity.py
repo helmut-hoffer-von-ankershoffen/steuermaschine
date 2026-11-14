@@ -11,6 +11,7 @@ from types import SimpleNamespace
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import policy_kit as kit  # noqa: E402
 from steuermaschine_heinzel.native.release_lib import candidate_capacity as cap
 
 HEAD, BASE, SOURCE, TREE = (c * 40 for c in 'abcd')
@@ -18,17 +19,22 @@ RUN, PR, VERSION, TOKEN = 99, 517, '0.9.17', 'e' * 32
 TOOLS = Path(__file__).resolve().parents[1]
 
 
+@pytest.fixture(autouse=True)
+def reviewed_policy(monkeypatch):
+    """Core's release policy at the release head (old CI shape), describing the fixture workflow and recorder."""
+    monkeypatch.setattr(cap, 'reviewed', lambda head: kit.policy(commit=head))
+
+
 def evidence():
-    blobs = {cap.strict.WORKFLOW: cap.policy.edge.approved.blob(cap.strict.WORKFLOW),
-             cap.strict.RECORDER: cap.policy.edge.approved.blob(cap.strict.RECORDER)}
+    blobs = {kit.WORKFLOW: kit.workflow_bytes(), kit.RECORDER: kit.recorder_bytes()}
     proof = {'schema': 1, 'repository': cap.strict.REPOSITORY, 'event': 'pull_request', 'run_id': RUN,
              'run_attempt': 1, 'head': HEAD, 'base': BASE, 'source_commit': SOURCE, 'tree': TREE, 'version': VERSION,
-             'pr': PR, 'sources': cap.policy.APPROVED_SOURCES}
+             'pr': PR, 'sources': kit.manifest()['sources']}
     def step(name, conclusion='success'):
         return {'name': name, 'status': 'completed', 'conclusion': conclusion,
                 'started_at': '2026-11-05T00:00:00Z', 'completed_at': '2026-11-05T00:00:10Z'}
     jobs = []
-    for index, (name, conclusion) in enumerate(sorted(cap.strict.expected_jobs('pull_request').items()), 1):
+    for index, (name, conclusion) in enumerate(sorted(kit.expected_jobs('pull_request').items()), 1):
         jobs.append({'id': index, 'name': name, 'run_id': RUN, 'run_attempt': 1, 'head_sha': HEAD,
                      'status': 'completed', 'conclusion': conclusion, 'runner_id': index if conclusion == 'success' else 0,
                      'runner_name': 'Hosted Agent' if conclusion == 'success' else '', 'labels': ['macos-latest'],
@@ -186,7 +192,7 @@ def test_composite_refuses_identity_replays_partial_and_incomplete_payload(monke
     elif defect == 'bad-proof':
         second['proof']['schema'] = 2
     elif defect == 'bad-pin':
-        second['blobs'][cap.strict.RECORDER] = base64.b64encode(b'unreviewed').decode()
+        second['blobs'][kit.RECORDER] = base64.b64encode(b'unreviewed').decode()
     elif defect == 'failed-replacement':
         next(j for j in second['jobs'] if j['run_attempt'] == 2)['conclusion'] = 'failure'
     elif defect == 'skipped-build-inclusion':
@@ -218,11 +224,10 @@ def test_replay_guard_parses_actual_graph_and_rejects_test_descendant_before_req
         cap.dependency_closure(data, eligible)
 
 
-def test_vendored_strict_verifier_remains_byte_exact_and_rejects_original_capacity_failure():
-    assert hashlib.sha256(__import__('moved_support').unmoved(cap.strict)).hexdigest() == cap.policy.APPROVED_SOURCES[cap.strict.RECORDER]
+def test_strict_verifier_rejects_original_capacity_failure():
     data = evidence()
     with pytest.raises(cap.strict.CandidateError):
-        cap.strict.validate(data, cap.strict.ExpectedCandidate(RUN, PR, HEAD, TREE), cap.policy.APPROVED_SOURCES)
+        cap.strict.validate(data, cap.strict.ExpectedCandidate(RUN, PR, HEAD, TREE), kit.policy(commit=HEAD))
 
 
 @pytest.fixture
