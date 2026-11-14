@@ -94,6 +94,11 @@ class Policy:
         return dict(self.jobs[event])
 
     @property
+    def workflow_runs(self) -> str:
+        """The Actions API path of the runs of the candidate workflow (by its file name, as the API names it)."""
+        return f"actions/workflows/{self.workflow.rsplit('/', 1)[-1]}/runs"
+
+    @property
     def pinned(self) -> tuple[str, str]:
         """The files a candidate's own proof names: the workflow and the recorder."""
         return (self.workflow, self.recorder)
@@ -291,13 +296,18 @@ def ci_changes(repo: str | Path, base: str, head: str) -> tuple[str, ...]:
     """Why the change from `base` to `head` touches Core's CI: one line per reason, empty when it does not.
 
     The not-CI paths are those of the manifest at BASE (`git show BASE:scripts/release_policy.json`), never the head's:
-    a change cannot declare itself harmless. Diff: `git diff --raw --no-renames -z BASE HEAD` in the Core clone, GIT_*
+    a change cannot declare itself harmless, and the base must be an ancestor of the head (a sibling's wider list never
+    applies). Diff: `git diff --raw --no-renames -z BASE HEAD` in the Core clone, GIT_*
     variables stripped; a rename is a delete and an add. Fail closed, never raising: an unreadable diff, no manifest at
     base, an empty or garbled diff, a non-UTF-8 path, a symlink or gitlink mode on either side and every path the base
     does not list as not CI are each a reason.
     """
     if not (isinstance(base, str) and SHA.fullmatch(base) and isinstance(head, str) and SHA.fullmatch(head)):
         return ("base and head must be exact commits",)
+    try:
+        git_read(repo, "merge-base", "--is-ancestor", base, head)
+    except (CandidateError, OSError, ValueError, subprocess.SubprocessError):
+        return (f"base {base[:12]} is not an ancestor of head {head[:12]} (or either is missing in the clone)",)
     try:
         policy = at_commit_git(repo, base)
     except (CandidateError, OSError, ValueError, subprocess.SubprocessError) as exc:

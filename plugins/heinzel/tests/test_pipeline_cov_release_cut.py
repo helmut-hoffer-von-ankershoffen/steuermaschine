@@ -39,6 +39,17 @@ class BrokenRemote(FakeVcs):
 
 
 @pytest.fixture(autouse=True)
+def judged_release(monkeypatch):
+    """Every step that acts on the release commit judges it for CI changes; by default the packet names HEAD and no
+    CI path changed. The gate's own tests below replace these."""
+    monkeypatch.setattr(release_cut, "changes_since_release", lambda core, head: ("7" * 40, ()))
+    monkeypatch.setattr(release_cut, "_same_commit", lambda ctx: HEAD)
+
+
+REAL = {name: getattr(release_cut, name) for name in ("changes_since_release", "_same_commit")}
+
+
+@pytest.fixture(autouse=True)
 def clean_overrides() -> Iterator[None]:
     common.OVERRIDE.clear()
     yield
@@ -138,35 +149,78 @@ def test_a_ci_change_verdict_on_the_release_commit_passes(tmp_path, monkeypatch)
     assert found == f"2 CI change(s) since {TAG[:12]}: ci_change verdict for {HEAD[:12]} recorded"
 
 
-def test_unreadable_rules_or_no_tag_count_as_a_ci_change(tmp_path, monkeypatch):
+def test_unreadable_rules_count_as_a_ci_change_and_no_head_refuses(tmp_path, monkeypatch):
     rt = runtime(tmp_path)
-    monkeypatch.setattr(release_cut, "_last_tag", lambda core, head: "")
-    assert release_cut.changes_since_release(str(tmp_path / "nowhere"), HEAD) == ("", ("no published release tag before the release commit",))
     monkeypatch.setattr(release_cut, "_last_tag", lambda core, head: TAG)
-    base, changes = release_cut.changes_since_release(str(tmp_path / "nowhere"), HEAD)
-    assert base == TAG and changes[0].startswith(f"no reviewed release policy at base {TAG}")
+    base, changes = REAL["changes_since_release"](str(tmp_path / "nowhere"), HEAD)
+    assert base == TAG and "is not an ancestor" in changes[0]  # the clone is unreadable: fail closed
     monkeypatch.undo()
-    assert release_cut._last_tag(str(tmp_path / "nowhere"), HEAD) == ""
+    with pytest.raises(Refuse, match="cannot read the published release tags"):
+        release_cut._last_tag(str(tmp_path / "nowhere"), HEAD)
     with native(rt), pytest.raises(Refuse, match="no exact head"):
         ctx = context(rt, {"clone": str(tmp_path / "clone")})
         monkeypatch.setattr(rt.providers.vcs, "head", lambda worktree: "")
         release_cut.ci_change(ctx)
 
 
-def test_the_last_tag_is_the_newest_release_tag_before_the_release_commit(tmp_path):
+def test_a_remade_release_commit_is_judged_again(tmp_path, monkeypatch):
+    """The step is done for commit A; the clone moves to B on the same main: every later step judges B again."""
+    rt = runtime(tmp_path)
+    other = "f" * 40
+    monkeypatch.setattr(release_cut, "_same_commit", REAL["_same_commit"])
+    monkeypatch.setattr(release_cut, "changes_since_release", lambda core, head: (TAG, ("scripts/x.py: CI path",)))
+    record(rt, "ci_change")  # a ci_change verdict on HEAD (commit A) only
+    ctx = context(rt, {"clone": str(tmp_path / "clone")})
+    with native(rt):
+        assert "ci_change verdict for " + HEAD[:12] in release_cut.ci_change(ctx)
+        assert ctx.data["ci_change_head"] == HEAD
+        assert "recorded" in release_cut.judged(ctx, HEAD)  # the same commit: not judged twice
+        with pytest.raises(Refuse, match=f"no verdict is recorded for {other}"):
+            release_cut.judged(ctx, other)
+        monkeypatch.setattr(release_cut, "_packet_head", lambda ctx: HEAD)
+        monkeypatch.setattr(rt.providers.vcs, "head", lambda worktree: other)
+        with pytest.raises(Refuse, match="moved to ffffffffffff since the packet named"):
+            release_cut._same_commit(ctx)
+        monkeypatch.setattr(release_cut, "_packet_head", lambda ctx: other)
+        for step in (release_cut._same_commit, release_cut.admit_prepare, release_cut.admit_apply, release_cut.resume):
+            with pytest.raises(Refuse, match=f"no verdict is recorded for {other}"):
+                step(ctx)
+
+
+def _git(repo, *args):
+    import os
     import subprocess
 
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")} | {
+        "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.invalid", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.invalid"}
+    return subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True, text=True, env=env).stdout.strip()
+
+
+def test_the_base_is_the_newest_published_release_never_a_local_tag(tmp_path):
     import policy_kit as kit
 
+    remote = tmp_path / "remote.git"
+    _git(tmp_path, "init", "-q", "--bare", str(remote))
     repo, first = kit.git_repo(tmp_path / "core", {"a": b"1"})
-    env = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.invalid", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.invalid"}
-    git = lambda *a: subprocess.run(["git", "-C", str(repo), *a], check=True, capture_output=True, text=True, env=env | {"PATH": __import__("os").environ["PATH"]}).stdout.strip()  # noqa: E731
-    git("tag", "v0.9.1", first)
-    git("commit", "-q", "--allow-empty", "-m", "next")
-    git("tag", "not-a-release")
-    git("commit", "-q", "--allow-empty", "-m", "release")
-    head = git("rev-parse", "HEAD")
+    _git(repo, "remote", "add", "origin", str(remote))
+    _git(repo, "tag", "-a", "v0.9.9", "-m", "published", first)  # annotated: the peeled commit counts
+    _git(repo, "push", "-q", "origin", "HEAD:refs/heads/main", "refs/tags/v0.9.9")
+    _git(repo, "commit", "-q", "--allow-empty", "-m", "next")
+    _git(repo, "tag", "v0.9.10")  # local only, never published, nearer the head
+    _git(repo, "commit", "-q", "--allow-empty", "-m", "release")
+    head = _git(repo, "rev-parse", "HEAD")
     assert release_cut._last_tag(str(repo), head) == first
+    _git(repo, "checkout", "-q", "--orphan", "side")
+    _git(repo, "commit", "-q", "--allow-empty", "-m", "elsewhere")
+    _git(repo, "tag", "v1.0.0")
+    _git(repo, "push", "-q", "origin", "refs/tags/v1.0.0")  # the newest published release is not an ancestor
+    with pytest.raises(Refuse, match=r"newest published release v1\.0\.0 .* is not an ancestor"):
+        release_cut._last_tag(str(repo), head)
+    empty = tmp_path / "empty.git"
+    _git(tmp_path, "init", "-q", "--bare", str(empty))
+    _git(repo, "remote", "set-url", "origin", str(empty))
+    with pytest.raises(Refuse, match="no published release tag"):
+        release_cut._last_tag(str(repo), head)
 
 
 # ----------------------------------------------------------------------------- admission

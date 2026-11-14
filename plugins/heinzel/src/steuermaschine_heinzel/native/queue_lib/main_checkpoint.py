@@ -251,7 +251,7 @@ def merged_candidate(config: dict, api: Callable, read: Callable) -> dict:
         and proof.get("run_attempt") == 1
         and proof["head"] == head
         and proof["base"] == pr.get("base", {}).get("sha"),
-        "candidate source identity or reviewed pins differ",
+        "candidate source identity differs",
     )
     source, released, merged = (
         api(f"commits/{sha}") for sha in (proof["source_commit"], head, squash)
@@ -311,7 +311,7 @@ def merged_candidate(config: dict, api: Callable, read: Callable) -> dict:
 
 
 def main_run(api: Callable, head: str) -> int:
-    data = api(f"actions/workflows/ci.yml/runs?head_sha={head}&event=push&per_page=1")
+    data = api(f"{core_policy.at_commit_api(api, head).workflow_runs}?head_sha={head}&event=push&per_page=1")
     rows = data.get("workflow_runs", [])
     require(len(rows) == 1, "missing or ambiguous resulting-main workflow")
     run = rows[0]
@@ -332,7 +332,8 @@ def main_run(api: Callable, head: str) -> int:
 
 def actual_main_ci(api: Callable, head: str, push_id: int) -> dict:
     """Bind the actual-main CI runs across events to the canonical push proof."""
-    data = api(f"actions/workflows/ci.yml/runs?branch=main&head_sha={head}&per_page=100")
+    policy = core_policy.at_commit_api(api, head)
+    data = api(f"{policy.workflow_runs}?branch=main&head_sha={head}&per_page=100")
     require(isinstance(data, dict), "invalid actual-main CI response")
     rows = data.get("workflow_runs")
     require(
@@ -350,7 +351,7 @@ def actual_main_ci(api: Callable, head: str, push_id: int) -> dict:
         require(
             type(identifier) is int and identifier > 0 and identifier not in seen
             and row.get("head_sha") == head and row.get("head_branch") == "main"
-            and row.get("path") == rc.WORKFLOW
+            and row.get("path") == policy.workflow
             and isinstance(repository, dict) and repository.get("full_name") == rc.REPOSITORY,
             "mismatched actual-main CI run identity",
         )

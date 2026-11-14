@@ -43,7 +43,7 @@ def world(monkeypatch, proof=None, **patch):
     proof = proof or good_proof()
     raw = archive_bytes(proof)
     run = {"id": RUN, "run_attempt": 1, "status": "completed", "conclusion": "success", "event": "pull_request", "head_sha": HEAD, "head_branch": "release/v0.9.41",
-           "repository": {"full_name": hzlib.CORE}, "head_repository": {"full_name": hzlib.CORE}, "path": rc.WORKFLOW,
+           "repository": {"full_name": hzlib.CORE}, "head_repository": {"full_name": hzlib.CORE}, "path": kit.WORKFLOW,
            "created_at": "2026-11-13T10:00:00+00:00", "updated_at": "2026-11-13T10:30:00+00:00"}
     pr = {"number": PR, "state": "closed", "merged": True, "draft": False, "merged_at": "2026-11-13T11:00:00Z", "head": {"sha": HEAD}, "base": {"sha": BASE}, "merge_commit_sha": SQUASH}
     artifact = {"name": rc.ARTIFACT, "expired": False, "id": 7, "workflow_run": {"id": RUN, "head_sha": HEAD}, "digest": "sha256:" + hashlib.sha256(raw).hexdigest(), "size_in_bytes": len(raw)}
@@ -140,7 +140,7 @@ def test_merged_candidate_refuses_a_duplicated_artifact_and_a_head_without_a_pol
         raise rc.CandidateError(f"scripts/release_policy.json missing at {sha}")
 
     monkeypatch.setattr(mc.core_policy, "at_commit_api", no_policy)
-    with pytest.raises(rc.CandidateError, match="release_policy.json missing"):
+    with pytest.raises(rc.CandidateError, match=r"release_policy\.json missing"):
         run_candidate(data, raw)
 
 
@@ -153,7 +153,7 @@ def test_merged_candidate_archive_and_proof_refusals(monkeypatch):
     data[f"actions/runs/{RUN}/artifacts?per_page=100"]["artifacts"][0].update(digest="sha256:" + hashlib.sha256(other).hexdigest(), size_in_bytes=len(other))
     with pytest.raises(rc.CandidateError, match="unexpected candidate source archive"):
         run_candidate(data, other)
-    for proof, message in ((good_proof(head="zz"), "malformed candidate source proof"), (good_proof(schema=2), "source identity or reviewed pins differ"),
+    for proof, message in ((good_proof(head="zz"), "malformed candidate source proof"), (good_proof(schema=2), "candidate source identity differs"),
                            (good_proof(pr=1), "source identity"), (good_proof(version="9"), "source identity"), (good_proof(base="6" * 40), "source identity"),
                            (good_proof(run_attempt=2), "source identity"), (good_proof(event="push"), "source identity")):
         data, raw, _jobs = world(monkeypatch, proof=proof)

@@ -21,8 +21,6 @@ if TYPE_CHECKING:
     from .core_policy import Policy
 
 REPOSITORY = "helmut-hoffer-von-ankershoffen/heinzel"
-# Where the candidate runs are listed before any policy is read; every check compares with the policy's workflow.
-WORKFLOW = ".github/workflows/ci.yml"
 ARTIFACT = "release-candidate-source"
 PROOF_FILE = "release-candidate.json"
 VERSION = re.compile(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)")
@@ -281,7 +279,7 @@ def validate(evidence: dict[str, Any], expected: ExpectedCandidate, policy: Poli
     }
 
 
-def discover(get: Callable[[str], Any], expected_head: str) -> int:
+def discover(get: Callable[[str], Any], expected_head: str, policy: Policy) -> int:
     """Require one original CI run on this exact head; never select a later green from competing attempts.
 
     Raises:
@@ -291,7 +289,7 @@ def discover(get: Callable[[str], Any], expected_head: str) -> int:
     rows = []
     total = None
     for page in range(1, 11):
-        data = get(f"actions/workflows/ci.yml/runs?head_sha={expected_head}&per_page=100&page={page}")
+        data = get(f"{policy.workflow_runs}?head_sha={expected_head}&per_page=100&page={page}")
         require(
             isinstance(data, dict)
             and type(data.get("total_count")) is int

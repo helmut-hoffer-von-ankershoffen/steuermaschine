@@ -9,11 +9,11 @@ from ..queue_lib import job_proof
 from ..queue_lib import core_policy
 from . import edge  # moved: records, processes and what used to be separate scripts
 
-# Source qualification: the pins and the job inventory are Core's reviewed release policy at the exact release head
+# Source qualification: the workflow and the job inventory are Core's reviewed release policy at the exact release head
 # (queue_lib/core_policy), never a copy in this plugin.
 
-# Tag-on-green-main (core ADR 0144): the executed sources of the release commit's main push run. None until the core
-# change that records and verifies the push shape is independently reviewed and vendored here; verify_commit refuses.
+# Tag-on-green-main (core ADR 0144): off until the push-event candidate route is built and independently reviewed;
+# while it is None, verify_commit refuses.
 TAG_ON_MAIN_SOURCES: dict | None = None
 
 # Owner waiver (owner 2026-11-07, v0.9.29): one candidate job that failed on attempt 1 by an in-date KNOWN flake and
@@ -106,9 +106,10 @@ def verify_pr(number: int, waiver: dict | None = None) -> dict:
     policy = core_policy.at_commit_api(_api, head)  # the reviewed facts of the exact release head, read first
     record = None
     if waiver is not None:
-        get, record = waived_view(get, head, waiver, hzlib.classify_attempt, aggregate=policy.aggregate)
+        get, record = waived_view(get, head, waiver, hzlib.classify_attempt, aggregate=policy.aggregate,
+                                  runs=policy.workflow_runs)
     get = without_api_check_runs(get, api_check_runs(policy))
-    run_id = release_candidate.discover(get, head)
+    run_id = release_candidate.discover(get, head, policy)
     expected = release_candidate.ExpectedCandidate(run_id, number, head, tree)
     evidence = release_candidate.verify(get, download, expected, policy)
     if record is not None:
@@ -139,9 +140,10 @@ def verify_commit(sha: str, waiver: dict | None = None) -> dict:
     policy = core_policy.at_commit_api(_api, sha)
     record = None
     if waiver is not None:
-        get, record = waived_view(get, sha, waiver, hzlib.classify_attempt, event="push", aggregate=policy.aggregate)
+        get, record = waived_view(get, sha, waiver, hzlib.classify_attempt, event="push", aggregate=policy.aggregate,
+                                  runs=policy.workflow_runs)
     get = without_api_check_runs(get, api_check_runs(policy))
-    run_id = release_candidate.discover(get, sha, "push")
+    run_id = release_candidate.discover(get, sha, policy)
     expected = release_candidate.ExpectedCandidate(run_id, None, sha, tree)
     evidence = release_candidate.verify(get, download, expected, policy)
     if record is not None:
@@ -164,7 +166,7 @@ def _jobs(get, run_id: int, attempt: int) -> list[dict]:
     return data["jobs"]
 
 
-def waived_view(get, head: str, waiver: dict, classify, event: str | None = None, *, aggregate: str) -> tuple:
+def waived_view(get, head: str, waiver: dict, classify, event: str | None = None, *, aggregate: str, runs: str) -> tuple:
     """Check the waiver against live evidence, then return a reader that shows attempt 1 with only the waived jobs
     replaced by their passing attempt-2 outcome, plus the record for the receipt. Refuses anything else."""
     job, bead, quote = (waiver.get(k) for k in ("job", "bead", "owner_quote"))
@@ -172,7 +174,7 @@ def waived_view(get, head: str, waiver: dict, classify, event: str | None = None
     _require(isinstance(bead, str) and BEAD.fullmatch(bead), "bead id must be 3 lowercase characters")
     _require(isinstance(quote, str) and len(quote.strip()) >= 10, "the owner's own words are required")
     only = f"&event={event}" if event else ""
-    listing = get(f"actions/workflows/ci.yml/runs?head_sha={head}{only}&per_page=100&page=1")
+    listing = get(f"{runs}?head_sha={head}{only}&per_page=100&page=1")
     rows = listing.get("workflow_runs") if isinstance(listing, dict) else None
     _require(isinstance(rows, list) and listing.get("total_count") == 1 and len(rows) == 1, "exactly one CI run on the head")
     current = rows[0]
@@ -202,7 +204,7 @@ def waived_view(get, head: str, waiver: dict, classify, event: str | None = None
     patched = {name: by_name[name]["conclusion"] for name in failed}
 
     def reader(path: str):
-        if path.startswith("actions/workflows/ci.yml/runs?"):
+        if path.startswith(f"{runs}?"):
             return {"total_count": 1, "workflow_runs": [run_view]}
         if path == f"actions/runs/{run_id}":
             return run_view

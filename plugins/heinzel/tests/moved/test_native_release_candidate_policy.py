@@ -15,7 +15,8 @@ from steuermaschine_heinzel.native.release_lib import candidate_policy as policy
 
 HEAD, TREE = "a" * 40, "b" * 40
 NAMES = policy.api_check_runs(kit.policy())
-REAL_AT_COMMIT_API = policy.core_policy.at_commit_api  # the policy's required contexts but the aggregate
+REAL_AT_COMMIT_API = policy.core_policy.at_commit_api
+RUNS = kit.policy().workflow_runs  # the policy's required contexts but the aggregate
 
 
 @pytest.fixture(autouse=True)
@@ -36,7 +37,7 @@ def test_adapter_passes_frozen_head_tree_and_reviewed_pins_to_the_public_reader(
             return {"commit": {"tree": {"sha": TREE}}}
         raise AssertionError(args)
     monkeypatch.setattr(policy.hzlib, "ghj", ghj)
-    monkeypatch.setattr(release_candidate, "discover", lambda get, head: 99 if head == HEAD else pytest.fail("wrong head"))
+    monkeypatch.setattr(release_candidate, "discover", lambda get, head, policy: 99 if head == HEAD else pytest.fail("wrong head"))
     def verify(get, download, expected, pins):
         assert expected == release_candidate.ExpectedCandidate(99, 17, HEAD, TREE)
         assert pins.commit == HEAD and pins.workflow == kit.WORKFLOW
@@ -61,7 +62,7 @@ def test_verify_pr_refuses_a_release_head_without_a_reviewed_policy(monkeypatch)
     with pytest.raises(release_candidate.CandidateError, match="unavailable"):
         policy.verify_pr(17)
     answers.update(kit.contents_routes(HEAD, kit.files("new")))
-    monkeypatch.setattr(release_candidate, "discover", lambda get, head: 99)
+    monkeypatch.setattr(release_candidate, "discover", lambda get, head, policy: 99)
     seen = {}
     monkeypatch.setattr(release_candidate, "verify", lambda get, download, expected, pins: seen.update(pins=pins) or {})
     policy.verify_pr(17)
@@ -120,10 +121,10 @@ KNOWN = lambda run, attempt: ("known", f"{JOB}=KNOWN(0bb) via 1 failing test(s)"
 
 
 def test_waiver_shows_attempt_one_with_only_the_waived_jobs_passing():
-    reader, record = policy.waived_view(_world(), HEAD, WAIVER, KNOWN, aggregate="CI OK")
+    reader, record = policy.waived_view(_world(), HEAD, WAIVER, KNOWN, aggregate="CI OK", runs=RUNS)
     assert reader("actions/runs/99")["run_attempt"] == 1 and reader("actions/runs/99")["conclusion"] == "success"
     listing = reader("actions/workflows/ci.yml/runs?head_sha=" + HEAD + "&per_page=100&page=1")
-    assert release_candidate.discover(reader, HEAD) == 99 and listing["workflow_runs"][0]["run_attempt"] == 1
+    assert release_candidate.discover(reader, HEAD, kit.policy()) == 99 and listing["workflow_runs"][0]["run_attempt"] == 1
     jobs = {j["name"]: j for j in reader("actions/runs/99/attempts/1/jobs?per_page=100&page=1")["jobs"]}
     assert all(j["conclusion"] == "success" and j["run_attempt"] == 1 for j in jobs.values())
     assert record["bead"] == "0bb" and record["attempt1_failed"] == ["CI OK", JOB] and record["run_attempt"] == 2
@@ -144,12 +145,12 @@ def test_waiver_shows_attempt_one_with_only_the_waived_jobs_passing():
 ])
 def test_waiver_refuses_everything_else(why, kwargs, waiver, classify, match):
     with pytest.raises(release_candidate.CandidateError, match=match):
-        policy.waived_view(_world(**kwargs), HEAD, waiver, classify, aggregate="CI OK")
+        policy.waived_view(_world(**kwargs), HEAD, waiver, classify, aggregate="CI OK", runs=RUNS)
 
 
 def test_without_a_waiver_a_rerun_candidate_is_still_refused():
     with pytest.raises(release_candidate.CandidateError, match="rerun candidate"):
-        release_candidate.discover(_world(), HEAD)
+        release_candidate.discover(_world(), HEAD, kit.policy())
 
 
 # merge-gate.yml POSTs merge-gate/coverage-floor check runs; GitHub may list them as jobs of the CI run (v0.9.32).
@@ -229,7 +230,7 @@ def test_verify_pr_reads_jobs_through_the_api_check_run_filter(monkeypatch):
     jobs = _pages(_candidate_jobs() + [_api_check("merge-gate", 5001)])
     monkeypatch.setattr(policy, "_api", lambda path: jobs(path) if "/jobs?" in path else
                         ({"head": {"sha": HEAD}} if path.startswith("pulls/") else {"commit": {"tree": {"sha": TREE}}}))
-    monkeypatch.setattr(release_candidate, "discover", lambda get, head: RUN)
+    monkeypatch.setattr(release_candidate, "discover", lambda get, head, policy: RUN)
     seen = {}
     monkeypatch.setattr(release_candidate, "verify", lambda get, download, expected, pins: seen.update(ok=_inventory_ok(get)))
     policy.verify_pr(17)

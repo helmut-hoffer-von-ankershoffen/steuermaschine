@@ -189,7 +189,7 @@ def refusal(m: Member, area: str, explicit: bool = False) -> str:
         return "pinned files unknown: Core's release policy (scripts/release_policy.json) at main is unreadable"
     pinned = [p for p in m.files if p in PINNED]
     if pinned and area != "tools":
-        return f"touches pinned {pinned[0]} (Core's release policy): area tools, ships alone, re-pin after merge"
+        return f"touches pinned {pinned[0]} (Core's release policy): area tools, ships alone with its own review"
     if solo := [p for p in m.files if solo_file(p)]:
         return f"solo class (update/install/auth/recovery: {solo[0]}): ships alone with its own review"
     if area == "tools":

@@ -220,8 +220,7 @@ def workflow(needs_test="", needs_ci="[build, test, notifier]"):
 def closure_data(text, names):
     import base64
 
-    from steuermaschine_heinzel.native.queue_lib import release_candidate as strict
-    return {"blobs": {strict.WORKFLOW: base64.b64encode(text.encode()).decode()}, "proof": {"head": "1" * 40},
+    return {"blobs": {kit.WORKFLOW: base64.b64encode(text.encode()).decode()}, "proof": {"head": "1" * 40},
             "jobs": [{"id": i, "name": n} for i, n in names.items()]}
 
 
@@ -427,14 +426,14 @@ def candidate_data(run_id=9):
     proof = {"schema": 1, "repository": strict.REPOSITORY, "event": "pull_request", "version": VERSION, "run_id": run_id,
              "run_attempt": 1, "sources": {}, "pr": 5, "head": H, "tree": T, "base": B, "source_commit": S}
     run = {"id": run_id, "run_attempt": 1, "status": "completed", "conclusion": "failure", "event": "pull_request",
-           "path": strict.WORKFLOW, "head_branch": f"release/v{VERSION}", "head_sha": H,
+           "path": kit.WORKFLOW, "head_branch": f"release/v{VERSION}", "head_sha": H,
            "repository": {"full_name": strict.REPOSITORY}, "head_repository": {"full_name": strict.REPOSITORY}}
     pr = {"state": "open", "draft": False, "number": 5, "title": f"chore(release): v{VERSION}",
           "head": {"sha": H, "ref": f"release/v{VERSION}", "repo": {"full_name": strict.REPOSITORY}},
           "base": {"sha": B, "ref": "main", "repo": {"full_name": strict.REPOSITORY}}}
     head = {"sha": H, "commit": {"tree": {"sha": T}}}
     source = {"sha": S, "commit": {"tree": {"sha": T}}, "parents": [{"sha": B}, {"sha": H}]}
-    blobs = {strict.WORKFLOW: base64.b64encode(kit.workflow_bytes()).decode()}  # the workflow, for its needs graph
+    blobs = {kit.WORKFLOW: base64.b64encode(kit.workflow_bytes()).decode()}  # the workflow, for its needs graph
     inventory = kit.expected_jobs("pull_request")
     jobs, annots, n = [], {}, 100
     for name, expected in inventory.items():
@@ -474,7 +473,6 @@ def test_identity_accepts_and_refuses():
     broken(lambda d: d["proof"].update(schema=2), "source proof protocol")
     broken(lambda d: d["head"].update(sha="x"), "source tree/parents")
     broken(lambda d: d["blobs"].pop(next(iter(d["blobs"]))), "executed workflow missing")
-    import base64
     broken(lambda d: d["blobs"].update({"scripts/other.py": ""}), "executed workflow missing")
 
 

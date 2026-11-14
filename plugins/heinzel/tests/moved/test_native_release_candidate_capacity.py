@@ -56,7 +56,7 @@ def evidence():
                        steps=[step('Fail if any required job failed', 'failure')])
     return {'run': {'id': RUN, 'run_attempt': 1, 'status': 'completed', 'conclusion': 'failure',
                     'repository': {'full_name': cap.strict.REPOSITORY}, 'head_repository': {'full_name': cap.strict.REPOSITORY},
-                    'path': cap.strict.WORKFLOW, 'event': 'pull_request', 'head_sha': HEAD,
+                    'path': kit.WORKFLOW, 'event': 'pull_request', 'head_sha': HEAD,
                     'head_branch': f'release/v{VERSION}', 'created_at': '2026-11-05T00:00:00Z'},
             'proof': proof, 'jobs': jobs, 'annotations': notes,
             'pr': {'number': PR, 'state': 'open', 'draft': False, 'title': f'chore(release): v{VERSION}',
@@ -215,11 +215,11 @@ def test_replay_guard_parses_actual_graph_and_rejects_test_descendant_before_req
     data = evidence()
     eligible = cap.original(data, VERSION, RUN)
     assert cap.dependency_closure(data, eligible) == {'Build', 'CI OK'}
-    text = base64.b64decode(data['blobs'][cap.strict.WORKFLOW]).decode()
+    text = base64.b64decode(data['blobs'][kit.WORKFLOW]).decode()
     start = text.index('\n  e2e:\n')
     end = text.index('\n  template:\n', start)
     modified = text[:start] + text[start:end].replace('needs: changes', 'needs: [changes, build]', 1) + text[end:]
-    data['blobs'][cap.strict.WORKFLOW] = base64.b64encode(modified.encode()).decode()
+    data['blobs'][kit.WORKFLOW] = base64.b64encode(modified.encode()).decode()
     with pytest.raises(cap.InvalidCapacity, match='descendant'):
         cap.dependency_closure(data, eligible)
 
