@@ -175,6 +175,27 @@ def test_generator_snapshots_only_harmless_runs_without_probing(stuck):
     assert s.read_nonconsumers(rt, output['receipts'], rt.home)  # round-trips through the reader
 
 
+def test_generator_excludes_run_changed_after_inventory(stuck):
+    rt, _, _, run, _ = stuck
+    original = rt.api
+    rt.api = lambda path: dict(run, head_sha='6' * 40) if path.endswith(f'/runs/{run["id"]}') else original(path)
+    output, excluded = s.stuck_queued_receipts(rt, set())
+    assert output['receipts'] == []
+    assert excluded == [{'id': run['id'], 'reason': 'active run changed during exact authentication'}]
+
+
+def test_generator_refuses_missing_run(stuck):
+    rt, _, _, run, _ = stuck
+    original = rt.api
+    def api(path):
+        if path.endswith(f'/runs/{run["id"]}'):
+            raise a.AdmissionError('run missing')
+        return original(path)
+    rt.api = api
+    with pytest.raises(a.AdmissionError, match='run missing'):
+        s.stuck_queued_receipts(rt, set())
+
+
 def test_cli_nonconsumers_requires_stuck_queued_flag(monkeypatch):
     monkeypatch.setattr(s, 'Runtime', lambda *args, **kwargs: pytest.fail('runtime constructed'))
     assert s.main(['nonconsumers', '--core-repo', 'x', '--review-root', '.']) == 1
