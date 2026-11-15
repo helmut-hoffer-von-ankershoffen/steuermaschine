@@ -1936,6 +1936,19 @@ def drop_identity(version: str) -> dict:
             "branch": repo["branch"] is not None}
 
 
+def recorded_release_pr(data: dict) -> int | None:
+    """The PR number `sm release pr` recorded (release_pr_opened), or None. A malformed record refuses: it is never
+    read as no PR. Whether the PR is unmerged, and that no tag or PyPI release exists, drop_identity proves on GitHub."""
+    opened = data.get("release_pr_opened")
+    if opened is None:
+        return None
+    if (not isinstance(opened, dict) or set(opened) != {"pr", "head", "at"} or type(opened["pr"]) is not int
+            or opened["pr"] <= 0 or not isinstance(opened["head"], str) or not re.fullmatch(r"[0-9a-f]{40}", opened["head"])
+            or not isinstance(opened["at"], str) or not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z", opened["at"])):
+        raise Stop("drop refused: the receipt's release_pr_opened record is malformed; preserving it for review")
+    return opened["pr"]
+
+
 def drop_unmet(version: str, identity: dict) -> str | None:
     if identity["open"]:
         return f"release PR #{identity['open'][0]} is open"
@@ -1983,8 +1996,9 @@ def drop_candidate(version: str, reason: str, close_pr: bool) -> int:
     if recorded is not None and (not isinstance(recorded, dict) or recorded.get("version") != version
                                  or recorded.get("token") != data.get("freeze_token")):
         raise Stop("drop refused: the receipt holds a drop record of another identity; preserving it for review")
-    if not has_only_pretag_core_state({key: value for key, value in data.items() if key != "drop"}):
+    if not has_only_pretag_core_state({key: value for key, value in data.items() if key not in ("drop", "release_pr_opened")}):
         raise Stop("drop refused: the receipt records steps after the tag (PyPI, compose or acceptance)")
+    opened = recorded_release_pr(data)  # `sm release pr` records the PR it opened: pre-tag, if GitHub agrees below
     events = hold_events(data)
     owned = data.get("freeze_token") is not None
     exists = owned and owned_hold_exists(version)
@@ -1994,7 +2008,10 @@ def drop_candidate(version: str, reason: str, close_pr: bool) -> int:
     if exists:
         directory, held = pin_owned_hold(version)
     try:
-        identity = drop_identity(version)
+        identity = drop_identity(version)  # proves: no tag, no GitHub release, PyPI 404, no merged release PR
+        if opened is not None and opened not in identity["open"] + identity["closed"]:
+            raise Stop(f"drop refused: the receipt names release PR #{opened}, which GitHub does not show as an "
+                       f"unmerged PR of release/v{version}; nothing was dropped")
         unmet = drop_unmet(version, identity)
         if unmet and not close_pr:
             raise Stop(f"drop refused: {unmet}; close the PR and delete the branch, or pass --close-pr")
@@ -2016,7 +2033,8 @@ def drop_candidate(version: str, reason: str, close_pr: bool) -> int:
                   "hold": "owned" if exists else "paused" if owned else "none",
                   "evidence": {"tag": False, "github_release": False, "pypi": 404, "merged_pr": False,
                                "closed_prs": identity["closed"], "closed_by_drop": closed_now,
-                               "branch": False, "branch_deleted_by_drop": branch_deleted}}
+                               "branch": False, "branch_deleted_by_drop": branch_deleted,
+                               **({"recorded_pr": opened} if opened is not None else {})}}
         if recorded is None:
             remember(drop=record)  # durable intent before the hold goes: a retry may then find the hold absent
         else:
