@@ -100,7 +100,7 @@ def ci_run(w: Reader, head: str) -> tuple[dict[str, Any] | None, str]:
     if why:
         return None, why
     runs = [r for r in (data or {}).get("workflow_runs") or []
-            if (r.get("path") == ".github/workflows/ci.yml" or (not r.get("path") and r.get("name") == CI_WORKFLOW))
+            if (r.get("path") == core_facts.ci_path() or (not r.get("path") and r.get("name") == CI_WORKFLOW))
             and r.get("head_sha") == head]
     return (max(runs, key=lambda r: int(r.get("id") or 0)) if runs else None), ""
 
@@ -250,7 +250,7 @@ def bound_workflow_gate(w: Reader, run_id: str, head: str, ci_id: str, pr: int) 
     if not re.fullmatch(r"[0-9]+", run_id):
         raise Refuse("the gate run id must contain only digits", f"sm ci why {pr}")
     gate = run_of(w, run_id)
-    if not gate or gate.get("path") != ".github/workflows/merge-gate.yml" or gate.get("event") != "workflow_run":
+    if not gate or gate.get("path") != core_facts.judge_path() or gate.get("event") != "workflow_run":
         raise Refuse("the named run is not the trusted workflow_run Merge gate", f"sm ci why {pr}")
     if gate.get("status") != "completed":
         raise Wait(f"Merge gate run {run_id} is not completed", f"CI run {run_id}")
