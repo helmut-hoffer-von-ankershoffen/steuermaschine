@@ -81,7 +81,7 @@ def extra_tests(sel: Path | None) -> list[str]:
     return [str(test).split("::")[0] for test in listed]
 
 
-@native("check", writes=True, files=("check_lib", "affected.py", "affected_lib", "preflight.py", "preflight_lib"), help=H(
+@native("check", writes=True, help=H(
     "The cheap checks of exactly what a Core head changes, in one pass: READY and a receipt for the commit, or every failure with its fix.",
     "Use before you ask for a review and before any push, on your committed head; again after every new commit.",
     "writes the check receipt of the commit on this machine when every check is green (written once per commit; "

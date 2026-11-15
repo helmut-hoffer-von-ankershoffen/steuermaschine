@@ -12,7 +12,6 @@ from .alarm_lib.asks import AskAlarmSettings
 
 __all__ = ["AskAlarmSettings"]
 
-UNIT = ("alarm_asks.py", "alarm_lib", "queue_lib/stall.py", "coord_lib")
 
 
 class AskAlarm(Model):
@@ -23,7 +22,7 @@ class AskAlarm(Model):
         return [f"ALERT {self.text} [key {asks.KEY}]" if self.holds else "no open ask bead"]
 
 
-@native("alarm asks", writes=True, files=UNIT, help=H(
+@native("alarm asks", writes=True, help=H(
     "Record one alarm for the open beads labelled owner-ask or heinzel-issues, so bare `sm` shows it and `sm alarm ack` works.",
     "Use after bead asks or in-app reports arrive; the queue daemon runs it on every tick.",
     "writes the one recorded alarm asks:open to the alarm state file (and drops an acknowledgement when beads are new since it).",

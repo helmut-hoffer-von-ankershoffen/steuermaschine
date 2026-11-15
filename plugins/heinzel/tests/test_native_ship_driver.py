@@ -187,7 +187,7 @@ def test_a_repository_is_required_for_the_wait(tmp_path):
 def test_the_help_is_in_contract_form():
     text = ship_driver.ship.__sm_native__.help
     assert missing(text) == "" and disorder(text, "sm") == ""
-    assert ship_driver.ship.__sm_native__.writes and ship_driver.ship.__sm_native__.review == "ship.md"
+    assert ship_driver.ship.__sm_native__.writes  # R3: no per-command review file any more
 
 
 def test_a_new_head_of_the_same_branch_does_not_rewrite_the_remembered_selection(tmp_path):

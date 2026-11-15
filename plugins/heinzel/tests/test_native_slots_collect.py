@@ -178,7 +178,6 @@ def test_collect_is_read_only_apply_is_a_reviewed_writer(world):
 
     by_path = {c.path: c for c in commands()}
     assert by_path["head slots collect"].writes is False and by_path["head slots apply"].writes is True
-    assert by_path["head slots apply"].review == "head-slots-apply.md"
 
 
 # ---- the library

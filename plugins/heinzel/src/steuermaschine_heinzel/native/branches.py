@@ -13,7 +13,6 @@ from steuermaschine.native import Group, native, runtime
 
 from . import branch_owner
 
-UNIT = ("branches.py", "branch_owner.py")
 
 GROUP = Group("branch", H(
     "branch: which agent owns a branch; one writer per branch.",
@@ -55,7 +54,7 @@ def branch_check(worktree: Path = typer.Option(Path("."), "--worktree", metavar=
     return _view(branch, owner, branch_owner.agent_name(agent))
 
 
-@native("branch claim", writes=True, files=UNIT, help=H(
+@native("branch claim", writes=True, help=H(
     "Record the agent as the one writer of the worktree's branch; a second agent's claim is refused.",
     "Use when a builder is started on a branch, so no other agent commits or pushes there. `sm head pr` also claims an unowned branch.",
     "writes one small record file under branch-owners/ in the state directory; nothing else.",
