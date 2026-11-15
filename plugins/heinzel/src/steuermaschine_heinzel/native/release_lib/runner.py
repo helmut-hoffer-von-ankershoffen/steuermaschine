@@ -70,6 +70,7 @@ import urllib.request
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 
 from . import edge  # moved: siblings are imported relatively, no sys.path entry
 from ..queue_lib import hzlib  # noqa: E402
@@ -1936,7 +1937,7 @@ def drop_identity(version: str) -> dict:
             "branch": repo["branch"] is not None}
 
 
-def recorded_release_pr(data: dict) -> int | None:
+def recorded_release_pr(data: dict[str, Any]) -> int | None:
     """The PR number `sm release pr` recorded (release_pr_opened), or None. A malformed record refuses: it is never
     read as no PR. Whether the PR is unmerged, and that no tag or PyPI release exists, drop_identity proves on GitHub."""
     opened = data.get("release_pr_opened")
