@@ -18,6 +18,7 @@ from test_pipeline_cov_head_admit import context
 from test_pipeline_cov_head_admit import native as native_rt
 from test_pipeline_cov_head_admit import runtime as plain_runtime
 
+from steuermaschine import verdicts
 from steuermaschine.engine import Refuse
 from steuermaschine.github.testing import FakeGh
 from steuermaschine_heinzel.native.admission_lib.ops import PrepareResult, canonical_sha256
@@ -87,7 +88,7 @@ def test_a_head_that_changes_a_protected_source_takes_the_route_by_itself_with_t
     packet = record.parent / "packet.json"
     assert json.loads(record.read_text()) == {"packet_sha256": sha_of(packet), "protected_producer": [CI]}  # the Makefile is unchanged
     assert review["sha256"] == sha_of(record) != sha_of(packet)
-    brief = Path(review["brief"]).read_text()
+    brief = rt.providers.agents.briefs[review["brief"]]
     assert f"CHANGES PROTECTED focused-CI sources ({CI})" in brief and "--reviewed-protected-producer" in brief and str(record) in brief
 
     verdict(rt, review["sha256"])
@@ -97,7 +98,7 @@ def test_a_head_that_changes_a_protected_source_takes_the_route_by_itself_with_t
     assert fakes.prepared_with == [True]  # the route was taken without a hand command
     prepared = json.loads(Path(stop["file"]).read_text())
     assert prepared["protected_producer"] is True and stop["sha256"] == canonical_sha256(prepared) != review["sha256"]  # a separate verdict
-    assert "PROTECTED-PRODUCER ROUTE" in Path(stop["brief"]).read_text() and CI in Path(stop["brief"]).read_text()
+    assert "PROTECTED-PRODUCER ROUTE" in rt.providers.agents.briefs[stop["brief"]] and CI in rt.providers.agents.briefs[stop["brief"]]
     refused = admit(rt, wt, "--approved", stop["sha256"], "--live")
     assert refused["status"] == "refused" and "no verdict is recorded" in refused["phase"]  # the packet verdict does not cover prepare.out
     assert "head apply" not in [c[0] for c in fakes.calls]
@@ -124,7 +125,7 @@ def test_the_ordinary_route_is_unchanged_and_passes_no_new_argument(tmp_path):
     verdict(rt, first["review"]["sha256"])
     second = admit(rt, wt, "--approved", first["review"]["sha256"])
     assert second["review"]["step"] == "apply review" and fakes.prepared_with == [None]  # the keyword is not passed at all
-    assert "PROTECTED-PRODUCER" not in Path(second["review"]["brief"]).read_text()
+    assert "PROTECTED-PRODUCER" not in rt.providers.agents.briefs[second["review"]["brief"]]
     assert not (Path(first["review"]["file"]).parent / head_admit.PROTECTED_RECORD).exists()
 
 
@@ -142,6 +143,7 @@ def setup(tmp_path: Path, execution: dict[str, str], at_main: dict[str, str] | i
 
 def approve(rt: Any, digest: str, reviewer: str = "reviewer-1", kind: str = "approve") -> None:
     rt.providers.store.put_receipt("verdicts", digest, {"digest": digest, "verdict": kind, "reviewer": reviewer})
+    verdicts.record_check(rt.providers.store, HEAD, {"base": MAIN})  # the packet stop binds the head: its cheap checks ran green
 
 
 def test_the_changed_sources_are_the_pins_that_differ_from_main_and_a_new_pin(tmp_path):
@@ -283,3 +285,14 @@ def test_the_record_digest_is_of_its_exact_bytes(tmp_path):
     text = head_admit._protected_bytes("a" * 64, [CI], None)
     assert text.endswith("\n") and json.loads(text) == {"packet_sha256": "a" * 64, "protected_producer": [CI]}
     assert hashlib.sha256(text.encode()).hexdigest() != hashlib.sha256(head_admit._protected_bytes("a" * 64, [CI, MAKE], None).encode()).hexdigest()
+
+
+def test_an_approve_without_the_heads_check_receipt_keeps_the_route_closed(tmp_path):
+    rt, ctx, _dir = setup(tmp_path, {CI: NEW}, {CI: OLD})
+    digest, _brief, _file = head_admit.packet_review(ctx)
+    verdicts.need_check(rt.providers.store, digest, HEAD, "sm check WT", base=MAIN)
+    rt.providers.store.put_receipt("verdicts", digest, {"digest": digest, "verdict": "approve", "reviewer": "reviewer-1"})
+    with pytest.raises(Refuse, match="no check receipt exists for exactly that commit"):
+        head_admit.reviewed_protected(ctx)
+    verdicts.record_check(rt.providers.store, HEAD, {"base": MAIN})
+    assert head_admit.reviewed_protected(ctx) == [CI]

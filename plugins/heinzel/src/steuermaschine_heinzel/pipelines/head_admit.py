@@ -30,9 +30,10 @@ import json
 from pathlib import Path
 from typing import Any
 
-from steuermaschine import USAGE
+from steuermaschine import USAGE, verdicts
 from steuermaschine.engine import Ctx, Pipeline, Refuse, ReviewStop, Step, Subject, identify_head, need_check
 from steuermaschine.github import Gh
+from steuermaschine.go import run_states
 from steuermaschine.native import unit
 
 from ..native import merge_tier
@@ -549,10 +550,16 @@ def reviewed_protected(ctx: Ctx) -> list[str]:
         same = record.read_text() == expected
     except OSError:
         same = False
-    verdict = ctx.providers.store.get_receipt("verdicts", digest) or {}
-    if not same or verdict.get("verdict") != "approve" or verdict.get("reviewer") == ctx.author:
+    why = "" if same else "the record on disk is not these bytes"
+    if same:
+        try:  # the engine's own rule for a review stop: an approve, not by anyone who produced the bytes, with its check receipt
+            verdict = verdicts.require_independent(ctx.providers.store, digest, run_states(ctx.providers.store), f"sm head admit {wt}")
+            why = f"the verdict was recorded by {ctx.author}, who drives this run" if verdict.get("reviewer") == ctx.author else ""
+        except Refuse as refused:
+            why = refused.message
+    if why:
         raise Refuse(f"this head changes protected focused-CI sources ({', '.join(changed)}), and no independent verdict approves "
-                     f"{record} for exactly them (digest {digest[:12]}): the protected-producer route stays closed. A verdict on "
+                     f"{record} for exactly them (digest {digest[:12]}): the protected-producer route stays closed ({why}). A verdict on "
                      "packet.json alone does not open it; the packet review stop names the sources and asks again",
                      f"sm head admit {wt}")
     return changed
