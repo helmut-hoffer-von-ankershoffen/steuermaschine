@@ -96,6 +96,21 @@ def test_a_wrong_digest_a_reject_and_a_self_review_are_refused():
     assert "reject" in e2.advance(pl2, "/wt", Options(approved=DIGEST)).phase
 
 
+def test_an_approved_digest_bound_to_a_head_does_not_resume_without_the_heads_check_receipt():
+    from steuermaschine import verdicts
+
+    p = fake_providers()
+    pl, calls = make(p)
+    e = engine(p)
+    e.advance(pl, "/wt", Options())
+    approve(p)  # recorded before anything bound the digest to a head
+    verdicts.need_check(p.store, DIGEST, "a" * 40, "tool check /wt", base="b" * 40)
+    r = e.advance(pl, "/wt", Options(approved=DIGEST))
+    assert (r.status, r.exit_code) == ("refused", REFUSED) and "no check receipt exists" in r.phase and "`tool check /wt`" in r.phase
+    verdicts.record_check(p.store, "a" * 40, {"base": "c" * 40})  # measured from another base: still no
+    assert "measured from cccccccccccc" in e.advance(pl, "/wt", Options(approved=DIGEST)).phase and calls == ["build"]
+
+
 def test_after_approval_a_dry_run_stops_before_the_first_external_step():
     p = fake_providers()
     pl, calls = make(p)

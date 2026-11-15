@@ -60,34 +60,61 @@ def require_independent(store: Any, digest: str, run_states: list[dict[str, Any]
     if receipt.get("reviewer") in authors_of(store, digest, run_states):
         raise Refuse(f"the verdict for {digest[:12]} was recorded by {receipt.get('reviewer')}, who also produced these bytes: "
                      "a different agent must review", recorded)
+    if unchecked := missing_check(store, digest):
+        raise Refuse(unchecked, recorded)
     return dict(receipt)
 
 
-def record_check(store: Any, head: str, data: dict[str, Any]) -> bool:
-    """Write the check receipt of the commit `head`: its cheap checks were green. A receipt is written once; False
-    when the commit already has one (the first stays: the same commit was green before)."""
+def check_receipt(store: Any, head: str) -> tuple[dict[str, Any] | None, str]:
+    """(the green check receipt of the commit, "") or (None, why there is none that counts): missing, unreadable, or
+    not green. A receipt that cannot be read proves nothing."""
+    try:
+        receipt = store.get_receipt(CHECKS, head)
+    except (OSError, ValueError, TypeError) as why:
+        return None, f"its check receipt exists but cannot be read ({type(why).__name__}): a damaged receipt is no proof and is never rewritten, so the commit needs a new sha"
+    if not isinstance(receipt, dict) or not receipt:
+        return None, "no check receipt exists for exactly that commit"
+    if receipt.get("green") is not True:
+        return None, "its check receipt is not green"
+    return dict(receipt), ""
+
+
+def record_check(store: Any, head: str, data: dict[str, Any]) -> str:
+    """Write the check receipt of the commit `head`: its cheap checks were green, measured from `data["base"]`.
+    -> "written"; "kept" when the commit already has a green receipt that can be read (the first stays); else why the
+    one that is there does not count (it cannot be replaced: a receipt is written once)."""
     try:
         store.put_receipt(CHECKS, head, {**data, "head": head, "green": True})
     except FileExistsError:
-        return False
-    return True
+        return "kept" if check_receipt(store, head)[0] else check_receipt(store, head)[1]
+    return "written"
 
 
-def need_check(store: Any, digest: str, head: str, command: str) -> None:
+def need_check(store: Any, digest: str, head: str, command: str, base: str = "") -> None:
     """Record that `digest` binds the commit `head`: an approval of it needs that commit's check receipt, which
-    `command` writes. The command that produces the digest calls this; a digest nobody bound needs no receipt."""
+    `command` writes. With `base` (the commit the bytes under review build the head on) the receipt must have been
+    measured from exactly that base: checks of a part of the head are no checks of the head. The command that
+    produces the digest calls this; a digest nobody bound needs no receipt."""
+    want = {"head": head, "command": command, **({"base": base} if base else {})}
     with store.lock(f"{KIND}.{digest}"):
         data = store.load(KIND, digest) or {"digest": digest, "authors": [], "sources": []}
-        if data.get("check") != {"head": head, "command": command}:
-            store.save(KIND, digest, {**data, "check": {"head": head, "command": command}})
+        if data.get("check") != want:
+            store.save(KIND, digest, {**data, "check": want})
 
 
 def missing_check(store: Any, digest: str) -> str:
-    """Why `digest` cannot be approved yet: it binds a commit that has no green check receipt. "" when it binds no
-    commit or the receipt is there. The text names the command that writes the receipt."""
+    """Why `digest` cannot be approved, or an approval of it cannot be used: it binds a commit without a green check
+    receipt measured from the bound base. "" when it binds no commit or the receipt is there. The text names the
+    command that writes the receipt. Asked when the verdict is recorded and again wherever it is used."""
     need = (store.load(KIND, digest) or {}).get("check") or {}
-    head = str(need.get("head") or "")
-    if not head or (store.get_receipt(CHECKS, head) or {}).get("green") is True:
+    head, base = str(need.get("head") or ""), str(need.get("base") or "")
+    if not head:
         return ""
-    return (f"{digest[:12]} binds the head {head[:12]}, and no green check receipt exists for exactly that commit: an approval needs "
-            f"the cheap checks green first. Run `{need.get('command')}` on that head (it writes the receipt), then record the verdict again")
+    receipt, why = check_receipt(store, head)
+    run = f"Run `{need.get('command')}` on that head (it writes the receipt), then record the verdict"
+    if receipt is None:
+        return f"{digest[:12]} binds the head {head[:12]}, and {why}: an approval needs the cheap checks green first. {run}"
+    if base and receipt.get("base") != base:
+        return (f"{digest[:12]} binds the head {head[:12]} on the base {base[:12]}, but its check receipt was measured from {str(receipt.get('base'))[:12]}: "
+                f"the checks did not cover what the head changes over that base. Bring the head onto that base (a new commit), then: {run}")
+    return ""

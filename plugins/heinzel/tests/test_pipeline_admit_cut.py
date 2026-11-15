@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+from steuermaschine import verdicts
 from steuermaschine.app import Runtime
 from steuermaschine.config import Project
 from steuermaschine.github.testing import FakeGh
@@ -70,6 +71,9 @@ def report(out) -> dict:
 
 
 def verdict(rt: Runtime, digest: str) -> None:
+    need = (rt.providers.store.load(verdicts.KIND, digest) or {}).get("check")
+    if need:  # a packet digest binds its head: `sm check` was green on it, measured from the main the packet is built on
+        verdicts.record_check(rt.providers.store, need["head"], {"base": need["base"]})
     done = invoke(rt, ["review", "verdict", digest, "--approve", "--reviewer", "reviewer-fable", "--notes", "recomputed"])
     assert done.exit_code == 0, done
 

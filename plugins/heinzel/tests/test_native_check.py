@@ -58,7 +58,8 @@ def test_a_web_change_runs_the_hooks_web_steps_and_the_selected_vitest_file_and_
     assert "  [PASS] web: 1 changed web file(s): web-prepare, web-lint, web-types, web-tests green" in lines
     assert "  [PASS] types: only documents, web/, desktop/ or plugins/ changed: the hook runs no type check" in lines and "  [PASS] docs: no document(s) changed" in lines
     assert "         warning: e2e lanes the selector names are not run here: web-1" in lines and "READY" in lines
-    assert lines[-1] == f"receipt: checks {HEAD} (written): an approval of this exact commit can be recorded"
+    assert lines[-1] == f"receipt: checks {HEAD} (written), measured from {MAIN[:12]}: an approval of this exact commit on that base can be recorded"
+    assert "  [PASS] hook: scripts/scoped_checks.py answered: 1 web file(s), 0 document(s), 0 early guard command(s)" in lines
     # the hook was asked with the changed paths and the Vitest files the checkout's selector named
     (probe, where, _), = machine.ran("core_scoped_checks")
     assert json.loads(probe[-1]) == {"changed": ["web/src/a.ts"], "vitest": ["web/src/a.test.ts"]} and probe[-2] == str(core) and where == str(core)
@@ -86,7 +87,7 @@ def test_a_document_change_runs_the_docs_style_test_the_selector_names_and_the_h
     assert machine.ran("tests/integration/guides_test.py")  # the hook's early guard, as the hook prints it
     (selected,) = [call[0] for call in machine.ran("tests/unit/prose_rules_test.py")]  # the selector's test: no name of it exists in sm
     assert selected[:3] == ["uv", "run", "pytest"] and selected[-1] == "tests/unit/prose_rules_test.py"
-    assert step(found, "tests").data == {"tests": ["tests/unit/prose_rules_test.py"], "guards": 1, "selector": "core"}
+    assert step(found, "tests").data == {"tests": ["tests/unit/prose_rules_test.py"], "guards": 1, "selector": "core", "unit_suite": False}
     assert not machine.ran("biome") and not machine.ran("coverage run") and not machine.ran("ruff")
 
 
@@ -147,25 +148,81 @@ def test_no_receipt_for_a_dirty_tree_a_skipped_check_or_a_head_that_moved(core, 
     assert moved.providers.store.get_receipt(verdicts.CHECKS, HEAD) is None and moved.providers.store.get_receipt(verdicts.CHECKS, "c" * 40) is None
 
 
-def test_a_full_selection_is_narrowed_by_the_hooks_import_graph_or_named_as_not_run(core, rt, tmp_path):  # noqa: F811
-    machine = checkout(core).on("git diff --name-only", "pyproject.toml\nsrc/heinzel/x.py").on("scripts/related_tests.py", "ALL\n")
-    found = report(invoke(rt(machine), ["--format", "json", "check", str(core)]))
-    assert not found.ready and not machine.ran("coverage run")
-    assert "the unit suite was NOT run here" in step(found, "tests").data["warnings"][0]
-    assert [f.step for f in found.failures] == ["coverage"] and "no test is selected" in found.failures[0].message and "--sel FILE" in found.failures[0].fix
-    assert not [call for call in machine.calls if call[0][:3] == ["uv", "run", "pytest"] and "-m" in call[0]]  # never the whole suite
+def test_a_change_nothing_narrows_runs_the_whole_unit_suite_or_fails_and_never_gets_a_receipt_on_a_warning(core, rt, tmp_path):  # noqa: F811
+    """B1 (the reviewer's probe): the selector says everything and Core's import graph says ALL. The unit suite runs,
+    as the preflight runs it; where the run lock refuses the whole suite the run is red and writes no receipt."""
+    machine = checkout(core).on("git diff --name-only", "pyproject.toml").on("scripts/related_tests.py", "ALL\n")
+    runtime = rt(machine)
+    found = report(invoke(runtime, ["--format", "json", "check", str(core)]))
+    assert not found.ready and not found.receipt and [f.step for f in found.failures] == ["tests"]
+    assert "both select everything: the whole unit suite runs; it was refused or failed (exit 2)" in found.failures[0].message and "--allow-full" in found.failures[0].fix
+    assert not machine.ran("unit and not perf") and runtime.providers.store.get_receipt(verdicts.CHECKS, HEAD) is None  # the lock refused it: nothing ran
+    allowed = rt(machine)
+    found = report(invoke(allowed, ["--format", "json", "check", str(core), "--allow-full"]))
+    assert found.ready and found.receipt and step(found, "tests").data["unit_suite"] is True
+    (suite, where, _), = machine.ran("unit and not perf")
+    assert suite[:5] == ["uv", "run", "pytest", "-m", "unit and not perf"] and where == str(core)
+    failing = rt(checkout(core).on("git diff --name-only", "pyproject.toml").on("scripts/related_tests.py", "ALL\n").on("unit and not perf", Result(1, "1 failed\n", "")))
+    found = report(invoke(failing, ["--format", "json", "check", str(core), "--allow-full"]))
+    assert not found.ready and "| 1 failed" in found.failures[0].message and failing.providers.store.get_receipt(verdicts.CHECKS, HEAD) is None
+
+
+def test_a_failing_import_graph_fails_the_run_instead_of_passing_for_everything(core, rt):  # noqa: F811
+    """B1 (the reviewer's probe): scripts/related_tests.py fails or prints something odd. That is no "ALL": red, no receipt."""
+    for answer, why in ((Result(3, "", "Traceback"), "scripts/related_tests.py failed (exit 3)"), ("something odd\n", "printed something that is no test path")):
+        machine = checkout(core).on("git diff --name-only", "pyproject.toml").on("scripts/related_tests.py", answer)
+        runtime = rt(machine)
+        found = report(invoke(runtime, ["--format", "json", "check", str(core), "--allow-full"]))
+        assert not found.ready and [f.step for f in found.failures] == ["tests"] and why in found.failures[0].message, answer
+        assert not machine.ran("unit and not perf") and runtime.providers.store.get_receipt(verdicts.CHECKS, HEAD) is None
+
+
+def test_a_full_selection_the_import_graph_narrows_runs_those_tests_and_the_ones_of_sel(core, rt, tmp_path):  # noqa: F811
     sel = tmp_path / "sel.json"
     sel.write_text(json.dumps({"python": ["tests/unit/x_test.py::test_one"]}))
     machine = checkout(core).on("git diff --name-only", "pyproject.toml").on("scripts/related_tests.py", "tests/unit/x_test.py\n")
     found = report(invoke(rt(machine), ["--format", "json", "check", str(core), "--sel", str(sel)]))
-    assert found.ready and step(found, "tests").data["tests"] == ["tests/unit/x_test.py"]
+    assert found.ready and step(found, "tests").data["tests"] == ["tests/unit/x_test.py"] and not machine.ran("unit and not perf")
     assert "scripts/related_tests.py narrows the unit tests to 1 file(s)" in step(found, "tests").data["warnings"][0]
+    machine = checkout(core).on("git diff --name-only", "pyproject.toml\nsrc/heinzel/x.py").on("scripts/related_tests.py", "ALL\n")
+    found = report(invoke(rt(machine), ["--format", "json", "check", str(core), "--allow-full"]))  # src/ changed and no test named: coverage has nothing to measure with
+    assert [f.step for f in found.failures] == ["coverage"] and "no test is selected" in found.failures[0].message and "--sel FILE" in found.failures[0].fix
 
 
-def test_an_unreadable_hook_fails_the_step_whose_files_changed_and_usage_errors_run_nothing(core, rt, tmp_path):  # noqa: F811
-    machine = checkout(core).on("core_scoped_checks", json.dumps({"error": "AttributeError: no scoped_steps"}))
-    found = report(invoke(rt(machine), ["--format", "json", "check", str(core)]))
-    assert [f.step for f in found.failures] == ["web", "docs"] and "scripts/scoped_checks.py does not answer: AttributeError" in found.failures[0].message
+def test_a_hook_that_does_not_answer_fails_the_run_whatever_changed(core, rt, tmp_path):  # noqa: F811
+    """B1 (the reviewer's probe): scripts/scoped_checks.py crashes and no web file or document changed. The early
+    guards of the change are unknown, so the run is red; and a checkout without the hook gets no receipt either."""
+    for changed in ("src/heinzel/x.py", "web/src/a.ts", "docs/adr/0001-x.md"):
+        machine = checkout(core).on("core_scoped_checks", json.dumps({"error": "AttributeError: no scoped_steps"})).on("git diff --name-only", changed)
+        machine.on("-m coverage run", Result(1, "", ""))
+        runtime = rt(machine)
+        found = report(invoke(runtime, ["--format", "json", "check", str(core)]))
+        assert "hook" in [f.step for f in found.failures] and not found.receipt and runtime.providers.store.get_receipt(verdicts.CHECKS, HEAD) is None, changed
+        hook = next(f for f in found.failures if f.step == "hook")
+        assert "scripts/scoped_checks.py does not answer: AttributeError" in hook.message and "early guards of this head are unknown" in hook.message
+        assert step(found, "web").status == "SKIP" and step(found, "docs").status == "SKIP"
+    silent = rt(checkout(core).on("core_scoped_checks", Result(1, "", "uv: error")))
+    assert [f.message.split(":")[0] for f in report(invoke(silent, ["--format", "json", "check", str(core)])).failures] == ["scripts/scoped_checks.py could not be asked (exit 1)"]
+    machine = checkout(core)
+    (core / "scripts/scoped_checks.py").unlink()
+    absent = rt(machine)
+    found = report(invoke(absent, ["--format", "json", "check", str(core)]))
+    assert [f.step for f in found.failures] == ["hook"] and "Core has no scripts/scoped_checks.py" in found.failures[0].message
+    assert absent.providers.store.get_receipt(verdicts.CHECKS, HEAD) is None and not machine.ran("core_scoped_checks")
+
+
+def test_checks_measured_from_another_base_write_no_receipt(core, rt):  # noqa: F811
+    """B2 (the reviewer's probe): `--base HEAD~1` checks the last commit only. Green, but no receipt."""
+    runtime = rt(checkout(core, WEB))
+    done = invoke(runtime, ["check", str(core), "--base", "HEAD~1"])
+    assert done.exit_code == 0 and "READY" in done.stdout.splitlines()
+    assert done.stdout.splitlines()[-1] == "receipt: none: measured from --base HEAD~1, not from origin/main (the setting preflight_base); run sm check without --base for the receipt"
+    assert runtime.providers.store.get_receipt(verdicts.CHECKS, HEAD) is None
+    done = invoke(runtime, ["check", str(core), "--base", "origin/main"])  # naming the setting's own base is the default
+    assert runtime.providers.store.get_receipt(verdicts.CHECKS, HEAD)["base"] == MAIN and "(written), measured from bbbbbbbbbbbb" in done.stdout
+
+
+def test_usage_errors_run_nothing(core, rt, tmp_path):  # noqa: F811
     machine = Machine()
     for argv in ([str(tmp_path / "nowhere")], [str(core), "--skip", "everything"]):
         done = invoke(rt(machine), ["--format", "json", "check", *argv])

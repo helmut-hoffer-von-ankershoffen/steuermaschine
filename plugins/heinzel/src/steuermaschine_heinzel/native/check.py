@@ -55,9 +55,9 @@ def command_of(worktree: object) -> str:
     return f"sm check {worktree}"
 
 
-def bound(rt: Any, wt: Path, base: str) -> cheap.Ctx:
+def bound(rt: Any, wt: Path, base: str, allow_full: bool = False) -> cheap.Ctx:
     """The context of one run: the preflight's edges, with the merge-base as the base (what the head itself changes)."""
-    inner = _preflight.bound(rt, wt)
+    inner = _preflight.bound(rt, wt, allow_full)
     c = cheap.Ctx(wt=wt, standards=inner.standards, sh=inner.sh, gate=inner.gate, meta=inner.meta, gh=inner.gh, repo=inner.repo)
     c.sha = c.git("rev-parse", "HEAD")[1].strip()
     rc, merge_base = c.git("merge-base", base, "HEAD")
@@ -93,6 +93,8 @@ def extra_tests(sel: Path | None) -> list[str]:
     "  ruff        format and lint of the changed Python files\n"
     "  types       the push hook's type checks (read from Core's scripts/scoped_checks.py), unless only web, desktop,\n"
     "              plugins or documents changed\n"
+    "  hook        Core's scripts/scoped_checks.py answered for the changed paths: which are web files and documents, their\n"
+    "              steps and the early guards. A hook that is missing or fails is a failure, never a pass\n"
     "  web         when web files changed: the hook's own web steps (lint, generated client, types) and the Vitest files\n"
     "              the selector names\n"
     "  docs        when documents, ADRs or the site's tooling changed: the hook's own document steps\n"
@@ -102,15 +104,19 @@ def extra_tests(sel: Path | None) -> list[str]:
     "  coverage    when src/ changed: scoped coverage of the whole changed files by those tests (>= 90 %)\n"
     "  bound       HEAD and the tree did not change while the checks ran\n"
     "Which test belongs to which path is never listed here: Core's selector, hook and standards list at the commit say it.\n"
-    "The head is compared with its merge-base with --base. When the selector selects the full set, Core's\n"
-    "scripts/related_tests.py narrows the unit tests; when that cannot either, the suite is NOT run and the tests check warns:\n"
-    "the push hook and CI run it. E2E lanes never run here. --sel FILE adds tests ({\"python\": [files]}).\n"
-    "The receipt is bound to the commit: any new commit needs a new run. A run with --skip, a red run and a dirty tree write none.\n"
+    "The head is compared with its merge-base with the base. When the selector selects the full set, Core's\n"
+    "scripts/related_tests.py narrows the unit tests; when it says everything too, the whole unit suite runs through the run\n"
+    "lock (where the lock refuses a whole suite, the coordinator adds --allow-full); when it fails, the run fails.\n"
+    "E2E lanes never run here. --sel FILE adds tests ({\"python\": [files]}).\n"
+    "The receipt is bound to the commit and names the base it was measured from: any new commit needs a new run, and\n"
+    "an approval needs the receipt's base to be the base the reviewed packet builds the head on. A run with --skip or\n"
+    "with another --base than the setting preflight_base, a red run and a dirty tree write none.\n"
     "Exit 0 READY, 1 NOT READY, 2 usage."))
 def check(worktree: Path | None = typer.Argument(None, metavar="WORKTREE", help="Core worktree whose HEAD is the head to check (default: the current directory)."),
           base: str | None = typer.Option(None, "--base", metavar="REV", help="The ref the head branched from (default: the setting preflight_base)."),
           sel: Path | None = typer.Option(None, "--sel", metavar="FILE", help='More tests to run and to measure coverage with: JSON {"python": [test files]}.'),
-          skip: list[str] | None = typer.Option(None, "--skip", metavar="NAME", help="Leave one check out (repeatable); named in the verdict, and no receipt is written.")) -> HeadCheck:
+          skip: list[str] | None = typer.Option(None, "--skip", metavar="NAME", help="Leave one check out (repeatable); named in the verdict, and no receipt is written."),
+          allow_full: bool = typer.Option(False, "--allow-full", help="Let the run lock run the whole unit suite when nothing narrows the change (the coordinator's call; logged).")) -> HeadCheck:
     rt, usage = runtime(), "sm check --help"
     providers: Any = rt.providers
     wt = _preflight.core_worktree(worktree or Path.cwd(), usage)
@@ -118,8 +124,9 @@ def check(worktree: Path | None = typer.Argument(None, metavar="WORKTREE", help=
     registry = cheap.checks()
     if unknown := registry.unknown(skipped):
         raise Refuse(f"--skip takes one of {', '.join(cheap.STEPS)}; unknown: {', '.join(unknown)}", usage, code=USAGE)
-    ref = base or str(_preflight.setting(rt, "preflight_base"))
-    c = bound(rt, wt, ref)
+    default = str(_preflight.setting(rt, "preflight_base"))
+    ref = base or default
+    c = bound(rt, wt, ref, allow_full)
     try:
         selection = affected.selection(select.Repo(wt), c.changed())
     except select.RepoError as why:
@@ -133,10 +140,13 @@ def check(worktree: Path | None = typer.Argument(None, metavar="WORKTREE", help=
         report.receipt_note = "none: fix every numbered failure in one commit, then run sm check again"
     elif left_out:
         report.receipt_note = f"none: {', '.join(left_out)} left out by --skip; a receipt needs every check"
+    elif ref != default:  # checks measured from another base cover a part of the head: no proof of the head
+        report.receipt_note = f"none: measured from --base {ref}, not from {default} (the setting preflight_base); run sm check without --base for the receipt"
     else:
-        new = verdicts.record_check(providers.store, c.sha, {"worktree": str(wt), "branch": c.branch, "base": c.base_sha, "at": providers.clock.now(), "command": report.command,
-                                                             "checks": [{"name": s.name, "status": s.status, "detail": s.detail} for s in report.steps]})
-        report.receipt = True
-        report.receipt_note = f"{verdicts.CHECKS} {c.sha} ({'written' if new else 'this commit already had one'}): an approval of this exact commit can be recorded"
+        state = verdicts.record_check(providers.store, c.sha, {"worktree": str(wt), "branch": c.branch, "base": c.base_sha, "at": providers.clock.now(), "command": report.command,
+                                                               "checks": [{"name": s.name, "status": s.status, "detail": s.detail} for s in report.steps]})
+        report.receipt = state in ("written", "kept")
+        report.receipt_note = (f"{verdicts.CHECKS} {c.sha} ({'written' if state == 'written' else 'this commit already had one'}), measured from {c.base_sha[:12]}: "
+                               "an approval of this exact commit on that base can be recorded" if report.receipt else f"none that counts: {state}")
     providers.store.save(SUMMARY_KIND, c.sha, report.model_dump(mode="json"))
     return report

@@ -414,9 +414,11 @@ def packet_review(ctx: Ctx) -> tuple[str, str, str]:
         return digest, brief, under_review
     facts = ctx.subject.facts
     command = check_command(facts["worktree"])
-    verdicts.need_check(ctx.providers.store, digest, facts["head"], command)
-    return digest, (brief + f"\nAn approval is recorded only when the head {facts['head'][:12]} has a green check receipt: `{command}` writes it. "
-                    "Without it `sm review verdict --approve` refuses."), under_review
+    # The preflight this run adopted proved the head sits on this main (its base is the main the packet is built on),
+    # so the checks must have been measured from exactly it: a receipt of a part of the head is refused.
+    verdicts.need_check(ctx.providers.store, digest, facts["head"], command, base=facts["main"])
+    return digest, (brief + f"\nAn approval is recorded only when the head {facts['head'][:12]} has a green check receipt measured from main {facts['main'][:12]}: "
+                    f"`{command}` writes it. Without it `sm review verdict --approve` refuses, and so does the next admit step."), under_review
 
 
 def _packet_review(ctx: Ctx) -> tuple[str, str, str]:

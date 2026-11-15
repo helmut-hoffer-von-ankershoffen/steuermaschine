@@ -362,7 +362,7 @@ def test_an_approve_of_a_digest_bound_to_a_head_needs_the_green_check_receipt_of
     store.save("runs.head.demo", "k", {"author": "builder-1", "steps": {"review": {"digest": digest}}})
     verdicts.need_check(store, digest, head, "sm check ../wt")
     no = invoke(r, ["review", "verdict", digest, "--approve", "--reviewer", "reviewer-1"])
-    assert no.exit_code == 1 and "no green check receipt" in no.stderr and "`sm check ../wt`" in no.stderr and head[:12] in no.stderr
+    assert no.exit_code == 1 and "no check receipt exists for exactly that commit" in no.stderr and "`sm check ../wt`" in no.stderr and head[:12] in no.stderr
     assert store.get_receipt("verdicts", digest) is None  # nothing was recorded
     verdicts.record_check(store, "b" * 40, {})  # another commit's receipt is not this head's
     assert invoke(r, ["review", "verdict", digest, "--approve", "--reviewer", "reviewer-1"]).exit_code == 1

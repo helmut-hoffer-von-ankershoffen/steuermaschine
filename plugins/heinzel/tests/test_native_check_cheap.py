@@ -98,6 +98,10 @@ def test_hook_facts_names_why_the_hook_could_not_be_read(tmp_path):
 
 
 def test_plan_takes_the_selectors_tests_or_narrows_a_full_selection_with_the_hooks_graph(tmp_path):
+    full = {"full": True, "pytest": ["ALL"], "vitest": ["ALL"]}
+    c, _ = context(tmp_path, {}, ["pyproject.toml"])  # no import graph in the checkout: everything
+    p = cheap.plan(c, full, [])
+    assert p.pytest is None and p.error == "" and "Core has no scripts/related_tests.py to narrow it: the whole unit suite runs" in p.narrowed
     (tmp_path / "scripts").mkdir()
     (tmp_path / "scripts/related_tests.py").write_text("")
     c, _ = context(tmp_path, {}, ["src/heinzel/x.py"])
@@ -105,15 +109,34 @@ def test_plan_takes_the_selectors_tests_or_narrows_a_full_selection_with_the_hoo
     assert (p.pytest, p.full, p.narrowed, p.lanes, p.extra, p.selector) == (["tests/unit/x_test.py"], False, "", ["cli"], ["tests/unit/y_test.py"], "core")
     assert p.hook == "Core has no scripts/scoped_checks.py" and p.web == [] and p.guards == []
     c, _ = context(tmp_path, {"related_tests.py": (0, "tests/unit/a_test.py\n")}, ["pyproject.toml", "web/src/a.ts"])
-    p = cheap.plan(c, {"full": True, "pytest": ["ALL"], "vitest": ["ALL"]}, [])
+    p = cheap.plan(c, full, [])
     assert p.pytest == ["tests/unit/a_test.py"] and p.narrowed == "the selector selects the full set; scripts/related_tests.py narrows the unit tests to 1 file(s)"
-    c, calls = context(tmp_path, {"related_tests.py": (0, "ALL\n")}, ["pyproject.toml"])
-    p = cheap.plan(c, {"full": True, "pytest": ["ALL"], "vitest": ["ALL"]}, [])
-    assert p.pytest is None and p.narrowed == "the selector selects the full set and nothing narrows it"
-    c, _ = context(tmp_path, {"related_tests.py": (3, "")}, ["pyproject.toml"])
-    assert "scripts/related_tests.py failed (exit 3)" in cheap.plan(c, {"full": True, "pytest": ["ALL"]}, []).narrowed
-    c, calls = context(tmp_path, {}, ["web/src/a.ts"])  # only web inputs: the import graph is not asked
-    assert cheap.plan(c, {"full": True, "pytest": ["ALL"]}, []).pytest is None and not [line for line in calls if "related_tests" in line]
+    c, _ = context(tmp_path, {"related_tests.py": (0, "ALL\n")}, ["pyproject.toml"])
+    p = cheap.plan(c, full, [])
+    assert p.pytest is None and p.error == "" and p.narrowed == "the selector and scripts/related_tests.py both select everything: the whole unit suite runs"
+    for answer, why in (((3, ""), "scripts/related_tests.py failed (exit 3)"), ((0, "odd line\n"), "printed something that is no test path"),
+                        ((0, "ALL\ntests/unit/a_test.py\n"), "printed ALL among other lines")):
+        c, _ = context(tmp_path, {"related_tests.py": answer}, ["pyproject.toml"])
+        p = cheap.plan(c, full, [])
+        assert why in p.error and p.pytest == [] and p.narrowed == "", answer  # a failure is an error, never "everything" and never "nothing"
+    c, calls = context(tmp_path, {}, ["web/src/a.ts"])  # only web inputs: the import graph is not asked, the web check runs every Vitest file
+    p = cheap.plan(c, full, [])
+    assert p.pytest == [] and "only web inputs changed" in p.narrowed and not [line for line in calls if "related_tests" in line]
+
+
+def test_the_tests_check_fails_on_a_selection_error_and_runs_the_unit_suite_for_everything(tmp_path):
+    c, calls = context(tmp_path, {}, [])
+    c.plan = cheap.Plan(pytest=[], error="scripts/related_tests.py failed (exit 3)")
+    s = cheap.step_tests(c)
+    assert [m for m, _ in s.failures] == ["scripts/related_tests.py failed (exit 3)"] and not [line for line in calls if "pytest" in line]
+    c, calls = context(tmp_path, {}, [])
+    c.plan = cheap.Plan(pytest=None, narrowed="both select everything: the whole unit suite runs")
+    s = cheap.step_tests(c)
+    assert not s.failures and s.data["unit_suite"] is True and calls[-1] == " ".join(head.UNIT_SUITE) and "the whole unit suite, " in s.detail
+    for rc, outcome in ((75, "got no slot (exit 75 = WAIT)"), (2, "was refused or failed (exit 2)"), (1, "was refused or failed (exit 1)")):
+        c, _ = context(tmp_path, {"unit and not perf": (rc, "out")}, [])
+        c.plan = cheap.Plan(pytest=None, narrowed="everything")
+        assert cheap.step_tests(c).failures[0][0].startswith(f"everything; it {outcome}"), rc
 
 
 def test_selected_tests_leaves_out_what_a_hook_step_runs_and_what_is_not_in_the_checkout(tmp_path):
@@ -152,14 +175,28 @@ def test_ruff_and_tree_and_bound_steps(tmp_path):
 
 def test_the_checks_are_registered_in_their_order_and_reuse_the_preflights_type_and_standards_checks():
     registry = cheap.checks()
-    assert registry.names == cheap.STEPS == ("tree", "ruff", "types", "web", "docs", "standards", "tests", "coverage", "bound")
+    assert registry.names == cheap.STEPS == ("tree", "ruff", "types", "hook", "web", "docs", "standards", "tests", "coverage", "bound")
     by_name = {check.name: check.run for check in registry.checks}
     assert by_name["types"] is head.step_types and by_name["standards"] is head.step_standards
 
 
-@pytest.mark.parametrize(("changed", "fails"), [(["web/src/a.ts"], True), (["docs/a.md"], True), (["src/heinzel/x.py"], False)])
-def test_an_unread_hook_fails_only_when_its_files_changed(tmp_path, changed, fails):
-    c, _ = context(tmp_path, {}, changed)
+@pytest.mark.parametrize("changed", [["web/src/a.ts"], ["docs/a.md"], ["src/heinzel/x.py"], []])
+def test_a_hook_that_did_not_answer_fails_its_check_whatever_changed_and_its_steps_are_not_run(tmp_path, changed):
+    c, calls = context(tmp_path, {}, changed)
     c.plan = cheap.Plan(changed=changed, hook="scripts/scoped_checks.py could not be asked (exit 1)")
-    s = cheap.hook_step("web", "web file(s)", "fix")(c)
-    assert bool(s.failures) is fails and (fails or "no web file or document changed" in s.detail)
+    s = cheap.step_hook(c)
+    assert len(s.failures) == 1 and s.failures[0][0].startswith("scripts/scoped_checks.py could not be asked (exit 1): the web steps")
+    for name in ("web", "docs"):
+        skipped = cheap.hook_step(name, "file(s)", "fix")(c)
+        assert skipped.status == "SKIP" and not skipped.failures and "the hook did not answer" in skipped.detail
+    assert calls == []
+
+
+def test_the_hook_check_passes_with_what_the_hook_named_and_each_kind_runs_its_own_steps(tmp_path):
+    c, calls = context(tmp_path, {}, [])
+    c.plan = cheap.Plan(web=[("web-lint", ["biome", "ci"])], web_files=["web/src/a.ts"], docs=[("typos", ["typos"])], docs_files=["a.md", "b.md"], guards=[["pytest", "g_test.py"]])
+    assert cheap.step_hook(c).detail == "scripts/scoped_checks.py answered: 1 web file(s), 2 document(s), 1 early guard command(s)"
+    assert cheap.hook_step("web", "web file(s)", "fix")(c).detail == "1 changed web file(s): web-lint green"
+    assert cheap.hook_step("docs", "document(s)", "fix")(c).detail == "2 changed document(s): typos green" and calls == ["biome ci", "typos"]
+    c.plan = cheap.Plan()
+    assert cheap.hook_step("docs", "document(s)", "fix")(c).detail == "no document(s) changed"

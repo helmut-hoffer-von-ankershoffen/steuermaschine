@@ -14,6 +14,7 @@ Checks, in the order they run (every one runs, so one pass names every finding):
   tree        clean tree, head ahead of the base: the receipt is bound to the commit, so the commit must be what ran
   ruff        format and lint of the changed Python files
   types       the hook's type checks, when the change is not web, desktop, plugins or documents only
+  hook        Core's hook answered for the changed paths; if it did not, its steps and guards are unknown and the run fails
   web         the hook's web steps when web files changed: lint, generated client, types, the selected Vitest files
   docs        the hook's document steps when documents or the site's tooling changed
   standards   the repository-wide standards tests
@@ -29,11 +30,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from steuermaschine.preflight import FAIL, Preflight, Step
+from steuermaschine.preflight import FAIL, SKIP, Preflight, Step
 
 from ..preflight_lib import head
 
-STEPS = ("tree", "ruff", "types", "web", "docs", "standards", "tests", "coverage", "bound")
+STEPS = ("tree", "ruff", "types", "hook", "web", "docs", "standards", "tests", "coverage", "bound")
 NO_SLOT = "wait for load to drop and run sm check again; do not bypass the run lock"
 # Runs in the worktree's own interpreter: Core's hook answers for the changed paths; this code only asks.
 PROBE = """
@@ -73,7 +74,8 @@ class Plan:
     selector: str = ""  # core: the checkout's scripts/affected.py; port: the moved copy
     full: bool = False  # the selector cannot narrow this change
     pytest: list[str] | None = None  # the tests of the changed paths; None: the whole suite (nothing narrower is known)
-    narrowed: str = ""  # how a full selection was narrowed, or why it could not be
+    narrowed: str = ""  # how a full selection was narrowed, or why the whole unit suite runs
+    error: str = ""  # the selection could not be made (Core's import graph failed): the run fails, nothing is guessed
     web: list[tuple[str, list[str]]] = field(default_factory=list)  # (step name, argv) of the hook's web steps
     docs: list[tuple[str, list[str]]] = field(default_factory=list)
     guards: list[list[str]] = field(default_factory=list)
@@ -126,18 +128,33 @@ def plan(c: Ctx, selection: dict[str, Any], extra: list[str]) -> Plan:
     p = Plan(changed=changed, selector=str(selection.get("selector", "")), full=full, extra=list(extra), lanes=list(selection.get("e2e_lanes") or []))
     if not full:
         p.pytest = list(selection.get("pytest") or [])
-    else:  # the selector says "everything": the hook's own import graph may still name the unit tests of the change
-        mappable = [f for f in changed if not f.startswith(head.WEB_INPUTS)]
-        picked, why = head.hook_selection(c, mappable) if mappable and (c.wt / head.RELATED_SCRIPT).is_file() else (None, "")
-        p.pytest = picked
-        p.narrowed = (f"the selector selects the full set; {head.RELATED_SCRIPT} narrows the unit tests to {len(picked)} file(s)" if picked is not None
-                      else why or "the selector selects the full set and nothing narrows it")
+    else:
+        narrow(c, p)
     vitest = selection.get("vitest") or []
     facts, p.hook = hook_facts(c, changed, None if vitest == ["ALL"] else list(vitest))
     p.web, p.docs = steps_of(facts.get("web") or []), steps_of(facts.get("docs") or [])
     p.guards = [[str(word) for word in command] for command in facts.get("guards") or []]
     p.web_files, p.docs_files, p.note = list(facts.get("web_files") or []), list(facts.get("doc_files") or []), str(facts.get("note") or "")
     return p
+
+
+def narrow(c: Ctx, p: Plan) -> None:
+    """The selector says "everything". Core's own import graph (the push hook's selection) may still name the unit
+    tests of the change; when it says ALL too, the whole unit suite runs; when it fails, the run fails."""
+    mappable = [f for f in p.changed if not f.startswith(head.WEB_INPUTS)]
+    if not mappable:
+        p.pytest, p.narrowed = [], "the selector selects the full set; only web inputs changed, so the web check runs every Vitest file and no unit test"
+        return
+    if not (c.wt / head.RELATED_SCRIPT).is_file():
+        p.narrowed = f"the selector selects the full set and Core has no {head.RELATED_SCRIPT} to narrow it: the whole unit suite runs"
+        return
+    picked, why = head.hook_selection(c, mappable)
+    if why:
+        p.pytest, p.error = [], why
+    elif picked is None:
+        p.narrowed = f"the selector and {head.RELATED_SCRIPT} both select everything: the whole unit suite runs"
+    else:
+        p.pytest, p.narrowed = picked, f"the selector selects the full set; {head.RELATED_SCRIPT} narrows the unit tests to {len(picked)} file(s)"
 
 
 def production(c: Ctx) -> list[str]:
@@ -192,17 +209,25 @@ def run_steps(c: Ctx, s: Step, steps: list[tuple[str, list[str]]], fix: str) -> 
             s.fail(f"{name} failed (exit {rc}): `{shlex.join(argv)}`{'; log ' + log if log else ''}\n{head.tail(out)}", fix)
 
 
+def step_hook(c: Ctx) -> Step:
+    """Core's hook must answer: it alone knows the web steps, the document steps and the early guards of the changed
+    paths. A hook that is missing, fails or says something else leaves them unknown, and unknown is not green."""
+    s = Step("hook")
+    if c.plan.hook:
+        return s.fail(f"{c.plan.hook}: the web steps, the document steps and the early guards of this head are unknown",
+                      f"run `uv run python {head.HOOK_SCRIPT} --help` in the worktree and fix the cause; without the hook's answer no receipt is written")
+    s.detail = f"{head.HOOK_SCRIPT} answered: {len(c.plan.web_files)} web file(s), {len(c.plan.docs_files)} document(s), {len(c.plan.guards)} early guard command(s)"
+    return s
+
+
 def hook_step(name: str, files: str, fix: str) -> Any:
-    """A check that runs the hook's own steps for one kind of changed file (`web`, `docs`)."""
+    """A check that runs the hook's own steps for one kind of changed file (`web`, `docs`); the hook says which files those are."""
 
     def step(c: Ctx) -> Step:
         s = Step(name)
         steps, touched = getattr(c.plan, name), getattr(c.plan, f"{name}_files")
         if c.plan.hook:
-            if any(f.startswith(head.WEB_INPUTS) or f.endswith(".md") for f in c.plan.changed):
-                return s.fail(f"{c.plan.hook}: the {files} steps of this head are unknown", f"run `uv run python {head.HOOK_SCRIPT} --help` in the worktree and fix the cause")
-            s.detail = f"{c.plan.hook}; no web file or document changed"
-            return s
+            return Step(name, SKIP, "not run: the hook did not answer (see the hook check)")
         if not steps:
             s.detail = f"no {files} changed"
             return s
@@ -219,19 +244,26 @@ def step_tests(c: Ctx) -> Step:
     s = Step("tests")
     for argv in c.plan.guards:
         run_steps(c, s, [("the hook's early guard", argv)], "fix the code, never the test: the push hook runs these guards before anything else")
-    measured = bool(production(c)) and c.plan.pytest is not None
+    if c.plan.error:
+        s.fail(c.plan.error, "run it by hand in the worktree and fix the cause; the tests of a change are never guessed")
+    whole = c.plan.pytest is None
+    measured = bool(production(c)) and not whole
     files = [] if measured else selected_tests(c)  # with src/ changed they run once, under coverage
-    if c.plan.pytest is None:
-        s.warn(f"{c.plan.narrowed}: the unit suite was NOT run here; the push hook and CI run it" + (f" (the tests of --sel ran: {len(files)})" if files else ""))
-    elif c.plan.narrowed:
-        s.warn(c.plan.narrowed)
+    if whole:  # nothing narrows the change: the unit suite runs, as the push hook runs it; it is never skipped
+        rc, out = c.gate(head.UNIT_SUITE, cwd=c.wt)
+        if rc != 0:
+            outcome = "got no slot (exit 75 = WAIT)" if rc == 75 else f"was refused or failed (exit {rc})"
+            s.fail(f"{c.plan.narrowed}; it {outcome}\n{head.tail(out)}",
+                   "fix the failing tests; when the run lock refuses the whole suite on this machine, the coordinator runs `sm check WORKTREE --allow-full`")
+    if c.plan.narrowed:
+        s.warn(c.plan.narrowed + ("" if whole else "; integration tests of the change run on CI"))
     if files:
         head.run_tests(c, s, "selected", files)
     if c.plan.lanes:
         s.warn(f"e2e lanes the selector names are not run here: {', '.join(c.plan.lanes)}")
-    s.data.update(tests=files, guards=len(c.plan.guards), selector=c.plan.selector)
+    s.data.update(tests=files, guards=len(c.plan.guards), selector=c.plan.selector, unit_suite=whole)
     where = "they run under coverage" if measured else f"{len(files)} selected test file(s)"
-    s.detail = f"{len(c.plan.guards)} early guard command(s), {where}" if s.status != FAIL else ""
+    s.detail = f"{len(c.plan.guards)} early guard command(s), {'the whole unit suite, ' if whole else ''}{where}" if s.status != FAIL else ""
     return s
 
 
@@ -241,7 +273,7 @@ def step_coverage(c: Ctx) -> Step:
         return head.step_coverage(c)
     tests = selected_tests(c) if c.plan.pytest is not None else [t for t in c.plan.extra if (c.wt / t).exists()]
     if not tests:
-        return Step("coverage").fail(f"{len(files)} file(s) under src/ changed and no test is selected for them ({c.plan.narrowed or 'the selector names none'})",
+        return Step("coverage").fail(f"{len(files)} file(s) under src/ changed and no test is selected for them ({c.plan.error or c.plan.narrowed or 'the selector names none'})",
                                      'write the tests of the changed files, or name the covering ones: --sel FILE with {"python": [test files]}')
     c.sel = {"python": tests}
     c.sel_bytes, c.sel_path = json.dumps(c.sel).encode(), Path("selector")
@@ -262,7 +294,7 @@ def step_bound(c: Ctx) -> Step:
 
 
 def checks() -> Preflight:
-    table = {"tree": step_tree, "ruff": step_ruff, "types": head.step_types,
+    table = {"tree": step_tree, "ruff": step_ruff, "types": head.step_types, "hook": step_hook,
              "web": hook_step("web", "web file(s)", "fix the reported lint or type errors; a stale generated client: regenerate it as the step's message says"),
              "docs": hook_step("docs", "document(s)", "fix the document or regenerate the generated file the step names"),
              "standards": head.step_standards, "tests": step_tests, "coverage": step_coverage, "bound": step_bound}

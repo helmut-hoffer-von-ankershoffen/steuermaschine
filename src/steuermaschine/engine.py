@@ -356,6 +356,10 @@ class Engine:
                                      f"{verdict.get('notes', '')}. Change the work; new bytes get a new review", cmd)
                     if verdict.get("reviewer") == ctx.author:
                         raise Refuse(f"the verdict was recorded by {ctx.author}, who also drives this run: a different agent must review")
+                    from . import verdicts  # here, not at the top: verdicts imports this module
+
+                    if unchecked := verdicts.missing_check(store, digest):  # asked again where the approval is used
+                        raise Refuse(unchecked, cmd)
                     steps[step.name] = {"status": "done", "detail": f"approved by {verdict['reviewer']}", "digest": digest,
                                         "at": stamp(self.p.clock.now()), "fingerprint": {k: subject.fingerprint.get(k) for k in step.binds}}
                     say(f"{tag} done: {digest[:12]} approved by {verdict['reviewer']}")
