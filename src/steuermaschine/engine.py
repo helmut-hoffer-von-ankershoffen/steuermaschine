@@ -74,6 +74,65 @@ class Step:
     gates: tuple[str, ...] = ()  # names of gates that must hold before `run`
 
 
+DIGEST_KIND = "review.digests"  # state: what is known about a digest under review (its authors; "check": the receipt an approval of it needs)
+CHECKS = "checks"  # receipts, one per commit: the cheap checks of that commit were green (written once, by a plugin's check command)
+
+
+def check_receipt(store: Any, head: str) -> tuple[dict[str, Any] | None, str]:
+    """(the green check receipt of the commit, "") or (None, why there is none that counts): missing, unreadable, or
+    not green. A receipt that cannot be read proves nothing."""
+    try:
+        receipt = store.get_receipt(CHECKS, head)
+    except (OSError, ValueError, TypeError) as why:
+        return None, f"its check receipt exists but cannot be read ({type(why).__name__}): a damaged receipt is no proof and is never rewritten, so the commit needs a new sha"
+    if not isinstance(receipt, dict) or not receipt:
+        return None, "no check receipt exists for exactly that commit"
+    if receipt.get("green") is not True:
+        return None, "its check receipt is not green"
+    return dict(receipt), ""
+
+
+def record_check(store: Any, head: str, data: dict[str, Any]) -> str:
+    """Write the check receipt of the commit `head`: its cheap checks were green, measured from `data["base"]`.
+    -> "written"; "kept" when the commit already has a green receipt that can be read (the first stays); else why the
+    one that is there does not count (it cannot be replaced: a receipt is written once)."""
+    try:
+        store.put_receipt(CHECKS, head, {**data, "head": head, "green": True})
+    except FileExistsError:
+        return "kept" if check_receipt(store, head)[0] else check_receipt(store, head)[1]
+    return "written"
+
+
+def need_check(store: Any, digest: str, head: str, command: str, base: str = "") -> None:
+    """Record that `digest` binds the commit `head`: an approval of it needs that commit's check receipt, which
+    `command` writes. With `base` (the commit the bytes under review build the head on) the receipt must have been
+    measured from exactly that base: checks of a part of the head are no checks of the head. The command that
+    produces the digest calls this; a digest nobody bound needs no receipt."""
+    want = {"head": head, "command": command, **({"base": base} if base else {})}
+    with store.lock(f"{DIGEST_KIND}.{digest}"):
+        data = store.load(DIGEST_KIND, digest) or {"digest": digest, "authors": [], "sources": []}
+        if data.get("check") != want:
+            store.save(DIGEST_KIND, digest, {**data, "check": want})
+
+
+def missing_check(store: Any, digest: str) -> str:
+    """Why `digest` cannot be approved, or an approval of it cannot be used: it binds a commit without a green check
+    receipt measured from the bound base. "" when it binds no commit or the receipt is there. The text names the
+    command that writes the receipt. Asked when the verdict is recorded and again wherever it is used."""
+    need = (store.load(DIGEST_KIND, digest) or {}).get("check") or {}
+    head, base = str(need.get("head") or ""), str(need.get("base") or "")
+    if not head:
+        return ""
+    receipt, why = check_receipt(store, head)
+    run = f"Run `{need.get('command')}` on that head (it writes the receipt), then record the verdict"
+    if receipt is None:
+        return f"{digest[:12]} binds the head {head[:12]}, and {why}: an approval needs the cheap checks green first. {run}"
+    if base and receipt.get("base") != base:
+        return (f"{digest[:12]} binds the head {head[:12]} on the base {base[:12]}, but its check receipt was measured from {str(receipt.get('base'))[:12]}: "
+                f"the checks did not cover what the head changes over that base. Bring the head onto that base (a new commit), then: {run}")
+    return ""
+
+
 @dataclass
 class ReviewStop:
     name: str
@@ -356,9 +415,7 @@ class Engine:
                                      f"{verdict.get('notes', '')}. Change the work; new bytes get a new review", cmd)
                     if verdict.get("reviewer") == ctx.author:
                         raise Refuse(f"the verdict was recorded by {ctx.author}, who also drives this run: a different agent must review")
-                    from . import verdicts  # here, not at the top: verdicts imports this module
-
-                    if unchecked := verdicts.missing_check(store, digest):  # asked again where the approval is used
+                    if unchecked := missing_check(store, digest):  # asked again where the approval is used, for every stop: nothing to opt into
                         raise Refuse(unchecked, cmd)
                     steps[step.name] = {"status": "done", "detail": f"approved by {verdict['reviewer']}", "digest": digest,
                                         "at": stamp(self.p.clock.now()), "fingerprint": {k: subject.fingerprint.get(k) for k in step.binds}}

@@ -23,13 +23,12 @@ import json
 from pathlib import Path
 from typing import Any
 
-from steuermaschine import USAGE, verdicts
-from steuermaschine.engine import Ctx, Pipeline, Refuse, ReviewStop, Step, Subject, identify_head
+from steuermaschine import USAGE
+from steuermaschine.engine import Ctx, Pipeline, Refuse, ReviewStop, Step, Subject, identify_head, need_check
 from steuermaschine.github import Gh
 from steuermaschine.native import unit
 
 from ..native import merge_tier
-from ..native.check import command_of as check_command
 from ..native.window import lane_branch
 from .common import SHA, core_repo, need, ok, packet_sha, path_input, prepared_digest, receipt_heads, run, setting, slug
 
@@ -408,15 +407,15 @@ def _remember_packet(ctx: Ctx, directory: Path, sha: str) -> None:
 
 def packet_review(ctx: Ctx) -> tuple[str, str, str]:
     """The packet under review, bound to its head: an approval of the digest needs the head's `sm check` receipt
-    (`steuermaschine.verdicts.need_check`), so no reviewer approves a head whose cheap checks did not run green."""
+    (`steuermaschine.engine.need_check`), so no reviewer approves a head whose cheap checks did not run green."""
     digest, brief, under_review = _packet_review(ctx)
     if not digest:
         return digest, brief, under_review
     facts = ctx.subject.facts
-    command = check_command(facts["worktree"])
+    command = f"sm check {facts['worktree']}"  # typed here, not imported: the check's module would pull its whole unit into this digest
     # The preflight this run adopted proved the head sits on this main (its base is the main the packet is built on),
     # so the checks must have been measured from exactly it: a receipt of a part of the head is refused.
-    verdicts.need_check(ctx.providers.store, digest, facts["head"], command, base=facts["main"])
+    need_check(ctx.providers.store, digest, facts["head"], command, base=facts["main"])
     return digest, (brief + f"\nAn approval is recorded only when the head {facts['head'][:12]} has a green check receipt measured from main {facts['main'][:12]}: "
                     f"`{command}` writes it. Without it `sm review verdict --approve` refuses, and so does the next admit step."), under_review
 

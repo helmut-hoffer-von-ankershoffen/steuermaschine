@@ -8,6 +8,7 @@ from test_pipeline_head_admit_rejected_packet import _setup
 
 from steuermaschine import verdicts
 from steuermaschine.testing import invoke
+from steuermaschine_heinzel.native import check
 from steuermaschine_heinzel.pipelines import head_admit
 
 
@@ -18,7 +19,8 @@ def test_the_packet_digest_cannot_be_approved_before_sm_check_was_green_on_the_h
         head_admit.preflight(ctx)
         head_admit.packet(ctx)
         digest, brief, _file = head_admit.packet_review(ctx)
-    command = f"sm check {tmp_path / 'wt'}"
+    command = check.command_of(tmp_path / "wt")  # the command the check itself names: the pipeline types the same words
+    assert command == f"sm check {tmp_path / 'wt'}"
     assert store.load(verdicts.KIND, digest)["check"] == {"head": HEAD, "command": command, "base": MAIN}  # the main the packet is built on
     assert f"`{command}` writes it" in brief and HEAD[:12] in brief and f"measured from main {MAIN[:12]}" in brief
     verdicts.register(store, digest, "head admit", "builder-1")  # the run that stopped at the digest, as the engine records its author

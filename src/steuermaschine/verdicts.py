@@ -7,19 +7,21 @@ and its reviewer is not one of the agents that produced the bytes.
 
 A digest can also bind a commit of code (`need_check`). Then an approval is recorded only when the cheap checks of
 exactly that commit were green: a plugin's check command writes one check receipt per commit (`record_check`), and
-`sm review verdict --approve` refuses without it (`missing_check`), naming the command that writes it."""
+`sm review verdict --approve` refuses without it (`missing_check`), naming the command that writes it. These four
+functions live in `engine` (the engine asks `missing_check` itself on every resume, so no pipeline can leave it out)
+and are named here too, where the verdicts are."""
 
 from __future__ import annotations
 
 from typing import Any
 
 from .config import environment
-from .engine import Refuse
+from .engine import CHECKS, DIGEST_KIND, Refuse, check_receipt, missing_check, need_check, record_check
 
-KIND = "review.digests"
+KIND = DIGEST_KIND
 CI_CHANGE = "ci_change"  # a verdict on a commit whose CI paths changed since the last release: the release gate needs it
 KINDS = ("", CI_CHANGE)  # "": a verdict on prepared bytes (the 04ro gate)
-CHECKS = "checks"  # receipts, one per commit: the cheap checks of that commit were green (written once, by a plugin's check command)
+__all__ = ["CHECKS", "CI_CHANGE", "KIND", "KINDS", "authors_of", "check_receipt", "current_agent", "missing_check", "need_check", "record_check", "register", "require_independent"]
 
 
 def current_agent() -> str:
@@ -63,58 +65,3 @@ def require_independent(store: Any, digest: str, run_states: list[dict[str, Any]
     if unchecked := missing_check(store, digest):
         raise Refuse(unchecked, recorded)
     return dict(receipt)
-
-
-def check_receipt(store: Any, head: str) -> tuple[dict[str, Any] | None, str]:
-    """(the green check receipt of the commit, "") or (None, why there is none that counts): missing, unreadable, or
-    not green. A receipt that cannot be read proves nothing."""
-    try:
-        receipt = store.get_receipt(CHECKS, head)
-    except (OSError, ValueError, TypeError) as why:
-        return None, f"its check receipt exists but cannot be read ({type(why).__name__}): a damaged receipt is no proof and is never rewritten, so the commit needs a new sha"
-    if not isinstance(receipt, dict) or not receipt:
-        return None, "no check receipt exists for exactly that commit"
-    if receipt.get("green") is not True:
-        return None, "its check receipt is not green"
-    return dict(receipt), ""
-
-
-def record_check(store: Any, head: str, data: dict[str, Any]) -> str:
-    """Write the check receipt of the commit `head`: its cheap checks were green, measured from `data["base"]`.
-    -> "written"; "kept" when the commit already has a green receipt that can be read (the first stays); else why the
-    one that is there does not count (it cannot be replaced: a receipt is written once)."""
-    try:
-        store.put_receipt(CHECKS, head, {**data, "head": head, "green": True})
-    except FileExistsError:
-        return "kept" if check_receipt(store, head)[0] else check_receipt(store, head)[1]
-    return "written"
-
-
-def need_check(store: Any, digest: str, head: str, command: str, base: str = "") -> None:
-    """Record that `digest` binds the commit `head`: an approval of it needs that commit's check receipt, which
-    `command` writes. With `base` (the commit the bytes under review build the head on) the receipt must have been
-    measured from exactly that base: checks of a part of the head are no checks of the head. The command that
-    produces the digest calls this; a digest nobody bound needs no receipt."""
-    want = {"head": head, "command": command, **({"base": base} if base else {})}
-    with store.lock(f"{KIND}.{digest}"):
-        data = store.load(KIND, digest) or {"digest": digest, "authors": [], "sources": []}
-        if data.get("check") != want:
-            store.save(KIND, digest, {**data, "check": want})
-
-
-def missing_check(store: Any, digest: str) -> str:
-    """Why `digest` cannot be approved, or an approval of it cannot be used: it binds a commit without a green check
-    receipt measured from the bound base. "" when it binds no commit or the receipt is there. The text names the
-    command that writes the receipt. Asked when the verdict is recorded and again wherever it is used."""
-    need = (store.load(KIND, digest) or {}).get("check") or {}
-    head, base = str(need.get("head") or ""), str(need.get("base") or "")
-    if not head:
-        return ""
-    receipt, why = check_receipt(store, head)
-    run = f"Run `{need.get('command')}` on that head (it writes the receipt), then record the verdict"
-    if receipt is None:
-        return f"{digest[:12]} binds the head {head[:12]}, and {why}: an approval needs the cheap checks green first. {run}"
-    if base and receipt.get("base") != base:
-        return (f"{digest[:12]} binds the head {head[:12]} on the base {base[:12]}, but its check receipt was measured from {str(receipt.get('base'))[:12]}: "
-                f"the checks did not cover what the head changes over that base. Bring the head onto that base (a new commit), then: {run}")
-    return ""
