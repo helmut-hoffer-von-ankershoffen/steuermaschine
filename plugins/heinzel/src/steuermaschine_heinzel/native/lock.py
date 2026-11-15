@@ -21,9 +21,8 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 from steuermaschine import USAGE
-from steuermaschine.commands.gate import with_focus
 from steuermaschine.native import runtime
-from steuermaschine.runlock import PUSH_COMMANDS, Policy, Refusal, RunLock, git_tree_state
+from steuermaschine.runlock import PUSH_COMMANDS, Policy, Refusal, RunLock, git_tree_state, with_focus
 
 from .. import state as statedir  # the plugin's state paths
 from .lock_lib import refuse

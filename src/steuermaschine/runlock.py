@@ -138,6 +138,27 @@ class Runner(Protocol):
     def passthrough(self, argv: list[str], cwd: str | None = None, env: dict[str, str] | None = None, timeout: float | None = None) -> int: ...
 
 
+def focus_of(store: Any) -> Callable[[str], str]:
+    """A `Policy.focus` over the core's focus list (`sm focus add`): the entry a directory lies in, "" for none. Only
+    entries that are paths count; a pull request or a version on the list names no directory."""
+
+    def focus(cwd: str) -> str:
+        here = Path(cwd).expanduser().resolve()
+        for key in store.load("focus", "list") or {}:
+            if str(key).startswith(("/", "~")):
+                head = Path(str(key)).expanduser().resolve()
+                if here == head or head in here.parents:
+                    return str(key)
+        return ""
+
+    return focus
+
+
+def with_focus(chosen: Policy, store: Any) -> Policy:
+    """The policy with the store's focus list (a policy that brings its own `focus` keeps it)."""
+    return chosen if chosen.focus is not None or store is None else replace(chosen, focus=focus_of(store))
+
+
 def sandbox_load(value: float | None) -> Callable[[], float] | None:
     """A fixed load for tests. Honoured only under a HOME other than the account's real one (a sandbox, whose lock
     files are separate anyway), so it opens no way around the shared lock.
