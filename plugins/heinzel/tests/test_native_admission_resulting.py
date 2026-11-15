@@ -349,7 +349,8 @@ def test_protected_replay_adapter_uses_exact_step_logs_and_verified_artifacts(or
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     monkeypatch.setattr(sys, 'stdin', io.StringIO(a.canonical(dict(token='fixture-token', repository=f.rt.repo,
-                        original=f.packet['original'], plan=f.old, live=live, paths=paths)).decode()))
+                        original=f.packet['original'], plan=f.old, live=live, paths=paths,
+                        gate_checks=['coverage-floor', 'merge-gate'])).decode()))
     if defect in ('none', 'leading-bom'):
         module.main()
         proof = json.loads(capsys.readouterr().out)

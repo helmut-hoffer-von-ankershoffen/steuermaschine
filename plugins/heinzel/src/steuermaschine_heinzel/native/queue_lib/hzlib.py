@@ -9,6 +9,7 @@ import subprocess
 import sys
 import time
 import tomllib
+from collections.abc import Iterator
 from pathlib import Path
 from . import edge  # moved: records, processes and what used to be separate scripts
 from ... import state as statedir  # the plugin's state paths
@@ -24,15 +25,15 @@ RUN_URL = re.compile(r"/runs/(\d+)")
 class _GateChecks:
     """The merge-gate workflow's checks (Core's release policy at main), read on use: hzlib is imported by core_facts."""
 
-    def _names(self):
+    def _names(self) -> tuple[str, ...]:
         from . import core_facts
 
         return core_facts.api_checks()
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[str]:
         return iter(self._names())
 
-    def __contains__(self, name):
+    def __contains__(self, name: object) -> bool:
         return name in self._names()
 
 

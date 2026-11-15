@@ -141,7 +141,8 @@ def _names(value: object, what: str, *, empty: bool = False) -> list[str]:
         and len(set(value)) == len(value),
         f"release policy {what} is not a list of unique names",
     )
-    return list(value)  # type: ignore[arg-type]
+    assert isinstance(value, list)
+    return [str(v) for v in value]
 
 
 def _text(value: object, what: str) -> str:

@@ -336,7 +336,11 @@ TOOLKIT = 'PLUGIN_API = {1: {"pydantic": 2, "rich": 15}}\n'
 
 def contract_fake(core, toolkit=TOOLKIT, **over):
     """The base pyproject and the plugins toolkit at the consumer ref, both read through `git show`."""
-    show = lambda cmd: (0, toolkit) if cmd[-1].endswith(m.CONTRACT_FILE) else (0, CONTRACTED)  # noqa: E731
+    def show(cmd):
+        if cmd[-1].endswith(":scripts/release_policy.json"):  # Core's release policy at the head
+            return 0, kit.encode(kit.manifest()).decode()
+        return (0, toolkit) if cmd[-1].endswith(m.CONTRACT_FILE) else (0, CONTRACTED)
+
     return Fake(core, **{"git show": show, **over})
 
 

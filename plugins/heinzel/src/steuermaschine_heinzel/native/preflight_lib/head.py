@@ -350,7 +350,7 @@ def head_workflow(c: Ctx) -> str:
     rc, raw = c.git("show", f"{head.strip()}:{core_policy.PATH}")
     try:
         return core_policy.parse(raw.encode() if isinstance(raw, str) else raw, head.strip()).workflow if rc == 0 else ""
-    except core_policy.CandidateError:
+    except ValueError:  # CandidateError is a ValueError
         return ""
 
 

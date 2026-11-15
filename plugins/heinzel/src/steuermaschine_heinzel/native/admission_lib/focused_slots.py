@@ -578,7 +578,7 @@ def prepare(rt, packet_path, review_root, protected=False, pr=None, nonconsumers
                                  resulting_main=is_main, protected_producer=protected)
         if resulting_main_only:
             require(not {'scripts/focused_gate.py', 'scripts/focused_gate.py.lock', 'scripts/merge_gate.py',
-                         'scripts/merge_gate.py.lock', resulting.JUDGE} & packet['manifest']['changed'].keys(),
+                         'scripts/merge_gate.py.lock', resulting._policy(rt, base).judge_file} & packet['manifest']['changed'].keys(),
                     'resulting-main-only refuses protected judgment source changes')
         repo_variables, org_variables = rt.variables()
         require(not set(NAMES) & org_variables.keys(), 'organization focused transport ambiguity')

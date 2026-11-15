@@ -12,6 +12,8 @@ import json
 import shutil
 import subprocess
 import time
+from collections.abc import Callable, Iterable, Iterator
+from typing import Any
 
 from . import core_policy
 from .release_candidate import REPOSITORY, CandidateError, require
@@ -21,7 +23,7 @@ _BY_COMMIT: dict[str, core_policy.Policy] = {}
 _MAIN: list[tuple[float, str]] = []
 
 
-def _gh_json(path: str):
+def _gh_json(path: str) -> Any:
     """One read-only `gh api` call on the Core repository; None when it fails (the readers fail closed)."""
     gh = shutil.which("gh")
     if not gh:
@@ -37,7 +39,7 @@ def _gh_json(path: str):
         return None
 
 
-def _get(path: str):
+def _get(path: str) -> Any:
     value = _gh_json(path)
     require(value is not None, f"{path} unreadable")
     return value
@@ -57,8 +59,9 @@ def main_sha() -> str:
     found = _get("commits/main")
     sha = found.get("sha") if isinstance(found, dict) else None
     require(isinstance(sha, str) and core_policy.SHA.fullmatch(sha), "Core main has no exact commit")
+    assert isinstance(sha, str)
     _MAIN[:] = [(now, sha)]
-    return sha  # type: ignore[return-value]
+    return sha
 
 
 NO_POLICY = f"Core main has no {core_policy.PATH}; merge the Core policy head first"
@@ -134,13 +137,13 @@ def contexts() -> tuple[str, ...]:
 class Names:
     """A tuple of names read from the policy when it is used, never at import (a module constant that stays one)."""
 
-    def __init__(self, read) -> None:
+    def __init__(self, read: Callable[[], Iterable[str]]) -> None:
         self._read = read
 
     def _names(self) -> tuple[str, ...]:
         return tuple(self._read())
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[str]:
         return iter(self._names())
 
     def __contains__(self, name: object) -> bool:
@@ -149,13 +152,13 @@ class Names:
     def __len__(self) -> int:
         return len(self._names())
 
-    def __getitem__(self, index):
+    def __getitem__(self, index: Any) -> Any:
         return self._names()[index]
 
-    def __add__(self, other):
+    def __add__(self, other: Iterable[str]) -> tuple[str, ...]:
         return self._names() + tuple(other)
 
-    def __radd__(self, other):
+    def __radd__(self, other: Iterable[str]) -> tuple[str, ...]:
         return tuple(other) + self._names()
 
     def __eq__(self, other: object) -> bool:
