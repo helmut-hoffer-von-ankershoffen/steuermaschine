@@ -44,7 +44,8 @@ wt, ask = Path(sys.argv[1]), json.loads(sys.argv[2])
 try:
     spec = importlib.util.spec_from_file_location("core_scoped_checks", wt / "scripts" / "scoped_checks.py")
     hook = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(hook)
+    # Always inspect the current hook bytes, never a timestamp/size-matched pyc.
+    exec(compile(Path(spec.origin).read_bytes(), spec.origin, "exec"), hook.__dict__)
     changed, picked, note = ask["changed"], ask["vitest"], ""
     docs = [p for p in changed if hook.is_document(p) or hook.is_docs_tooling(p)]
     web = [p for p in changed if p not in docs and hook.scoped_steps([p]) is not None]
