@@ -185,7 +185,7 @@ def ship(worktree: str = typer.Argument(..., metavar="WORKTREE", help="The clean
          set_: list[str] | None = typer.Option(None, "--set", metavar="NAME=VALUE", help="An input of `head admit` (remembered); it replaces a derived one."),
          wait: int | None = typer.Option(None, "--wait", min=1, metavar="MINUTES", help="After the queue step, wait up to MINUTES for the PR to merge."),
          plan: bool = typer.Option(False, "--plan", help="Only print the route this head will take (sm head plan); run and write nothing.")) -> ShipResult:
-    if plan:
+    if plan is True:  # a direct call that leaves the option out passes typer's default object, which is not True
         if live or approved or wait is not None or set_:
             raise Refuse("--plan only reads: give it without --live, --approved, --wait and --set", "sm ship --help", code=2)
         route = run("head plan", worktree=Path(worktree))

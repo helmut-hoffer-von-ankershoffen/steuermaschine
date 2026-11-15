@@ -73,7 +73,7 @@ class RoutePlan(Model):
 
     @property
     def exit_code(self) -> int:
-        return 0 if self.route or self.tier == "none" else 1
+        return 0 if self.route or not self.routes else 1  # no routes at all: nothing is committed yet
 
     def render(self) -> list[str]:
         return list(self.lines)

@@ -60,7 +60,7 @@ def commit(repo: Path, files: dict[str, str | None], message: str) -> str:
 
 def repository(tmp_path: Path, plan: str = PLAN) -> Path:
     repo = tmp_path / "core"
-    repo.mkdir()
+    repo.mkdir(parents=True)
     git(repo, "init", "-q", "-b", "main")
     commit(repo, {**BASE_FILES, "scripts/focused_plan.py": plan}, "base")
     git(repo, "update-ref", "refs/remotes/origin/main", "HEAD")
