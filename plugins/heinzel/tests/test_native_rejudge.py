@@ -160,6 +160,7 @@ def test_explicit_workflow_gate_binds_trigger_inputs_instead_of_default_branch_s
                                                               "Verify the original workload and applicable coverage evidence\t"
                                                               "2026-11-15T21:32:59.788Z   PR_NUMBER: 804"),
                                   workflow_input_log().replace("Verify the original workload and applicable coverage evidence", "unrelated"),
+                                  workflow_input_log().replace("Merge gates\tVerify the original workload and applicable coverage evidence", "Unrelated job\tUntrusted output"),
                                   workflow_input_log().replace("env:", "##[endgroup]\nenv:")])
 def test_explicit_workflow_gate_refuses_missing_wrong_or_ambiguous_inputs(tmp_path, log):
     gh = github(gate_answers=[gate_run() | {"head_sha": "f" * 40, "event": "workflow_run"}])
