@@ -22,19 +22,42 @@ from steuermaschine_heinzel.native.packet_lib import route_plan
 from steuermaschine_heinzel.native.release_admit_lib import release_scope
 from steuermaschine_heinzel.pipelines import common
 
+# The limit constants and the lines that apply them are Core's own, as they stand at its main (scripts/focused_plan.py and
+# scripts/focused_job.py); only the functions around them are shortened. Nothing here is executed: the plan reads text.
 PLAN = '''import re
+from scripts.focused_job import MAX_IDS, PYTHON_CI_MAX_IDS
 PROTECTED_FILES = ("Makefile", "scripts/focused_plan.py")
 PLAN_VARIABLE = "PLANS"
 LANES = {"python": ("a", "b", "pytest"), "web": ("a", "b", "vitest")}
 PATH = re.compile(r"[A-Za-z0-9_./-]+")
 MAX_PLAN = 48 * 1024
-MAX_IDS = 3
-PYTHON_CI_MAX_IDS = 2
-MAX_SECONDS = 900
+MAX_SLOT = 40_000
+MAX_SLOT_DECODED = 1024 * 1024
+MAX_SLOT_ENTRIES = 256
+MAX_DIFF = 1024 * 1024
+MAX_COVERED_FILES = 100
 max_lower = 1
 MAXIMUM = 7
+
+
+def changed_paths(raw):
+    require(len(raw) <= MAX_DIFF and (not raw or raw.endswith(b"\\0")), "unsupported focused diff")
+
+
+def _selections(plan, commit):
+    for lane, tests in plan["selection"].items():
+        limit = PYTHON_CI_MAX_IDS if lane == "python" else MAX_IDS
+        require(isinstance(tests, list) and 0 < len(tests) <= limit, f"empty or broad focused lane {lane}")
+
+
+def decode_slot(raw):
+    require(len(raw) <= MAX_SLOT_DECODED, "focused slot exceeds its decoded limit")
+
+
+def _scope(plan, production):
+    return len(registry) <= MAX_SLOT_ENTRIES and len(production) <= MAX_COVERED_FILES
 '''
-JOB = 'import re\nTOKEN = re.compile(r"[a-z]+")\n'
+JOB = 'import re\nTOKEN = re.compile(r"[a-z]+")\nMAX_IDS = 10\nPYTHON_CI_MAX_IDS = 4096\nMAX_REPEAT = 60\n'
 BASE_FILES = {"scripts/focused_plan.py": PLAN, "scripts/focused_job.py": JOB, "scripts/release_candidate.py": 'REPOSITORY = "o/core"\n',
               "Makefile": "all:\n", "src/heinzel/a.py": "A = 1\n", "docs/a.md": "a\n", "pyproject.toml": "[project]\n", "uv.lock": "lock\n"}
 
@@ -58,19 +81,19 @@ def commit(repo: Path, files: dict[str, str | None], message: str) -> str:
     return git(repo, "rev-parse", "HEAD")
 
 
-def repository(tmp_path: Path, plan: str = PLAN) -> Path:
+def repository(tmp_path: Path, plan: str = PLAN, job: str = JOB) -> Path:
     repo = tmp_path / "core"
     repo.mkdir(parents=True)
     git(repo, "init", "-q", "-b", "main")
-    commit(repo, {**BASE_FILES, "scripts/focused_plan.py": plan}, "base")
+    commit(repo, {**BASE_FILES, "scripts/focused_plan.py": plan, "scripts/focused_job.py": job}, "base")
     git(repo, "update-ref", "refs/remotes/origin/main", "HEAD")
     git(repo, "checkout", "-q", "-b", "fix/topic")
     return repo
 
 
-def selector(pytest_ids: list[str] | None = None, *, full: bool = False, e2e: list[str] | None = None) -> Any:
+def selector(pytest_ids: list[str] | None = None, *, full: bool = False, e2e: list[str] | None = None, vitest: list[str] | None = None) -> Any:
     def select(_repo: Any, _base: str, _tree: str, _changed: dict[str, str]) -> dict[str, Any]:
-        return {"full": full, "pytest": ["ALL"] if full else list(pytest_ids if pytest_ids is not None else ["tests/unit/a_test.py"]), "vitest": [],
+        return {"full": full, "pytest": ["ALL"] if full else list(pytest_ids if pytest_ids is not None else ["tests/unit/a_test.py"]), "vitest": list(vitest or []),
                 "e2e_lanes": list(e2e or []), "lane_files": {lane: [f"tests/e2e/{lane}_test.py"] for lane in e2e or []},
                 "reasons": ["uv.lock: shared/sensitive path, selects the full set"] if full else []}
     return select
@@ -103,43 +126,80 @@ def test_an_ordinary_head_takes_focused_admit_with_two_review_stops(tmp_path):
     assert "ROUTE    focused admit: TAKEN." in text and f"sm ship {repo}" in text and "REFUSED" not in text
 
 
-def test_every_limit_is_read_from_the_base_commit_and_measured(tmp_path):
+def test_cores_real_constants_leave_an_ordinary_small_head_open(tmp_path):
+    """The review's probe: MAX_SLOT_ENTRIES 256, MAX_IDS 10, PYTHON_CI_MAX_IDS 4096 as Core has them, and a small head."""
+    repo = repository(tmp_path)
+    commit(repo, {"src/heinzel/a.py": "A = 2\n" + "# a comment line that makes the diff larger\n" * 40, "tests/unit/a_test.py": "def test_a(): pass\n"}, "fix")
+    got = plan_of(repo, selector([f"tests/unit/t{n}_test.py" for n in range(11)]))  # 11 Python ids: over MAX_IDS, which Core never applies to Python
+    values = {item.name: (item.value, item.binds) for item in got.limits}
+    assert values["MAX_SLOT_ENTRIES"] == (256, "unknown") and values["MAX_IDS"] == (10, "no") and values["PYTHON_CI_MAX_IDS"] == (4096, "no")
+    assert [item.name for item in got.limits if item.binds == "yes"] == []
+    assert route(got, "focused admit").state == "TAKEN" and got.route == "focused admit" and got.exit_code == 0
+    assert "REFUSED" not in "\n".join(got.render())
+
+
+def test_every_limit_is_read_from_the_base_and_only_the_measured_ones_can_bind(tmp_path):
     repo = repository(tmp_path)
     commit(repo, {"src/heinzel/a.py": "A = 2\n"}, "fix")
-    got = plan_of(repo, selector(["tests/a_test.py", "tests/b_test.py"]))
+    got = plan_of(repo, selector(["tests/a_test.py", "tests/b_test.py"], vitest=["web/a.test.ts"]))
     names = [item.name for item in got.limits]
-    assert names[:4] == ["MAX_PLAN", "MAX_IDS", "PYTHON_CI_MAX_IDS", "MAX_SECONDS"] and "max_lower" not in names and "MAXIMUM" not in names
-    assert (limit(got, "MAX_PLAN").value, limit(got, "MAX_PLAN").binds) == (48 * 1024, "no")
-    assert (limit(got, "MAX_IDS").measured, limit(got, "MAX_IDS").binds) == (2, "no")
-    assert (limit(got, "PYTHON_CI_MAX_IDS").measured, limit(got, "PYTHON_CI_MAX_IDS").binds) == (2, "no")  # at the limit is not over it
-    assert (limit(got, "MAX_SECONDS").measured, limit(got, "MAX_SECONDS").binds) == (None, "unknown")
-    assert limit(got, "MAX_IDS").source == "scripts/focused_plan.py at the base"
+    assert names[:-1] == ["MAX_PLAN", "MAX_SLOT", "MAX_SLOT_DECODED", "MAX_SLOT_ENTRIES", "MAX_DIFF", "MAX_COVERED_FILES",
+                          "MAX_IDS", "PYTHON_CI_MAX_IDS", "MAX_REPEAT"]  # max_lower and MAXIMUM are no limits
+    for name in ("MAX_PLAN", "MAX_SLOT", "MAX_SLOT_DECODED", "MAX_SLOT_ENTRIES", "MAX_REPEAT"):  # counted in entries, encoded bytes, repeats
+        assert (limit(got, name).measured, limit(got, name).binds, limit(got, name).what) == (None, "unknown", route_plan.NOT_MEASURED)
+    assert (limit(got, "PYTHON_CI_MAX_IDS").measured, limit(got, "PYTHON_CI_MAX_IDS").what) == (2, "test ids in lane python")
+    assert (limit(got, "MAX_IDS").measured, limit(got, "MAX_IDS").what) == (1, "test ids in lane web")
+    assert (limit(got, "MAX_COVERED_FILES").measured, limit(got, "MAX_COVERED_FILES").binds) == (1, "no")
+    assert limit(got, "MAX_DIFF").measured == got.limits[-1].measured > 0 and limit(got, "MAX_DIFF").binds == "no"
+    assert limit(got, "MAX_IDS").source == "scripts/focused_job.py at the base" and limit(got, "MAX_PLAN").value == 48 * 1024
     assert got.limits[-1].source.startswith("sm ") and got.limits[-1].value == fm.MAX_DIFF  # the tool's own bound, named as such
+    assert "MAX_SLOT_ENTRIES = 256 (scripts/focused_plan.py at the base): not measured" in "\n".join(got.render())
 
 
 def test_a_binding_limit_closes_the_route_at_the_start_and_follows_the_base(tmp_path):
     repo = repository(tmp_path)
     commit(repo, {"src/heinzel/a.py": "A = 2\n"}, "fix")
-    three = selector(["tests/a_test.py", "tests/b_test.py", "tests/c_test.py"])
-    got = plan_of(repo, three)
-    assert limit(got, "PYTHON_CI_MAX_IDS").binds == "yes" and limit(got, "MAX_IDS").binds == "no"
+    eleven = selector(vitest=[f"web/t{n}.test.ts" for n in range(11)])
+    got = plan_of(repo, eleven)
+    assert limit(got, "MAX_IDS").binds == "yes" and limit(got, "PYTHON_CI_MAX_IDS").binds == "no"
     closed = route(got, "focused admit")
-    assert closed.state == "CLOSED" and "PYTHON_CI_MAX_IDS = 2" in closed.why and "this head has 3 test ids in lane python" in closed.why
+    assert closed.state == "CLOSED" and "MAX_IDS = 10" in closed.why and "this head has 11 test ids in lane web" in closed.why
     assert "split the head" in closed.alternative and got.route == "" and got.exit_code == 1
     assert got.review_stops == [] and got.render()[-1].startswith("REFUSED  no route is open")
+    assert plan_of(repo, selector(vitest=[f"web/t{n}.test.ts" for n in range(10)])).route == "focused admit"  # at the limit is not over it
 
-    lifted = repository(tmp_path / "lifted", PLAN.replace("PYTHON_CI_MAX_IDS = 2\n", "").replace("MAX_IDS = 3", "MAX_IDS = 30"))
+    lifted = repository(tmp_path / "lifted", job=JOB.replace("MAX_IDS = 10\n", "MAX_IDS = 30\n", 1))
     commit(lifted, {"src/heinzel/a.py": "A = 2\n"}, "fix")
-    free = plan_of(lifted, three)
-    assert free.route == "focused admit" and "PYTHON_CI_MAX_IDS" not in [item.name for item in free.limits] and limit(free, "MAX_IDS").value == 30
+    free = plan_of(lifted, eleven)
+    assert free.route == "focused admit" and limit(free, "MAX_IDS").value == 30
+
+
+def test_a_limit_the_base_applies_in_another_way_is_unknown_and_closes_nothing(tmp_path):
+    plan = PLAN.replace("0 < len(tests) <= limit", "0 < count(tests) <= limit").replace("len(raw) <= MAX_DIFF", "size(raw) <= MAX_DIFF")
+    plan = plan.replace("len(production) <= MAX_COVERED_FILES", "len(set(production)) <= MAX_COVERED_FILES")
+    repo = repository(tmp_path, plan, JOB.replace("MAX_IDS = 10\n", "MAX_IDS = 1\n", 1).replace("4096", "1"))
+    commit(repo, {"src/heinzel/a.py": "A = 2\n"}, "fix")
+    got = plan_of(repo, selector(["tests/a_test.py", "tests/b_test.py"], vitest=["web/a.test.ts", "web/b.test.ts"]))
+    assert {item.binds for item in got.limits[:-1]} == {"unknown"} and got.route == "focused admit" and got.exit_code == 0
+
+
+def test_the_constant_names_come_from_the_bases_own_lines(tmp_path):
+    plan = PLAN.replace("PYTHON_CI_MAX_IDS", "PY_MAX").replace("MAX_COVERED_FILES", "MAX_SOURCES").replace('lane == "python"', "lane == 'web'")
+    repo = repository(tmp_path, plan, JOB.replace("PYTHON_CI_MAX_IDS = 4096", "PY_MAX = 1"))
+    commit(repo, {"src/heinzel/a.py": "A = 2\n"}, "fix")
+    got = plan_of(repo, selector(["tests/a_test.py"], vitest=["web/a.test.ts", "web/b.test.ts"]))
+    assert (limit(got, "PY_MAX").measured, limit(got, "PY_MAX").what, limit(got, "PY_MAX").binds) == (2, "test ids in lane web", "yes")
+    assert (limit(got, "MAX_IDS").measured, limit(got, "MAX_IDS").what) == (1, "test ids in lane python")
+    assert limit(got, "MAX_SOURCES").measured == 1 and got.exit_code == 1
 
 
 def test_the_merge_tier_needs_no_plan_and_its_plan_limits_do_not_apply(tmp_path):
     repo = repository(tmp_path)
     commit(repo, {"src/heinzel/a.py": "A = 2\n"}, "fix")
-    got = plan_of(repo, selector(["a", "b", "c", "d"]), mode="on")
+    got = plan_of(repo, selector(["a"], vitest=[f"web/t{n}.test.ts" for n in range(11)]), mode="on")
     assert got.tier == "merge" and got.route == "focused admit" and "no plan" in route(got, "focused admit").why
-    assert limit(got, "MAX_IDS").binds == "no" and "not applied" in limit(got, "MAX_IDS").what
+    assert (limit(got, "MAX_IDS").measured, limit(got, "MAX_IDS").binds) == (11, "no") and "not applied" in limit(got, "MAX_IDS").what
+    assert limit(got, "MAX_SLOT_ENTRIES").binds == "unknown"
     assert [stop.split(":")[0] for stop in got.review_stops] == ["at the pr step"]
 
 
@@ -214,8 +274,8 @@ def test_a_reformatted_identity_constant_is_not_a_change(tmp_path):
 def test_a_binding_limit_closes_the_protected_producer_route_too(tmp_path):
     repo = repository(tmp_path)
     commit(repo, {"Makefile": "all: test\n"}, "ci")
-    got = plan_of(repo, selector(["a", "b", "c"]), mode="on")
-    assert route(got, "protected-producer route").state == "CLOSED" and "a limit binds" in route(got, "protected-producer route").why
+    got = plan_of(repo, selector(vitest=[f"web/t{n}.test.ts" for n in range(11)]), mode="on")
+    assert route(got, "protected-producer route").state == "CLOSED" and "a limit binds: MAX_IDS = 10" in route(got, "protected-producer route").why
 
 
 def test_the_bases_own_protected_blobs_decide_when_it_has_them(tmp_path):
@@ -279,15 +339,28 @@ def test_only_integer_constants_named_max_are_limits_and_nothing_is_evaluated():
     assert route_plan._number(ast.parse("1 + x", mode="eval").body) is None
 
 
-def test_a_limit_is_measured_by_what_its_name_counts():
-    facts = {"ids": {"python": 4, "web": 9}, "diff_bytes": 100, "production": 3, "plan_bytes": 50}
-    assert route_plan.measure("PYTHON_CI_MAX_IDS", facts) == (4, "test ids in lane python")
-    assert route_plan.measure("MAX_IDS", facts) == (9, "test ids in lane web")
-    assert route_plan.measure("MAX_IDS", {**facts, "ids": {}}) == (0, "test ids (none selected)")
-    assert route_plan.measure("MAX_DIFF", facts)[0] == 100 and route_plan.measure("MAX_COVERED_FILES", facts)[0] == 3
-    assert route_plan.measure("MAX_PLAN", facts)[0] == 50 and route_plan.measure("MAX_SECONDS", facts)[0] is None
-    near = route_plan.limits_of(lambda path: b"MAX_PLAN = 90\n" if path.endswith("plan.py") else None, facts)
-    assert near[0].binds == "unknown"  # a lower bound past half the limit: the packet decides
+def test_a_base_without_the_id_rule_or_with_no_lane_selected_measures_what_it_can():
+    facts = {"ids": {}, "diff_bytes": 100, "production": 3}
+    diff = 'require(len(raw) <= MAX_DIFF and (not raw or raw.endswith(b"\\0")), "x")\n'
+    assert route_plan.applied("require(len(raw) <= MAX_SLOT_DECODED)\n" + diff, facts) == {"MAX_DIFF": (100, "bytes of the raw diff")}
+    assert route_plan.applied(diff + diff.replace("MAX_DIFF", "MAX_OTHER"), facts) == {}  # two different constants in the same form: ambiguous
+    assert route_plan.applied("len(production) <= A\nlen(production) <= A\n", facts) == {"A": (3, "changed production files")}
+    rule = 'limit = A if lane == "python" else B\nrequire(len(tests) <= limit)\n'
+    assert route_plan.applied(rule, facts) == {"A": (0, "test ids in lane python"), "B": (0, "test ids in a lane other than python (none selected)")}
+    assert route_plan.applied(rule, {**facts, "ids": {"python": 4, "web": 9, "browser": 2}}) == {"A": (4, "test ids in lane python"), "B": (9, "test ids in lane web")}
+    assert route_plan.applied("", facts) == {}
+
+
+def test_the_identity_constants_are_the_ones_prepare_compares():
+    """route_plan.IDENTITY has no copy to drift from silently: the gate's own comparison names the same three."""
+    import inspect
+
+    from steuermaschine_heinzel.native.admission_lib import focused_admit
+
+    gate = inspect.getsource(focused_admit.validate_canonical)
+    for path, name in route_plan.IDENTITY:
+        assert f'"{name}"' in gate and (path in gate or name in ("PROTECTED_FILES", "PLAN_VARIABLE")), name
+    assert gate.count("_literal(") == len(route_plan.IDENTITY)
 
 
 def test_an_identity_constant_missing_on_one_side_is_a_change():

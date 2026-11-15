@@ -12,7 +12,7 @@ alternative. A head with no route to take is refused (exit 1) at the start, not 
 from __future__ import annotations
 
 import ast
-import json
+import re
 from collections.abc import Callable
 from typing import Any
 
@@ -109,33 +109,51 @@ def core_limits(read: Callable[[str], bytes | None]) -> list[tuple[str, str, int
     return found
 
 
-def measure(name: str, facts: dict[str, Any]) -> tuple[int | None, str]:
-    """What a Core limit of this name counts, measured on this head; (None, why) when the plan cannot know it yet.
+# How the base's own scripts/focused_plan.py applies a limit. A constant is measured only when the base applies it in
+# exactly one of these forms; the constant's NAME is read from the match, never from this file. Any other use, and any
+# other constant, is listed as "unknown" and closes no route.
+DIFF_USE = re.compile(r"\blen\(raw\)\s*<=\s*(\w+)\s+and\s+\(not raw or raw\.endswith\(b\"\\0\"\)\)")  # the NUL-terminated diff records
+FILES_USE = re.compile(r"\blen\(production\)\s*<=\s*(\w+)")
+IDS_USE = re.compile(r"\blimit\s*=\s*(\w+)\s+if\s+lane\s*==\s*[\"'](\w+)[\"']\s+else\s+(\w+)[ \t]*\n[^\n]*\blen\(tests\)\s*<=\s*limit\b")
+NOT_MEASURED = "the plan does not measure what Core checks with it"
 
-    The words are Core's naming convention; the values never come from here."""
-    words = set(name.split("_"))
-    ids: dict[str, int] = facts["ids"]
-    if "IDS" in words:
-        lanes = [lane for lane in ids if lane.upper() in words] or list(ids)
-        lane = max(lanes, key=lambda item: ids[item], default="")
-        return (ids[lane], f"test ids in lane {lane}") if lane else (0, "test ids (none selected)")
-    if "DIFF" in words:
-        return facts["diff_bytes"], "bytes of the raw diff"
-    if words & {"FILES", "PRODUCTION", "COVERED"}:
-        return facts["production"], "changed production files"
-    if words & {"PLAN", "MANIFEST", "SLOT", "REGISTRY"}:
-        return facts["plan_bytes"], "bytes of the plan, at least (case digests come with the packet)"
-    return None, "not measurable before the packet exists"
+
+def _one(pattern: re.Pattern[str], source: str) -> re.Match[str] | None:
+    """The use, when every place the base has this form names the same constants; two different ones are ambiguous."""
+    uses = list(pattern.finditer(source))
+    return uses[0] if uses and len({use.groups() for use in uses}) == 1 else None
+
+
+def applied(plan_source: str, facts: dict[str, Any]) -> dict[str, tuple[int, str]]:
+    """{constant: (what this head has, what is counted)} for the limits the base applies to a quantity the plan
+    measures exactly: the bytes of the raw diff, the changed production files, the test ids of a lane."""
+    found: dict[str, tuple[int, str]] = {}
+    if use := _one(DIFF_USE, plan_source):
+        found[use[1]] = (facts["diff_bytes"], "bytes of the raw diff")
+    if use := _one(FILES_USE, plan_source):
+        found[use[1]] = (facts["production"], "changed production files")
+    if use := _one(IDS_USE, plan_source):
+        ids: dict[str, int] = facts["ids"]
+        named, lane, other = use[1], use[2], use[3]
+        found[named] = (ids.get(lane, 0), f"test ids in lane {lane}")
+        rest = {name: count for name, count in ids.items() if name != lane}
+        largest = max(rest, key=lambda name: rest[name], default="")
+        found[other] = (rest[largest], f"test ids in lane {largest}") if largest else (0, f"test ids in a lane other than {lane} (none selected)")
+    return found
 
 
 def limits_of(read: Callable[[str], bytes | None], facts: dict[str, Any], planned: bool = True) -> list[Limit]:
-    """Core's limits on a focused plan, and the tool's own bound on the diff. PLANNED False: the route builds no plan
-    (merge tier, nothing protected), so Core's plan limits are listed and do not apply."""
+    """Core's limits on a focused plan, and the tool's own bound on the diff. A limit binds only when the plan measures
+    the quantity the base checks with it (`applied`); every other one is "unknown". PLANNED False: the route builds no
+    plan (merge tier, nothing protected), so a measured plan limit is listed and does not apply."""
+    measured_by_use = applied((read(POLICY_FILES[0]) or b"").decode("utf-8", "replace"), facts)
     out = []
     for name, path, value in core_limits(read):
-        measured, what = measure(name, facts)
-        lower_bound = "at least" in what
-        binds = "unknown" if measured is None else "yes" if measured > value else "unknown" if lower_bound and measured * 2 > value else "no"
+        if name not in measured_by_use:
+            out.append(Limit(name=name, source=f"{path} at the base", value=value, what=NOT_MEASURED, binds="unknown"))
+            continue
+        measured, what = measured_by_use[name]
+        binds = "yes" if measured > value else "no"
         if not planned:
             binds, what = "no", f"{what}; this route builds no plan, the limit is not applied"
         out.append(Limit(name=name, source=f"{path} at the base", value=value, measured=measured, what=what, binds=binds))
@@ -211,13 +229,13 @@ def plan(repo: Any, head_rev: str, base_rev: str, *, worktree: str = "", branch:
     tree = names[0].strip()
     raw = repo.raw_diff(base, tree)
     if not raw:
-        got.tier_why = "nothing is committed on this head yet: plan again after the first commit"
+        got.tier_why = "nothing is committed on this head that the base lacks (new, or already merged): plan again after the first commit"
         return _rendered(got)
     changed = fm.changed_paths(raw, policy) if len(raw) <= fm.MAX_DIFF else {}
     read_base = _reader(repo, base)
     if not changed:  # a diff the packet builder refuses to read: only the tool's own bound is known
         got.tier, got.tier_why = "full", f"the raw diff is {len(raw)} bytes, more than the packet builder reads"
-        got.limits = limits_of(read_base, {"ids": {}, "diff_bytes": len(raw), "production": 0, "plan_bytes": 0})
+        got.limits = limits_of(read_base, {"ids": {}, "diff_bytes": len(raw), "production": 0})
         got.routes = [Route(name="focused admit", state=CLOSED, why=got.tier_why, alternative="split the head into parts that each merge on their own")]
         return _rendered(got)
     advisory = select(repo, base, tree, changed)
@@ -235,9 +253,7 @@ def plan(repo: Any, head_rev: str, base_rev: str, *, worktree: str = "", branch:
     got.tier_why = ("; ".join(refusals[:3]) if derived is None else
                     "the base's Core has the merge tier: CI selects the lanes itself" if tiered else
                     "the base's Core has no merge tier: a reviewed plan names the tests")
-    estimate = len(json.dumps({"changed": changed, "production": production, "selection": selection, "execution": got.protected},
-                              sort_keys=True, separators=(",", ":")))
-    got.limits = limits_of(read_base, {"ids": got.selection, "diff_bytes": len(raw), "production": got.production, "plan_bytes": estimate},
+    got.limits = limits_of(read_base, {"ids": got.selection, "diff_bytes": len(raw), "production": got.production},
                            planned=not tiered or bool(got.protected))
     got.routes = _routes(got, changed, tiered, refusals, identity_changed(read_base, _reader(repo, tree)), where)
     got.review_stops = _stops(got, tiered)
@@ -310,7 +326,7 @@ def _rendered(got: RoutePlan) -> RoutePlan:
                      + (f"; hosted lanes: {', '.join(got.hosted_lanes)}" if got.hosted_lanes else ""))
         lines.append("PROTECTED " + (", ".join(got.protected) if got.protected else "none changed"))
     for limit in got.limits:
-        measured = "not measured" if limit.measured is None else f"{limit.measured} {limit.what}"
+        measured = f"not measured ({limit.what})" if limit.measured is None else f"{limit.measured} {limit.what}"
         lines.append(f"LIMIT    {limit.name} = {limit.value} ({limit.source}): {measured}; binds: {limit.binds}")
     if got.changed:
         lines.append("LIMIT    not read here (they need the packet or the network): coverage of the changed files (sm head preflight), "

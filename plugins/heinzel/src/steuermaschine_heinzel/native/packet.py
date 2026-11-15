@@ -119,7 +119,8 @@ def head_size(
     "the ROUTE line marked TAKEN (sm ship WORKTREE); a CLOSED route names the sanctioned way instead",
     "Tier: focused (a reviewed plan names the tests), merge (the base's Core selects the lanes itself) or full (the selector asks for\n"
     "everything). Limits are the integer MAX constants the base's scripts/focused_plan.py and scripts/focused_job.py define at that\n"
-    "commit, measured where the plan can (test ids, diff bytes, production files, plan bytes); sm holds no copy of them. Routes:\n"
+    "commit. One binds only when the base applies it to what the plan measures (diff bytes, production files, a lane's test ids);\n"
+    "every other one is listed as unknown and closes no route. sm holds no copy of them. Routes:\n"
     "focused admit, the protected-producer route (`sm head admit` takes it by itself when a protected focused-CI source changes) and\n"
     "the release path. Exit 1: no route is open for the head as it is. --base is read locally: fetch first when main moved."))
 def head_plan(
@@ -139,7 +140,7 @@ def plan_route(worktree: Path, base: str = "origin/main") -> route_plan.RoutePla
         branch = repo.out("rev-parse", "--abbrev-ref", "HEAD").decode().strip()
         return route_plan.plan(repo, "HEAD", base, worktree=str(path), branch=branch,
                                merge_tier_mode=str(runtime().settings.get("merge_tier_mode") or "auto"))
-    except (fm.ManifestError, OSError, ValueError) as error:
+    except (fm.ManifestError, OSError, ValueError, SyntaxError) as error:
         raise Refuse(f"cannot plan the route of {path}: {error}", "sm head plan --help") from error
 
 
