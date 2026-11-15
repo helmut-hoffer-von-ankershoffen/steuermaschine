@@ -22,3 +22,4 @@ def split_key(tokens: list[str] | str) -> tuple[str, str, str]:
     if prefix not in SHORT or not number.isdigit():
         raise ValueError(f"not a PR: {' '.join(words)}")
     return SHORT[prefix], number, f"{prefix} #{number}" if prefix else number
+

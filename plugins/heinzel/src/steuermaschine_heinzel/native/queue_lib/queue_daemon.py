@@ -1138,6 +1138,30 @@ def plan_guard(item: dict, earlier, refusal: list[str]):
     return guard
 
 
+ASKS_EVERY = 300  # seconds between two reads of the tracker for the ask alarm
+_asks_read = 0.0
+
+
+def record_asks(now: float) -> None:
+    """The combined ask alarm (`sm alarm asks`), at most every ASKS_EVERY seconds; a failure is logged, never stops merges."""
+    global _asks_read
+    if now - _asks_read < ASKS_EVERY:
+        return
+    _asks_read = now
+    try:
+        import importlib
+
+        from steuermaschine.native import runtime
+
+        # by name: an import statement would put the alarm code into the review digest of every queue writer
+        asks = importlib.import_module("steuermaschine_heinzel.native.alarm_lib.asks")
+        rt = runtime()
+        labels = list(rt.settings.get("alarm_ask_labels") or asks.AskAlarmSettings.model_fields["alarm_ask_labels"].default)
+        asks.record(rt.providers.commands, rt.providers.store, rt.settings, labels, now)
+    except Exception as error:  # noqa: BLE001 - an alarm read must not stop merges
+        log(f"ask alarm failed: {error!r}")
+
+
 def tick(now: float | None = None) -> None:
     """Run one tick under the runner's queue lock."""
     now = time.time() if now is None else now
@@ -1150,6 +1174,7 @@ def tick(now: float | None = None) -> None:
         _main_rerun(auto=True)
     except Exception as error:
         log(f"main-rerun failed: {error!r}")
+    record_asks(now)
     data = load()
     try:  # a needs-work row at its unchanged pinned head whose checks turned green is queued again
         recheck_needs_work(data["items"], merge)

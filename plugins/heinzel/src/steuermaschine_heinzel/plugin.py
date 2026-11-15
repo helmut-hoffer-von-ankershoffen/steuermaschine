@@ -16,6 +16,7 @@ from steuermaschine.hookspecs import hookimpl
 from .native.admission import AdmissionSettings
 from .native.affected import SelectSettings
 from .native.agents import AgentsSettings
+from .native.alarm_asks import AskAlarmSettings
 from .native.asks import AsksSettings
 from .native.briefs import BriefSettings
 from .native.ci_classify import ClassifySettings
@@ -52,7 +53,7 @@ from .native.why import WhySettings
 from .native.window import WindowSettings
 
 
-class HeinzelSettings(AdmissionSettings, AgentsSettings, AsksSettings, BriefSettings, CiOpsSettings, CiSettings, ClassifySettings, CombineSettings, CoordSettings, DispatchSettings, DocsSettings, FlakesSettings, GallerySettings, GoSettings, GuardsSettings, HandoffSettings, LeakwatchSettings, LoadguardSettings, LockSettings, LoopsSettings, MergeTierSettings, MiniSettings, PreflightSettings, QueueSettings, RefillSettings, RehearseSettings, ReleaseSettings, SelectSettings, ShipSettings, SkillsSettings, StatusSettings, TickSettings, TrainSettings, UpdaterHoldSettings, VelocitySettings, WhySettings, WindowSettings, BaseModel):
+class HeinzelSettings(AdmissionSettings, AgentsSettings, AskAlarmSettings, AsksSettings, BriefSettings, CiOpsSettings, CiSettings, ClassifySettings, CombineSettings, CoordSettings, DispatchSettings, DocsSettings, FlakesSettings, GallerySettings, GoSettings, GuardsSettings, HandoffSettings, LeakwatchSettings, LoadguardSettings, LockSettings, LoopsSettings, MergeTierSettings, MiniSettings, PreflightSettings, QueueSettings, RefillSettings, RehearseSettings, ReleaseSettings, SelectSettings, ShipSettings, SkillsSettings, StatusSettings, TickSettings, TrainSettings, UpdaterHoldSettings, VelocitySettings, WhySettings, WindowSettings, BaseModel):
     """The table [heinzel]. Every field can also be set as SM_HEINZEL__<FIELD> in the environment.
     Each area adds its fields as a mixin in its own module and is listed in the bases here."""
 

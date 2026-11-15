@@ -4,7 +4,7 @@
 import json
 import shutil
 import subprocess
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -35,7 +35,7 @@ GREEN = [{"name": n, "status": "COMPLETED", "conclusion": "SUCCESS"} for n in ("
 
 def long_ago() -> str:
     """Forty minutes before now, as the code host writes a time."""
-    return (datetime.now(timezone.utc) - timedelta(minutes=40)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return (datetime.now(UTC) - timedelta(minutes=40)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 @pytest.fixture(autouse=True)
@@ -578,3 +578,39 @@ def test_a_cleared_guard_counts_for_the_same_repository_and_the_exact_head_only(
     assert not known_failures.guard_cleared("801", [row], CORE + "-plugins", HEAD)
     assert not known_failures.guard_cleared("801", [row], CORE, "")
     assert not known_failures.guard_cleared("801", [{**row, "status": "needs work"}], CORE, HEAD)
+
+
+PLUGINS = "helmut-hoffer-von-ankershoffen/heinzel-plugins"
+
+
+def test_pr_works_for_a_plugins_worktree_the_repository_is_read_from_its_origin(rt, gh, worktree):
+    """qtz6 (a): a worktree whose origin is heinzel-plugins opens a plugins PR; the PR is looked up and would be opened there."""
+    gh.on("remote get-url origin", f"git@github.com:{PLUGINS}.git\n").on("pr list -R " + PLUGINS + " --head fix/x", [])
+    out = invoke(rt, ["--format", "json", "head", "pr", "abc", "fix(web): keep the draft", "--body-file", str(worktree)])
+    assert out.exit_code == 0 and doc(out).verdict == "dry_run", out
+    assert any(line.startswith("pr list -R " + PLUGINS) for line in gh.lines())  # the push gate still reads core's main CI
+
+
+def test_the_ship_step_of_a_plugins_pr_gets_the_plugins_key():
+    from steuermaschine_heinzel.native.ship_lib import repos
+
+    assert repos.pr_key(PLUGINS, 38) == "plugins 38" and repos.pr_key(CORE, 801) == "801"
+    assert repos.known_repo("https://github.com/Helmut-Hoffer-von-Ankershoffen/heinzel-plugins.git") == PLUGINS
+    assert repos.known_repo("git@github.com:someone/plugins.git") is None
+
+
+def test_head_pr_refuses_another_agents_branch_naming_the_owner_and_nothing_is_published(rt, gh, worktree, monkeypatch, tmp_path):
+    """nn5m: one writer per branch, enforced by the tool."""
+    from steuermaschine_heinzel import state as statedir
+    from steuermaschine_heinzel.native import branch_owner
+
+    monkeypatch.setattr(statedir, "path", lambda name, under=None: tmp_path / "owners" / name)
+    gh.on("rev-parse --git-common-dir", str(tmp_path / ".git") + "\n").on("symbolic-ref --short refs/remotes/origin/HEAD", "origin/main\n")
+    gh.on("rev-parse --abbrev-ref HEAD", "fix/x\n")
+    monkeypatch.setenv("STEUERMASCHINE_AGENT", "agent-1")
+    out = invoke(rt, ["head", "pr", "abc", "fix: x", "--body-file", str(worktree)])  # a dry run by the first writer: nothing recorded
+    assert out.exit_code == 0 and not (tmp_path / "owners").exists(), out
+    branch_owner.claim(gh, Path("."), "agent-1")  # the first writer owns it
+    monkeypatch.setenv("STEUERMASCHINE_AGENT", "agent-2")
+    out = invoke(rt, ["head", "pr", "abc", "fix: x", "--body-file", str(worktree), "--live"])
+    assert out.exit_code == 1 and "belongs to agent agent-1" in out.stderr and not published(gh), out

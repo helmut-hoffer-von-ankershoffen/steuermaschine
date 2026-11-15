@@ -61,10 +61,11 @@ def watch_pr(repo: str, pr: str, deadline: float) -> tuple[int, str]:
     merge = hzlib
     label = f"PR #{pr}" if repo == hzlib.CORE else f"PR {repo.split('/')[-1].removeprefix('heinzel-')} #{pr}"
     while True:
-        info = hzlib.ghj("pr", "view", pr, "-R", repo, "--json", "state,statusCheckRollup", default={}) or {}
+        info = hzlib.ghj("pr", "view", pr, "-R", repo, "--json", "state,mergeCommit,statusCheckRollup", default={}) or {}
         rollup = [c for c in info.get("statusCheckRollup", []) if c.get("name") != "review"]
         if info.get("state") == "MERGED":
-            return 0, f"{label}: merged"
+            commit = ((info.get("mergeCommit") or {}).get("oid") or "")[:9]  # the state is GitHub's; a commit is shown when it has one
+            return 0, f"{label}: merged" + (f" ({commit})" if commit else "")
         if info.get("state") == "CLOSED":
             return 1, f"{label}: closed"
         if merge.settled(rollup):
