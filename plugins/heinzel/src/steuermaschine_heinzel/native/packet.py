@@ -22,7 +22,7 @@ from steuermaschine.runlock import Request
 
 from .lock import lock_of
 from .packet_lib import admit_wave as aw
-from .packet_lib import check_ops, ops, wave_ops
+from .packet_lib import check_ops, ops, route_plan, wave_ops
 from .packet_lib import floor_check as fc
 from .packet_lib import focused_manifest as fm
 
@@ -109,6 +109,39 @@ def head_size(
         return ops.size_wave(branches, _core(core), base)
     except ops.PacketRefused as error:
         _refuse(error, "sm head size --help")
+
+
+@native("head plan", writes=False, help=H(
+    "Print the route one head takes through admission: tier, size, every limit and whether it binds, the route, the review stops.",
+    "Use at the START of a head or a bundle, and again after every merge into it: before building, not at the last step.",
+    "nothing (read-only: local Git objects and the base's own selector; no network, nothing fetched).",
+    "sm head plan ~/Code/heinzel-fix",
+    "the ROUTE line marked TAKEN (sm ship WORKTREE); a CLOSED route names the sanctioned way instead",
+    "Tier: focused (a reviewed plan names the tests), merge (the base's Core selects the lanes itself) or full (the selector asks for\n"
+    "everything). Limits are the integer MAX constants the base's scripts/focused_plan.py and scripts/focused_job.py define at that\n"
+    "commit. One binds only when the base applies it to what the plan measures (diff bytes, production files, a lane's test ids);\n"
+    "every other one is listed as unknown and closes no route. sm holds no copy of them. Routes:\n"
+    "focused admit, the protected-producer route (`sm head admit` takes it by itself when a protected focused-CI source changes) and\n"
+    "the release path. Exit 1: no route is open for the head as it is. --base is read locally: fetch first when main moved."))
+def head_plan(
+    worktree: Path = typer.Argument(..., metavar="WORKTREE", help="The worktree of the head; its committed HEAD is planned."),
+    base: str = typer.Option("origin/main", "--base", help="Base revision, read locally, never fetched."),
+) -> route_plan.RoutePlan:
+    return plan_route(worktree, base)
+
+
+def plan_route(worktree: Path, base: str = "origin/main") -> route_plan.RoutePlan:
+    """The route plan of the committed HEAD of WORKTREE (shared by `sm head plan` and `sm ship --plan`)."""
+    path = Path(os.path.realpath(os.path.expanduser(str(worktree))))
+    if not path.is_dir():
+        raise Refuse(f"{path} is not a directory", "sm head plan --help", code=2)
+    repo = fm.Repo(path)
+    try:
+        branch = repo.out("rev-parse", "--abbrev-ref", "HEAD").decode().strip()
+        return route_plan.plan(repo, "HEAD", base, worktree=str(path), branch=branch,
+                               merge_tier_mode=str(runtime().settings.get("merge_tier_mode") or "auto"))
+    except (fm.ManifestError, OSError, ValueError, SyntaxError) as error:
+        raise Refuse(f"cannot plan the route of {path}: {error}", "sm head plan --help") from error
 
 
 @native("head floor", writes=False, replaces=("hz-floor-check",), help=H(

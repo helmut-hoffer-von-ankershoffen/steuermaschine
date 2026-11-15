@@ -8,6 +8,13 @@ protected file (PROTECTED_FILES, PROTECTED_PATTERNS: a reviewed execution manife
 widen asks for an explicit widening. An older Core at main, or a protected list that is not a plain literal, keeps
 every step.
 
+Protected-producer route: a head that changes a pinned focused-CI source (the packet's `execution` pins differ from
+main's blobs) is prepared with `--reviewed-protected-producer` by this pipeline itself. Nothing is left out against the
+hand route: the packet review approves a record that names the changed sources (a verdict on the packet alone does not
+match), prepare checks the PR manifest and the paired main manifest with main's own resolver and refuses when the head
+changes PROTECTED_FILES, PLAN_VARIABLE or REPOSITORY, and the apply review is a separate verdict on prepare.out, which
+says `protected_producer` true.
+
 Each step runs the existing native command (`head preflight`, `head packet preopen`, `head prepare`, `head apply`,
 `head pr`, `queue add`) through its review gate; nothing here reimplements one. The state is kept per head (the
 exact SHA). A plan binds one head and one main: when main moves before the apply, packet, reviews and prepare are
@@ -23,9 +30,10 @@ import json
 from pathlib import Path
 from typing import Any
 
-from steuermaschine import USAGE
+from steuermaschine import USAGE, verdicts
 from steuermaschine.engine import Ctx, Pipeline, Refuse, ReviewStop, Step, Subject, identify_head, need_check
 from steuermaschine.github import Gh
+from steuermaschine.go import run_states
 from steuermaschine.native import unit
 
 from ..native import merge_tier
@@ -468,7 +476,19 @@ def _packet_subject(ctx: Ctx) -> tuple[str, str, str]:
              f"Read: {ctx.data.get('packet')} and the builder's {ctx.data.get('packet_review')}.\n"
              "Check: the selection covers what the head changes, the collected cases match the local JUnit, the resulting tree is the merge of "
              "this head onto this main, nothing outside the packet's scope.")
-    if skips := ctx.data.get("preflight_skipped"):  # the verdict binds the skip too: a review of the packet alone does not approve it
+    skips = ctx.data.get("preflight_skipped")
+    if changed := protected_producer(ctx):  # the verdict binds the route: a review of the packet alone does not approve a CI-source change
+        record = _protected_record(ctx)
+        record.write_text(_protected_bytes(sha, changed, skips))
+        brief += (f"\nThis head CHANGES PROTECTED focused-CI sources ({', '.join(changed)}). After your approval `sm head admit` prepares it on the "
+                  "protected-producer route by itself (`head prepare --reviewed-protected-producer`).\n"
+                  "Approve only if you reviewed those changes as changes of CI itself: what CI runs, selects and judges after the merge.")
+        if skips:
+            brief += f"\nThe preflight LEFT CHECKS OUT ({', '.join(skips['checks'])}): {skips['reason']}\nApprove only if that reason holds."
+        brief += (f"\nThe digest to approve is the sha256 of the bytes of {record} (`shasum -a 256 FILE`); it names the packet's sha256 "
+                  "and the changed sources.")
+        return packet_sha(record), brief, str(record)
+    if skips:  # the verdict binds the skip too: a review of the packet alone does not approve it
         record = Path(ctx.data.get("packet_dir") or Path(ctx.data.get("packet", "")).parent) / "preflight-skips.json"
         record.write_text(json.dumps({"packet_sha256": sha, "preflight_skipped": skips["checks"], "reason": skips["reason"]}, indent=1) + "\n")
         brief += (f"\nThe preflight LEFT CHECKS OUT ({', '.join(skips['checks'])}): {skips['reason']}\n"
@@ -476,6 +496,73 @@ def _packet_subject(ctx: Ctx) -> tuple[str, str, str]:
                   "(`shasum -a 256 FILE`); it names the packet's sha256.")
         return packet_sha(record), brief, str(record)
     return sha, brief, ctx.data.get("packet", "")
+
+
+# ----------------------------------------------------------------------------- the protected-producer route
+PROTECTED_RECORD = "protected-producer.json"
+
+
+def protected_producer(ctx: Ctx) -> list[str]:
+    """The pinned focused-CI sources this head changes: the paths whose blob in the packet's `execution` (the pins of
+    the resulting tree, built from main's own protected list at that commit) is not main's blob. Empty: the ordinary
+    route. An unreadable packet is empty too: prepare then refuses a protected change with its own reason.
+
+    Read from the packet under review and from main's tree, never from a list in this tool."""
+    try:
+        execution = json.loads(Path(ctx.data.get("packet", "")).read_text())["manifest"]["execution"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return []
+    if not isinstance(execution, dict) or not execution or not all(isinstance(k, str) and isinstance(v, str) for k, v in execution.items()):
+        return []
+    main = ctx.subject.facts["main"]
+    rc, out = _git_out(ctx, "ls-tree", "-r", "-z", main, "--", *sorted(execution))
+    if rc != 0:
+        raise Refuse(f"cannot read the pinned focused-CI sources of main {main[:12]} in {ctx.subject.facts['worktree']}: "
+                     "whether this head changes one is unknown", f"git -C {ctx.subject.facts['worktree']} fetch origin main")
+    at_main = {path: meta.split()[2] for meta, tab, path in (row.partition("\t") for row in out.split("\0")) if tab and len(meta.split()) == 3}
+    return sorted(path for path, blob in execution.items() if at_main.get(path) != blob)
+
+
+def _protected_record(ctx: Ctx) -> Path:
+    return Path(ctx.data.get("packet_dir") or Path(ctx.data.get("packet", "")).parent) / PROTECTED_RECORD
+
+
+def _protected_bytes(packet: str, changed: list[str], skips: dict[str, Any] | None) -> str:
+    """The exact bytes the packet reviewer approves on this route: the packet, the changed sources, a preflight skip."""
+    record: dict[str, Any] = {"packet_sha256": packet, "protected_producer": changed}
+    if skips:
+        record |= {"preflight_skipped": skips["checks"], "reason": skips["reason"]}
+    return json.dumps(record, indent=1) + "\n"
+
+
+def reviewed_protected(ctx: Ctx) -> list[str]:
+    """The changed pinned sources, once an independent verdict approves exactly them with this packet; empty on the
+    ordinary route. Refuses when the head changes one and no such verdict exists: the route is never taken on a
+    verdict that did not name the sources (a verdict on packet.json alone, or on an earlier list)."""
+    changed = protected_producer(ctx)
+    if not changed:
+        return []
+    wt = ctx.subject.facts["worktree"]
+    expected = _protected_bytes(packet_sha(Path(ctx.data.get("packet", ""))), changed, ctx.data.get("preflight_skipped"))
+    digest = hashlib.sha256(expected.encode()).hexdigest()
+    record = _protected_record(ctx)
+    try:
+        same = record.read_text() == expected
+    except OSError:
+        same = False
+    why = "" if same else "the record on disk is not these bytes"
+    if same:
+        try:  # the engine's own rule for a review stop: an approve, not by anyone who produced the bytes, with its check receipt
+            verdict = verdicts.require_independent(ctx.providers.store, digest, run_states(ctx.providers.store), f"sm head admit {wt}")
+            why = f"the verdict was recorded by {ctx.author}, who drives this run" if verdict.get("reviewer") == ctx.author else ""
+        except Refuse as refused:
+            why = refused.message
+    if why:
+        raise Refuse(f"this head changes protected focused-CI sources ({', '.join(changed)}), and no independent verdict approves "
+                     f"{record} for exactly them (digest {digest[:12]}): the protected-producer route stays closed ({why}). A verdict on "
+                     "packet.json alone does not open it; the packet review stop names the sources and asks again",
+                     f"sm head admit {wt}")
+    return changed
 
 
 # ----------------------------------------------------------------------------- prepare and apply
@@ -493,7 +580,13 @@ def prepare_probe(ctx: Ctx) -> str | None:
         return None
     if not prepared_path(ctx).is_file() or Path(str(stored.get("packet", ""))).resolve() != Path(ctx.data.get("packet", "")).resolve():
         return None
-    return f"prepared {prepared_digest(prepared_path(ctx))[:12]}"
+    try:
+        protected = reviewed_protected(ctx)
+    except Refuse:
+        return None  # not adopted: the prepare step says why the route is closed
+    if bool(stored.get("protected")) != bool(protected):
+        return None  # prepared for the other route
+    return f"prepared {prepared_digest(prepared_path(ctx))[:12]}" + (" on the protected-producer route" if protected else "")
 
 
 def _branch_pr(ctx: Ctx) -> int | None:
@@ -510,10 +603,15 @@ def prepare(ctx: Ctx) -> str:
         ctx.say(f"  the branch has open PR #{found}: this head updates it (prepare binds its current head as the expected remote head)")
         pr = str(found)
     receipts = ctx.inputs.get("nonconsumers")
+    protected = reviewed_protected(ctx)
+    options: dict[str, Any] = {"reviewed_protected_producer": True} if protected else {}  # the ordinary route passes nothing new
+    if protected:
+        ctx.say(f"  protected-producer route: the packet review approved the change of {', '.join(protected)}; prepare checks both manifests "
+                "with main's resolver and refuses a changed PROTECTED_FILES, PLAN_VARIABLE or REPOSITORY")
     done = ok("head prepare", packet=Path(ctx.data["packet"]), core_repo=Path(ctx.subject.facts["worktree"]),
               review_root=path_input(ctx, "review_root", "where packets live"), pr=int(pr) if pr.isdigit() else None, wait_=True,
-              nonconsumers=path_input(ctx, "nonconsumers", "the reviewed receipts file") if receipts else None)
-    return f"prepared {done.sha256[:12]} at {done.prepared_path}"
+              nonconsumers=path_input(ctx, "nonconsumers", "the reviewed receipts file") if receipts else None, **options)
+    return f"prepared {done.sha256[:12]} at {done.prepared_path}" + (" on the protected-producer route" if protected else "")
 
 
 def apply_review(ctx: Ctx) -> tuple[str, str, str]:
@@ -521,12 +619,17 @@ def apply_review(ctx: Ctx) -> tuple[str, str, str]:
         return "", "", ""
     path = prepared_path(ctx)
     _same_packet(ctx, path)
+    protected = _same_route(ctx, path)
     sha = prepared_digest(path)
     ctx.data["apply_sha256"] = sha  # what the apply step passes as --approved: the digest this stop checked
     brief = (f"Review the prepared registry transaction of {ctx.subject.label}: {path}.\n"
              f"Recompute the digest yourself: sm head hash {path}\n"
              "Check: head, main and slot are this head's; the plan names exactly the packet you (or another reviewer) approved; "
              "nothing else is admitted.")
+    if protected:
+        brief += (f"\nPROTECTED-PRODUCER ROUTE: this head changes protected focused-CI sources ({', '.join(protected)}); the transaction says "
+                  "`protected_producer` true. This verdict is separate from the packet review's: check that the slot carries the PR plan and "
+                  f"the paired main plan of this head, and that the packet review approved {_protected_record(ctx)}.")
     return sha, brief, str(path)
 
 
@@ -548,8 +651,24 @@ def _same_packet(ctx: Ctx, prepared: Path) -> None:
                      f"(its bytes now: {now[:12]}): prepare again from the reviewed packet", f"sm head admit {ctx.subject.facts['worktree']}")
 
 
+def _same_route(ctx: Ctx, prepared: Path) -> list[str]:
+    """The prepared transaction is on the route the packet review approved: `protected_producer` is true exactly when
+    this head changes a pinned source (and then only with the verdict that names it). Returns the changed sources."""
+    protected = reviewed_protected(ctx)
+    try:
+        flag = json.loads(prepared.read_text()).get("protected_producer")
+    except (OSError, ValueError, AttributeError) as exc:
+        raise Refuse(f"cannot read the prepared transaction {prepared}: {exc}") from None
+    if bool(flag) is not bool(protected):
+        raise Refuse(f"the prepared transaction says protected_producer {flag!r}, but this head "
+                     + (f"changes protected sources ({', '.join(protected)})" if protected else "changes no protected source")
+                     + ": prepare again", f"sm head admit {ctx.subject.facts['worktree']} --rewind prepare")
+    return protected
+
+
 def apply(ctx: Ctx) -> str:
     _same_packet(ctx, prepared_path(ctx))
+    _same_route(ctx, prepared_path(ctx))
     done = ok("head apply", packet=Path(ctx.data["packet"]), approved=ctx.data["apply_sha256"], wait_=True)
     ctx.data["receipt"] = done.receipt_path
     return f"applied; receipt {done.receipt_path}"
