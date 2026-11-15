@@ -110,6 +110,14 @@ def test_rejudge_reruns_the_gate_run_the_details_url_names_and_prints_new_verdic
     assert not [c for c in gh.lines() if "claude" in c.lower()]
 
 
+def test_explicit_gate_dry_run_preserves_the_verified_run_in_next_command(tmp_path):
+    gh = github(gate_answers=[gate_run() | {"head_sha": "f" * 40, "event": "workflow_run"}])
+    gh.on(f"run view {GATE}", workflow_input_log())
+    out = invoke(runtime_for(tmp_path, gh), ["ci", "merge-gate", "rejudge", "803", "--gate-run", str(GATE), "--dry-run"])
+    assert out.exit_code == 0 and not gh.writes()
+    assert out.stdout.splitlines()[-1] == f"NEXT     sm ci merge-gate rejudge 803 --gate-run {GATE}"
+
+
 def test_rejudge_dry_run_changes_nothing_and_a_red_verdict_exits_1(tmp_path):
     gh = github()
     dry = invoke(runtime_for(tmp_path, gh), ["--format", "json", "ci", "merge-gate", "rejudge", "803", "--dry-run"])

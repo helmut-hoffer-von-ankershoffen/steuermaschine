@@ -216,6 +216,7 @@ class Rejudge(Model):
     live: bool = True
     state: str  # would_rerun | running | done
     sonar: str = ""
+    explicit_gate: bool = False
     verdicts: list[Verdict] = []
 
     @property
@@ -235,7 +236,8 @@ class Rejudge(Model):
         elif self.state == "done":
             out.append("NEXT     " + (f"sm queue why {self.pr}" if not self.exit_code else f"sm ci why {self.pr}"))
         else:
-            out.append(f"NEXT     sm ci merge-gate rejudge {self.pr}")
+            option = f" --gate-run {self.gate_run}" if self.explicit_gate else ""
+            out.append(f"NEXT     sm ci merge-gate rejudge {self.pr}{option}")
         return out
 
 
@@ -302,7 +304,7 @@ def rejudge(pr: int, wait_minutes: int = 15, dry_run: bool = False, gate_run_id:
         raise Refuse(f"Sonar is not clean for PR {pr} ({sonar.render()[0].removeprefix('SONAR    ')}): a re-judge would fail again", f"sm head sonar {pr}")
     gate_id, attempt = str(gate.get("id")), int(gate.get("run_attempt") or 1)
     result = Rejudge(pr=pr, head=head, ci_run=str(run.get("id")), gate_run=gate_id, found_by=found_by, attempt=attempt, live=not dry_run,
-                     state="would_rerun" if dry_run else "running", sonar=sonar.render()[0].removeprefix("SONAR    "))
+                     state="would_rerun" if dry_run else "running", sonar=sonar.render()[0].removeprefix("SONAR    "), explicit_gate=bool(gate_run_id))
     if dry_run:
         return result
     _, why = w.gh.api(f"actions/runs/{gate_id}/rerun", method="POST")
