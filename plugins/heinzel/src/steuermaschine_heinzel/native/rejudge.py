@@ -259,10 +259,40 @@ def bound_workflow_gate(w: Reader, run_id: str, head: str, ci_id: str, pr: int) 
         raise Refuse(f"cannot identify the gate repository: {why}", f"sm ci why {pr}")
     log = w.gh.run(["run", "view", run_id, "--repo", repo, "--log"])
     expected = {"PR_HEAD_SHA": head, "CI_RUN_ID": ci_id, "PR_NUMBER": str(pr)}
-    observed = {key: set(re.findall(rf"(?m)^.*\t\S+Z   {key}: ([^\s]+)\s*$", log.out)) for key in expected}
-    if log.rc or any(observed[key] != {value} for key, value in expected.items()):
+    observed = gate_input_environment(log.out)
+    if log.rc or any(observed.get(key) != [value] for key, value in expected.items()):
         raise Refuse("the gate log does not bind exactly this PR head, CI run and PR number", f"sm ci why {pr}")
     return gate
+
+
+def gate_input_environment(log: str) -> dict[str, list[str]]:
+    """Only the runner's initial environment group of the trusted coverage step can prove trigger identity."""
+    prefix = "Merge gates\tVerify the original workload and applicable coverage evidence\t"
+    command = "##[group]Run uv run --no-build --frozen --script scripts/focused_gate.py"
+    observed: dict[str, list[str]] = {}
+    state = "start"
+    for line in log.splitlines():
+        if not line.startswith(prefix):
+            continue
+        timestamp, separator, content = line[len(prefix):].removeprefix("\ufeff").partition(" ")
+        if not separator or not re.fullmatch(r"\d{4}-\d{2}-\d{2}T[\d:.]+Z", timestamp):
+            return {}
+        if state == "start":
+            if content != command:
+                return {}
+            state = "command"
+        elif content == "##[endgroup]":
+            return observed if state == "env" else {}
+        elif content == "env:":
+            if state != "command":
+                return {}
+            state = "env"
+        elif state == "env":
+            key, colon, value = content.removeprefix("  ").partition(": ")
+            if not content.startswith("  ") or not colon:
+                return {}
+            observed.setdefault(key, []).append(value)
+    return {}  # an incomplete group is not evidence
 
 
 def rejudge(pr: int, wait_minutes: int = 15, dry_run: bool = False, gate_run_id: str = "") -> Rejudge:

@@ -140,8 +140,10 @@ def test_dynamic_ci_title_is_identified_by_workflow_path_not_a_spoofed_name(tmp_
 
 
 def workflow_input_log(head=HEAD, ci=str(CI), pr="803"):
-    return "\n".join(f"Merge gates\tGate\t2026-11-15T21:32:59.788Z   {key}: {value}"
-                     for key, value in (("PR_HEAD_SHA", head), ("CI_RUN_ID", ci), ("PR_NUMBER", pr)))
+    prefix = "Merge gates\tVerify the original workload and applicable coverage evidence\t2026-11-15T21:32:59.788Z "
+    lines = ["##[group]Run uv run --no-build --frozen --script scripts/focused_gate.py", "env:"]
+    lines += [f"  {key}: {value}" for key, value in (("PR_HEAD_SHA", head), ("CI_RUN_ID", ci), ("PR_NUMBER", pr))]
+    return "\n".join(prefix + line for line in [*lines, "##[endgroup]"]).replace("\t2026-", "\t\ufeff2026-", 1)
 
 
 def test_explicit_workflow_gate_binds_trigger_inputs_instead_of_default_branch_sha(tmp_path):
@@ -153,7 +155,12 @@ def test_explicit_workflow_gate_binds_trigger_inputs_instead_of_default_branch_s
 
 
 @pytest.mark.parametrize("log", [workflow_input_log(head="f" * 40), workflow_input_log(ci="1"),
-                                  workflow_input_log(pr="804"), "", workflow_input_log() + "\n" + workflow_input_log(head="f" * 40)])
+                                  workflow_input_log(pr="804"), "",
+                                  workflow_input_log().replace("  PR_NUMBER: 803", "  PR_NUMBER: 803\nMerge gates\t"
+                                                              "Verify the original workload and applicable coverage evidence\t"
+                                                              "2026-11-15T21:32:59.788Z   PR_NUMBER: 804"),
+                                  workflow_input_log().replace("Verify the original workload and applicable coverage evidence", "unrelated"),
+                                  workflow_input_log().replace("env:", "##[endgroup]\nenv:")])
 def test_explicit_workflow_gate_refuses_missing_wrong_or_ambiguous_inputs(tmp_path, log):
     gh = github(gate_answers=[gate_run() | {"head_sha": "f" * 40, "event": "workflow_run"}])
     gh.on(f"run view {GATE}", log)
