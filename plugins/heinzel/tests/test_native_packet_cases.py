@@ -9,7 +9,7 @@ from pathlib import Path
 
 import packet_parity as parity
 import pytest
-from test_native_packet_dirs import rt, runtime_for  # noqa: F401  (rt is a fixture)
+from test_native_packet_dirs import assert_collections_recorded, gated_requests, rt, runtime_for  # noqa: F401  (fixtures)
 from test_native_packet_wave import _git, _write, wave  # noqa: F401  (wave is a fixture)
 
 from steuermaschine.testing import invoke
@@ -124,8 +124,7 @@ def test_the_collector_file_runs_as_a_real_isolated_process(tmp_path):
 
 
 # ----------------------------------------------------------------------------- the commands
-@pytest.mark.skipif("os.environ.get('CI')", reason="the gate history keeps 200 characters of the command; the CI checkout path pushes 'collect' past them")
-def test_cases_collect_in_text_and_json_under_the_run_lock(rt, wave):  # noqa: F811
+def test_cases_collect_in_text_and_json_under_the_run_lock(rt, wave, gated_requests):  # noqa: F811
     out = wave["tmp"] / "python.collected.xml"
     argv = ["head", "cases", "collect", "--repo", str(wave["repo"]), "--tree", wave["a"], "--selection", str(wave["sel-a"]), "--lane", "python", "--output", str(out)]
     done = invoke(rt, argv)
@@ -136,7 +135,7 @@ def test_cases_collect_in_text_and_json_under_the_run_lock(rt, wave):  # noqa: F
     collected = check_ops.CasesCollected.model_validate(json.loads(invoke(rt, ["--format", "json", *argv]).stdout))
     assert collected.cases == 2 and collected.digest == digest and collected.lane == "python" and collected.tree == wave["a"] and collected.output == str(out)
     history = [json.loads(line) for line in (wave["tmp"] / "home/history.jsonl").read_text().splitlines()]
-    assert len(history) == 2 and all("collect_cases.py collect" in entry["cmd"] and entry["exit"] == 0 for entry in history)
+    assert_collections_recorded(history, gated_requests)
     assert not list(Path(out).parent.glob("cases-collect-*"))
 
 
