@@ -12,6 +12,7 @@ its worktrees) and the branch name, so a second worktree of the same branch is t
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import os
@@ -25,7 +26,7 @@ from .. import state as statedir
 
 FOLDER = "branch-owners"
 ENV = "SM_AGENT"
-NOT_A_WORK_BRANCH = ("main", "master", "HEAD", "")
+DETACHED = ("HEAD", "")  # no branch at all; the default branch is read from the repository, never listed here
 
 
 def agent_name(given: str | None = None) -> str:
@@ -46,19 +47,47 @@ def where(commands: Any, worktree: Path) -> tuple[str, str]:
     return str(common.resolve()), read("rev-parse", "--abbrev-ref", "HEAD")
 
 
+def default_branch(commands: Any, worktree: Path) -> str:
+    """The repository's default branch: origin's HEAD as the clone recorded it, else GitHub's `defaultBranchRef`. Refuses
+    when neither can be read (an owner is never guessed for a branch that might be the default one)."""
+    done = commands.run(["git", "-C", str(worktree), "symbolic-ref", "--short", "refs/remotes/origin/HEAD"], timeout=30)
+    name = done.out.strip().removeprefix("origin/") if not done.rc else ""
+    if not name:
+        done = commands.run(["gh", "repo", "view", "--json", "defaultBranchRef", "-q", ".defaultBranchRef.name"], cwd=str(worktree), timeout=60)
+        name = done.out.strip() if not done.rc else ""
+    if not name:
+        raise Refuse(f"cannot tell the default branch of {worktree} (origin/HEAD is not set and `gh repo view` failed)",
+                     "git remote set-head origin --auto", code=2)
+    return name
+
+
+def is_work_branch(commands: Any, worktree: Path, branch: str) -> bool:
+    return branch not in DETACHED and branch != default_branch(commands, worktree)
+
+
 def record_path(common: str, branch: str, root: Path | None = None) -> Path:
     name = hashlib.sha256(f"{common}\0{branch}".encode()).hexdigest()[:20]
     return (statedir.path(FOLDER) if root is None else root / FOLDER) / f"{name}.json"
 
 
 def owner_of(common: str, branch: str, root: Path | None = None) -> dict[str, Any] | None:
-    """The record of the branch, or None: none written, unreadable, or naming another branch."""
+    """The record of the branch, or None when none was written. A record that exists but cannot be read, or names another
+    branch, refuses: it is never taken for "unowned" (the next writer would overwrite an owner)."""
+    path = record_path(common, branch, root)
     try:
-        data = json.loads(record_path(common, branch, root).read_text())
-    except (OSError, ValueError):
+        text = path.read_text()
+    except FileNotFoundError:
         return None
-    ok = isinstance(data, dict) and data.get("branch") == branch and data.get("common") == common and isinstance(data.get("agent"), str)
-    return data if ok else None
+    except OSError as error:
+        raise Refuse(f"the owner record of branch {branch} ({path}) cannot be read: {error}", "ask the coordinator to check it (`sm branch claim --take` replaces it)", code=1) from None
+    try:
+        data = json.loads(text)
+    except ValueError:
+        data = None
+    if not (isinstance(data, dict) and data.get("branch") == branch and data.get("common") == common and isinstance(data.get("agent"), str)):
+        raise Refuse(f"the owner record of branch {branch} ({path}) is corrupt: nobody is assumed not to own the branch",
+                     "the coordinator replaces it with `sm branch claim --take`", code=1)
+    return data
 
 
 def refusal(branch: str, owner: dict[str, Any], me: str) -> Refuse:
@@ -72,7 +101,7 @@ def check(commands: Any, worktree: Path, agent: str = "") -> tuple[str, dict[str
     detached), and an unnamed agent, are never refused."""
     common, branch = where(commands, Path(worktree).expanduser().resolve())
     me = agent_name(agent)
-    owner = None if branch in NOT_A_WORK_BRANCH else owner_of(common, branch)
+    owner = owner_of(common, branch) if is_work_branch(commands, Path(worktree).expanduser().resolve(), branch) else None
     if owner and me and owner["agent"] != me:
         raise refusal(branch, owner, me)
     return branch, owner
@@ -86,17 +115,26 @@ def claim(commands: Any, worktree: Path, agent: str = "", take: bool = False, ro
     me = agent_name(agent)
     if not me:
         raise Refuse(f"no agent name: set {ENV} or give --agent", "sm branch claim --help", code=2)
-    if branch in NOT_A_WORK_BRANCH:
+    if not is_work_branch(commands, worktree, branch):
         raise Refuse(f"'{branch}' is not a work branch; only work branches have one owner", "sm branch claim --help", code=2)
-    owner = owner_of(common, branch, root)
-    if owner and owner["agent"] != me and not take:
+    path = record_path(common, branch, root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.with_name(path.name + ".lock").open("a") as lock:  # one claim at a time; the lock goes with the process, so a crash leaves none
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            raise Refuse(f"another claim of branch {branch} is in progress", "run the command again in a moment", code=75) from None
+        return _write_claim(common, branch, worktree, me, take, path, root)
+
+
+def _write_claim(common: str, branch: str, worktree: Path, me: str, take: bool, path: Path, root: Path | None) -> dict[str, Any]:
+    owner = None if take else owner_of(common, branch, root)  # the hand-over replaces even a record that cannot be read
+    if owner and owner["agent"] != me:
         raise refusal(branch, owner, me)
     if owner and owner["agent"] == me:
         return owner
     data = {"common": common, "branch": branch, "agent": me, "worktree": str(worktree), "since": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")}
-    path = record_path(common, branch, root)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
     tmp.write_text(json.dumps(data, sort_keys=True) + "\n")
     tmp.replace(path)
     return data
@@ -108,5 +146,5 @@ def guard_write(commands: Any, worktree: Path, agent: str = "", *, record: bool 
     if not agent_name(agent):
         return
     branch, owner = check(commands, worktree, agent)
-    if record and owner is None and branch not in NOT_A_WORK_BRANCH:
+    if record and owner is None and is_work_branch(commands, Path(worktree).expanduser().resolve(), branch):
         claim(commands, worktree, agent)

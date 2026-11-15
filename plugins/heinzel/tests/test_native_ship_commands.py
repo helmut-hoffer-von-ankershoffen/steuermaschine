@@ -605,7 +605,7 @@ def test_head_pr_refuses_another_agents_branch_naming_the_owner_and_nothing_is_p
     from steuermaschine_heinzel.native import branch_owner
 
     monkeypatch.setattr(statedir, "path", lambda name, under=None: tmp_path / "owners" / name)
-    gh.on("rev-parse --git-common-dir", str(tmp_path / ".git") + "\n")
+    gh.on("rev-parse --git-common-dir", str(tmp_path / ".git") + "\n").on("symbolic-ref --short refs/remotes/origin/HEAD", "origin/main\n")
     gh.on("rev-parse --abbrev-ref HEAD", "fix/x\n")
     monkeypatch.setenv("SM_AGENT", "agent-1")
     out = invoke(rt, ["head", "pr", "abc", "fix: x", "--body-file", str(worktree)])  # a dry run by the first writer: nothing recorded

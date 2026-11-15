@@ -43,7 +43,7 @@ def _view(branch: str, record: dict | None, agent: str) -> BranchOwner:
 
 @native("branch check", writes=False, help=H(
     "Refuse (exit 1) when another agent owns the worktree's branch, naming the owner; otherwise say who owns it.",
-    "Use in a pre-commit or pre-push hook, or before you commit to a branch you did not create.",
+    "Use before you commit or push to a branch you did not create, and in a pre-commit or pre-push hook.",
     "nothing (read-only).",
     "sm branch check --worktree ~/Code/steuermaschine-topic",
     "refused: ask the owner to hand it over, or use a branch of your own",
