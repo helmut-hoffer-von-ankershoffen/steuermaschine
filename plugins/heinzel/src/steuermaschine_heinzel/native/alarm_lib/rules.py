@@ -104,20 +104,6 @@ def stall_alarm(key: str, state: str | None, rollup: list[dict], required, since
                  f" and the queue records {'`' + queue_block + '`' if queue_block else 'no block'}; sm queue why")
 
 
-ASK_LABELS = ("owner-ask", "heinzel-issues")  # bead labels that must never sit unseen: the owner's asks and the in-app reports
-
-
-def ask_alarms(beads: list[dict]) -> list[dict]:
-    """One ALERT per open bead that carries an ask label (`ASK_LABELS`); `sm alarm ack KEY` silences it once it was seen."""
-    found = []
-    for bead in beads:
-        labels = [x for x in ASK_LABELS if x in (bead.get("labels") or [])]
-        if bead.get("status", "open") != "open" or not labels or not bead.get("id"):
-            continue
-        found.append(alarm("ALERT", f"bead-ask:{bead['id']}", f"NEW {labels[0].upper()} bead {bead['id']}: {str(bead.get('title') or '')[:90]}; sm beads tasks show {bead['id']}"))
-    return found
-
-
 def bad_jobs(jobs: list[dict]) -> list[str]:
     names = [j.get("name") or "?" for j in jobs if (j.get("conclusion") or "").lower() in BAD_JOB]
     return [n for n in dict.fromkeys(names) if n != "CI OK"] or list(dict.fromkeys(names))
