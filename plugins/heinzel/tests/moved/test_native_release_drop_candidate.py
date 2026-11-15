@@ -458,3 +458,45 @@ def test_close_pr_never_closes_the_pr_of_a_candidate_that_still_runs(candidate, 
     assert untouched(rel, before) and remote.writes == [] and remote.prs[0]["state"] == "OPEN"
     remote.active = {}
     assert rel.main([*DROP, "--close-pr"]) == 0 and len(archives(rel)) == 1
+
+
+# ---------------------------------------------------------------- bead oevt: a release PR that `sm release pr` opened
+OPENED = {"pr": 794, "head": "a" * 40, "at": "2026-11-15T01:00:00Z"}
+
+
+def test_a_recorded_open_release_pr_is_pre_tag_and_close_pr_closes_it(candidate):
+    rel, remote = candidate
+    rel.remember(release_pr_opened=OPENED)
+    remote.prs = [{"number": 794, "state": "OPEN", "headRefName": f"release/v{VERSION}"}]
+    remote.branch = {"name": f"release/v{VERSION}"}
+    before = rel.paths()[1].read_bytes()
+    refused = rel.main(DROP)  # open PR without --close-pr: refused, nothing written
+    assert refused != 0 and remote.writes == [] and rel.paths()[1].read_bytes() == before
+    assert rel.main([*DROP, "--close-pr"]) == 0
+    assert remote.writes[0] == ("pr", "close", "794", "-R", rel.CORE)
+    evidence = json.loads(archives(rel)[0].read_text())["drop"]["evidence"]
+    assert evidence["recorded_pr"] == 794 and evidence["closed_by_drop"] == [794] and evidence["pypi"] == 404 and evidence["tag"] is False
+
+
+def test_a_recorded_release_pr_is_judged_by_github_not_by_the_receipt(candidate, capsys):
+    rel, remote = candidate
+    rel.remember(release_pr_opened=OPENED)
+    before = rel.paths()[1].read_bytes()
+    remote.prs = [{"number": 794, "state": "MERGED", "headRefName": f"release/v{VERSION}"}]
+    assert rel.main([*DROP, "--close-pr"]) != 0 and "release PR #794 is merged" in capsys.readouterr().err
+    remote.prs = [{"number": 801, "state": "OPEN", "headRefName": f"release/v{VERSION}"}]  # GitHub knows no #794
+    assert rel.main([*DROP, "--close-pr"]) != 0 and "names release PR #794" in capsys.readouterr().err
+    remote.prs, remote.tag = [{"number": 794, "state": "CLOSED", "headRefName": f"release/v{VERSION}"}], {"name": "v1.2.3"}
+    assert rel.main(DROP) != 0 and "tag v1.2.3 exists" in capsys.readouterr().err
+    remote.tag, remote.pypi = None, 200
+    assert rel.main(DROP) != 0 and "is on PyPI" in capsys.readouterr().err
+    assert remote.writes == [] and rel.paths()[1].read_bytes() == before and archives(rel) == []
+
+
+@pytest.mark.parametrize("bad", [{"pr": "794", "head": "a" * 40, "at": "2026-11-15T01:00:00Z"}, {"pr": 794}, "794",
+                                 {"pr": 794, "head": "a" * 40, "at": "yesterday"}])
+def test_a_malformed_release_pr_record_refuses_before_any_network(candidate, capsys, bad):
+    rel, remote = candidate
+    rel.remember(release_pr_opened=bad)
+    assert rel.main([*DROP, "--close-pr"]) != 0 and "release_pr_opened record is malformed" in capsys.readouterr().err
+    assert remote.writes == []
