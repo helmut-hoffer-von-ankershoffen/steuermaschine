@@ -10,8 +10,8 @@ through `sm_provider_extras` under the key `POLICY`, as a callable
 Without one the lock uses `default_policy`: files below the project's state directory, the core defaults of `Policy`,
 no refusals.
 
-The focus head is the core's own (`sm focus add WORKTREE`): a policy that reserves slots and names no `focus` gets the
-focus list of the store (`focus_of`), so a command run inside a focus worktree reaches the reserved slot.
+The focus head is the core's own (`sm focus add WORKTREE`): a policy that names no `focus` gets the focus list of the
+store (`runlock.focus_of`), so a command run inside a focus worktree reaches the reserved slot.
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ from ..engine import Refuse
 from ..helpdoc import H
 from ..models import Model
 from ..native import Group, native, runtime
-from ..runlock import Outcome, Policy, Request, RunLock, Runner, Status, bad_reason, git_tree_state
+from ..runlock import Outcome, Policy, Request, RunLock, Runner, Status, bad_reason, git_tree_state, with_focus
 
 POLICY = "gate.policy"  # key in `Providers.extra`: the project's policy factory
 
@@ -69,27 +69,6 @@ def default_policy(home: Path) -> Policy:
 def with_tree_state(chosen: Policy, commands: Runner) -> Policy:
     """The policy with the rerun refusal on (a policy that brings its own `tree_state` keeps it)."""
     return chosen if chosen.tree_state is not None else replace(chosen, tree_state=git_tree_state(commands))
-
-
-def focus_of(store: Any) -> Callable[[str], str]:
-    """A `Policy.focus` over the core's focus list (`sm focus add`): the entry a directory lies in, "" for none. Only
-    entries that are paths count; a pull request or a version on the list names no directory."""
-
-    def focus(cwd: str) -> str:
-        here = Path(cwd).expanduser().resolve()
-        for key in store.load("focus", "list") or {}:
-            if str(key).startswith(("/", "~")):
-                head = Path(str(key)).expanduser().resolve()
-                if here == head or head in here.parents:
-                    return str(key)
-        return ""
-
-    return focus
-
-
-def with_focus(chosen: Policy, store: Any) -> Policy:
-    """The policy with the store's focus list (a policy that brings its own `focus` keeps it)."""
-    return chosen if chosen.focus is not None or store is None else replace(chosen, focus=focus_of(store))
 
 
 def background_directory(chosen: Policy) -> Path:

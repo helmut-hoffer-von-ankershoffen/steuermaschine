@@ -165,6 +165,7 @@ def test_the_launcher_passes_an_absolute_project_root_on_and_the_help_names_the_
 
 
 def test_a_command_inside_a_focus_worktree_reaches_the_focus_head(tmp_path):
+    from steuermaschine import runlock
     from steuermaschine.runlock import Policy
     from steuermaschine.testing import MemoryStore
 
@@ -172,10 +173,10 @@ def test_a_command_inside_a_focus_worktree_reaches_the_focus_head(tmp_path):
     head = tmp_path / "release-fix"
     (head / "tests").mkdir(parents=True)
     store.save("focus", "list", {str(head): {"for": "1.4.0"}, "PR 12": {}, "1.4.0": {}})
-    focus = gate.focus_of(store)
+    focus = runlock.focus_of(store)
     assert focus(str(head)) == str(head) and focus(str(head / "tests")) == str(head) and focus(str(tmp_path)) == "" and focus(str(tmp_path / "release-fix-2")) == ""
-    assert gate.focus_of(MemoryStore())(str(head)) == ""
+    assert runlock.focus_of(MemoryStore())(str(head)) == ""
     plain = Policy(directory=tmp_path)
-    assert gate.with_focus(plain, store).focus(str(head)) == str(head) and gate.with_focus(plain, None) is plain
+    assert runlock.with_focus(plain, store).focus(str(head)) == str(head) and runlock.with_focus(plain, None) is plain
     own = Policy(directory=tmp_path, focus=lambda cwd: "mine")
-    assert gate.with_focus(own, store) is own
+    assert runlock.with_focus(own, store) is own

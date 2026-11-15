@@ -6,9 +6,11 @@ edge: typed options, the result model, and the binding of the library to the pro
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import typer
 from pydantic import BaseModel, Field
@@ -139,7 +141,7 @@ def bound(rt, lines: list[str], problems: list[str]) -> focused.Edge:
     return edge
 
 
-def caps(settings) -> c.Caps:
+def caps(settings: Mapping[str, Any] | None) -> c.Caps:
     """The account's caps from the settings; a missing value is the default."""
     jobs, macos = settings.get("ci_job_cap") if settings else None, settings.get("ci_macos_cap") if settings else None
     return c.Caps(jobs=c.JOB_CEILING if jobs is None else int(jobs), macos=c.ARM_LIMIT if macos is None else int(macos))

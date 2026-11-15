@@ -11,7 +11,9 @@ the scarce part, and the candidate gets them. The two numbers are the account's,
 from the settings `ci_job_cap` and `ci_macos_cap` (`dispatch.DispatchSettings`).
 """
 import re
+from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass
+from typing import Any
 
 from steuermaschine import window
 
@@ -112,11 +114,12 @@ def match_job(jobs, name):
     return None, f"{name!r} matches {len(sub)} jobs: " + "; ".join(j["name"] for j in sub[:6])
 
 
-def is_arm(labels):
+def is_arm(labels: Iterable[str] | None) -> bool:
     return any("macos" in label or label.endswith("-arm") for label in labels or [])
 
 
-def capacity_refusal(active_runs, active_jobs, focused_inflight, wants_arm, *, new_jobs=1, new_arm_jobs=None, caps=None):
+def capacity_refusal(active_runs: Collection[Mapping[str, Any]], active_jobs: Collection[Mapping[str, Any]], focused_inflight: int, wants_arm: bool, *,
+                     new_jobs: int = 1, new_arm_jobs: int | None = None, caps: Caps | None = None) -> str:
     """active_runs: run identity, status and headBranch; active_jobs: run_id, status and labels;
     focused_inflight: focused runs still active; caps: the account's `Caps` (none: the defaults).
 
@@ -151,7 +154,7 @@ def capacity_refusal(active_runs, active_jobs, focused_inflight, wants_arm, *, n
     return ""
 
 
-def capacity_note(active_jobs, wants_arm, caps=None):
+def capacity_note(active_jobs: Collection[Mapping[str, Any]], wants_arm: bool, caps: Caps | None = None) -> str:
     """One line on how full the runners are, for a job that will queue."""
     caps = caps or Caps()
     arm = sum(1 for j in active_jobs if is_arm(j.get("labels")))
@@ -160,7 +163,7 @@ def capacity_note(active_jobs, wants_arm, caps=None):
     return ""
 
 
-def protected_release(run):
+def protected_release(run: Mapping[str, Any]) -> bool:
     return (run.get("headBranch") or "").startswith("release/")
 
 
