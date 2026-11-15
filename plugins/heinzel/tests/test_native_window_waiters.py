@@ -144,10 +144,12 @@ def test_process_start_asks_ps_through_the_runner():
     assert calls[0] == ["ps", "-o", "lstart=", "-p", "7"]
 
 
-def test_drop_is_a_write_command_with_its_own_review_file():
+def test_drop_is_a_write_command_that_reaches_the_files_of_head_validate():
+    from steuermaschine.reviewgraph import reach
+
     cmd = window.ci_window_drop.__sm_native__
-    assert cmd.writes and cmd.review_file == "ci-window-drop.md"
-    assert cmd.code_digest() == window.head_validate.__sm_native__.code_digest()
+    drop, validate = reach([cmd, window.head_validate.__sm_native__])
+    assert cmd.writes and drop.files == validate.files
 
 
 def test_the_real_liveness_is_the_cores(monkeypatch):

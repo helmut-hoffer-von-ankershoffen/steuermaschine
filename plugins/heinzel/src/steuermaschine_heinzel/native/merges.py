@@ -10,10 +10,9 @@ from steuermaschine.native import native
 
 from .merges_lib import combine_close
 
-UNIT = ("merges.py", "merges_lib", "coord_lib")  # the review unit: combine_close takes the tracker directory and the child environment from coord_lib
 
 
-@native("head combine-close", writes=True, replaces=("hz-merged-via",), files=UNIT, help=H(
+@native("head combine-close", writes=True, replaces=("hz-merged-via",), help=H(
     "After a combine pull request merged: close its still-open members and note the beads that mention them.",
     "Use after a combine merged whose members were not closed by the merge queue, or after one member was moved out.",
     "with --apply: closes each open member pull request on GitHub with a comment, and adds one note per bead (bd). Without: nothing.",

@@ -38,6 +38,5 @@
   "native/ship_lib/push_gate_cli.py: import subprocess": "queue-release",
   "native/train_lib/train.py: import subprocess": "queue-release; the moved train starts its detached release runner (`sm daemon train --run X`, own session) and streams the release child's lines with Popen, which the core's runner cannot express; every other start goes through edge.run"
  },
- "read commands that reach a write": {},
- "review units with gaps": {}
+ "read commands that reach a write": {}
 }

@@ -18,7 +18,7 @@ from .briefs_lib.builder import BriefSettings
 __all__ = ["BriefSettings"]
 
 
-@native("beads brief", writes=True, replaces=("hz-brief",), files=("briefs.py", "briefs_lib", "coord_lib"), help=H(
+@native("beads brief", writes=True, replaces=("hz-brief",), help=H(
     "Create a builder's worktree on a new branch from origin/main and print the exact prompt to hand to the builder.",
     "Use when a ready bead gets a builder; check `sm beads refill` first, and never brief the same topic twice.",
     "fetches origin/main and adds a git worktree and branch on this machine; with --force one line in the journal.",

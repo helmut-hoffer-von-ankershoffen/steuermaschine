@@ -45,13 +45,6 @@ class NativeCommand:
     writes: bool = False  # True: writes state other commands depend on, or anything outside this machine
     tick: bool = False  # True: one tick of a loop; the core adds --loop SECONDS
     replaces: tuple[str, ...] = ()  # old tool names this command takes over, for the tool map
-    review: str = ""  # file name in the package's reviews/ directory; default: the path with dashes + .md
-    files: tuple[str, ...] = ()  # the review unit: paths relative to the module's directory; default: the module and its <module>_lib package
-    exempt: str = ""  # a writer the gate cannot hold, with the reason (the run lock itself: every review's tests run through it)
-
-    @property
-    def review_file(self) -> str:
-        return self.review or self.path.replace(" ", "-") + ".md"
 
     @property
     def model(self) -> Any:
@@ -75,8 +68,8 @@ class NativeCommand:
         return found
 
     def code_files(self) -> list[Any]:
-        """The files a review of this command covers: the module that defines it and, next to it, the package
-        `<module>_lib` with the logic it moved in. A change to any of them voids the verdict."""
+        """The code of this command: the module that defines it and, next to it, the package `<module>_lib` with the
+        logic it moved in. `reviewgraph.reach` follows the imports from here (`sm self reviews`)."""
         import sys
         from pathlib import Path
 
@@ -84,48 +77,8 @@ class NativeCommand:
         source = Path(getattr(module, "__file__", "") or "")
         if not source.is_file():
             return []
-        if self.files:  # an explicit review unit: exactly the files this command executes; the reviewer checks the list is complete
-            listed, missing = [], []
-            for name in self.files:  # a file, or a directory (every .py file below it)
-                entry = source.parent / name
-                listed += sorted(entry.rglob("*.py")) if entry.is_dir() else [entry]
-                missing += [] if entry.exists() else [str(entry)]
-            if missing:
-                raise FileNotFoundError(f"@native('{self.path}', files=...) names files that do not exist: {missing}")
-            return [source, *sorted(set(listed) - {source})]
         lib = source.with_name(source.stem + "_lib")
         return [source, *sorted(p for p in lib.rglob("*.py"))] if lib.is_dir() else [source]
-
-    def imported_files(self) -> list[Path]:
-        """The first-party files the unit imports, transitively: core (`steuermaschine`) and the plugin's own package,
-        including imports from one `*_lib` package into another. A change to any of them can change what the command
-        does, so it voids the verdict too. Followed: every `import` and `from ... import` in the source (also inside
-        functions); not followed: names loaded by string at run time (they stay inside the declared unit)."""
-        unit = self.code_files()
-        return _imported(unit, _roots(self.fn.__module__)) if unit else []
-
-    def review_files(self) -> list[Path]:
-        """What the digest covers: the declared unit (`code_files()`), then the files it imports (`imported_files()`)."""
-        return [*self.code_files(), *self.imported_files()]
-
-    def labels(self) -> list[str]:
-        """The name of each file of `review_files()` in the digest: relative to the command's module for the unit, the
-        package path (`steuermaschine/engine.py`) for an imported file. The same in a checkout and in an install."""
-        files = self.review_files()
-        return [_label(path, files[0].parent) for path in files] if files else []
-
-    def code_digest(self) -> str:
-        """sha256 over the names and bytes of `review_files()`. No gate reads it any more (one verdict per promoted
-        commit replaced the per-command review files); it goes with the `review=` and `files=` arguments."""
-        import hashlib
-
-        files = self.review_files()
-        if not files:
-            return ""
-        digest = hashlib.sha256()
-        for path, label in zip(files, self.labels(), strict=True):
-            digest.update(label.encode() + b"\0" + path.read_bytes() + b"\0")
-        return digest.hexdigest()
 
 
 CORE = "steuermaschine"
@@ -194,32 +147,10 @@ def _imports_of(path: Path, roots: dict[str, Path]) -> list[Path]:
     return found
 
 
-def _imported(unit: list[Path], roots: dict[str, Path]) -> list[Path]:
-    seen = {p.resolve() for p in unit}
-    queue, extra = [p for p in seen if p.suffix == ".py"], list[Path]()
-    while queue:
-        for hit in _imports_of(queue.pop(), roots):
-            if hit not in seen:
-                seen.add(hit)
-                extra.append(hit)
-                queue.append(hit)
-    return sorted(extra, key=_package_path)  # by package path, not by where it is installed: the same digest everywhere
-
-
 def _package_path(path: Path) -> str:
     """`steuermaschine/engine.py`: the path below the directory that holds the top-level package."""
     path = Path(path).resolve()
     for parent in path.parents:
-        if not (parent / "__init__.py").is_file():
-            return str(path.relative_to(parent))
-    return path.name
-
-
-def _label(path: Path, here: Path) -> str:
-    path, here = Path(path).resolve(), Path(here).resolve()
-    if path.is_relative_to(here):
-        return str(path.relative_to(here))
-    for parent in path.parents:  # the package path: up to the directory that holds the top-level package
         if not (parent / "__init__.py").is_file():
             return str(path.relative_to(parent))
     return path.name
@@ -236,7 +167,7 @@ class Group:
 @dataclass(frozen=True)
 class Alias:
     """A second name for a command group: `Alias("work", "beads")` mounts the group `beads` as `work` as well. The
-    commands are the same objects, so the review gate, the writers' lock and the help are the original's.
+    commands are the same objects, so the writers' lock and the help are the original's.
     `Alias("work focus", "focus")` mounts a group below an alias that was declared before it."""
 
     path: str
@@ -244,10 +175,9 @@ class Alias:
     help: str = ""
 
 
-def native(path: str, *, help: str, writes: bool = False, tick: bool = False, replaces: tuple[str, ...] = (), review: str = "",
-           files: tuple[str, ...] = (), exempt: str = "") -> Callable[[F], F]:
+def native(path: str, *, help: str, writes: bool = False, tick: bool = False, replaces: tuple[str, ...] = ()) -> Callable[[F], F]:
     def mark(fn: F) -> F:
-        setattr(fn, "__sm_native__", NativeCommand(" ".join(path.split()), fn, help, writes, tick, tuple(replaces), review, tuple(files), exempt))  # noqa: B010
+        setattr(fn, "__sm_native__", NativeCommand(" ".join(path.split()), fn, help, writes, tick, tuple(replaces)))  # noqa: B010
         return fn
 
     return mark
@@ -273,7 +203,7 @@ class NativeRuntime:
     project: Any
     say: Callable[[str], None] = field(default=lambda text: typer.echo(text, err=True))
     # every native command of the loaded plugin stack; lets a command look up others (a digest of read commands)
-    # without importing the plugin's whole registry, which would pull every module into its review unit
+    # without importing the plugin's whole registry, which would put every module into its reach (`sm self reviews`)
     commands: Callable[[], list[Any]] = field(default=list)
 
 
@@ -304,20 +234,20 @@ class using:
 
 
 # ----------------------------------------------------------------------------- write units
-def unit(path: str, anchor: Callable[..., Any], review: str, files: tuple[str, ...] = ()) -> NativeCommand:
-    """A review unit for a write path that is not a `@native` function: a core command, a pipeline. `anchor` is any
-    function of the module that holds the code (its module and `<module>_lib` are the unit, imports followed)."""
-    return NativeCommand(" ".join(path.split()), anchor, "", writes=True, review=review, files=tuple(files))
+def unit(path: str, anchor: Callable[..., Any]) -> NativeCommand:
+    """A write path that is not a `@native` function: a core command, a pipeline. `anchor` is any function of the
+    module that holds the code (its module and `<module>_lib` are the unit, imports followed by `reviewgraph.reach`)."""
+    return NativeCommand(" ".join(path.split()), anchor, "", writes=True)
 
 
-# The writers that do not take the writers' lock, by command path. A plugin's `exempt=` counts only for a path named
-# here: the run lock (`gate run`), which every test run goes through. Any other path with `exempt=` takes the lock.
+# The writers that do not take the writers' lock, by command path: the run lock (`gate run`), which every test run goes
+# through. The core alone decides this; a plugin cannot exempt a command of its own.
 EXEMPT_PATHS: frozenset[str] = frozenset({"gate run"})
 
 
 def is_exempt(cmd: Any) -> bool:
-    """True when `cmd` declares `exempt=` and its path is on the core's allowlist (`EXEMPT_PATHS`)."""
-    return bool(getattr(cmd, "exempt", "")) and getattr(cmd, "path", "") in EXEMPT_PATHS
+    """True when the path of `cmd` is on the core's allowlist (`EXEMPT_PATHS`)."""
+    return getattr(cmd, "path", "") in EXEMPT_PATHS
 
 
 def call(cmd: NativeCommand, **kwargs: Any) -> Any:

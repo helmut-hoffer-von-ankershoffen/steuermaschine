@@ -211,7 +211,7 @@ def ci_one_dispatch(branch: str = typer.Argument(..., metavar="BRANCH", help="Th
     return call("dispatch", focused.cmd_dispatch, args, "sm ci one status")
 
 
-@native("ci one rerun", writes=True, replaces=("hz-ci-one",), review="ci-one-dispatch.md", help=H(
+@native("ci one rerun", writes=True, replaces=("hz-ci-one",), help=H(
     "Re-run the failing job(s) of the newest CI run of a PR head or of a run, or only the job named.",
     "Use when a job failed only on the hosted runner and you named the cause; a re-run is verification, never the fix.",
     "starts a new attempt of the failed jobs (or of one job) of that run; writes a receipt.",

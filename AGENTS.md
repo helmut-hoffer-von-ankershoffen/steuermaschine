@@ -17,7 +17,7 @@ Everything you commit is public at once. Write nothing that must stay private: n
 
 ```
 src/steuermaschine/      core: generic; names no project, person, company or private path
-plugins/heinzel/         the large plugin: src/steuermaschine_heinzel/{plugin.py,native/,pipelines/,reviews/}, tests/
+plugins/heinzel/         the large plugin: src/steuermaschine_heinzel/{plugin.py,native/,pipelines/}, tests/
 examples/toy, layer/     small plugins: the quick start, and proof that plugins stack
 tests/                   core tests (tests/test_core_<module>.py), tests/projects
 docs/                    DESIGN.md and the runbooks
@@ -69,7 +69,7 @@ coordinator dispatching a different agent. Write commands check nothing at run t
 code first, then the write paths the diff since the live release reaches.
 
 - Never record a verdict on your own commits.
-- The `reviews/*.md` files are no longer read; they are deleted in the next step (R3).
+- No command declares a review file or its files: `@native` takes `writes=`, `tick=` and `replaces=` only. `sm self reviews` computes what a write path reaches from its imports, and takes a `*_lib` package whole.
 
 ## Hard rules
 

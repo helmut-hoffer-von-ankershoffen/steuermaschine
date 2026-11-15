@@ -478,7 +478,7 @@ def lanes_of(text: str) -> list[str]:
     return lanes
 
 
-@native("head validate", writes=True, replaces=("hz-ci-one",), files=("dispatch.py", "dispatch_lib", "lock.py", "lock_lib"), review="head-validate.md", help=H(
+@native("head validate", writes=True, replaces=("hz-ci-one",), help=H(
     "Run full hosted e2e lanes for a head on a throwaway child commit, never on the head SHA itself.",
     "Use before a packet is built, when a head touches web, e2e drivers or journeys (the candidate runs every journey on Linux).",
     "pushes one validation/<branch>-<lane>-<sha8> per lane through the run lock, dispatches one hosted run on each, deletes them afterwards.",
@@ -625,7 +625,7 @@ CI_WINDOW = Group("ci window", H(
     "sm head validate WORKTREE"))
 
 
-@native("ci window run", writes=True, replaces=("hz-ci-one",), files=("dispatch.py", "dispatch_lib", "lock.py", "lock_lib"), review="head-validate.md", help=H(
+@native("ci window run", writes=True, replaces=("hz-ci-one",), help=H(
     "Several heads through `sm head validate`, in parallel as far as the cap allows, in the order given.",
     "Use when two or more heads need hosted lanes before admission and you want them serialised, not racing for runners.",
     "nothing without --run (prints the order); with --run each head pushes and deletes its validation branch and starts hosted runs.",
@@ -686,7 +686,7 @@ def remove_branch(rt, name: str) -> str:
     return f"removed {name}" if removed else f"did not remove {name}"
 
 
-@native("ci window release", writes=True, replaces=("hz-ci-one",), files=("dispatch.py", "dispatch_lib", "lock.py", "lock_lib"), review="head-validate.md", help=H(
+@native("ci window release", writes=True, replaces=("hz-ci-one",), help=H(
     "End the turn of a validation whose command is gone, and remove the validation branches it left behind.",
     "Use when `sm ci window status` shows a holder whose command is gone, or `sm head validate` names a leftover branch.",
     "the window's state on this machine; with --remove-branch deletes that validation/* branch on the remote when no run is active on it.",
@@ -714,7 +714,7 @@ def ci_window_release(force: bool = typer.Option(False, "--force", help="End the
     return WindowRelease(released=found.released, reason=found.reason, branch_removed=removed, notes=notes)
 
 
-@native("ci window release-hold", writes=True, replaces=("hz-ci-one",), files=("dispatch.py", "dispatch_lib", "lock.py", "lock_lib"), review="head-validate.md", help=H(
+@native("ci window release-hold", writes=True, replaces=("hz-ci-one",), help=H(
     "Remove a stale admission hold of the validation window by hand.",
     "Use when `sm ci window status` shows a hold whose admission is long gone (a reused pid keeps it looking alive) and no validation can start.",
     "the window's state on this machine: that one hold.",
@@ -763,7 +763,7 @@ def matches(turn: Turn, head: str) -> bool:
     return turn.branch == head or (len(head) >= 7 and re.fullmatch(r"[0-9a-f]+", head) is not None and turn.head.startswith(head))
 
 
-@native("ci window drop", writes=True, replaces=("hz-ci-one",), files=("dispatch.py", "dispatch_lib", "lock.py", "lock_lib"), review="ci-window-drop.md", help=H(
+@native("ci window drop", writes=True, replaces=("hz-ci-one",), help=H(
     "Take a waiting head out of the validation window's line: its command is gone, or you own the head and give up its turn.",
     "Use when `sm ci window status` lists a head that no longer needs hosted validation, or a waiter whose command died.",
     "the window's state on this machine; for a waiter whose command still runs here, stops that command (SIGTERM) first.",

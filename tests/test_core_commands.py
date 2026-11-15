@@ -62,7 +62,7 @@ class Done(Model):
         return [f"lim of {self.by}"]
 
 
-@native("lim", writes=True, review="own-lim.md", help=H(
+@native("lim", writes=True, help=H(
     "A project's own output limiter, replacing the core's.",
     "Use when testing the order rule.",
     "writes a log of its own.",
@@ -201,7 +201,7 @@ def test_window_status_takes_the_window_a_plugin_hands_in():
 def test_a_plugin_command_at_a_core_path_replaces_it_and_is_the_write_unit_at_that_path():
     rt = stacked(Replaces(), reviewed=False)
     (cmd,) = [c for c in natives(rt) if getattr(c, "path", "") == "lim"]
-    assert cmd.fn is own_lim and cmd.review_file == "own-lim.md"
+    assert cmd.fn is own_lim
     assert invoke(rt, ["lim"]).stdout.strip() == "lim of the plugin"
     assert [u.fn for u in write_units(rt) if u.path == "lim"] == [own_lim]
 

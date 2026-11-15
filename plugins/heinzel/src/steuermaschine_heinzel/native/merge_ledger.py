@@ -30,7 +30,6 @@ from steuermaschine.protocols import Busy
 from . import merge_tier
 from .tasks_lib import beads
 
-UNIT = ("merge_ledger.py", "merge_tier.py", "tasks_lib", "asks_lib", "coord_lib")
 SEEN = "heinzel.merge_tier.flakes"  # store kind: one record per harvested ledger (artifact name or main run)
 JUDGE = "heinzel.merge_tier.judge"  # store lock: one main judge at a time
 FILING = "heinzel.merge_tier.filing"  # store lock: one run at a time files flaky beads (tick and a manual call)
@@ -156,7 +155,7 @@ def _ledger_text(rt: Any, gh: Gh, run: int, name: str) -> str:
         return "\n".join(p.read_text(errors="replace") for p in sorted(Path(scratch).rglob("*")) if p.is_file())
 
 
-@native("ci flake-ledger", writes=True, tick=True, files=UNIT, review="ci-flake-ledger.md", help=H(
+@native("ci flake-ledger", writes=True, tick=True, help=H(
     "File one flaky bead per job that passed only on a rerun, from the merge gate's flake ledgers.",
     "Use at every tick (or as a daemon with --loop): a pass after a rerun is a flake, never hidden.",
     "creates or notes beads labelled flaky (bd create, bd update --append-notes); remembers each ledger it read.",
@@ -257,7 +256,7 @@ def _judge(rt: Any, gh: Gh, core: str, sha: str, run: int, base: str) -> dict[st
     return dict(proof)
 
 
-@native("queue main-proof", writes=True, tick=True, files=UNIT, review="queue-main-proof.md", help=H(
+@native("queue main-proof", writes=True, tick=True, help=H(
     "Judge the newest green main push with main's own merge gate (main mode) and post the hz/main-proof status.",
     "Use at every tick (or as a daemon with --loop): until a main commit carries the status, every main push runs the full set.",
     "posts one commit status (hz/main-proof, success) on the main commit the judge accepted; files flaky beads for its reruns.",

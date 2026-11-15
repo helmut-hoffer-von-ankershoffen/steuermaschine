@@ -37,11 +37,10 @@ GROUP = Group("head", H(
     "depends on the command; push and guard only read, pr pushes and opens the PR, ship queues it.",
     "sm head push 801", "the NEXT line the command prints"))
 
-# The review unit of the write commands: everything they execute. ship_lib calls the queue's add (native/queue.py),
+# What the write commands execute: ship_lib calls the queue's add (native/queue.py),
 # the diff guard and the edges (queue_lib), and the preflight area's CI meta preflight (`meta_of`) and its check of
 # the title and body a PR would publish (`texts_check`) in native/preflight.py + preflight_lib. `head combine-close`
 # (native/merges.py) and `head merge-ready` (native/merge_ready.py) are other areas' commands; nothing here runs them.
-UNIT = ("ship_lib", "queue_lib", "queue.py", "preflight.py", "preflight_lib")
 def _translate(text: str) -> list[str]:
     """The lines of the moved code's output (it names the sm commands itself)."""
     return text.splitlines()
@@ -104,7 +103,7 @@ def head_guard(pr: list[str] = typer.Argument(..., metavar="PR", help="A PR numb
     return _result("guard", " ".join(pr), done, {0: "pass", 1: "flag", 2: "unreadable"})
 
 
-@native("head ship", writes=True, files=UNIT, replaces=("hz-ship",), help=H(
+@native("head ship", writes=True, replaces=("hz-ship",), help=H(
     "Guard the diff, then queue the PR for merge; with a reason from an independent review, queue as reviewed.",
     "Use when a PR is open and its head is final.",
     "adds the PR to the merge queue (and a note when a reason is given); nothing when the guard answers NEEDS_REVIEW.",
@@ -146,7 +145,7 @@ def is_focus(worktree: Path) -> bool:
     return any(str(key).startswith(("/", "~")) and Path(str(key)).expanduser().resolve() == here for key in listed)
 
 
-@native("head pr", writes=True, files=UNIT, replaces=("hz-pr-open",), help=H(
+@native("head pr", writes=True, replaces=("hz-pr-open",), help=H(
     "From a clean worktree to a queued PR: checks, one pinned push under the run lock, the PR, then ship.",
     "Use when the head is committed on a work branch. Without --live it checks and prints what it would run.",
     "nothing without --live. With --live: pushes the branch, opens the PR, queues it. It never switches auto-merge on.",

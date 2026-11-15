@@ -591,9 +591,11 @@ def test_every_command_has_help_in_contract_form_and_names_no_former_tool(world)
                                                                  "release rehearse start", "release rehearse status", "release rehearse step"]
     for command in found:
         assert missing(command.help) == "" and "hz-" not in command.help and "hz_" not in command.help, command.path
-    writes = {c.path: c.review_file for c in found if getattr(c, "writes", False)}
-    assert set(writes) == {"daemon rehearse", "release rehearse cancel", "release rehearse consumers", "release rehearse start", "release rehearse step"}
-    assert set(writes.values()) == {"release-rehearse-start.md"}  # one review, one unit
-    units = [{f.name for f in c.code_files()} for c in found if getattr(c, "writes", False)]
+    from steuermaschine.reviewgraph import reach
+
+    writes = [c for c in found if getattr(c, "writes", False)]
+    assert {c.path for c in writes} == {"daemon rehearse", "release rehearse cancel", "release rehearse consumers", "release rehearse start", "release rehearse step"}
+    units = [{name.rsplit("/", 1)[-1] for name in unit.files} for unit in reach(writes)]
+    assert len(units) == len(writes)
     assert all({"rehearse.py", "rehearsal.py", "focused.py", "rules.py", "dispatch.py", "lock.py", "refuse.py"} <= unit for unit in units)
     assert next(c for c in found if c.path == "daemon rehearse").tick

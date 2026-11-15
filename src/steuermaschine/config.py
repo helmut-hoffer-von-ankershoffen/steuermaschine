@@ -156,7 +156,7 @@ class Project:
     raw_settings: dict[str, Any] = field(default_factory=dict)  # plugin name -> its table, file layers merged, not yet validated
     plugins: list[Any] = field(default_factory=list)  # every loaded plugin, base first
     # Unused: nothing checks a per-command review at run time any more (one verdict per promoted commit, bin/promote).
-    # Kept only so the tests that still pass it construct; it goes with the review files and `review=`/`files=`.
+    # Kept only so the tests that still pass it construct.
     allow_unreviewed: bool = False
     format: str = "text"
     layers: list[Any] = field(default_factory=list)  # [(source name, dict)] highest first, for `sm self config`

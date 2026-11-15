@@ -171,7 +171,7 @@ class Pipeline:
     when: str = ""
     example_arg: str = "."
     done_next: str = f"{PROG} go"
-    unit: object = None  # the review unit of the pipeline itself (`native.unit(...)`): it runs only once that is approved
+    unit: object = None  # the code of the pipeline itself (`native.unit(...)`): what `sm self reviews` follows for this write path
 
     @property
     def id(self) -> str:

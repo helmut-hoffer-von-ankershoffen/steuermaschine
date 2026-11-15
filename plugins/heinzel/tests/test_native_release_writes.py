@@ -137,38 +137,33 @@ def test_the_transcripts_cover_a_freeze_a_receipt_and_two_github_writes():
 
 
 # ----------------------------------------------------------------------------- the commands themselves
-def test_the_review_unit_is_the_command_module_the_release_library_and_the_queue_library():
+def test_the_release_writers_reach_the_command_module_the_release_library_and_the_queue_library():
+    from steuermaschine.reviewgraph import reach
     from steuermaschine_heinzel import native
 
-    for cmd in (c for c in native.commands() if getattr(c, "path", "").startswith(("release resume", "release drop", "release plugin"))):
-        names = {str(path.relative_to(Path(area.__file__).parent)) for path in cmd.code_files()}
+    found = reach(c for c in native.commands() if getattr(c, "path", "").startswith(("release resume", "release drop", "release plugin")))
+    assert len(found) >= 3
+    for unit in found:
+        names = {name.removeprefix("steuermaschine_heinzel/native/") for name in unit.files}
         assert {"release.py", "release_lib/runner.py", "release_lib/candidate_policy.py", "release_lib/approved.py", "release_lib/moved_map.py", "queue_lib/hzlib.py",
-                "queue_lib/merge_train.py", "queue_lib/release_candidate.py"} <= names
-        assert not any(name.startswith("release_read") for name in names)
+                "queue_lib/merge_train.py", "queue_lib/release_candidate.py"} <= names, unit.path
+        assert not any(name.startswith("release_read") for name in names), unit.path
 
 
-def test_a_repin_voids_every_release_verdict_because_the_reviewed_sources_are_in_the_review_unit(tmp_path):
-    import hashlib
-
+def test_a_repin_reaches_every_release_writer_because_the_reviewed_sources_are_in_their_reach():
+    from steuermaschine.reviewgraph import reach, reached_by
     from steuermaschine_heinzel import native
     from steuermaschine_heinzel.native.release_lib import approved
 
     on_disk = sorted(p for p in approved.DIRECTORY.iterdir() if p.is_file())
     assert on_disk == sorted(approved.file(path) for path in approved.FILES) and len(on_disk) == 2  # no reviewed file that the table does not name
-    writes = [c for c in native.commands() if getattr(c, "writes", False) and c.path in ("release resume", "release plugin", "release drop")]  # not the admission route (release admit ...): its own unit
-    assert {c.path for c in writes} >= {"release resume", "release plugin", "release drop"}
-    for cmd in writes:
-        files = cmd.code_files()
-        assert all(path in files for path in on_disk), cmd.path
-        # the digest is over names and bytes of these files: one changed byte in a reviewed source is another digest
-        def digest(changed=None, cmd=cmd):  # over the unit and every first-party file it imports, each under its label
-            total = hashlib.sha256()
-            for path, label in zip(cmd.review_files(), cmd.labels(), strict=True):
-                total.update(label.encode() + b"\0" + path.read_bytes() + (b"#" if path == changed else b"") + b"\0")
-            return total.hexdigest()
-
-        assert digest() == cmd.code_digest() and all(digest(path) != cmd.code_digest() for path in on_disk), cmd.path
-        assert cmd.review_file == ("release-drop.md" if cmd.path == "release drop" else "daemon-train.md" if cmd.path.startswith("release train ") else "release-resume.md")
+    wanted = {"release resume", "release plugin", "release drop"}  # not the admission route (release admit ...): its own unit
+    found = reach(c for c in native.commands() if getattr(c, "writes", False) and c.path in wanted)
+    assert {unit.path for unit in found} == wanted
+    for source in on_disk:  # the reviewed sources are data files: no import names them, the whole release library is reached
+        changed = f"plugins/heinzel/src/steuermaschine_heinzel/native/release_lib/{approved.DIRECTORY.name}/{source.name}"
+        assert set(reached_by(found, [changed])) == wanted, source.name
+        assert reached_by(found, [f".github/workflows/{source.name}"]) == {}  # a file of the same name elsewhere is another file
 
 
 def typed(rt, monkeypatch, *args):

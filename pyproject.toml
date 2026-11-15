@@ -84,8 +84,7 @@ known-first-party = ["steuermaschine", "steuermaschine_heinzel", "steuermaschine
 
 [tool.ruff.lint.per-file-ignores]
 "plugins/heinzel/src/steuermaschine_heinzel/toolmap.py" = ["E501"]  # a table: one row per line
-# Focused admission: moved verbatim with its tests (reviews/head-apply.md). Restyled only after the write path is reviewed,
-# so that the diff against the originals stays the review instrument.
+# Focused admission: moved verbatim with its tests. Not restyled yet (debt, docs/debt.json).
 "plugins/heinzel/src/steuermaschine_heinzel/native/admission_lib/focused_*.py" = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
 "plugins/heinzel/tests/test_native_admission_slots.py" = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
 "plugins/heinzel/tests/test_native_admission_batch.py" = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
@@ -101,7 +100,7 @@ known-first-party = ["steuermaschine", "steuermaschine_heinzel", "steuermaschine
 "plugins/heinzel/tests/test_native_packet_wave.py" = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
 "plugins/heinzel/tests/test_native_packet_size.py" = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
 "plugins/heinzel/tests/test_native_packet_floor.py" = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
-# The release-main route: moved from the reviewed operator copy (reviews/release-admit-apply.md), same rule.
+# The release-main route: moved from the reviewed operator copy, same rule.
 "plugins/heinzel/src/steuermaschine_heinzel/native/release_admit_lib/focused_release.py" = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
 "plugins/heinzel/src/steuermaschine_heinzel/native/release_admit_lib/release_scope.py" = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
 "plugins/heinzel/src/steuermaschine_heinzel/native/release_admit_lib/release_slots.py" = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]

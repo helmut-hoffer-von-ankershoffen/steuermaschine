@@ -150,13 +150,13 @@ def test_the_native_command_passes_the_reviewed_head_and_dry_run(tmp_path, monke
     assert bad.exit_code == 2 and len(seen) == 1
 
 
-def test_the_native_command_is_a_reviewed_write_of_the_release_unit():
+def test_the_native_command_is_a_write_that_reaches_the_release_and_queue_libraries():
+    from steuermaschine.reviewgraph import reach
     from steuermaschine_heinzel import native
 
     cmd = next(c for c in native.commands() if getattr(c, "path", "") == "release pr")
-    assert cmd.writes and cmd.review_file == "release-pr.md"
-    names = {str(path.relative_to(Path(area.__file__).parent)) for path in cmd.code_files()}
-    assert {"release.py", "release_lib/runner.py", "queue_lib/hzlib.py"} <= names
+    names = {name.removeprefix("steuermaschine_heinzel/native/") for name in reach([cmd])[0].files}
+    assert cmd.writes and {"release.py", "release_lib/runner.py", "queue_lib/hzlib.py"} <= names
     assert os.path.basename(area.__file__) == "release.py"
 
 

@@ -33,7 +33,7 @@ TABLES: dict[str, type[BaseModel]] = {"github": GitHubSettings, "sonar": SonarSe
 
 
 def unit_anchor() -> None:
-    """Anchor of the review unit of `ci cancel` (the one write here): this module and every core file it imports."""
+    """Anchor of the unit of `ci cancel` (the one write here): this module and every core file it imports."""
 
 
 def table(rt: Runtime, name: str) -> dict[str, Any]:

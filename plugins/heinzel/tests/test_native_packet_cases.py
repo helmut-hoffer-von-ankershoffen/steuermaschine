@@ -177,11 +177,3 @@ def test_cases_compare_in_text_and_json_with_its_exit_codes(rt, tmp_path):  # no
 def test_registrations():
     reg = {c.path: c for c in native.commands() if hasattr(c, "writes")}
     assert reg["head cases collect"].writes is True and reg["head cases compare"].writes is True
-    assert reg["head cases compare"].review_file == reg["head cases collect"].review_file == "head-packet-writes.md"
-
-
-
-def test_cases_compare_is_listed_in_its_shared_review_file():
-    reviews = Path(native.__file__).parent.parent / "reviews"
-    lines = (reviews / "head-packet-writes.md").read_text().splitlines()
-    assert "COVERS: head cases compare" in lines  # the gate holds it until a reviewer approves this file's digest
