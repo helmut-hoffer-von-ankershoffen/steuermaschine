@@ -3,7 +3,7 @@
 Two builders committed to the same branch on 2026-11-14 (bead nn5m). The tool now records the owner of a branch and
 refuses a second agent's write step on it, naming the owner.
 
-The agent is named by the environment variable `SM_AGENT` (the coordinator sets it when it starts a builder; a
+The agent is named by the environment variable `STEUERMASCHINE_AGENT` (the coordinator sets it when it starts a builder; a
 command may also be given `--agent`). Without a name the tool cannot tell agents apart and does not refuse (it says
 so in `sm branch check`); the record is never guessed. The record is one small JSON file per branch of a repository
 under `branch-owners/` in the plugin's state directory, keyed by the repository's git common directory (shared by all
@@ -20,18 +20,19 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from steuermaschine.config import environment
 from steuermaschine.engine import Refuse
 
 from .. import state as statedir
 
 FOLDER = "branch-owners"
-ENV = "SM_AGENT"
+ENV = "STEUERMASCHINE_AGENT"  # the typed environment setting that names the acting agent (`--as` of the pipelines)
 DETACHED = ("HEAD", "")  # no branch at all; the default branch is read from the repository, never listed here
 
 
 def agent_name(given: str | None = None) -> str:
-    """The acting agent: `given`, else the environment's SM_AGENT; "" when neither names one."""
-    return (given or os.environ.get(ENV, "")).strip()
+    """The acting agent: `given`, else the environment's STEUERMASCHINE_AGENT; "" when neither names one."""
+    return (given or environment().steuermaschine_agent or "").strip()
 
 
 def where(commands: Any, worktree: Path) -> tuple[str, str]:
@@ -40,7 +41,7 @@ def where(commands: Any, worktree: Path) -> tuple[str, str]:
         done = commands.run(["git", "-C", str(worktree), *args], timeout=30)
         if done.rc:
             raise Refuse(f"{worktree} is not a git worktree: {(done.err or done.out).strip()[:200]}", "sm branch check --help", code=2)
-        return done.out.strip()
+        return str(done.out).strip()
 
     common = Path(read("rev-parse", "--git-common-dir"))
     common = common if common.is_absolute() else Path(worktree) / common

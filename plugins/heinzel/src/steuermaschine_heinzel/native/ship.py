@@ -18,9 +18,8 @@ from steuermaschine.native import Group, native, runtime
 from steuermaschine.plugins import old_variable
 
 from . import branch_owner, queue_hold
-from .admission_lib import identity
 from .queue_lib import hzlib
-from .ship_lib import deps, pr, push_gate, ship
+from .ship_lib import deps, pr, push_gate, repos, ship
 from .ship_lib.deps import Done
 
 
@@ -178,7 +177,7 @@ def head_pr(
     commands = runtime().providers.commands
     branch_owner.guard_write(commands, worktree, record=live)  # one writer per branch: another agent's branch is refused, naming its owner
     # the repository is the one the worktree's origin names (a plugins worktree opens a plugins PR), else the configured one
-    forge = GitHub(commands, repo=identity.repo_of_checkout(commands, str(Path(worktree).expanduser().resolve())) or str(conf.get("repo") or hzlib.CORE))
+    forge = GitHub(commands, repo=repos.repo_of_checkout(commands, str(Path(worktree).expanduser().resolve())) or str(conf.get("repo") or hzlib.CORE))
     done = pr.open_pr(worktree, bead, title, body_file, reason, commands=commands, forge=forge, live=live,
                       max_wait=int(conf.get("head_pr_lock_max_wait_seconds") or ShipSettings.model_fields["head_pr_lock_max_wait_seconds"].default),
                       critical=is_focus(worktree))

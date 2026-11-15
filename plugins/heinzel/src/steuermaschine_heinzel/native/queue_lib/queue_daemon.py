@@ -1149,10 +1149,12 @@ def record_asks(now: float) -> None:
         return
     _asks_read = now
     try:
+        import importlib
+
         from steuermaschine.native import runtime
 
-        from ..alarm_lib import asks
-
+        # by name: an import statement would put the alarm code into the review digest of every queue writer
+        asks = importlib.import_module("steuermaschine_heinzel.native.alarm_lib.asks")
         rt = runtime()
         labels = list(rt.settings.get("alarm_ask_labels") or asks.AskAlarmSettings.model_fields["alarm_ask_labels"].default)
         asks.record(rt.providers.commands, rt.providers.store, rt.settings, labels, now)

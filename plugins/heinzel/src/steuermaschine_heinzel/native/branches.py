@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import typer
 
@@ -27,16 +28,16 @@ class BranchOwner(Model):
     owner: str = ""  # "" when nobody owns it yet
     worktree: str = ""
     since: str = ""
-    agent: str = ""  # who is asking ("" when SM_AGENT is not set and --agent is not given)
+    agent: str = ""  # who is asking ("" when STEUERMASCHINE_AGENT is not set and --agent is not given)
     ok: bool = True
 
     def render(self) -> list[str]:
         who = f"owned by {self.owner} (worktree {self.worktree}, since {self.since})" if self.owner else "owned by nobody yet"
-        note = "" if self.agent else "   (no agent name: set SM_AGENT or give --agent; nothing can be refused without one)"
+        note = "" if self.agent else "   (no agent name: set STEUERMASCHINE_AGENT or give --agent; nothing can be refused without one)"
         return [f"branch {self.branch}: {who}{note}"]
 
 
-def _view(branch: str, record: dict | None, agent: str) -> BranchOwner:
+def _view(branch: str, record: dict[str, Any] | None, agent: str) -> BranchOwner:
     record = record or {}
     return BranchOwner(branch=branch, owner=record.get("agent", ""), worktree=record.get("worktree", ""), since=record.get("since", ""), agent=agent)
 
@@ -47,9 +48,9 @@ def _view(branch: str, record: dict | None, agent: str) -> BranchOwner:
     "nothing (read-only).",
     "sm branch check --worktree ~/Code/steuermaschine-topic",
     "refused: ask the owner to hand it over, or use a branch of your own",
-    "The acting agent is the environment variable SM_AGENT, or --agent. Without a name nothing can be refused. main is never owned."))
+    "The acting agent is the environment variable STEUERMASCHINE_AGENT, or --agent. Without a name nothing can be refused. main is never owned."))
 def branch_check(worktree: Path = typer.Option(Path("."), "--worktree", metavar="DIR", help="The worktree (default: here)."),
-                 agent: str = typer.Option("", "--agent", metavar="NAME", help="The acting agent (default: SM_AGENT).")) -> BranchOwner:
+                 agent: str = typer.Option("", "--agent", metavar="NAME", help="The acting agent (default: STEUERMASCHINE_AGENT).")) -> BranchOwner:
     branch, owner = branch_owner.check(runtime().providers.commands, worktree, agent)
     return _view(branch, owner, branch_owner.agent_name(agent))
 
@@ -60,9 +61,9 @@ def branch_check(worktree: Path = typer.Option(Path("."), "--worktree", metavar=
     "writes one small record file under branch-owners/ in the state directory; nothing else.",
     "sm branch claim --agent a9b40bbe597ed25d8 --worktree ~/Code/steuermaschine-topic",
     "sm branch check",
-    "--take (the coordinator's hand-over) replaces another agent's claim. The acting agent is SM_AGENT, or --agent."))
+    "--take (the coordinator's hand-over) replaces another agent's claim. The acting agent is STEUERMASCHINE_AGENT, or --agent."))
 def branch_claim(worktree: Path = typer.Option(Path("."), "--worktree", metavar="DIR", help="The worktree (default: here)."),
-                 agent: str = typer.Option("", "--agent", metavar="NAME", help="The agent that owns it (default: SM_AGENT)."),
+                 agent: str = typer.Option("", "--agent", metavar="NAME", help="The agent that owns it (default: STEUERMASCHINE_AGENT)."),
                  take: bool = typer.Option(False, "--take", help="Take the branch over from its owner.")) -> BranchOwner:
     record = branch_owner.claim(runtime().providers.commands, worktree, agent, take)
     return _view(record["branch"], record, branch_owner.agent_name(agent))

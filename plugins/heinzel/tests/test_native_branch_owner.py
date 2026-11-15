@@ -41,7 +41,7 @@ def test_the_first_claim_owns_the_branch_and_a_second_agent_is_refused_by_name(r
 
 
 def test_without_an_agent_name_nothing_is_refused_or_recorded_and_main_is_never_owned(repo, monkeypatch):
-    monkeypatch.delenv("SM_AGENT", raising=False)
+    monkeypatch.delenv("STEUERMASCHINE_AGENT", raising=False)
     commands = Subprocess()
     branch_owner.claim(commands, repo / "wt-a", "agent-1")
     branch_owner.guard_write(commands, repo / "wt-a")  # no name: no read, no refusal
@@ -57,9 +57,9 @@ def test_the_guard_of_a_write_step_claims_an_unowned_branch_for_the_first_named_
     commands = Subprocess()
     branch_owner.guard_write(commands, repo / "wt-a", "agent-1", record=False)  # a dry run records nothing
     assert not (repo / "state" / branch_owner.FOLDER).exists()
-    monkeypatch.setenv("SM_AGENT", "agent-1")
+    monkeypatch.setenv("STEUERMASCHINE_AGENT", "agent-1")
     branch_owner.guard_write(commands, repo / "wt-a")
-    monkeypatch.setenv("SM_AGENT", "agent-2")
+    monkeypatch.setenv("STEUERMASCHINE_AGENT", "agent-2")
     with pytest.raises(Refuse, match="belongs to agent agent-1"):
         branch_owner.guard_write(commands, repo / "wt-a")
     files = list((repo / "state" / branch_owner.FOLDER).glob("*.json"))

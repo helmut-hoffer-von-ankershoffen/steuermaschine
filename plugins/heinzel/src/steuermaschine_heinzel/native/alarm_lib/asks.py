@@ -27,7 +27,7 @@ class AskAlarmSettings(BaseModel):
                                         "(the owner's asks, in-app reports).")
 
 
-def read_beads(commands: Any, settings: Any, labels: list[str]) -> list[dict]:
+def read_beads(commands: Any, settings: Any, labels: list[str]) -> list[dict[str, Any]]:
     """The open beads with any of `labels`, from the tracker. Raises RuntimeError when it cannot be read."""
     done = commands.run(["bd", "list", "--status", "open", "--label-any", ",".join(labels), "--json", "--limit", "0"],
                         cwd=str(tracker_dir(settings)), env=child_env(settings), timeout=60)
@@ -40,23 +40,21 @@ def read_beads(commands: Any, settings: Any, labels: list[str]) -> list[dict]:
     return [b for b in found if isinstance(b, dict)] if isinstance(found, list) else []
 
 
-def counts(beads: list[dict], acked_at: float | None) -> tuple[int, int]:
+def counts(beads: list[dict[str, Any]], acked_at: float | None) -> tuple[int, int]:
     """(open ask beads, those created after the ack; all of them without an ack)."""
     if acked_at is None:
         return len(beads), len(beads)
     return len(beads), sum(1 for b in beads if (stamp(b.get("created_at")) or 0) > acked_at)
 
 
-def build(labels: list[str], total: int, new: int) -> dict | None:
+def build(labels: list[str], total: int, new: int) -> dict[str, Any] | None:
     if not total:
         return None
     return alarm("ALERT", KEY, f"{total} open {'/'.join(labels)} beads, {new} new since the last ack; sm beads tasks ls all")
 
 
-def record(commands: Any, store: Any, settings: Any, labels: list[str], now: float | None = None) -> dict | None:
+def record(commands: Any, store: Any, settings: Any, labels: list[str], now: float | None = None) -> dict[str, Any] | None:
     """Read the tracker and record the one alarm (cleared when no ask bead is open). Returns the alarm, or None."""
-    from steuermaschine.app import locked
-
     from ..queue_lib import stall
 
     beads = read_beads(commands, settings, labels)
@@ -64,7 +62,7 @@ def record(commands: Any, store: Any, settings: Any, labels: list[str], now: flo
     acked_at = acks.get(KEY)
     total, new = counts(beads, float(acked_at) if isinstance(acked_at, int | float) else None)
     if acked_at is not None and new:
-        with locked(store, "alarms.acks"):  # something new since the ack: the alarm holds again
+        with store.lock("alarms.acks"):  # something new since the ack: the alarm holds again
             data = store.load("alarms", "acks") or {}
             data.pop(KEY, None)
             store.save("alarms", "acks", data)

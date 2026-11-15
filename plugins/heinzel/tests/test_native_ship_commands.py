@@ -4,7 +4,7 @@
 import json
 import shutil
 import subprocess
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -35,7 +35,7 @@ GREEN = [{"name": n, "status": "COMPLETED", "conclusion": "SUCCESS"} for n in ("
 
 def long_ago() -> str:
     """Forty minutes before now, as the code host writes a time."""
-    return (datetime.now(timezone.utc) - timedelta(minutes=40)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return (datetime.now(UTC) - timedelta(minutes=40)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 @pytest.fixture(autouse=True)
@@ -592,11 +592,11 @@ def test_pr_works_for_a_plugins_worktree_the_repository_is_read_from_its_origin(
 
 
 def test_the_ship_step_of_a_plugins_pr_gets_the_plugins_key():
-    from steuermaschine_heinzel.native.admission_lib import identity
+    from steuermaschine_heinzel.native.ship_lib import repos
 
-    assert identity.pr_key(PLUGINS, 38) == "plugins 38" and identity.pr_key(CORE, 801) == "801"
-    assert identity.known_repo("https://github.com/Helmut-Hoffer-von-Ankershoffen/heinzel-plugins.git") == PLUGINS
-    assert identity.known_repo("git@github.com:someone/plugins.git") is None
+    assert repos.pr_key(PLUGINS, 38) == "plugins 38" and repos.pr_key(CORE, 801) == "801"
+    assert repos.known_repo("https://github.com/Helmut-Hoffer-von-Ankershoffen/heinzel-plugins.git") == PLUGINS
+    assert repos.known_repo("git@github.com:someone/plugins.git") is None
 
 
 def test_head_pr_refuses_another_agents_branch_naming_the_owner_and_nothing_is_published(rt, gh, worktree, monkeypatch, tmp_path):
@@ -607,10 +607,10 @@ def test_head_pr_refuses_another_agents_branch_naming_the_owner_and_nothing_is_p
     monkeypatch.setattr(statedir, "path", lambda name, under=None: tmp_path / "owners" / name)
     gh.on("rev-parse --git-common-dir", str(tmp_path / ".git") + "\n").on("symbolic-ref --short refs/remotes/origin/HEAD", "origin/main\n")
     gh.on("rev-parse --abbrev-ref HEAD", "fix/x\n")
-    monkeypatch.setenv("SM_AGENT", "agent-1")
+    monkeypatch.setenv("STEUERMASCHINE_AGENT", "agent-1")
     out = invoke(rt, ["head", "pr", "abc", "fix: x", "--body-file", str(worktree)])  # a dry run by the first writer: nothing recorded
     assert out.exit_code == 0 and not (tmp_path / "owners").exists(), out
     branch_owner.claim(gh, Path("."), "agent-1")  # the first writer owns it
-    monkeypatch.setenv("SM_AGENT", "agent-2")
+    monkeypatch.setenv("STEUERMASCHINE_AGENT", "agent-2")
     out = invoke(rt, ["head", "pr", "abc", "fix: x", "--body-file", str(worktree), "--live"])
     assert out.exit_code == 1 and "belongs to agent agent-1" in out.stderr and not published(gh), out
