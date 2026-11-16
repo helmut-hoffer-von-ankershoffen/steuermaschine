@@ -45,7 +45,7 @@ jobs:
           elif [ "$GITHUB_EVENT_NAME" = pull_request ]; then
             # Scan every actual PR commit, not GitHub's synthetic merge commit identity.
             test -n "$PR_HEAD"
-            git merge-base --is-ancestor "$PR_HEAD" HEAD
+            test "$(git rev-parse HEAD^2)" = "$PR_HEAD"
             range="$BEFORE..$PR_HEAD"
           else
             range="$BEFORE..HEAD"
