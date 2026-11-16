@@ -20,7 +20,6 @@ from steuermaschine.native import native, runtime
 
 from . import queue as area
 
-UNIT = ("queue_lib", "queue.py")  # what these commands execute: the moved queue code and the queue commands' edge
 
 
 class QueueMain(Model):
@@ -58,7 +57,7 @@ def _call(action: str, argv: list[str]) -> QueueMain:
     return QueueMain(action=action, lines=area._translate(lines), errors=errors, proof=proof, exit=code)
 
 
-@native("queue main-rerun", writes=True, files=UNIT, replaces=("hz-queue",), help=H(
+@native("queue main-rerun", writes=True, replaces=("hz-queue",), help=H(
     "Rerun main's failed jobs once when every failing job is KNOWN; a fully green second attempt lets merges proceed.",
     "Use when main is red by KNOWN non-focused failures only and the loop has not rerun it yet; --dry-run shows the plan.",
     "nothing with --dry-run. Otherwise: one `gh run rerun --failed` of main's run, queue state, log and one note.",
@@ -73,7 +72,7 @@ def queue_main_rerun(dry_run: bool = typer.Option(False, "--dry-run", help="Prin
     return _call("main-rerun", ["main-rerun", *(["--dry-run"] if dry_run else [])])
 
 
-@native("queue checkpoint", writes=True, files=UNIT, replaces=("hz-queue",), help=H(
+@native("queue checkpoint", writes=True, replaces=("hz-queue",), help=H(
     "Verify merged-release and focused-main continuity past a pinned main failure; with --apply record the evidence.",
     "Use when main's failure is pinned and a merged release plus focused main proofs cover everything since.",
     "nothing without --apply (it downloads evidence into temporary files). With --apply: the checkpoint file beside the queue state.",

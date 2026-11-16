@@ -6,16 +6,17 @@ same lines (the commands after the arrow are sm commands). No test here starts a
 import json
 from pathlib import Path
 
+import policy_kit as kit
 import pytest
-from steuermaschine_heinzel.native import ci_triage, loadguard, merge_ready
-from steuermaschine_heinzel.native.ci_lib import triage as t
-from steuermaschine_heinzel.plugin import plugin
 
 from steuermaschine.app import Runtime
 from steuermaschine.config import Project
 from steuermaschine.github.testing import FakeGh
 from steuermaschine.plugins import stack_of
 from steuermaschine.testing import fake_providers, invoke
+from steuermaschine_heinzel.native import ci_triage, loadguard, merge_ready
+from steuermaschine_heinzel.native.ci_lib import triage as t
+from steuermaschine_heinzel.plugin import plugin
 
 REPO = "helmut-hoffer-von-ankershoffen/heinzel"
 HEAD = "a" * 40
@@ -266,15 +267,33 @@ def test_deadline_json_and_bad_options(source):
 
 
 # ------------------------------------------------------------------ head merge-ready
+BASE = "b" * 40
+
+
 def view(**kw):
     d = dict(state="OPEN", mergeStateStatus="CLEAN", files=[{"path": "a.py"}], comments=[{"body": "Verdict: ship"}], headRefOid=HEAD,
-             statusCheckRollup=[{"name": n, "conclusion": "SUCCESS"} for n in ("CI OK", "merge-gate", "coverage-floor")])
+             baseRefOid=BASE, statusCheckRollup=[{"name": n, "conclusion": "SUCCESS"} for n in ("CI OK", "merge-gate", "coverage-floor")])
     d.update(kw)
     return d
 
 
+def policy_gh(fake, repo=REPO):
+    """Core's release policy at the base, through the contents API; a plugin repository has none, but branch rules."""
+    for path, answer in kit.contents_routes(BASE, kit.files("new")).items():
+        fake.on(f"api repos/{repo}/{path}", answer)
+    fake.on("rules/branches/main", [{"type": "required_status_checks", "parameters": {"required_status_checks": [{"context": "CI OK"}]}}])
+    return fake
+
+
+@pytest.fixture(autouse=True)
+def no_ci_change(monkeypatch):
+    """ci_changes needs a Core clone; its own tests are in test_native_core_policy. Here: no CI change unless a test says so."""
+    monkeypatch.setattr(merge_ready, "ci_reasons", lambda w, repo, base, head, files: tuple(
+        f"{f['path']}: CI path" for f in files if f["path"].startswith(".github/")))
+
+
 def ready(tmp_path, data, *args, actions: str | None = ""):
-    return invoke(runtime_for(tmp_path, FakeGh().on("pr view", data), actions=actions), ["head", "merge-ready", *args])
+    return invoke(runtime_for(tmp_path, policy_gh(FakeGh().on("pr view", data)), actions=actions), ["head", "merge-ready", *args])
 
 
 def test_go_and_refusals(tmp_path):
@@ -283,7 +302,9 @@ def test_go_and_refusals(tmp_path):
                      ({"comments": []}, "verdict"),
                      ({"headRefOid": ""}, "checked head"),
                      ({"state": "MERGED"}, "state MERGED"),
-                     ({"statusCheckRollup": [{"name": "CI OK", "conclusion": None}]}, "CI OK")]:
+                     ({"statusCheckRollup": [{"name": "CI OK", "conclusion": None}]}, "CI OK"),
+                     ({"baseRefOid": ""}, "no exact base"),
+                     ({"statusCheckRollup": [{"name": n, "conclusion": "SUCCESS"} for n in ("CI OK", "merge-gate")]}, "coverage-floor")]:
         out = ready(tmp_path, view(**kw), "1")
         assert (out.exit_code == 0 and out.stdout.strip() == "GO #1") if word is None else (out.exit_code == 1 and out.stdout.startswith("NO-GO #1: ") and word in out.stdout), (kw, out)
 
@@ -291,11 +312,11 @@ def test_go_and_refusals(tmp_path):
 def test_a_review_file_counts_as_the_verdict_and_json_carries_the_checked_head(tmp_path):
     (tmp_path / "research").mkdir()
     (tmp_path / "research" / "review-1-independent.md").write_text("ok")
-    fake = FakeGh().on("pr view", view(comments=[]))
+    fake = policy_gh(FakeGh().on("pr view", view(comments=[])))
     out = invoke(runtime_for(tmp_path, fake), ["--format", "json", "head", "merge-ready", "1"])
     report = merge_ready.MergeReady.model_validate_json(out.stdout)
     assert out.exit_code == 0 and report.go and report.head == HEAD and report.repo == REPO and not fake.writes()
-    assert [argv[1:3] for argv in fake.calls] == [["pr", "view"]]  # it never merges
+    assert [argv[1] for argv in fake.calls] == ["pr", "api"] and not fake.writes()  # it never merges
 
 
 @pytest.mark.parametrize(("key", "repo"), [("669", REPO), ("plugins #669", "helmut-hoffer-von-ankershoffen/heinzel-plugins")])
@@ -345,6 +366,28 @@ def test_loadguard_lists_what_the_guard_paused(tmp_path):
 
 
 def test_merge_ready_without_a_research_directory_accepts_only_a_comment_verdict(tmp_path):
-    rt = runtime_for(tmp_path, FakeGh().on("pr view", view(comments=[])), ci_research_dir=None)
+    rt = runtime_for(tmp_path, policy_gh(FakeGh().on("pr view", view(comments=[]))), ci_research_dir=None)
     assert "no review verdict on file" in invoke(rt, ["head", "merge-ready", "1"]).stdout
-    assert invoke(runtime_for(tmp_path, FakeGh().on("pr view", view()), ci_research_dir=None), ["head", "merge-ready", "1"]).exit_code == 0
+    assert invoke(runtime_for(tmp_path, policy_gh(FakeGh().on("pr view", view())), ci_research_dir=None), ["head", "merge-ready", "1"]).exit_code == 0
+
+
+def test_without_a_policy_at_core_base_the_required_checks_are_unknown(tmp_path):
+    out = invoke(runtime_for(tmp_path, FakeGh().on("pr view", view())), ["head", "merge-ready", "1"])
+    assert out.exit_code == 1 and "required checks unknown: no reviewed release policy at base" in out.stdout
+
+
+def test_the_ci_change_check_reads_core_and_another_repo_by_its_workflows(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    monkeypatch.undo()
+    world = SimpleNamespace(repo=REPO, core="")
+    assert merge_ready.ci_reasons(world, REPO, BASE, HEAD, []) == ("no local Core clone (setting core_repo_dir) to judge the CI paths",)
+    files = [{"path": ".github/workflows/ci.yml"}, {"path": "src/x.py"}]
+    assert merge_ready.ci_reasons(world, "o/plugins", BASE, HEAD, files) == (".github/workflows/ci.yml: a workflow file",)
+    seen = []
+    monkeypatch.setattr(merge_ready.probes, "World", object, raising=False)
+    from steuermaschine_heinzel.native.queue_lib import core_policy
+
+    monkeypatch.setattr(core_policy, "ci_changes", lambda repo, base, head: seen.append((repo, base, head)) or ("x: CI path",))
+    assert merge_ready.ci_reasons(SimpleNamespace(repo=REPO, core="/core"), REPO, BASE, HEAD, []) == ("x: CI path",)
+    assert seen == [("/core", BASE, HEAD)]

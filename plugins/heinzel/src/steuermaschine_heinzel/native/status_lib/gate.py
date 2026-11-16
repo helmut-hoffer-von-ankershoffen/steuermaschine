@@ -15,9 +15,11 @@ from typing import Any
 from steuermaschine.github.client import Gh
 from steuermaschine.github.sonar import Fetch, Sonar
 
+from ..queue_lib import core_facts
+
 RATINGS = {"reliability_rating": "reliability", "security_rating": "security", "sqale_rating": "maintainability"}
 LETTERS = {"1.0": "A", "2.0": "B", "3.0": "C", "4.0": "D", "5.0": "E"}
-GATE_CHECKS = ("merge-gate", "coverage-floor")
+GATE_CHECKS = core_facts.API_CHECKS  # the merge-gate workflow's checks (Core's release policy)
 ADVISORY_REVIEW = frozenset({"review", "attempt", "Claude review"})
 BADGE = "https://raw.githubusercontent.com/{repo}/python-coverage-comment-action-data/endpoint.json"
 
@@ -74,14 +76,15 @@ def required_in(data: dict[str, Any]) -> list[dict[str, Any]]:
 
 def gate_row(sonar: Sonar, fetch: Fetch, gh: Gh, owner: str, repo: str) -> dict[str, Any]:
     """One repository: the words, what is required, and the marks. `sonar` is the core provider for its project."""
-    states = {"merge-gate": sonar_state(sonar), "coverage-floor": coverage_state(fetch, f"{owner}/{repo}")}
+    sonar_check, coverage_check = core_facts.gate_check("sonar"), core_facts.gate_check("coverage")
+    states = {sonar_check: sonar_state(sonar), coverage_check: coverage_state(fetch, f"{owner}/{repo}")}
     data, unread = ruleset(gh, f"{owner}/{repo}")
     names = {c["context"] for c in required_in(data)} if data else set()
-    marks = [] if states["merge-gate"][0] else ["NOT A"]
-    marks += [] if states["coverage-floor"][0] else ["RED"]
+    marks = [] if states[sonar_check][0] else ["NOT A"]
+    marks += [] if states[coverage_check][0] else ["RED"]
     marks += ["BYPASS"] if data and data.get("bypass_actors") else []
     marks += [] if data else ["RULESET UNREAD"] if unread else ["NO RULESET"]
-    return {"repo": repo, "sonar": states["merge-gate"][1], "coverage": states["coverage-floor"][1],
+    return {"repo": repo, "sonar": states[sonar_check][1], "coverage": states[coverage_check][1],
             "required": [c for c in states if c in names], "not_yet": [c for c in states if c not in names], "marks": marks, "note": "",
             "unknown": f"ruleset of {repo}: {unread}" if unread else ""}
 

@@ -4,13 +4,13 @@ The main plan check (`queue_lib/main_plan.gap`, bead q9kh) needs a Core checkout
 not about it sees a main whose resulting tree is planned. Tests of the check itself request `real_main_plan`.
 """
 
+from pathlib import Path
+
 import pytest
 
 from steuermaschine import config
 from steuermaschine_heinzel import state as statedir
 from steuermaschine_heinzel.native.queue_lib import main_plan
-
-from pathlib import Path
 
 
 def _records_for_tests():
@@ -65,3 +65,19 @@ def _state_under_home(request, monkeypatch):
 
         monkeypatch.setattr(statedir, "root", root)
     yield
+
+
+@pytest.fixture(autouse=True)
+def core_policy_at_main(monkeypatch):
+    """Core's release policy as the readers see it on GitHub: the kit's (old CI shape) at any commit, never a network
+    read. A test of the readers themselves calls `core_facts.real` or patches these again."""
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import policy_kit as kit
+
+    from steuermaschine_heinzel.native.queue_lib import core_facts
+
+    core_facts.forget()
+    monkeypatch.setattr(core_facts, "main_sha", lambda: "c" * 40)
+    monkeypatch.setattr(core_facts, "at", lambda commit: kit.policy(commit=commit))

@@ -172,7 +172,7 @@ class SizeResult(Model):
     base: str
     branches: list[BranchSize]
     union: dict[str, int]  # test ids per lane
-    limits: dict[str, int]  # the limit of each lane in `union`, and of "production"
+    limits: dict[str, int | None]  # None everywhere: no lane and no production maximum (owner 2026-11-14), kept for the shape
     production: int
     overlaps: list[Overlap] = []
     conflicts: list[list[str]] = []

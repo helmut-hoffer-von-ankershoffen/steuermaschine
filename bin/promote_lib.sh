@@ -45,6 +45,21 @@ record_red_gate() {                                     # record_red_gate STABLE
   mkdir -p "$1" && printf '%s %s reason=%s red=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$2" "$3" "$4" >> "$(red_gate_log "$1")"
 }
 
+# verdict_holds PYTHON STABLE REPO SHA CANDIDATE_CHECKER: 0 when the promote verdict on SHA holds. The candidate's own
+# checker decides, and so does the live release's checker (STABLE/current/src/bin/promote_verdict.py) when it has one:
+# a candidate that weakens or breaks its own checker is still judged by the reviewed one. Only before the first release
+# with a checker does the candidate's copy decide alone (bootstrap; it says so). Messages go to stderr.
+verdict_holds() {
+  local python="$1" stable="$2" repo="$3" sha="$4" cand="$5" live="$2/current/src/bin/promote_verdict.py" rc=0
+  "$python" -I "$cand" check "$stable" "$repo" "$sha" || rc=1
+  if [ -f "$live" ]; then
+    "$python" -I "$live" check "$stable" "$repo" "$sha" || { echo "verdict: the live release's checker refuses it" >&2; rc=1; }
+  else
+    echo "verdict: the live release has no promote_verdict.py: the candidate's checker alone decides (bootstrap)" >&2
+  fi
+  return "$rc"
+}
+
 # The failing test ids of a bin/check output (pytest's short summary), so a refused promote names them (bead t84w:
 # a refusal that said only "check: FAIL tests" left the flaky test unknown). At most 20.
 failed_tests() { grep -oE '(FAILED|ERROR) [^ ]+::[^ ]+' "$1" | head -20; }

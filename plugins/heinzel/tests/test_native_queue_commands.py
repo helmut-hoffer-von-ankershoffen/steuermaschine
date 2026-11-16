@@ -250,17 +250,6 @@ def test_drop_removes_only_the_named_entry_keeps_every_other_key_and_says_what_i
     assert {k: v for k, v in after.items() if k != "items"} == {k: v for k, v in before.items() if k != "items"}
 
 
-def test_a_write_command_whose_review_is_not_approved_refuses_and_changes_nothing(rt, monkeypatch):
-    from steuermaschine.native import NativeCommand
-
-    monkeypatch.setattr(NativeCommand, "review_state", lambda self: ("open", "no verdict"))
-    rt.project.allow_unreviewed = False
-    before = rt.state_file.read_text()
-    for argv in (["queue", "drop", "796"], ["queue", "add", "801"], ["daemon", "queue"]):
-        out = invoke(rt, argv)
-        assert out.exit_code == 70 and "review" in out.stderr and rt.state_file.read_text() == before
-
-
 def test_two_named_state_files_are_refused_and_without_the_setting_the_environment_names_the_file(rt, tmp_path, monkeypatch):
     """Review finding S3: a session that isolates itself with HZ_QUEUE_STATE must never write another file."""
     other = tmp_path / "other.json"
@@ -508,15 +497,3 @@ def test_a_refused_or_failing_check_is_a_log_line(rt, gh, monkeypatch):
     assert "main_proof" not in json.loads(rt.state_file.read_text())  # nothing ran: no attempt is spent
 
 
-def test_the_tick_runs_main_proof_through_its_review_gate(rt, gh, monkeypatch):
-    from steuermaschine.native import NativeCommand
-    from steuermaschine_heinzel.native.queue_lib import hzlib
-
-    monkeypatch.setattr(hzlib, "merge_tier", lambda: True)
-    monkeypatch.setattr(NativeCommand, "review_state", lambda self: ("open", "no verdict") if self.path == "queue main-proof" else ("approved", ""))
-    rt.project.allow_unreviewed = False
-    done = invoke(rt, ["--format", "json", "daemon", "queue"])
-    assert done.exit_code == 0, done.stderr
-    lines = json.loads(done.stdout)["lines"]
-    assert any("main proof: `sm queue main-proof` writes" in line and "nothing was run" in line for line in lines), lines
-    assert detached(gh) == []

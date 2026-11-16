@@ -16,7 +16,6 @@ from .asks_lib.asks import AsksSettings
 
 __all__ = ["AsksSettings"]
 
-UNIT = ("asks.py", "asks_lib", "coord_lib")  # the review unit: asks_lib takes the document, its locks and the settings helpers from coord_lib
 
 DOC = Group("doc", H(
     "doc: the tracking document and what is written from it: asks, sections, handoff, hourly update, velocity.",
@@ -26,7 +25,7 @@ DOC = Group("doc", H(
     "sm go"))
 
 
-@native("doc ask", writes=True, replaces=("hz-ask",), files=UNIT, help=H(
+@native("doc ask", writes=True, replaces=("hz-ask",), help=H(
     "Record an owner ask: one row with the time in the asks table of the tracking document, before any work on it.",
     "Use when the owner asks for something, at once; for a new topic prefer `sm beads tasks add TITLE --ask`.",
     "adds one table row to the tracking document (setting coord_document); nothing else. Not committed, not pushed.",
@@ -60,7 +59,7 @@ def doc_asks(transcript: Path | None = typer.Option(None, "--transcript", metava
         raise Refuse(f"no session transcript found ({exc.args[0]})", "sm doc asks --transcript FILE") from None
 
 
-@native("doc asks-ack", writes=True, replaces=("hz-ask",), files=UNIT, help=H(
+@native("doc asks-ack", writes=True, replaces=("hz-ask",), help=H(
     "Mark the owner messages up to one timestamp as reviewed.",
     "Use after `sm doc asks`, once every message it printed is a bead or needs none.",
     "moves the audit watermark in this tool's state (never backwards); nothing else.",

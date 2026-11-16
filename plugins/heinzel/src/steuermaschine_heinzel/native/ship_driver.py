@@ -3,7 +3,7 @@
 It adds no step of its own. It derives the inputs `head admit` asks for (the selection, the review root, the Core
 repository), hands them to the `head admit` pipeline unchanged and, after the queue step, can wait for the PR to merge.
 An input given with `--set` (now or earlier: the pipeline remembers them) is never replaced by a derived one. The stops
-are those of `head admit`; the review gate of the pipeline and of every step it runs still holds.
+are those of `head admit`.
 """
 
 from __future__ import annotations
@@ -15,12 +15,12 @@ from typing import Any
 
 import typer
 
-from steuermaschine import INTERNAL, config
+from steuermaschine import config
 from steuermaschine.engine import Engine, Options, Refuse, Report, Wait
 from steuermaschine.github import Gh
 from steuermaschine.helpdoc import H
 from steuermaschine.models import Model
-from steuermaschine.native import gate_problem, native, runtime, switch_pending
+from steuermaschine.native import native, runtime, switch_pending
 
 from .. import state as statedir
 from ..pipelines.common import core_repo, run
@@ -165,7 +165,7 @@ def _summary(worktree: str, report: Report, derived: list[str], pr: int | None, 
                       derived=derived, pr=pr, merged=merged, exit=report.exit_code, lines=lines)
 
 
-@native("ship", writes=True, review="ship.md", help=H(
+@native("ship", writes=True, help=H(
     "Take one head from its worktree to a merged PR: `head admit` with its inputs derived, then wait for the merge.",
     "Use when a head is committed in its own worktree and should go out; type it again after every stop.",
     "what `head admit` writes: state on this machine, the selection and the packets under the plugin state directory; with --live also the plan slot, "
@@ -176,17 +176,22 @@ def _summary(worktree: str, report: Report, derived: list[str], pr: int | None, 
     "(the plugin state directory), core_repo (the setting core_repo_dir; it refuses naming it when unset). The PR is found by itself.\n"
     "The stops are those of `head admit`: both review stops stay, a verdict comes from a different agent (--approved SHA256).\n"
     "--wait MINUTES, after the queue step: exit 0 when the PR merged, exit 1 with the reason when it was closed or the queue dropped it,\n"
-    "exit 75 when the ceiling is reached (run it again to keep waiting)."))
+    "exit 75 when the ceiling is reached (run it again to keep waiting).\n"
+    "--plan, at the start of a head or bundle: only print the route (`sm head plan`): tier, size, limits, route, review stops; exit 1 when no route is open."))
 def ship(worktree: str = typer.Argument(..., metavar="WORKTREE", help="The clean worktree of the head, on its own work branch."),
          live: bool = typer.Option(False, "--live", help="Also run the steps that write outside this machine (apply, push and PR, queue)."),
          approved: str = typer.Option("", "--approved", metavar="SHA256", help="The digest a different agent approved at the review stop."),
          author: str = typer.Option("", "--as", metavar="NAME", help="Who drives this run; the reviewer must be someone else."),
          set_: list[str] | None = typer.Option(None, "--set", metavar="NAME=VALUE", help="An input of `head admit` (remembered); it replaces a derived one."),
-         wait: int | None = typer.Option(None, "--wait", min=1, metavar="MINUTES", help="After the queue step, wait up to MINUTES for the PR to merge.")) -> ShipResult:
+         wait: int | None = typer.Option(None, "--wait", min=1, metavar="MINUTES", help="After the queue step, wait up to MINUTES for the PR to merge."),
+         plan: bool = typer.Option(False, "--plan", help="Only print the route this head will take (sm head plan); run and write nothing.")) -> ShipResult:
+    if plan is True:  # a direct call that leaves the option out passes typer's default object, which is not True
+        if live or approved or wait is not None or set_:
+            raise Refuse("--plan only reads: give it without --live, --approved, --wait and --set", "sm ship --help", code=2)
+        route = run("head plan", worktree=Path(worktree))
+        return ShipResult(worktree=worktree, status="plan", phase=f"route: {route.route or 'none'}", exit=route.exit_code, lines=route.render())
     rt = runtime()
     pl = pipeline()
-    if problem := gate_problem(pl.unit, rt.project):
-        raise Refuse(problem + "; nothing was run", "sm self reviews", code=INTERNAL)
     subject = identify(rt.providers, rt.settings, worktree)
     store = rt.providers.store
     kept = _given(store, pl, subject.key, set_)

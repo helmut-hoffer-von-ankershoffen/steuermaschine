@@ -105,7 +105,8 @@ class Watched(Model):
     "sm ci watch 795 --timeout 40     (a plugins PR: sm ci watch 38 --repo plugins)",
     "red: sm ci why PR (then sm ci faillog PR); green: sm head sonar PR",
     "The target is a PR number (below 10,000,000), a run id (above), a pull-request or run URL, or `plugins 38` for a PR of\n"
-    "another repository of the project. The advisory `review` check is ignored. A merged PR counts as green.\n"
+    "another repository of the project. A bare number means the repository of the worktree you stand in (its origin), else the core\n"
+    "repository. The state shown is GitHub's own (`gh pr view --json state,mergeCommit`). The advisory `review` check is ignored. A merged PR counts as green.\n"
     "Exit codes: 0 green, 1 red or closed, 2 not done after --timeout minutes (nothing is cancelled)."))
 def ci_watch(target: list[str] = typer.Argument(..., metavar="RUN|PR|URL", help="A PR number, a run id, a URL, or `plugins 38`."),
              repo: str | None = typer.Option(None, "--repo", "-R", metavar="OWNER/NAME", help="The repository of a bare number, OWNER/NAME or a "
@@ -122,7 +123,8 @@ def ci_watch(target: list[str] = typer.Argument(..., metavar="RUN|PR|URL", help=
         except ValueError:
             raise Refuse(f"--repo {repo}: neither OWNER/NAME nor a repository word (plugins, acme, sf, core)", "sm ci watch --help", code=2) from None
     try:
-        kind, where, number, code, text = checks.watch(list(target), repo or core, minutes)
+        checks.parse(list(target), core)  # a target that is no PR, URL or run is refused before anything is read
+        kind, where, number, code, text = checks.watch(list(target), repo or hub.checkout_repo() or core, minutes)
     except ValueError as no:  # not a number, a URL or a known repository word
         raise Refuse(str(no), "sm ci watch --help", code=2) from None
     return Watched(kind=kind, repository=where, number=int(number), outcome=text.splitlines()[0].split(": ", 1)[1], code=code,

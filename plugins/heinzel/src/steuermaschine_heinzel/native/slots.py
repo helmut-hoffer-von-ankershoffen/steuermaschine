@@ -16,7 +16,8 @@ from typing import Any, NoReturn
 import typer
 
 from steuermaschine.engine import Refuse, Wait
-from steuermaschine.github import Gh, GhError
+from steuermaschine.github import Gh, GhError, GitHub
+from steuermaschine.github.base import ProviderError
 from steuermaschine.helpdoc import H
 from steuermaschine.models import Model
 from steuermaschine.native import Group, native, runtime
@@ -25,7 +26,6 @@ from .. import state as statedir
 from .slots_lib import collect, legacy, registry_lock
 
 PR_LIMIT = 1000
-REVIEW = "head-slots-apply.md"
 
 SLOTS = Group("head slots", H(
     "head slots: the focused plan registry (five repository variables) and what may be collected from it.",
@@ -135,17 +135,17 @@ def _unreleased_trees(gh: Gh) -> set[str]:
 def _read() -> tuple[str, dict[str, str], list[dict[str, Any]], int, dict[str, str]]:
     rt = runtime()
     gh, repo = _gh()
-    forge: Any = rt.providers.forge
-    values = {name: forge.get_variable(name) for name in collect.NAMES}
-    if all(value is None for value in values.values()):
-        raise Refuse("no focused registry variable could be read; nothing collected.", "sm status", code=1)
-    texts = {name: value or "" for name, value in values.items()}
+    forge = rt.providers.forge or GitHub(rt.providers.commands, repo=repo, clock=rt.providers.clock)
     try:
+        values = {name: forge.get_variable(name) for name in collect.NAMES}
+        if all(value is None for value in values.values()):
+            raise Refuse("no focused registry variable could be read; nothing collected.", "sm status", code=1)
+        texts = {name: value or "" for name, value in values.items()}
         slots = {name: collect.decode(name, text) for name, text in texts.items()}
         prs = _prs(gh)
         reserved = _unreleased_trees(gh)
         main = _main(gh)
-    except (collect.Unreadable, GhError) as error:
+    except (collect.Unreadable, GhError, ProviderError) as error:
         raise Refuse(f"cannot collect: {error}", "sm status", code=1) from error
     return repo, texts, collect.classify(slots, prs, reserved, main["tree"], rt.providers.clock.now()), len(reserved), main
 
@@ -177,7 +177,7 @@ def head_slots_collect(all_: bool = typer.Option(False, "--all", help="Also list
     return _model(repo, texts, rows, reserved, main, all_)
 
 
-@native("head slots apply", writes=True, review=REVIEW, help=H(
+@native("head slots apply", writes=True, help=H(
     "Apply one approved collection: rewrite the slots that lose entries, with a receipt.",
     "Use after an independent reviewer approved the digest of `sm head slots collect`.",
     "up to five repository variables (the focused plan slots that lose entries); writes a receipt.",
@@ -187,6 +187,8 @@ def head_slots_collect(all_: bool = typer.Option(False, "--all", help="Also list
     "wrote, and no Actions run is active (exit 75). The readback must equal what was written; nothing is restored automatically."))
 def head_slots_apply(approved: str = typer.Option(..., "--approved", help="The digest of the collect output the reviewer approved.")) -> SlotsApplied:
     rt = runtime()
+    if rt.providers.forge is None:
+        raise Refuse("no forge provider is configured; nothing was written.", "sm self config", code=1)
     repo, texts, rows, reserved, main = _read()
     result = _model(repo, texts, rows, reserved, main, False)
     if approved != result.digest:

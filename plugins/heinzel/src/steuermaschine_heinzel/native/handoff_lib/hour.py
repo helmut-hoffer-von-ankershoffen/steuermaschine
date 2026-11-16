@@ -11,6 +11,7 @@ from steuermaschine import digest
 from steuermaschine.github import Gh
 from steuermaschine.models import Model
 
+from ..queue_lib import core_facts
 from . import snapshot
 
 
@@ -52,7 +53,8 @@ def build(rt: Any, commands: list[Any], no_handoff: bool = False, load: Any = No
     gh = Gh(rt.providers.commands, repo, clock=rt.providers.clock)
     facts = [HourFact(command=f.path, status=f.status, lines=f.lines[:40] + ([f"... {len(f.lines) - 40} more: sm {f.path}"] if len(f.lines) > 40 else []), exit_code=f.exit_code)
              for f in digest.collect(commands, list(snapshot.get(s, "hour_facts")))]
-    runs, _ = gh.try_json(["run", "list", "-R", repo, "--workflow", str(snapshot.get(s, "handoff_ci_workflow")), "--branch", "main", "-L", "5", "--json", "conclusion,status,headSha"])
+    workflow = str(snapshot.get(s, "handoff_ci_workflow") or core_facts.ci_file())
+    runs, _ = gh.try_json(["run", "list", "-R", repo, "--workflow", workflow, "--branch", "main", "-L", "5", "--json", "conclusion,status,headSha"])
     main_ci = ", ".join(f"{str(r.get('headSha', ''))[:7]} {r.get('conclusion') or r.get('status')}" for r in runs or [] if isinstance(r, dict)) or "unknown"
     releases = []
     for name in [repo, *snapshot.get(s, "handoff_extra_repos")]:

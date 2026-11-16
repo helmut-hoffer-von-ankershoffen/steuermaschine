@@ -4,10 +4,12 @@ Hosted runners are few. When several builders start validation runs for their he
 cap of runs in flight together, some start half their lanes, and nobody's result is complete. The window puts the
 heads in a line:
 
-- one head at a time: a head holds the window from its first run to its last result (or until its lease expires)
+- several heads at once: a head holds the window from its first run to its last result (or until its lease
+  expires); another head may hold it at the same time when the runs of all holders together fit under the cap
 - per-branch pending rule: a branch has one place in the line. A newer head of the same branch takes that place and
   the older request is dropped: nobody validates a head that is already replaced
-- global cap: a head starts only when the runs in flight plus the runs it wants fit under the cap; it never forces
+- global cap: a head starts only when the runs in flight (at least the runs the holders asked for) plus the runs
+  it wants fit under the cap; it never forces
 - first come, first served among the waiting branches
 
 and it never validates on the head's own commit:
@@ -100,20 +102,21 @@ class WindowStatus(Model):
     """Who holds the validation window and who waits, in order."""
 
     cap: int
-    active: Turn | None = None
-    held_minutes: float = 0.0
-    holder_alive: bool | None = None  # None: cannot be known from here (another machine)
+    active: Turn | None = None  # the first holder (older readers); `actives` holds them all
+    actives: list[Turn] = []
+    held_minutes: float = 0.0  # of the first holder
+    holder_alive: bool | None = None  # of the first holder; None: cannot be known from here (another machine)
     waiting: list[Turn] = []
     gone: list[Turn] = []  # waiting requests whose command is gone: skipped, never given the turn
     holds: list[Hold] = []  # admissions that keep new validations from starting
 
     def render(self) -> list[str]:
-        lines = [f"validation window: cap {self.cap} runs in flight, one head at a time"]
-        if self.active:
-            gone = "; ITS COMMAND IS GONE: `release` ends the turn" if self.holder_alive is False else ""
-            lines.append(f"  active   {self.active.branch} {self.active.head[:9]} ({self.active.runs} runs, {self.held_minutes:.0f} min, "
-                         f"pid {self.active.pid} on {self.active.host or '?'}{gone})")
-        else:
+        lines = [f"validation window: cap {self.cap} runs in flight, as many heads at once as fit under it"]
+        for n, turn in enumerate(self.actives or ([self.active] if self.active else [])):
+            gone = "; ITS COMMAND IS GONE: `release` ends the turn" if n == 0 and self.holder_alive is False else ""
+            minutes = f", {self.held_minutes:.0f} min" if n == 0 else ""
+            lines.append(f"  active   {turn.branch} {turn.head[:9]} ({turn.runs} runs{minutes}, pid {turn.pid} on {turn.host or '?'}{gone})")
+        if not (self.actives or self.active):
             lines.append("  active   nobody")
         lines += [f"  waiting  {n}. {turn.branch} {turn.head[:9]} ({turn.runs} runs)" for n, turn in enumerate(self.waiting, 1)]
         lines += [f"  gone     {turn.branch} {turn.head[:9]} (pid {turn.pid} is gone; skipped, never gets the turn: "
@@ -187,13 +190,17 @@ class Window:
         self.kind = f"{namespace}.window"
 
     # ------------------------------------------------------------------ state
-    def _load(self) -> tuple[Turn | None, list[Turn]]:
+    def _load(self) -> tuple[list[Turn], list[Turn]]:
         data = self.store.load(self.kind, KEY) or {}
-        active = Turn(**data["active"]) if data.get("active") else None
-        return active, [Turn(**row) for row in data.get("waiting") or []]
+        rows = data.get("actives")
+        if rows is None:  # a document an older release wrote: one holder
+            rows = [data["active"]] if data.get("active") else []
+        return [Turn(**row) for row in rows], [Turn(**row) for row in data.get("waiting") or []]
 
-    def _save(self, active: Turn | None, waiting: list[Turn]) -> None:
-        self.store.save(self.kind, KEY, {"active": active.model_dump() if active else None, "waiting": [turn.model_dump() for turn in waiting]})
+    def _save(self, actives: list[Turn], waiting: list[Turn]) -> None:
+        self.store.save(self.kind, KEY, {"actives": [turn.model_dump() for turn in actives],
+                                         "active": actives[0].model_dump() if actives else None,  # for an older release after a rollback
+                                         "waiting": [turn.model_dump() for turn in waiting]})
 
     def _locked(self, change: Callable[[], T]) -> T:
         """Run `change` under the store's lock; another process inside it is waited for briefly."""
@@ -205,11 +212,10 @@ class Window:
                 self.clock.sleep(0.05)
         raise Busy(self.kind)
 
-    def _expire(self, active: Turn | None, waiting: list[Turn]) -> tuple[Turn | None, list[Turn]]:
+    def _expire(self, actives: list[Turn], waiting: list[Turn]) -> tuple[list[Turn], list[Turn]]:
         now = self.clock.now()
-        if active is not None and now - (active.started or active.requested) > self.rules.lease_minutes * 60:
-            active = None
-        return active, [turn for turn in waiting if now - turn.asked <= self.rules.waiting_minutes * 60 and self.alive(turn) is not False]
+        actives = [turn for turn in actives if now - (turn.started or turn.requested) <= self.rules.lease_minutes * 60]
+        return actives, [turn for turn in waiting if now - turn.asked <= self.rules.waiting_minutes * 60 and self.alive(turn) is not False]
 
     def _hold_rows(self) -> list[Hold]:
         return [Hold(**row) for row in (self.store.load(self.kind, HOLDS) or {}).get("rows") or []]
@@ -230,13 +236,14 @@ class Window:
 
         def change() -> Decision:
             now = self.clock.now()
-            active, waiting = self._expire(*self._load())
-            passed = None
-            if active is not None and active.owner != owner and self.alive(active) is False:  # the holder's command is gone
-                passed, active = active, None
-            if active is not None and active.branch == branch and active.head == head and active.owner == owner:
-                self._save(active.model_copy(update={"asked": now}), waiting)
-                return Decision(state="go", reason="this command holds the window")
+            actives, waiting = self._expire(*self._load())
+            gone = [turn for turn in actives if turn.owner != owner and self.alive(turn) is False]  # a holder whose command is gone
+            passed = gone[0] if gone else None
+            actives = [turn for turn in actives if turn not in gone]
+            mine_active = next((turn for turn in actives if turn.branch == branch and turn.head == head and turn.owner == owner), None)
+            if mine_active is not None:
+                self._save([turn.model_copy(update={"asked": now}) if turn is mine_active else turn for turn in actives], waiting)
+                return Decision(state="go", reason="this command holds the window", passed=passed)
             replaced = ""
             mine = next((turn for turn in waiting if turn.branch == branch), None)
             fresh: dict[str, Any] = {"runs": runs, "asked": now, "owner": owner, "pid": pid, "host": host}
@@ -248,28 +255,33 @@ class Window:
             else:
                 waiting.append(Turn(branch=branch, head=head, requested=now, **fresh))
             position = next(n for n, turn in enumerate(waiting) if turn.branch == branch)
-            if active is not None:
-                self._save(active, waiting)
-                if active.branch == branch and active.head == head:
-                    why = f"this head is already being validated by another command (pid {active.pid} on {active.host or '?'})"
+            same = next((turn for turn in actives if turn.branch == branch), None)
+            if same is not None:  # one request per branch: an older head of it, or another command on this head, finishes first
+                self._save(actives, waiting)
+                if same.head == head:
+                    why = f"this head is already being validated by another command (pid {same.pid} on {same.host or '?'})"
                 else:
-                    same = " (an older head of this branch: it finishes first)" if active.branch == branch else ""
-                    why = f"{active.branch} {active.head[:9]} holds the window{same}"
-                return Decision(state="wait", reason=why, position=position + 1, holder=active.branch, replaced=replaced)
+                    why = f"{same.branch} {same.head[:9]} holds the window (an older head of this branch: it finishes first)"
+                return Decision(state="wait", reason=why, position=position + 1, holder=same.branch, replaced=replaced, passed=passed)
             if position:
-                self._save(active, waiting)
+                self._save(actives, waiting)
                 return Decision(state="wait", reason=f"{position} head(s) ahead: {', '.join(turn.branch for turn in waiting[:position])}",
-                                position=position, replaced=replaced, passed=passed)
+                                position=position + (1 if actives else 0), replaced=replaced, passed=passed,
+                                holder=actives[0].branch if actives else "")
             if holds := self._holds():
-                self._save(active, waiting)
+                self._save(actives, waiting)
                 return Decision(state="wait", reason=f"an admission is pending ({', '.join(hold.label or hold.owner for hold in holds)}): no new validation starts",
                                 replaced=replaced, passed=passed, held_by=[hold.label or hold.owner for hold in holds])
-            if in_flight + runs > self.rules.cap:
-                self._save(active, waiting)
-                return Decision(state="wait", reason=f"{in_flight} runs in flight + {runs} wanted > cap {self.rules.cap}", replaced=replaced, passed=passed)
+            reserved = sum(turn.runs for turn in actives)  # runs a holder asked for may not show as in flight yet
+            busy = max(in_flight, reserved)
+            if busy + runs > self.rules.cap:
+                self._save(actives, waiting)
+                held = f" ({len(actives)} head(s) hold the window: {', '.join(turn.branch for turn in actives)})" if actives else ""
+                return Decision(state="wait", reason=f"{busy} runs in flight + {runs} wanted > cap {self.rules.cap}{held}", position=position + 1 if actives else 0,
+                                replaced=replaced, passed=passed, holder=actives[0].branch if actives else "")
             turn = waiting.pop(0)
-            self._save(turn.model_copy(update={"started": now, "asked": now}), waiting)
-            return Decision(state="go", reason=f"{in_flight} runs in flight + {runs} wanted <= cap {self.rules.cap}", replaced=replaced, passed=passed)
+            self._save([*actives, turn.model_copy(update={"started": now, "asked": now})], waiting)
+            return Decision(state="go", reason=f"{busy} runs in flight + {runs} wanted <= cap {self.rules.cap}", replaced=replaced, passed=passed)
 
         return self._locked(change)
 
@@ -277,9 +289,9 @@ class Window:
         """The holder records what it would leave behind (a branch, a commit), for whoever has to clean up after it."""
 
         def change() -> None:
-            active, waiting = self._load()
-            if active is not None and active.owner == owner:
-                self._save(active.model_copy(update={"data": {**active.data, **data}}), waiting)
+            actives, waiting = self._load()
+            if any(turn.owner == owner for turn in actives):
+                self._save([turn.model_copy(update={"data": {**turn.data, **data}}) if turn.owner == owner else turn for turn in actives], waiting)
 
         self._locked(change)
 
@@ -288,10 +300,11 @@ class Window:
         command's turn, also one for the same head, is left alone."""
 
         def change() -> bool:
-            active, waiting = self._load()
-            held = active is not None and active.branch == branch and active.head == head and active.owner == owner
-            self._save(None if held else active, [turn for turn in waiting if not (turn.branch == branch and turn.head == head and turn.owner == owner)])
-            return held
+            actives, waiting = self._load()
+            ours = [turn for turn in actives if turn.branch == branch and turn.head == head and turn.owner == owner]
+            self._save([turn for turn in actives if turn not in ours],
+                       [turn for turn in waiting if not (turn.branch == branch and turn.head == head and turn.owner == owner)])
+            return bool(ours)
 
         return self._locked(change)
 
@@ -333,29 +346,46 @@ class Window:
 
         return self._locked(change)
 
-    def release(self, force: bool = False) -> Released:
-        """End the holder's turn by hand: when its command is gone or its lease ran out, or with `force`."""
+    def release(self, force: bool = False, branch: str = "") -> Released:
+        """End a holder's turn by hand: when its command is gone or its lease ran out, or with `force`. With several
+        holders, `branch` names the one; without it the first whose command is gone or whose lease ran out (`force`
+        then needs `branch`)."""
 
         def change() -> Released:
-            stored, waiting = self._load()
-            if stored is None:
+            actives, waiting = self._load()
+            if not actives:
                 return Released(released=False, reason="nobody holds the window")
-            expired, _ = self._expire(stored, [])
+            if branch:
+                found = [turn for turn in actives if turn.branch == branch]
+                if not found:
+                    return Released(released=False, reason=f"{branch} does not hold the window (holders: {', '.join(t.branch for t in actives)})")
+                stored = found[0]
+            elif len(actives) == 1:
+                stored = actives[0]
+            else:
+                stale = [t for t in actives if self.alive(t) is False or not self._expire([t], [])[0]]
+                if not stale or force:
+                    return Released(released=False, reason=f"{len(actives)} heads hold the window ({', '.join(t.branch for t in actives)}): "
+                                                            "name the one to release")
+                stored = stale[0]
+            others = [turn for turn in actives if turn is not stored]
+            expired = self._expire([stored], [])[0]
             alive = self.alive(stored)
-            if not force and expired is not None and alive is not False:
+            if not force and expired and alive is not False:
                 state = "its command still runs" if alive else "its command runs on another machine and cannot be checked from here"
                 return Released(released=False, reason=f"{stored.branch} {stored.head[:9]} holds the window and {state} (pid {stored.pid} on {stored.host or '?'})", turn=stored)
-            self._save(None, waiting)
-            why = "forced" if force and alive is not False and expired is not None else "its command is gone" if alive is False else "its lease ran out"
+            self._save(others, waiting)
+            why = "forced" if force and alive is not False and expired else "its command is gone" if alive is False else "its lease ran out"
             return Released(released=True, reason=f"released the window held by {stored.branch} {stored.head[:9]} ({why})", turn=stored)
 
         return self._locked(change)
 
     def status(self) -> WindowStatus:
-        active, waiting = self._expire(*self._load())
-        held = (self.clock.now() - (active.started or active.requested)) / 60 if active else 0.0
-        return WindowStatus(cap=self.rules.cap, active=active, held_minutes=round(held, 1), holder_alive=self.alive(active) if active else None,
-                            waiting=waiting, gone=self._gone(), holds=self._holds())
+        actives, waiting = self._expire(*self._load())
+        first = actives[0] if actives else None
+        held = (self.clock.now() - (first.started or first.requested)) / 60 if first else 0.0
+        return WindowStatus(cap=self.rules.cap, active=first, actives=actives, held_minutes=round(held, 1),
+                            holder_alive=self.alive(first) if first else None, waiting=waiting, gone=self._gone(), holds=self._holds())
 
     def _gone(self) -> list[Turn]:
         """Waiting requests that are still within their time but whose command is gone."""

@@ -9,6 +9,7 @@ import sys
 import types
 import zipfile
 
+import policy_kit as kit
 import pytest
 
 from test_native_admission_slots import env, s
@@ -38,9 +39,9 @@ def original(env):
     checks = [dict(id=check_id, name=name, head_sha=HEAD, app={'id': r.APP}, status='completed', conclusion='success',
                    details_url=f'https://github.com/{rt.repo}/actions/runs/{CI_ID}/job/{check_id}' if name == 'CI OK'
                    else f'https://github.com/{rt.repo}/runs/{check_id}') for name, check_id in CHECKS.items()]
-    ci = dict(id=CI_ID, run_attempt=1, head_sha=HEAD, event='pull_request', path=r.CI, head_branch=BRANCH,
+    ci = dict(id=CI_ID, run_attempt=1, head_sha=HEAD, event='pull_request', path=kit.WORKFLOW, head_branch=BRANCH,
               repository=repo, head_repository=repo, status='completed', conclusion='success', workflow_id=7, check_suite_id=8)
-    judge = dict(ci, id=JUDGE_ID, event='workflow_run', path=r.JUDGE, head_sha=JUDGE_SHA, head_branch='main',
+    judge = dict(ci, id=JUDGE_ID, event='workflow_run', path=kit.JUDGE, head_sha=JUDGE_SHA, head_branch='main',
                  workflow_id=9, check_suite_id=10)
     artifact = dict(id=90, name=f'focused-pr-evidence-python-{CI_ID}-1', size_in_bytes=22,
                     digest='sha256:' + '0' * 64, expired=False, workflow_run={'id': CI_ID})
@@ -66,10 +67,11 @@ def original(env):
         f'{root}/actions/runs/{CI_ID}': ci, f'{root}/actions/runs/{JUDGE_ID}': judge,
         f'{root}/actions/runs/{JUDGE_ID}/attempts/1': copy.deepcopy(judge),
         f'{root}/actions/workflows/7/runs?head_sha={HEAD}&event=pull_request&per_page=1': {'workflow_runs': [{'id': CI_ID}]},
-        f'{root}/actions/workflows/merge-gate.yml': {'id': 9, 'path': r.JUDGE},
+        f'{root}/actions/workflows/merge-gate.yml': {'id': 9, 'path': kit.JUDGE},
         f'{root}/check-runs/{JOB}': dict(id=JOB, name='Merge gates', head_sha=JUDGE_SHA, app={'id': r.APP},
                                        check_suite={'id': 10}, status='completed', conclusion='success'),
         **{f"{root}/check-runs/{row['id']}": copy.deepcopy(row) for row in checks},
+        **{f'{root}/{path}': answer for path, answer in kit.contents_routes(MAIN, kit.files('new')).items()},  # Core's policy at main
     }
     pages = {
         f'{root}/commits/{HEAD}/check-runs?filter=latest': checks,
@@ -93,7 +95,8 @@ def original(env):
 
 @pytest.mark.parametrize('defect', ['strict', 'classic', 'app', 'missing-rule', 'fork', 'pr-head', 'id', 'main',
                                     'latest', 'ci-attempt', 'judge-attempt', 'check-app', 'check-failed',
-                                    'check-url', 'check-duplicate', 'artifact-expired', 'artifact-foreign'])
+                                    'check-url', 'check-duplicate', 'artifact-expired', 'artifact-foreign',
+                                    'policy-missing', 'policy-garbled', 'policy-contexts', 'policy-workflow'])
 def test_current_green_proof_refuses_drift(original, defect):
     f = original
     if defect == 'strict': f.rule['parameters']['strict_required_status_checks_policy'] = True
@@ -113,6 +116,14 @@ def test_current_green_proof_refuses_drift(original, defect):
     elif defect == 'check-duplicate': f.checks.append(dict(f.checks[1], id=123))
     elif defect == 'artifact-expired': f.artifact['expired'] = True
     elif defect == 'artifact-foreign': f.artifact['workflow_run']['id'] = 123
+    elif defect == 'policy-missing': f.api[f'{f.root}/contents/{kit.PATH}?ref={MAIN}'] = None
+    elif defect == 'policy-garbled': f.api[f'{f.root}/contents/{kit.PATH}?ref={MAIN}'] = kit.contents(b'{"policy": 2}\n')
+    elif defect == 'policy-workflow':  # the run's workflow is not the one main's policy names
+        f.api.update({f'{f.root}/{path}': answer for path, answer in kit.contents_routes(
+            MAIN, kit.files('new', workflow='.github/workflows/other.yml')).items()})
+    elif defect == 'policy-contexts':  # the ruleset still requires coverage-floor; main's policy does not
+        f.api.update({f'{f.root}/{path}': answer for path, answer in kit.contents_routes(
+            MAIN, kit.files('new', required_contexts=['CI OK', 'merge-gate'])).items()})
     with pytest.raises(a.AdmissionError):
         r.live_proof(f.rt, f.packet)
     assert not f.rt.writes
@@ -187,7 +198,7 @@ def plan_registry(legacy, slots):
         assert runtime == rt and packet == f.packet and repo == snapshot and old == f.old
         assert live['checks'] == CHECKS
         observed.append('replay')
-        return dict(source={r.JUDGE: '3' * 40, 'scripts': '4' * 40}, evidence={'tested_commit': OLD_COMMIT})
+        return dict(source={kit.JUDGE: '3' * 40, 'scripts': '4' * 40}, evidence={'tested_commit': OLD_COMMIT})
 
     def append(archive, old, slots, additions):
         assert archive == source and old == rt.values[s.NAMES[0]] and len(slots) == 4
@@ -211,7 +222,7 @@ def test_actual_cli_main_only_binds_original_and_one_reviewed_append(original, m
     prepared = json.loads(capsys.readouterr().out)
     assert prepared['resulting_main']['original'] == f.packet['original']
     assert 'pr_update' not in prepared and observed == ['compose', 'replay'] and not rt.writes
-    if defect == 'prepared-drift': prepared['resulting_main']['original_replay']['source'][r.JUDGE] = '5' * 40
+    if defect == 'prepared-drift': prepared['resulting_main']['original_replay']['source'][kit.JUDGE] = '5' * 40
     elif defect == 'rule-after-prepare': f.rule['parameters']['strict_required_status_checks_policy'] = True
     elif defect == 'old-manifest': rt.values[s.NAMES[0]] = '{}'
     elif defect == 'stale-compose':
@@ -338,7 +349,8 @@ def test_protected_replay_adapter_uses_exact_step_logs_and_verified_artifacts(or
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     monkeypatch.setattr(sys, 'stdin', io.StringIO(a.canonical(dict(token='fixture-token', repository=f.rt.repo,
-                        original=f.packet['original'], plan=f.old, live=live, paths=paths)).decode()))
+                        original=f.packet['original'], plan=f.old, live=live, paths=paths,
+                        gate_checks=['coverage-floor', 'merge-gate'])).decode()))
     if defect in ('none', 'leading-bom'):
         module.main()
         proof = json.loads(capsys.readouterr().out)

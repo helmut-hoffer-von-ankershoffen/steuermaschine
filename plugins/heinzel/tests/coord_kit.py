@@ -50,9 +50,3 @@ def ok(data="") -> Result:
     return Result(0, data if isinstance(data, str) else json.dumps(data), "")
 
 
-@pytest.fixture
-def unreviewed(monkeypatch):
-    """The gate tests must not depend on the live review files: every write command's review is open in such a test."""
-    from steuermaschine.native import NativeCommand
-
-    monkeypatch.setattr(NativeCommand, "review_state", lambda self: ("open", f"reviews/{self.review_file} has no verdict yet"))

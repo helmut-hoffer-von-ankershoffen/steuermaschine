@@ -4,6 +4,7 @@ import sys
 
 import pytest
 from steuermaschine_heinzel import state as statedir
+from steuermaschine_heinzel.native.queue_lib import core_policy
 
 CORE = "helmut-hoffer-von-ankershoffen/heinzel"
 PLUGINS = "helmut-hoffer-von-ankershoffen/heinzel-plugins"
@@ -874,6 +875,15 @@ def test_later_main_first_attempt_descendant(tool, lib, monkeypatch, conclusion,
         return {'status': relationship}
     monkeypatch.setattr(lib, 'ghj', response)
     assert q.later_main_passes() is expected
+
+
+@pytest.fixture(autouse=True)
+def main_policy(monkeypatch):
+    """Core's release policy at main: its Test cells are those recovery_evidence runs (read by full_pass)."""
+    import policy_kit as kit
+
+    cells = frozenset(job["name"] for job in recovery_evidence()["jobs"]["jobs"]) - {"CI OK"}
+    monkeypatch.setattr(core_policy, "at_commit_api", lambda get, sha: kit.policy(commit=sha, test_jobs=cells))
 
 
 def recovery_evidence():

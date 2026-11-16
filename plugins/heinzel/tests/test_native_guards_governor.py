@@ -138,15 +138,6 @@ def cmd(monkeypatch, tmp_path):
     return build, load, conf
 
 
-def test_the_governor_tick_is_off_until_its_review_is_approved(cmd, monkeypatch):
-    from steuermaschine.native import NativeCommand
-
-    monkeypatch.setattr(NativeCommand, "review_state", lambda self: ("open", f"reviews/{self.review_file} has no verdict (test)"))  # whatever the shipped review files say
-    runtime, commands = cmd[0](reviewed=False)
-    off = invoke(runtime, ["daemon", "governor"])
-    assert off.exit_code == 70 and "daemon-governor.md" in off.stderr and commands.calls == []
-
-
 def test_one_governor_tick_makes_exactly_these_calls_in_this_order(cmd):
     build, _load, _ = cmd
     runtime, commands = build()

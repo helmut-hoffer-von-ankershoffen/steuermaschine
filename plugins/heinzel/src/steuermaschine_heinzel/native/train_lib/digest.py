@@ -4,6 +4,7 @@ import os
 import re
 import sys
 from datetime import datetime, timezone
+from ..queue_lib import core_facts
 
 REAL_BAD = ("FAILURE", "ACTION_REQUIRED", "TIMED_OUT")
 
@@ -14,7 +15,7 @@ def is_focused(name):
 
 
 def classify_pr(roll):
-    """ready | pending | deferred (mass-cancel plus aggregate 'CI OK' red: placeholder, not a code failure) | failing.
+    """ready | pending | deferred (mass-cancel plus the aggregate red: placeholder, not a code failure) | failing.
     hz-ci-one's dispatched `Focused ...` check runs attach to the head too; they are diagnostics and never count."""
     roll = [c for c in roll or [] if not is_focused(c.get("name"))]
     if not roll:
@@ -25,7 +26,7 @@ def classify_pr(roll):
     if not bad:
         return "ready", []
     cancelled = [c for c in roll if c.get("conclusion") == "CANCELLED"]
-    real = sorted({c["name"] for c in roll if c.get("conclusion") in REAL_BAD and c["name"] not in ("CI OK", "coverage-floor")})
+    real = sorted({c["name"] for c in roll if c.get("conclusion") in REAL_BAD and c["name"] not in (core_facts.aggregate(), *core_facts.api_checks())})
     if cancelled and not real:
         return "deferred", []
     return "failing", real or sorted(set(bad))

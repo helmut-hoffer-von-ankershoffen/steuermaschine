@@ -61,7 +61,8 @@ def main():
                if re.fullmatch(r'\[command\][^ ]*/git log -1 --format=%H', line)]
     gate.require(commits == [original['judge_source']], 'protected judge checkout source differs')
     bind_environment(logs['coverage'], dict(PR_HEAD_SHA=original['head'], PR_NUMBER=original['pr'], CI_RUN_ID=original['ci_run']))
-    bind_environment(logs['report'], dict(MERGE_GATE=live['checks']['merge-gate'], COVERAGE_FLOOR=live['checks']['coverage-floor']))
+    # The judge step names each posted check by its context in upper case (merge-gate -> MERGE_GATE).
+    bind_environment(logs['report'], {name.upper().replace('-', '_'): live['checks'][name] for name in request['gate_checks']})
     artifacts = {}
 
     def read(path):

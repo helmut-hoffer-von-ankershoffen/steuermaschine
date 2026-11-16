@@ -2,19 +2,19 @@
 the verify collection on a fake API, the recorder and the command line. No network, no git, no gh."""
 
 import base64
-import hashlib
 import io
 import json
 import zipfile
-from types import SimpleNamespace
 
+import policy_kit as kit
 import pytest
 
 from steuermaschine_heinzel.native.queue_lib import release_candidate as rc
 
 H, T, B, S = "1" * 40, "2" * 40, "3" * 40, "4" * 40
 V = "1.2.3"
-PINS = {rc.WORKFLOW: "a" * 64, rc.RECORDER: "b" * 64}
+PINS = {kit.WORKFLOW: "a" * 64, kit.RECORDER: "b" * 64}
+POLICY = kit.policy(commit=H)
 
 
 def make_pr(**over):
@@ -24,9 +24,9 @@ def make_pr(**over):
     return pr | over
 
 
-def jobs_for(event="pull_request", run_id=9):
+def jobs_for(event="pull_request", run_id=9, policy=POLICY):
     out = []
-    for i, (name, concl) in enumerate(rc.expected_jobs(event).items(), start=1):
+    for i, (name, concl) in enumerate(policy.expected_jobs(event).items(), start=1):
         job = {"id": i, "name": name, "run_id": run_id, "run_attempt": 1, "head_sha": H, "status": "completed", "conclusion": concl}
         if concl == "success":
             job |= {"runner_id": 4, "steps": [{"n": 1}]}
@@ -34,15 +34,15 @@ def jobs_for(event="pull_request", run_id=9):
     return out
 
 
-def evidence(event="pull_request", run_id=9):
-    run = {"id": run_id, "run_attempt": 1, "status": "completed", "conclusion": "success", "event": event, "path": rc.WORKFLOW,
+def evidence(event="pull_request", run_id=9, policy=POLICY):
+    run = {"id": run_id, "run_attempt": 1, "status": "completed", "conclusion": "success", "event": event, "path": kit.WORKFLOW,
            "head_sha": H, "head_branch": f"release/v{V}", "repository": {"full_name": rc.REPOSITORY},
            "head_repository": {"full_name": rc.REPOSITORY}, "created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T01:00:00+00:00"}
     pr_proof = event == "pull_request"
     proof = {"schema": 1, "repository": rc.REPOSITORY, "event": event, "run_id": run_id, "run_attempt": 1, "head": H, "tree": T,
              "version": V, "sources": PINS, "base": B, "source_commit": S if pr_proof else H, "pr": 5 if pr_proof else None}
     source = {"sha": proof["source_commit"], "commit": {"tree": {"sha": T}}, "parents": [{"sha": B}, {"sha": H}]}
-    return {"run": run, "jobs": jobs_for(event, run_id), "proof": proof, "pr": make_pr(), "source": source,
+    return {"run": run, "jobs": jobs_for(event, run_id, policy), "proof": proof, "pr": make_pr(), "source": source,
             "head": {"sha": H, "commit": {"tree": {"sha": T}}}}
 
 
@@ -59,20 +59,6 @@ def test_require_and_valid_sha_and_unique():
         rc.unique_object([("a", 1), ("a", 2)])
 
 
-def test_command(monkeypatch):
-    with pytest.raises(rc.CandidateError, match="unsupported"):
-        rc.command(["rm", "x"])
-    monkeypatch.setattr(rc.shutil, "which", lambda name: None)
-    with pytest.raises(rc.CandidateError, match="not installed"):
-        rc.command(["git", "x"])
-    seen = []
-    monkeypatch.setattr(rc.shutil, "which", lambda name: "/bin/" + name)
-    monkeypatch.setattr(rc.edge, "run", lambda argv, **k: seen.append(argv) or SimpleNamespace(stdout=b"out"))
-    assert rc.command(["gh", "api", "x"]) == b"out" and seen == [["/bin/gh", "api", "x"]]
-    monkeypatch.setattr(rc, "command", lambda argv: b" abc\n")
-    assert rc.git("rev-parse") == "abc"
-
-
 def test_release_version():
     f = rc.release_version
     assert f("pull_request", "other/repo", "", {}) is None
@@ -86,95 +72,25 @@ def test_release_version():
     assert f("push", rc.REPOSITORY, f"release/v{V}", {}) is None
 
 
-def test_dispatch_pull():
-    pr = make_pr()
-
-    def get(path):
-        return [pr]
-    assert rc.dispatch_pull(H, f"release/v{V}", get)["number"] == 5
-    with pytest.raises(rc.CandidateError, match="exact source head"):
-        rc.dispatch_pull("x", "r", get)
-    with pytest.raises(rc.CandidateError, match="may be truncated"):
-        rc.dispatch_pull(H, f"release/v{V}", lambda p: [pr] * 100)
-    with pytest.raises(rc.CandidateError, match="no unique"):
-        rc.dispatch_pull(H, "release/v9.9.9", get)
-
-
-def test_context_select_and_git(monkeypatch, tmp_path):
-    event = tmp_path / "event.json"
-    event.write_text(json.dumps({"pull_request": make_pr()}))
-    monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
-    monkeypatch.setenv("GITHUB_REPOSITORY", rc.REPOSITORY)
-    monkeypatch.setenv("GITHUB_REF_NAME", "x")
-    monkeypatch.setenv("GITHUB_EVENT_PATH", str(event))
-    assert rc.context()[0] == "pull_request"
-    assert rc.select_release() is True
-    event.write_text(json.dumps({"pull_request": make_pr(draft=True)}))
-    with pytest.raises(rc.CandidateError, match="open non-draft"):
-        rc.select_release()
-    event.write_text(json.dumps({"pull_request": make_pr(title="other")}))
-    assert rc.select_release() is False
-    monkeypatch.setenv("GITHUB_EVENT_NAME", "workflow_dispatch")
-    monkeypatch.setenv("GITHUB_REF_NAME", f"release/v{V}")
-    monkeypatch.setenv("GITHUB_SHA", H)
-    monkeypatch.setattr(rc, "command", lambda argv: json.dumps([make_pr()]).encode())
-    assert rc.select_release() is True
-
-
-def test_record(monkeypatch, tmp_path):
-    event = tmp_path / "event.json"
-    event.write_text(json.dumps({"pull_request": make_pr()}))
-    root = tmp_path / "repo"
-    (root / "scripts").mkdir(parents=True)
-    (root / ".github/workflows").mkdir(parents=True)
-    (root / "pyproject.toml").write_text(f'[project]\nversion = "{V}"\n')
-    (root / rc.WORKFLOW).write_text("w")
-    (root / rc.RECORDER).write_text("r")
-    for k, v in {"GITHUB_EVENT_NAME": "pull_request", "GITHUB_REPOSITORY": rc.REPOSITORY, "GITHUB_REF_NAME": "x",
-                 "GITHUB_EVENT_PATH": str(event), "GITHUB_SHA": S, "GITHUB_RUN_ID": "9", "GITHUB_RUN_ATTEMPT": "1"}.items():
-        monkeypatch.setenv(k, v)
-    answers = {("rev-parse", "HEAD"): S, ("rev-parse", "HEAD^{tree}"): T, ("rev-parse", f"{H}^{{tree}}"): T}
-    monkeypatch.setattr(rc, "git", lambda *args: answers.get(args, B))
-    proof = rc.record(root)
-    assert proof["pr"] == 5 and proof["sources"][rc.WORKFLOW] == hashlib.sha256(b"w").hexdigest() and proof["run_id"] == 9
-    answers[("rev-parse", f"{H}^{{tree}}")] = "5" * 40
-    with pytest.raises(rc.CandidateError, match="tested merge tree"):
-        rc.record(root)
-    answers[("rev-parse", f"{H}^{{tree}}")] = T
-    monkeypatch.setenv("GITHUB_SHA", "other")
-    with pytest.raises(rc.CandidateError, match="differs from the Actions event SHA"):
-        rc.record(root)
-    monkeypatch.setenv("GITHUB_SHA", S)
-    (root / "pyproject.toml").write_text('[project]\nversion = "9.9.9"\n')
-    with pytest.raises(rc.CandidateError, match="project version differs"):
-        rc.record(root)
-    (root / "pyproject.toml").write_text(f'[project]\nversion = "{V}"\n')
-    monkeypatch.setenv("GITHUB_EVENT_NAME", "workflow_dispatch")
-    monkeypatch.setenv("GITHUB_REF_NAME", f"release/v{V}")
-    monkeypatch.setenv("GITHUB_SHA", H)
-    answers[("rev-parse", "HEAD")] = H
-    out = rc.record(root)
-    assert out["pr"] is None and out["head"] == H
-    monkeypatch.setenv("GITHUB_REPOSITORY", "other/x")
-    with pytest.raises(rc.CandidateError, match="not an owner-repository"):
-        rc.record(root)
-
-
 def test_quarantine_lane():
     def lane(*names, concl="success", attempt=1):
         return [{"name": n, "run_id": 9, "run_attempt": attempt, "head_sha": H, "status": "completed", "conclusion": concl} for n in names]
     base = [{"name": "x"}]
-    assert rc.quarantine_lane(base, 9, H) == base
-    good = lane(rc.QUARANTINE_REGISTRY, rc.QUARANTINE_PLAN) + lane(*rc.QUARANTINE_RUNS, concl="failure")
-    assert rc.quarantine_lane(base + good, 9, H) == base
-    idle = lane(rc.QUARANTINE_REGISTRY, rc.QUARANTINE_PLAN) + lane(rc.QUARANTINE_IDLE, concl="skipped")
-    assert rc.quarantine_lane(base + idle, 9, H) == base
+    q = POLICY.quarantine  # the lane's job names are the policy's
+    assert rc.quarantine_lane(base, 9, H, POLICY) == base
+    good = lane(q.registry, q.plan) + lane(*q.runs, concl="failure")
+    assert rc.quarantine_lane(base + good, 9, H, POLICY) == base
+    idle = lane(q.registry, q.plan) + lane(q.idle, concl="skipped")
+    assert rc.quarantine_lane(base + idle, 9, H, POLICY) == base
     with pytest.raises(rc.CandidateError, match="missing, extra or duplicated"):
-        rc.quarantine_lane(lane(rc.QUARANTINE_REGISTRY), 9, H)
+        rc.quarantine_lane(lane(q.registry), 9, H, POLICY)
     with pytest.raises(rc.CandidateError, match="failed its registry check"):
-        rc.quarantine_lane(lane(rc.QUARANTINE_REGISTRY, concl="failure") + lane(rc.QUARANTINE_PLAN) + lane(*rc.QUARANTINE_RUNS), 9, H)
+        rc.quarantine_lane(lane(q.registry, concl="failure") + lane(q.plan) + lane(*q.runs), 9, H, POLICY)
     with pytest.raises(rc.CandidateError, match="failed its registry check"):
-        rc.quarantine_lane([*good], 8, H)
+        rc.quarantine_lane([*good], 8, H, POLICY)
+    renamed = kit.policy(commit=H, quarantine=POLICY.quarantine.__class__("R", "P", frozenset({"Q1"}), "I"))
+    assert rc.quarantine_lane(base + lane("R", "P", "Q1"), 9, H, renamed) == base
+    assert rc.quarantine_lane(base + good, 9, H, renamed) == base + good  # names of another policy are workload
 
 
 def test_job_inventory():
@@ -200,49 +116,73 @@ def test_job_inventory():
 
 def test_discover():
     run = {"id": 9, "head_sha": H, "run_attempt": 1}
-    assert rc.discover(lambda p: {"total_count": 1, "workflow_runs": [run]}, H) == 9
+    assert rc.discover(lambda p: {"total_count": 1, "workflow_runs": [run]}, H, POLICY) == 9
     with pytest.raises(rc.CandidateError, match="invalid release head"):
-        rc.discover(lambda p: {}, "x")
+        rc.discover(lambda p: {}, "x", POLICY)
     for data, msg in (([], "malformed"), ({"total_count": 0, "workflow_runs": []}, "changed or is empty"),
                       ({"total_count": 1, "workflow_runs": [run, run]}, "extra candidate"),
                       ({"total_count": 1, "workflow_runs": [dict(run, run_attempt=2)]}, "ambiguous"),
                       ({"total_count": 2, "workflow_runs": []}, "truncated")):
         with pytest.raises(rc.CandidateError, match=msg):
-            rc.discover(lambda p, d=data: d, H)
+            rc.discover(lambda p, d=data: d, H, POLICY)
     def two(p):
         return {"total_count": 2, "workflow_runs": [run]}
     with pytest.raises(rc.CandidateError, match="ambiguous"):
-        rc.discover(two, H)
+        rc.discover(two, H, POLICY)
     with pytest.raises(rc.CandidateError, match="exceeded bound"):
-        rc.discover(lambda p: {"total_count": 1000, "workflow_runs": [run]}, H)
+        rc.discover(lambda p: {"total_count": 1000, "workflow_runs": [run]}, H, POLICY)
 
 
 def test_source_bytes():
     blob = {"encoding": "base64", "type": "file", "content": base64.b64encode(b"hello world").decode()[:8] + "\n" + base64.b64encode(b"hello world").decode()[8:]}
-    assert rc.source_bytes(lambda p: blob, rc.WORKFLOW, S) == b"hello world"
+    assert rc.source_bytes(lambda p: blob, kit.WORKFLOW, S, PINS) == b"hello world"
     with pytest.raises(rc.CandidateError, match="invalid reviewed source request"):
-        rc.source_bytes(lambda p: blob, "other", S)
+        rc.source_bytes(lambda p: blob, "other", S, PINS)
     with pytest.raises(rc.CandidateError, match="source blob missing"):
-        rc.source_bytes(lambda p: {"encoding": "x"}, rc.WORKFLOW, S)
+        rc.source_bytes(lambda p: {"encoding": "x"}, kit.WORKFLOW, S, PINS)
 
 
-def broken(mutate, msg, event="pull_request", expected=EXPECTED, pins=PINS):
+def broken(mutate, msg, event="pull_request", expected=EXPECTED, policy=POLICY):
     data = evidence(event)
     mutate(data)
     with pytest.raises(rc.CandidateError, match=msg):
-        rc.validate(data, expected, pins)
+        rc.validate(data, expected, policy)
 
 
-def test_validate_accepts_both_events():
-    out = rc.validate(evidence(), EXPECTED, PINS)
-    assert out["job_count"] == len(rc.expected_jobs("pull_request")) and out["workflow_wall_seconds"] == 3600
-    out = rc.validate(evidence("workflow_dispatch"), EXPECTED, PINS)
-    assert out["event"] == "workflow_dispatch"
+@pytest.mark.parametrize(("shape", "tests", "jobs"), [("old", 16, 69), ("new", 4, 57)])
+def test_validate_accepts_both_events_in_both_ci_shapes(shape, tests, jobs):
+    policy = kit.policy(commit=H, shape=shape)
+    out = rc.validate(evidence(policy=policy), EXPECTED, policy)
+    assert out["job_count"] == len(policy.expected_jobs("pull_request")) == jobs and out["workflow_wall_seconds"] == 3600
+    assert len(policy.test_jobs) == tests and out["policy_commit"] == H
+    out = rc.validate(evidence("workflow_dispatch", policy=policy), EXPECTED, policy)
+    assert out["event"] == "workflow_dispatch" and out["job_count"] == jobs
+
+
+def test_the_commit_binds_the_sources_no_checksum_is_compared():
+    """The proof's recorded digests are not compared with anything: the reviewed head and its tree bind the sources."""
+    assert rc.validate(evidence(), EXPECTED, POLICY)["policy_commit"] == H
+    data = evidence()
+    data["proof"]["sources"] = {"anything": "else"}
+    assert rc.validate(data, EXPECTED, POLICY)["run_id"] == 9
+    broken(lambda d: d["source"]["commit"]["tree"].update(sha="9" * 40), "tested checkout tree differs")
+    broken(lambda d: None, "not the release head's", policy=kit.policy(commit="9" * 40))
+    broken(lambda d: None, "not the release head's", policy=kit.policy(commit=H, repository="x/y"))
+
+
+def test_validate_refuses_a_candidate_of_another_ci_shape():
+    """The inventory is the policy's: a run of the old shape does not pass the new shape's policy, nor the reverse."""
+    old, new = (kit.policy(commit=H, shape=shape) for shape in ("old", "new"))
+    with pytest.raises(rc.CandidateError, match="short-matrix"):
+        rc.validate(evidence(policy=old), EXPECTED, new)
+    with pytest.raises(rc.CandidateError, match="short-matrix"):
+        rc.validate(evidence(policy=new), EXPECTED, old)
 
 
 def test_validate_refusals():
     broken(lambda d: None, "invalid expected head", expected=rc.ExpectedCandidate(9, 5, "x", T))
-    broken(lambda d: None, "missing reviewed CI source pins", pins={rc.WORKFLOW: "a" * 64})
+    broken(lambda d: None, "wrong candidate repository", policy=kit.policy(
+        commit=H, workflow=".github/workflows/other.yml"))
     broken(lambda d: d["run"].update(run_attempt=2), "original attempt")
     broken(lambda d: d["run"].update(path="x"), "wrong candidate repository")
     broken(lambda d: d["run"].update(conclusion="failure"), "not completed successfully")
@@ -267,9 +207,7 @@ def test_validate_refusals():
 def verify_world(mutate=None):
     ev = evidence()
     proof = ev["proof"]
-    sources = {rc.WORKFLOW: b"wf", rc.RECORDER: b"rec"}
-    pins = {k: hashlib.sha256(v).hexdigest() for k, v in sources.items()}
-    proof["sources"] = pins
+    pins = kit.policy(commit=H)
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as z:
         z.writestr(rc.PROOF_FILE, json.dumps(proof))
@@ -279,8 +217,6 @@ def verify_world(mutate=None):
                  {"name": rc.ARTIFACT, "expired": False, "id": 3, "workflow_run": {"id": 9, "head_sha": H}}]}}
     jobs = ev["jobs"]
     table["actions/runs/9/attempts/1/jobs?per_page=100&page=1"] = {"total_count": len(jobs), "jobs": jobs}
-    for path, content in sources.items():
-        table[f"contents/{path}?ref={S}"] = {"encoding": "base64", "type": "file", "content": base64.b64encode(content).decode()}
     if mutate:
         mutate(table)
     return table, (lambda p: table[p]), (lambda i: archive), pins
@@ -318,8 +254,6 @@ def test_verify_refusals():
         z.writestr(rc.PROOF_FILE, json.dumps({"source_commit": "x"}))
     with pytest.raises(rc.CandidateError, match="malformed candidate source identities"):
         rc.verify(get, lambda i: buf.getvalue(), EXPECTED, pins)
-    with pytest.raises(rc.CandidateError, match="differs from independent review"):
-        rc.verify(get, download, EXPECTED, {rc.WORKFLOW: "0" * 64, rc.RECORDER: "1" * 64})
     flips = iter([0, 1])
     real = dict(table)
     def changing(path):
@@ -328,27 +262,3 @@ def test_verify_refusals():
         return real[path]
     with pytest.raises(rc.CandidateError, match="changed during evidence"):
         rc.verify(changing, download, EXPECTED, pins)
-
-
-def test_main_cli(monkeypatch, tmp_path, capsys):
-    out = tmp_path / "out" / "o.txt"
-    out.parent.mkdir()
-    monkeypatch.setattr(rc, "select_release", lambda: True)
-    monkeypatch.setattr(rc.sys, "argv", ["rc", "select", "--output", str(out)])
-    assert rc.main() == 0 and out.read_text() == "full_release=true\n"
-    monkeypatch.setattr(rc, "verify", lambda get, dl, exp, pins: {"ok": exp.run_id})
-    monkeypatch.setattr(rc, "command", lambda argv: b'{"a": 1}')
-    monkeypatch.setattr(rc.sys, "argv", ["rc", "verify", "--run-id", "9", "--pr", "5", "--head", H, "--tree", T,
-                                          "--workflow-sha256", "a" * 64, "--recorder-sha256", "b" * 64])
-    assert rc.main() == 0 and '"ok": 9' in capsys.readouterr().out
-    seen = {}
-    def fake_verify(get, dl, exp, pins):
-        seen["get"], seen["dl"] = get("x"), dl(3)
-        return {}
-    monkeypatch.setattr(rc, "verify", fake_verify)
-    rc.main()
-    assert seen == {"get": {"a": 1}, "dl": b'{"a": 1}'}
-    monkeypatch.setattr(rc, "record", lambda root: {"p": 1})
-    target = tmp_path / "rec" / "p.json"
-    monkeypatch.setattr(rc.sys, "argv", ["rc", "record", "--output", str(target)])
-    assert rc.main() == 0 and json.loads(target.read_text()) == {"p": 1}

@@ -1,12 +1,11 @@
 """`sm doc handoff` and `sm doc hour`, and the core's digest. git and gh are the fake process runner's: no test
 commits or pushes anything."""
-# ruff: noqa: F811  (a fixture imported from coord_kit is also a test parameter)
 
 import json
 import os
 
 import typer
-from coord_kit import NOW, app_runtime, ok, unreviewed  # noqa: F401  (fixtures)
+from coord_kit import NOW, app_runtime, ok
 
 from steuermaschine import digest
 from steuermaschine.engine import Refuse, Wait
@@ -128,13 +127,6 @@ def test_a_failed_step_after_the_checks_stops_the_handoff_and_names_the_step(tmp
         assert done.exit_code == 1 and f"fatal: {step} refused" in done.stderr and later not in verbs(c)
 
 
-def test_handoff_and_hour_are_off_until_reviewed(tmp_path, unreviewed):
-    for args, name in ((["doc", "handoff"], "doc-handoff.md"), (["doc", "hour", "--no-handoff"], "doc-hour.md")):
-        c, repo = world(tmp_path)
-        done = invoke(rt_of(tmp_path, c, repo, allow=False), args)
-        assert done.exit_code == 70 and f"reviews/{name}" in done.stderr and not c.calls
-
-
 def test_hour_without_handoff_gathers_facts_drafts_and_writes_nothing(tmp_path):
     c, repo = world(tmp_path)
     done = invoke(rt_of(tmp_path, c, repo, hour_facts=["doc asks", "ci nothing-here", "note", "doc velocity-record"]), ["doc", "hour", "--no-handoff"])
@@ -219,9 +211,11 @@ def test_digest_calls_read_only_commands_with_their_defaults_and_survives_each_f
 
 
 def test_hour_and_handoff_units_do_not_pull_in_the_plugins_whole_registry():
+    from steuermaschine.reviewgraph import reach
     from steuermaschine_heinzel.native import handoff
 
-    for fn in (handoff.doc_hour, handoff.doc_handoff):
-        labels = fn.__sm_native__.labels()
-        assert "__init__.py" not in labels and "queue.py" not in labels and "tick.py" not in labels, labels  # a plugin change elsewhere keeps the verdict
-        assert "handoff.py" in labels and "handoff_lib/hour.py" in labels
+    area = "steuermaschine_heinzel/native/"
+    for found in reach([handoff.doc_hour.__sm_native__, handoff.doc_handoff.__sm_native__]):
+        files = set(found.files)
+        assert not {area + "__init__.py", area + "queue.py", area + "tick.py"} & files, found.path  # a change elsewhere in the plugin does not reach them
+        assert {area + "handoff.py", area + "handoff_lib/hour.py"} <= files

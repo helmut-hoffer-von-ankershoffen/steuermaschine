@@ -235,17 +235,10 @@ def test_prepare_stores_transaction_and_arguments(tmp_path, monkeypatch):
 
 
 # ----------------------------------------------------------------------------- the commands
-def test_both_commands_are_write_commands_under_one_review_file_and_unavailable_without_a_verdict(tmp_path, monkeypatch):
-    from steuermaschine.native import NativeCommand
-
-    monkeypatch.setattr(NativeCommand, "review_state", lambda self: ("missing", f"reviews/{self.review_file} is missing"))
+def test_both_commands_are_write_commands_with_help(tmp_path):
     reg = {c.path: c for c in native.commands() if hasattr(c, "writes")}
     for path in ("release admit prepare", "release admit apply"):
-        assert reg[path].writes and reg[path].review_file == "release-admit-apply.md"
-    done = invoke(runtime(), ["release", "admit", "apply", str(tmp_path / "p.json"), "--approved", "0" * 64])
-    assert done.exit_code == 70 and "release-admit-apply.md" in (done.stdout + done.stderr)
-    done = invoke(runtime(), ["release", "admit", "prepare", str(tmp_path / "p.json"), "--core-repo", str(tmp_path), "--review-root", str(tmp_path)])
-    assert done.exit_code == 70
+        assert reg[path].writes
     for path in (["release", "admit", "prepare"], ["release", "admit", "apply"]):
         text = invoke(runtime(), [*path, "--help"]).stdout
         assert "Changes:" in text and "Example: sm release admit" in text

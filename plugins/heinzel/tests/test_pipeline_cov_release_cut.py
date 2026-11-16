@@ -23,7 +23,7 @@ from steuermaschine.testing.fakes import FakeVcs
 from steuermaschine_heinzel.native import release
 from steuermaschine_heinzel.native.admission_lib.ops import canonical_sha256
 from steuermaschine_heinzel.native.release import ReleaseRun
-from steuermaschine_heinzel.native.release_read import ReleasePins, ReleaseVerify, SurfaceCheck
+from steuermaschine_heinzel.native.release_read import ReleaseVerify, SurfaceCheck
 from steuermaschine_heinzel.native.ship import HeadResult
 from steuermaschine_heinzel.pipelines import common, release_cut
 from steuermaschine_heinzel.plugin import plugin
@@ -36,6 +36,17 @@ OTHER_MAIN = "bb56886" + "1" * 33
 class BrokenRemote(FakeVcs):
     def remote_head(self, worktree: str, branch: str) -> str | None:
         raise RuntimeError("git ls-remote: timed out")
+
+
+@pytest.fixture(autouse=True)
+def judged_release(monkeypatch):
+    """Every step that acts on the release commit judges it for CI changes; by default the packet names HEAD and no
+    CI path changed. The gate's own tests below replace these."""
+    monkeypatch.setattr(release_cut, "changes_since_release", lambda core, head: ("7" * 40, ()))
+    monkeypatch.setattr(release_cut, "_same_commit", lambda ctx: HEAD)
+
+
+REAL = {name: getattr(release_cut, name) for name in ("changes_since_release", "_same_commit")}
 
 
 @pytest.fixture(autouse=True)
@@ -91,16 +102,125 @@ def test_identify_refuses_when_main_cannot_be_read_exactly_and_binds_main_otherw
     assert subject.facts == {"version": "0.9.41", "main": MAIN, "core": str(tmp_path)}
 
 
-# ----------------------------------------------------------------------------- pins and notes
-def test_pins_that_differ_from_the_reviewed_files_refuse_the_cut(tmp_path):
+# ----------------------------------------------------------------------------- the CI-change gate
+TAG = "7" * 40
+
+
+def gate(rt, monkeypatch, changes, tmp_path):
+    monkeypatch.setattr(release_cut, "changes_since_release", lambda core, head: (TAG, changes))
+    return context(rt, {"clone": str(tmp_path / "clone")})
+
+
+def record(rt, kind):
+    from steuermaschine import verdicts
+
+    data = {"digest": HEAD, "verdict": "approve", "reviewer": "reviewer-fable", "model": "m", "notes": "ci.yml read", "at": 0}
+    rt.providers.store.put_receipt("verdicts", HEAD, data | ({"kind": kind} if kind else {}))
+    return verdicts
+
+
+def test_a_release_without_ci_changes_needs_no_ci_change_verdict(tmp_path, monkeypatch):
     rt = runtime(tmp_path)
-    common.OVERRIDE["release pins"] = lambda **kw: HeadResult(action="pins", target=kw["ref"], verdict="failed", lines=["ci.yml differs"], exit=1)
-    with native(rt), pytest.raises(Refuse, match=r"the release pins differ from the reviewed files: sm release pins exit 1: ci.yml differs") as no:
-        release_cut.pins(context(rt))
-    assert no.value.next_cmd == "sm release pins origin/main"
-    common.OVERRIDE["release pins"] = lambda **kw: ReleasePins(ref=kw["ref"], source="approved_sources", pins=[])
     with native(rt):
-        assert release_cut.pins(context(rt)) == "0 pins match the reviewed files"
+        assert release_cut.ci_change(gate(rt, monkeypatch, (), tmp_path)) == f"no CI path changed since {TAG[:12]}: no ci_change verdict needed"
+
+
+def test_a_ci_change_without_a_verdict_refuses_and_names_the_command(tmp_path, monkeypatch):
+    rt = runtime(tmp_path)
+    with native(rt), pytest.raises(Refuse, match=f"no verdict is recorded for {HEAD}") as no:
+        release_cut.ci_change(gate(rt, monkeypatch, (".github/workflows/ci.yml: CI path",), tmp_path))
+    assert no.value.next_cmd.startswith(f"sm review verdict {HEAD} --approve --kind ci_change --reviewer NAME --model M --notes")
+    assert ".github/workflows/ci.yml" in no.value.next_cmd
+    assert rt.providers.store.load("review.digests", HEAD)["sources"] == ["release ci_change"]  # reviewable now
+
+
+def test_a_plain_verdict_does_not_cover_a_ci_change(tmp_path, monkeypatch):
+    rt = runtime(tmp_path)
+    record(rt, "")
+    with native(rt), pytest.raises(Refuse, match="is not a ci_change verdict"):
+        release_cut.ci_change(gate(rt, monkeypatch, ("scripts/x.py: CI path",), tmp_path))
+
+
+def test_a_ci_change_verdict_on_the_release_commit_passes(tmp_path, monkeypatch):
+    rt = runtime(tmp_path)
+    record(rt, "ci_change")
+    with native(rt):
+        found = release_cut.ci_change(gate(rt, monkeypatch, ("scripts/x.py: CI path", "a.py: CI path"), tmp_path))
+    assert found == f"2 CI change(s) since {TAG[:12]}: ci_change verdict for {HEAD[:12]} recorded"
+
+
+def test_unreadable_rules_count_as_a_ci_change_and_no_head_refuses(tmp_path, monkeypatch):
+    rt = runtime(tmp_path)
+    monkeypatch.setattr(release_cut, "_last_tag", lambda core, head: TAG)
+    base, changes = REAL["changes_since_release"](str(tmp_path / "nowhere"), HEAD)
+    assert base == TAG and "is not an ancestor" in changes[0]  # the clone is unreadable: fail closed
+    monkeypatch.undo()
+    with pytest.raises(Refuse, match="cannot read the published release tags"):
+        release_cut._last_tag(str(tmp_path / "nowhere"), HEAD)
+    with native(rt), pytest.raises(Refuse, match="no exact head"):
+        ctx = context(rt, {"clone": str(tmp_path / "clone")})
+        monkeypatch.setattr(rt.providers.vcs, "head", lambda worktree: "")
+        release_cut.ci_change(ctx)
+
+
+def test_a_remade_release_commit_is_judged_again(tmp_path, monkeypatch):
+    """The step is done for commit A; the clone moves to B on the same main: every later step judges B again."""
+    rt = runtime(tmp_path)
+    other = "f" * 40
+    monkeypatch.setattr(release_cut, "_same_commit", REAL["_same_commit"])
+    monkeypatch.setattr(release_cut, "changes_since_release", lambda core, head: (TAG, ("scripts/x.py: CI path",)))
+    record(rt, "ci_change")  # a ci_change verdict on HEAD (commit A) only
+    ctx = context(rt, {"clone": str(tmp_path / "clone")})
+    with native(rt):
+        assert "ci_change verdict for " + HEAD[:12] in release_cut.ci_change(ctx)
+        assert ctx.data["ci_change_head"] == HEAD
+        assert "recorded" in release_cut.judged(ctx, HEAD)  # the same commit: not judged twice
+        with pytest.raises(Refuse, match=f"no verdict is recorded for {other}"):
+            release_cut.judged(ctx, other)
+        monkeypatch.setattr(release_cut, "_packet_head", lambda ctx: HEAD)
+        monkeypatch.setattr(rt.providers.vcs, "head", lambda worktree: other)
+        with pytest.raises(Refuse, match="moved to ffffffffffff since the packet named"):
+            release_cut._same_commit(ctx)
+        monkeypatch.setattr(release_cut, "_packet_head", lambda ctx: other)
+        for step in (release_cut._same_commit, release_cut.admit_prepare, release_cut.admit_apply, release_cut.resume):
+            with pytest.raises(Refuse, match=f"no verdict is recorded for {other}"):
+                step(ctx)
+
+
+def _git(repo, *args):
+    import os
+    import subprocess
+
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")} | {
+        "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.invalid", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.invalid"}
+    return subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True, text=True, env=env).stdout.strip()
+
+
+def test_the_base_is_the_newest_published_release_never_a_local_tag(tmp_path):
+    import policy_kit as kit
+
+    remote = tmp_path / "remote.git"
+    _git(tmp_path, "init", "-q", "--bare", str(remote))
+    repo, first = kit.git_repo(tmp_path / "core", {"a": b"1"})
+    _git(repo, "remote", "add", "origin", str(remote))
+    _git(repo, "tag", "-a", "v0.9.9", "-m", "published", first)  # annotated: the peeled commit counts
+    _git(repo, "push", "-q", "origin", "HEAD:refs/heads/main", "refs/tags/v0.9.9")
+    _git(repo, "commit", "-q", "--allow-empty", "-m", "next")
+    _git(repo, "tag", "v0.9.10")  # local only, never published, nearer the head
+    _git(repo, "commit", "-q", "--allow-empty", "-m", "release")
+    head = _git(repo, "rev-parse", "HEAD")
+    assert release_cut._last_tag(str(repo), head) == first
+    _git(repo, "checkout", "-q", "--orphan", "side")
+    _git(repo, "commit", "-q", "--allow-empty", "-m", "elsewhere")
+    _git(repo, "tag", "v1.0.0")
+    _git(repo, "push", "-q", "origin", "refs/tags/v1.0.0")  # the newest published release is not an ancestor
+    with pytest.raises(Refuse, match=r"newest published release v1\.0\.0 .* is not an ancestor"):
+        release_cut._last_tag(str(repo), head)
+    empty = tmp_path / "empty.git"
+    _git(tmp_path, "init", "-q", "--bare", str(empty))
+    _git(repo, "remote", "set-url", "origin", str(empty))
+    with pytest.raises(Refuse, match="no published release tag"):
+        release_cut._last_tag(str(repo), head)
 
 
 # ----------------------------------------------------------------------------- admission
@@ -255,16 +375,16 @@ def test_run_without_an_override_calls_the_registered_command(tmp_path):
 
 
 @pytest.mark.parametrize("exit_code, lines, kind, text, code", [
-    (75, ["the run lock is held"], Wait, "sm release pins: the run lock is held", None),
-    (75, [], Wait, "sm release pins: waiting", None),
-    (2, ["  ", "no such ref"], Refuse, "sm release pins exit 2: no such ref", 2),
-    (4, [], Refuse, "sm release pins exit 4: no detail", 4),
+    (75, ["the run lock is held"], Wait, "sm release notes-audit: the run lock is held", None),
+    (75, [], Wait, "sm release notes-audit: waiting", None),
+    (2, ["  ", "no such ref"], Refuse, "sm release notes-audit exit 2: no such ref", 2),
+    (4, [], Refuse, "sm release notes-audit exit 4: no detail", 4),
 ])
 def test_ok_turns_an_exit_code_into_a_wait_or_a_refusal(tmp_path, exit_code, lines, kind, text, code):
     rt = runtime(tmp_path)
-    common.OVERRIDE["release pins"] = lambda **kw: HeadResult(action="pins", target="x", verdict="failed", lines=lines, exit=exit_code)
+    common.OVERRIDE["release notes-audit"] = lambda **kw: HeadResult(action="notes", target="x", verdict="failed", lines=lines, exit=exit_code)
     with native(rt), pytest.raises(kind, match=text) as caught:
-        common.ok("release pins", ref="origin/main")
+        common.ok("release notes-audit", base="origin/main")
     if code is not None:
         assert caught.value.code == code
 

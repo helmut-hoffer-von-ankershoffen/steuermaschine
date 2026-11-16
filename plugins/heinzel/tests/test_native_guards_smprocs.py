@@ -85,7 +85,7 @@ def live(tmp_path_factory):
     sleeper.chmod(0o755)
     project = tmp / "project"
     project.mkdir()
-    (project / "steuermaschine.toml").write_text('[project]\nname = "guards-shapes"\nplugin = "heinzel"\n\n[heinzel]\nlock_extra_slot_load = 1000.0\n')
+    (project / "steuermaschine.toml").write_text('[project]\nname = "guards-shapes"\nplugin = "heinzel"\n\n[heinzel]\nlock_extra_slot_load = 1000.0\nlock_start_load = 0.0\n')
     stable = tmp / "stable"
     (stable / "releases" / "r1").mkdir(parents=True)
     (stable / "releases" / "r1" / "venv").symlink_to(VENV_BIN.parent)

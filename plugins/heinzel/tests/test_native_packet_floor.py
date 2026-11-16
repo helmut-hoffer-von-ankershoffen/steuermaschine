@@ -13,7 +13,8 @@ def facts(**kw):
             "head": HEAD, "main": MAIN, "protected": PROTECTED, "base_is_ancestor": True,
             "blobs": {p: "1" * 40 for p in PROTECTED},
             "plan": {"head": HEAD, "base": MAIN, "production": {"src/heinzel/x.py": "2" * 40}, "selection": {"python": ["tests/x_test.py"], "web": ["web/a.test.ts"]}, "execution": {p: "1" * 40 for p in PROTECTED}},
-            "checks": [{"name": "Focused tests (python)", "conclusion": "success"}, {"name": "Focused tests (web)", "conclusion": "success"}, {"name": "Coverage", "conclusion": "skipped"}]}
+            "checks": [{"name": "Focused tests (python)", "conclusion": "success"}, {"name": "Focused tests (web)", "conclusion": "success"}, {"name": "Coverage", "conclusion": "skipped"}],
+            "gate_checks": ["coverage-floor", "merge-gate"], "focused_job": "Focused tests ({lane})"}  # Core's policy at main
     base.update(kw)
     return base
 
@@ -107,3 +108,10 @@ def test_gather_with_fakes_makes_no_network_call(tool):
     three = lambda *args: (*decode(*args), "web/ALL")
     assert check.gather("feat/x", "/core", "o/r", "origin/main", git, gh, three)["vitest_all"] == "web/ALL"
 
+
+
+def test_without_core_policy_the_floor_refuses(tool):
+    check = tool("floor_check")
+    assert any("no reviewed release policy" in r for r in check.evaluate(facts(gate_checks=None)))
+    assert any("merge-gate check on the head failed" in r
+               for r in check.evaluate(facts(checks=facts()["checks"] + [{"name": "merge-gate", "conclusion": "failure"}])))

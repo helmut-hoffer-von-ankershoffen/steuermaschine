@@ -41,7 +41,6 @@ def current() -> dict[str, set[str]]:
         "process starts": {key(f) for f in lint.script_calls(package, {r.tool for r in ROWS}, old_dir="heinzel-management/tools") if not f.startswith("toolmap.py")},
         "path defaults": defaults,
         "read commands that reach a write": {f"{c.path}: {hit}" for c in commands if not c.writes for hit in lint.write_reach(c)},
-        "review units with gaps": {gap for c in commands if c.writes for gap in lint.review_unit_gaps(c)},
     }
 
 

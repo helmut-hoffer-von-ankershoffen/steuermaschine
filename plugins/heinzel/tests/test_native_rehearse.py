@@ -243,17 +243,6 @@ def test_status_in_text_and_json_and_exit_1_when_the_last_verdict_is_red(rt, wor
     assert invoke(rt(), ["release", "rehearse", "status"]).exit_code == 0 and rehearse.open_rehearsal(rt.store)["main"] == MAIN
 
 
-def test_write_commands_are_off_until_their_review_is_approved(rt, world, monkeypatch):
-    from steuermaschine.native import NativeCommand
-
-    monkeypatch.setattr(NativeCommand, "review_state", lambda self: ("open", f"reviews/{self.review_file} has no verdict"))
-    for argv in (["release", "rehearse", "start"], ["release", "rehearse", "step"], ["release", "rehearse", "consumers"], ["release", "rehearse", "cancel"],
-                 ["daemon", "rehearse"]):
-        off = invoke(rt(reviewed=False), argv)
-        assert off.exit_code == 70 and "writes and its independent review is open" in off.stderr and "nothing was run" in off.stderr, argv
-    assert world.calls == [] and world.local == [] and state(rt) == {}
-
-
 # ----------------------------------------------------------------------------- start, step, cancel: the exact calls
 def test_start_then_step_make_exactly_these_external_calls_in_this_order(rt, world, tmp_path):
     queue(tmp_path, ("393", "merged"))
@@ -602,9 +591,11 @@ def test_every_command_has_help_in_contract_form_and_names_no_former_tool(world)
                                                                  "release rehearse start", "release rehearse status", "release rehearse step"]
     for command in found:
         assert missing(command.help) == "" and "hz-" not in command.help and "hz_" not in command.help, command.path
-    writes = {c.path: c.review_file for c in found if getattr(c, "writes", False)}
-    assert set(writes) == {"daemon rehearse", "release rehearse cancel", "release rehearse consumers", "release rehearse start", "release rehearse step"}
-    assert set(writes.values()) == {"release-rehearse-start.md"}  # one review, one unit
-    units = [{f.name for f in c.code_files()} for c in found if getattr(c, "writes", False)]
+    from steuermaschine.reviewgraph import reach
+
+    writes = [c for c in found if getattr(c, "writes", False)]
+    assert {c.path for c in writes} == {"daemon rehearse", "release rehearse cancel", "release rehearse consumers", "release rehearse start", "release rehearse step"}
+    units = [{name.rsplit("/", 1)[-1] for name in unit.files} for unit in reach(writes)]
+    assert len(units) == len(writes)
     assert all({"rehearse.py", "rehearsal.py", "focused.py", "rules.py", "dispatch.py", "lock.py", "refuse.py"} <= unit for unit in units)
     assert next(c for c in found if c.path == "daemon rehearse").tick

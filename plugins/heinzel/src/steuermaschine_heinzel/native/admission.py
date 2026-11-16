@@ -51,7 +51,6 @@ def require_verdict(digest: str) -> None:
 
 
 ERRORS = (_a.AdmissionError, OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError)
-REVIEW = "head-apply.md"
 RECEIPTS_HINT = "reviewed receipts for such runs: --nonconsumers FILE or the setting admission_nonconsumers_file"
 
 
@@ -122,6 +121,21 @@ def head_blockers(
 ) -> ops.BlockersResult:
     try:
         return ops.blockers(core_repo, _nonconsumers(nonconsumers))
+    except ERRORS as error:
+        _refuse(error)
+
+
+@native("head nonconsumers", writes=False, help=H(
+    "Generate candidate stuck-queued receipts for the current active run inventory.",
+    "Use when active runs block admission; independently review the JSON before using it.",
+    "nothing (read-only); no cancel probe is sent.",
+    "sm head nonconsumers --core-repo WORKTREE --format json",
+    "Review the receipts, then pass the JSON file to sm head prepare --nonconsumers FILE; apply revalidates them."))
+def head_nonconsumers(
+    core_repo: Path = typer.Option(..., "--core-repo", help="The owned Core checkout."),
+) -> ops.NonconsumerResult:
+    try:
+        return ops.nonconsumer_receipts(core_repo)
     except ERRORS as error:
         _refuse(error)
 
@@ -200,7 +214,7 @@ def _prepare(packet: Path | None, core_repo: Path | None, review_root: Path, pr:
         _refuse(error, core_repo or (core_repos[0] if core_repos else None), nonconsumers)
 
 
-@native("head apply", writes=True, review=REVIEW, replaces=("hz-focused-admit",), help=H(
+@native("head apply", writes=True, replaces=("hz-focused-admit",), help=H(
     "Apply one approved prepared transaction: the single registry slot write, with receipt.",
     "Use after an independent reviewer approved the sha256 of prepare.out.",
     "one repository variable (a focused plan slot); pauses and restores the merge queue; writes a receipt.",

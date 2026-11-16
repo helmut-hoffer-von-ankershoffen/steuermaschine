@@ -10,9 +10,10 @@ from collections import Counter, defaultdict
 from collections.abc import Callable
 from typing import Any
 
+from ..queue_lib import core_facts
+
 MAIN_EVENTS = {"push", "schedule", "workflow_dispatch"}
 FAILED = ("failure", "timed_out", "startup_failure")
-AGGREGATE = "CI OK"  # the aggregate gate repeats the real failures
 
 Run = dict[str, Any]
 
@@ -54,7 +55,7 @@ def tally(runs: list[Run], details: dict[tuple[int, int], dict[str, Any]]) -> tu
             continue
         for attempt in attempts_to_read(run):
             data = details.get((run["databaseId"], attempt), {})
-            jobs.update(j for j in data.get("jobs", []) if j != AGGREGATE)
+            jobs.update(j for j in data.get("jobs", []) if j != core_facts.aggregate())
             tests.update(data.get("tests", []))
     return jobs, tests
 
@@ -82,7 +83,7 @@ def macos_suite(name: str) -> bool:
 def wanted_attempts(runs: list[Run], all_jobs: dict[int, list[dict[str, str]]]) -> list[tuple[int, int]]:
     """The attempts whose failing jobs and tests `group` reads: every replaced attempt, and the last one when a job is red."""
     return sorted({(r["databaseId"], a) for r in runs for a in range(1, r["attempt"] + 1)
-                   if a < r["attempt"] or any(j["conclusion"] in FAILED and j["name"] != AGGREGATE for j in all_jobs[r["databaseId"]])})
+                   if a < r["attempt"] or any(j["conclusion"] in FAILED and j["name"] != core_facts.aggregate() for j in all_jobs[r["databaseId"]])})
 
 
 def group(runs: list[Run], jobs_of: Callable[[int], list[dict[str, str]]], attempt_of: Callable[[int, int], dict[str, Any]], bar: int = 3) -> dict[str, Any]:
@@ -95,12 +96,12 @@ def group(runs: list[Run], jobs_of: Callable[[int], list[dict[str, str]]], attem
     streak_count, not_full, broken = 0, 0, bool(unknown)
     for run in runs:
         jobs = jobs_of(run["databaseId"])
-        red = {j["name"] for j in jobs if j["conclusion"] in FAILED and j["name"] != AGGREGATE}
+        red = {j["name"] for j in jobs if j["conclusion"] in FAILED and j["name"] != core_facts.aggregate()}
         run_tests: set[str] = set()
         run_failing = set(red)
         for attempt in range(1, run["attempt"]):  # attempts a rerun replaced
             data = attempt_of(run["databaseId"], attempt)
-            run_failing |= set(data.get("jobs", [])) - {AGGREGATE}
+            run_failing |= set(data.get("jobs", [])) - {core_facts.aggregate()}
             run_tests |= set(data.get("tests", []))
         if red:
             run_tests |= set(attempt_of(run["databaseId"], run["attempt"]).get("tests", []))

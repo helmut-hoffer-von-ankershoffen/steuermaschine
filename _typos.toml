@@ -1,5 +1,5 @@
 [files]
-extend-exclude = ["plugins/*/tests/fixtures/**", "plugins/*/src/*/native/*_lib/**", "plugins/*/src/*/parity/**", "plugins/*/src/*/reviews/**"]  # recorded data and verbatim-moved code
+extend-exclude = ["plugins/*/tests/fixtures/**", "plugins/*/src/*/native/*_lib/**"]  # recorded data and verbatim-moved code
 
 [default.extend-words]
 wrold = "wrold"  # a deliberate typo in a test of unknown settings

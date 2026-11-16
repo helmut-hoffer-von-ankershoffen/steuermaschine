@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 from . import digest as d  # moved: the definitions of the digest module this table needs
 from . import edge  # moved: records, processes and what used to be separate scripts
 from ... import state as statedir  # the plugin's state paths
+from ..queue_lib import core_facts
 R = "helmut-hoffer-von-ankershoffen/heinzel"
 LIST = "research/release-a.txt"  # moved: in the records checkout (edge.records_dir()); one PR number per word; '#' starts a comment line
 
@@ -58,7 +59,7 @@ def plan_row(info, queue, now, known=()):
     ms = info.get("mergeStateStatus", "?")
     q = queue.get(str(n))
     state = "DRAFT" if info.get("isDraft") else ("QUEUED" if q == "queued" else ("NEEDS-WORK" if q == "needs work" else "OPEN"))
-    red = sorted({c["name"] for c in roll if c.get("conclusion") in d.REAL_BAD and not d.is_focused(c.get("name")) and c["name"] not in ("CI OK", "coverage-floor")})
+    red = sorted({c["name"] for c in roll if c.get("conclusion") in d.REAL_BAD and not d.is_focused(c.get("name")) and c["name"] not in (core_facts.aggregate(), *core_facts.api_checks())})
     ci = {"ready": "green", "pending": "pending", "deferred": "deferred"}.get(cls, "FAIL " + ",".join(real)[:40])
     if cls == "pending" and red:  # red while still running: act now, do not wait for the rest
         ci = f"pending, RED {len(red)}: " + ",".join(red)[:30]

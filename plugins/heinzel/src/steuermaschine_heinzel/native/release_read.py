@@ -25,7 +25,6 @@ from steuermaschine.models import Model
 from steuermaschine.native import native, runtime
 
 from .. import state as statedir  # the plugin's state paths
-from .release_lib import approved
 from .release_lib.binding import assets_cache, captured, conf, core_repo, moved, release_dir, required_core_checkout, train_state_dir
 from .release_lib.names import translate, translated
 
@@ -281,51 +280,6 @@ def release_verify(version: str | None = typer.Argument(None, metavar="[VERSION]
     return result
 
 
-# ----------------------------------------------------------------------------- release pins
-class PinRow(Model):
-    path: str = Field(description="The pinned file, by its path in the core repository.")
-    approved: str = Field(description="sha256 of the reviewed content.")
-    executed: str = Field("", description="First 12 characters of the sha256 at REF when it differs.")
-    matches: bool
-
-
-class ReleasePins(Model):
-    """The pinned candidate sources at a ref against their reviewed content."""
-
-    ref: str
-    source: str = Field(description="Where the reviewed files are kept: the one source of the pins.")
-    pins: list[PinRow]
-    lines: list[str] = []
-
-    def render(self) -> list[str]:
-        return self.lines
-
-    @property
-    def exit_code(self) -> int:
-        return 0 if all(p.matches for p in self.pins) else 1
-
-
-@native("release pins", replaces=("hz-chores",), help=H(
-    "Compare the pinned candidate sources at a ref with their reviewed content; print the diff and a review request.",
-    "Use after any merge that touches the candidate workflow or its recorder, and when a candidate is refused for its source.",
-    "nothing (read-only); it reads the core checkout with git.",
-    "sm release pins origin/main", "an independent review of the diff, then replace the reviewed file and commit",
-    "The pins are the sha256 of the reviewed files in the plugin (release_lib/approved_sources/): replacing a file IS the re-pin.\n"
-    "Exit 1 when a pinned file differs at REF."))
-def release_pins(ref: str = typer.Argument("origin/main", metavar="[REF]", help="A ref of the core checkout.")) -> ReleasePins:
-    required_core_checkout("release pins")
-    chores = moved("release_read_lib.chores")
-    code, out, err = captured(chores.main, ["pin-diagnose", ref])
-    if code:
-        raise Refuse("; ".join(translated(err)) or "the pins could not be compared", "sm release pins --help", code=code)
-    pins, rows = approved.pins(), {}
-    for text in out:
-        if found := re.fullmatch(r"DIFF (\S+): executed ([0-9a-f]{12}) != approved [0-9a-f]{12}", text):
-            rows[found[1]] = found[2]
-    return ReleasePins(ref=ref, source=str(approved.DIRECTORY), lines=translated(out),
-                       pins=[PinRow(path=path, approved=pin, executed=rows.get(path, ""), matches=path not in rows) for path, pin in pins.items()])
-
-
 # ----------------------------------------------------------------------------- release after
 class ReleaseAfter(Model):
     """The checklist after a release was published."""
@@ -411,7 +365,7 @@ class ReleaseAssets(Model):
         return 0 if all(r.ok for r in self.results) and self.stable is not False else 1
 
 
-@native("release assets", writes=True, files=("release_read_lib", "release_lib"), replaces=("hz-assets-health",), help=H(
+@native("release assets", writes=True, replaces=("hz-assets-health",), help=H(
     "Probe with a real GET every external asset that hooks and CI download; 200 or 206 is OK.",
     "Use before a release is cut and when CI fails on a download.",
     "the probe cache file (setting release_assets_cache); nothing else.",

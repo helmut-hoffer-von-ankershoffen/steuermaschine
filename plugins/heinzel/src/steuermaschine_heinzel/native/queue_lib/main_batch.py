@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, urlsplit
 from . import edge  # moved: records, processes and what used to be separate scripts
 from ... import environment  # moved: the process context is a typed model
+from . import core_facts  # noqa: E402
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -114,7 +115,7 @@ def valid_run(run: dict[str, Any], proof: dict[str, Any], *, reruns: bool = Fals
         and run.get("event") == "push"
         and run.get("head_branch") == "main"
         and run.get("head_sha") == proof["prs"][-1][1]
-        and run.get("path") == ".github/workflows/ci.yml"
+        and run.get("path") == core_facts.ci_path()
         and run.get("repository", {}).get("full_name") == REPOSITORY
         and run.get("status") in {"queued", "in_progress", "completed", "waiting", "pending", "requested"}
         and (

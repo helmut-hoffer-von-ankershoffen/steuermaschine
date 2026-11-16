@@ -22,7 +22,6 @@ from steuermaschine.native import native, runtime
 from .coord_lib.base import child_env
 from .velocity_lib import samples
 
-UNIT = ("velocity.py", "velocity_lib", "coord_lib")  # the review unit: the child environment comes from coord_lib
 
 
 class VelocitySettings(BaseModel):
@@ -115,7 +114,7 @@ def doc_velocity(sample: list[str] = typer.Option([], "--sample", metavar="PR:RU
     return Velocity(**report)
 
 
-@native("doc velocity-record", writes=True, replaces=("hz-velocity",), files=UNIT, help=H(
+@native("doc velocity-record", writes=True, replaces=("hz-velocity",), help=H(
     "Record that a pull request head was seen eligible to merge: one caller-attested line in the measurement journal.",
     "Use after the caller's own gates passed for exactly this head, and only then, while throughput is being measured.",
     "appends at most one line to this tool's eligibility journal (first observation per head); nothing else.",

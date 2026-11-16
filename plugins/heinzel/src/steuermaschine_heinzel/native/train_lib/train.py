@@ -91,6 +91,7 @@ from . import edge  # moved: siblings are imported relatively, no sys.path entry
 from ..queue_lib import hzlib, release_flow  # noqa: E402
 from steuermaschine.config import child_environment
 from ... import state as statedir  # the plugin's state paths
+from ..queue_lib import core_facts
 
 HOME = Path.home()
 CORE = "helmut-hoffer-von-ankershoffen/heinzel"
@@ -407,7 +408,7 @@ class Real:
         base = self._gh("api", f"repos/{CORE}/compare/main...release/v{version}")["merge_base_commit"]["sha"]
         if base != tip:
             return f"kept: the candidate's base {base[:9]} is not main's tip {tip[:9]}"
-        rows = self._gh("run", "list", "-R", CORE, "--workflow", "ci.yml", "--branch", "main", "-L", "20", "--json", "databaseId,headSha,status") or []
+        rows = self._gh("run", "list", "-R", CORE, "--workflow", core_facts.ci_file(), "--branch", "main", "-L", "20", "--json", "databaseId,headSha,status") or []
         out = []
         for row in (r for r in rows if r["headSha"] == tip and r["status"] != "completed"):
             rid = row["databaseId"]

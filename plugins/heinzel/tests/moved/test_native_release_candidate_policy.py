@@ -9,13 +9,25 @@ import pytest
 
 TOOLS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(TOOLS))
+import policy_kit as kit  # noqa: E402
 from steuermaschine_heinzel.native.queue_lib import release_candidate
 from steuermaschine_heinzel.native.release_lib import candidate_policy as policy
 
 HEAD, TREE = "a" * 40, "b" * 40
+NAMES = policy.api_check_runs(kit.policy())
+REAL_AT_COMMIT_API = policy.core_policy.at_commit_api
+RUNS = kit.policy().workflow_runs  # the policy's required contexts but the aggregate
 
 
-def test_adapter_passes_frozen_head_tree_and_reviewed_pins_to_the_public_reader(monkeypatch):
+@pytest.fixture(autouse=True)
+def reviewed_policy(monkeypatch):
+    """Core's release policy at the release head: read through at_commit_api, replaced by the kit's old shape."""
+    seen = []
+    monkeypatch.setattr(policy.core_policy, "at_commit_api", lambda get, sha: seen.append(sha) or kit.policy(commit=sha))
+    return seen
+
+
+def test_adapter_passes_frozen_head_tree_and_reviewed_pins_to_the_public_reader(monkeypatch, reviewed_policy):
     calls = []
     def ghj(*args, **kwargs):
         calls.append(args)
@@ -25,14 +37,39 @@ def test_adapter_passes_frozen_head_tree_and_reviewed_pins_to_the_public_reader(
             return {"commit": {"tree": {"sha": TREE}}}
         raise AssertionError(args)
     monkeypatch.setattr(policy.hzlib, "ghj", ghj)
-    monkeypatch.setattr(release_candidate, "discover", lambda get, head: 99 if head == HEAD else pytest.fail("wrong head"))
+    monkeypatch.setattr(release_candidate, "discover", lambda get, head, policy: 99 if head == HEAD else pytest.fail("wrong head"))
     def verify(get, download, expected, pins):
         assert expected == release_candidate.ExpectedCandidate(99, 17, HEAD, TREE)
-        assert pins == policy.APPROVED_SOURCES
+        assert pins.commit == HEAD and pins.workflow == kit.WORKFLOW
         return {"run_id": 99, "run_attempt": 1, "head": HEAD, "tree": TREE}
     monkeypatch.setattr(release_candidate, "verify", verify)
     assert policy.verify_pr(17)["run_id"] == 99
-    assert len(calls) == 2
+    assert len(calls) == 2 and reviewed_policy == [HEAD]  # the policy of the exact release head, nothing else
+
+
+def test_verify_pr_refuses_a_release_head_without_a_reviewed_policy(monkeypatch):
+    """The real reader: the policy comes from the contents API at the release head; none there refuses."""
+    monkeypatch.setattr(policy.core_policy, "at_commit_api", REAL_AT_COMMIT_API)
+    answers = {"pulls/17": {"head": {"sha": HEAD}}, f"commits/{HEAD}": {"commit": {"tree": {"sha": TREE}}}}
+
+    def api(path):
+        if path not in answers:
+            raise release_candidate.CandidateError("candidate API evidence unavailable")
+        return answers[path]
+
+    monkeypatch.setattr(policy, "_api", api)
+    monkeypatch.setattr(release_candidate, "discover", lambda *_: pytest.fail("discovery before the policy"))
+    with pytest.raises(release_candidate.CandidateError, match="unavailable"):
+        policy.verify_pr(17)
+    answers.update(kit.contents_routes(HEAD, kit.files("new")))
+    monkeypatch.setattr(release_candidate, "discover", lambda get, head, policy: 99)
+    seen = {}
+    monkeypatch.setattr(release_candidate, "verify", lambda get, download, expected, pins: seen.update(pins=pins) or {})
+    policy.verify_pr(17)
+    assert seen["pins"].commit == HEAD and len(seen["pins"].test_jobs) == 4
+    answers.update(kit.contents_routes(HEAD, kit.files("new", policy=b"{garbled\n")))
+    with pytest.raises(release_candidate.CandidateError, match="not valid JSON"):
+        policy.verify_pr(17)
 
 
 def test_unavailable_candidate_api_does_not_dispatch_or_substitute_evidence(monkeypatch):
@@ -55,22 +92,6 @@ def test_candidate_artifact_download_failure_is_not_accepted(monkeypatch):
     monkeypatch.setattr(release_candidate, "verify", lambda get, download, *args: download(1))
     with pytest.raises(release_candidate.CandidateError, match="artifact unavailable"):
         policy.verify_pr(17)
-
-
-def test_public_reader_vendoring_and_expected_source_pins_are_exact():
-    assert hashlib.sha256(__import__("moved_support").unmoved(release_candidate)).hexdigest() == policy.APPROVED_SOURCES[release_candidate.RECORDER]
-    reviewed_workflow = policy.edge.approved.file(release_candidate.WORKFLOW)
-    assert hashlib.sha256(reviewed_workflow.read_bytes()).hexdigest() == policy.APPROVED_SOURCES[release_candidate.WORKFLOW]
-
-
-def test_test_cells_are_exactly_the_split_unit_and_integration_layout_on_both_runners():
-    # core #592: every Python cell runs as a separate unit and integration job on Linux and macOS.
-    expected = release_candidate.expected_jobs("pull_request")
-    cells = {name for name in expected if name.startswith("Test (")}
-    assert cells == {f"Test ({runner}, Python 3.{minor}, {level})" for runner in ("ubuntu-24.04", "macos-latest")
-                     for minor in range(12, 16) for level in ("unit", "integration")}
-    assert all(expected[name] == "success" for name in cells)
-    assert not {f"Test (ubuntu-24.04, Python 3.{minor})" for minor in range(12, 16)} & set(expected)
 
 
 # --- owner waiver (v0.9.29): one KNOWN flaky job, green on the attempt-2 rerun of failed jobs only ------------------
@@ -100,10 +121,10 @@ KNOWN = lambda run, attempt: ("known", f"{JOB}=KNOWN(0bb) via 1 failing test(s)"
 
 
 def test_waiver_shows_attempt_one_with_only_the_waived_jobs_passing():
-    reader, record = policy.waived_view(_world(), HEAD, WAIVER, KNOWN)
+    reader, record = policy.waived_view(_world(), HEAD, WAIVER, KNOWN, aggregate="CI OK", runs=RUNS)
     assert reader("actions/runs/99")["run_attempt"] == 1 and reader("actions/runs/99")["conclusion"] == "success"
     listing = reader("actions/workflows/ci.yml/runs?head_sha=" + HEAD + "&per_page=100&page=1")
-    assert release_candidate.discover(reader, HEAD) == 99 and listing["workflow_runs"][0]["run_attempt"] == 1
+    assert release_candidate.discover(reader, HEAD, kit.policy()) == 99 and listing["workflow_runs"][0]["run_attempt"] == 1
     jobs = {j["name"]: j for j in reader("actions/runs/99/attempts/1/jobs?per_page=100&page=1")["jobs"]}
     assert all(j["conclusion"] == "success" and j["run_attempt"] == 1 for j in jobs.values())
     assert record["bead"] == "0bb" and record["attempt1_failed"] == ["CI OK", JOB] and record["run_attempt"] == 2
@@ -124,12 +145,12 @@ def test_waiver_shows_attempt_one_with_only_the_waived_jobs_passing():
 ])
 def test_waiver_refuses_everything_else(why, kwargs, waiver, classify, match):
     with pytest.raises(release_candidate.CandidateError, match=match):
-        policy.waived_view(_world(**kwargs), HEAD, waiver, classify)
+        policy.waived_view(_world(**kwargs), HEAD, waiver, classify, aggregate="CI OK", runs=RUNS)
 
 
 def test_without_a_waiver_a_rerun_candidate_is_still_refused():
     with pytest.raises(release_candidate.CandidateError, match="rerun candidate"):
-        release_candidate.discover(_world(), HEAD)
+        release_candidate.discover(_world(), HEAD, kit.policy())
 
 
 # merge-gate.yml POSTs merge-gate/coverage-floor check runs; GitHub may list them as jobs of the CI run (v0.9.32).
@@ -152,7 +173,7 @@ def _api_check(name: str, ident: int) -> dict:
 
 
 def _candidate_jobs() -> list[dict]:
-    inventory = release_candidate.expected_jobs("pull_request")
+    inventory = kit.expected_jobs("pull_request")
     return [_real(name, 1000 + i, want) for i, (name, want) in enumerate(sorted(inventory.items()))]
 
 
@@ -168,7 +189,7 @@ def _pages(jobs: list[dict], per_page: int = 100):
 def _inventory_ok(get) -> bool:
     """The reviewed reader's exact inventory rule (release_candidate.validate)."""
     jobs = release_candidate.job_inventory(get, RUN)
-    inventory = release_candidate.expected_jobs("pull_request")
+    inventory = kit.expected_jobs("pull_request")
     return len(jobs) == len(inventory) and {job.get("name") for job in jobs} == set(inventory)
 
 
@@ -176,9 +197,9 @@ def test_api_check_runs_listed_as_candidate_jobs_no_longer_refuse_the_inventory(
     jobs = _candidate_jobs() + [_api_check("merge-gate", 5001), _api_check("coverage-floor", 5002)]
     assert len(jobs) == 71
     assert not _inventory_ok(_pages(jobs))  # the old behaviour: "missing, extra or short-matrix candidate jobs"
-    assert _inventory_ok(policy.without_api_check_runs(_pages(jobs)))
-    assert _inventory_ok(policy.without_api_check_runs(_pages(jobs, per_page=30)))  # raw pagination still exhausted
-    assert _inventory_ok(policy.without_api_check_runs(_pages(_candidate_jobs())))  # 0.9.31 shape unchanged
+    assert _inventory_ok(policy.without_api_check_runs(_pages(jobs), NAMES))
+    assert _inventory_ok(policy.without_api_check_runs(_pages(jobs, per_page=30), NAMES))  # raw pagination still exhausted
+    assert _inventory_ok(policy.without_api_check_runs(_pages(_candidate_jobs()), NAMES))  # 0.9.31 shape unchanged
 
 
 @pytest.mark.parametrize("why, mutate", [
@@ -193,67 +214,50 @@ def test_api_check_runs_listed_as_candidate_jobs_no_longer_refuse_the_inventory(
     ("renamed matrix cell", lambda jobs: [j | {"name": "merge-gate"} if j["name"] == "Build" else j for j in jobs]),
 ])
 def test_everything_else_still_refuses_the_inventory(why, mutate):
-    assert not _inventory_ok(policy.without_api_check_runs(_pages(mutate(_candidate_jobs()))))
+    assert not _inventory_ok(policy.without_api_check_runs(_pages(mutate(_candidate_jobs())), NAMES))
 
 
 def test_filtered_reader_keeps_raw_integrity_checks_and_passes_other_paths():
     jobs = _candidate_jobs() + [_api_check("merge-gate", 1000)]  # duplicate ID of a real job
     with pytest.raises(release_candidate.CandidateError, match="duplicate"):
-        policy.without_api_check_runs(_pages(jobs))(f"actions/runs/{RUN}/attempts/1/jobs?per_page=100&page=1")
+        policy.without_api_check_runs(_pages(jobs), NAMES)(f"actions/runs/{RUN}/attempts/1/jobs?per_page=100&page=1")
     with pytest.raises(release_candidate.CandidateError, match="pagination"):
-        policy.without_api_check_runs(_pages(jobs))(f"actions/runs/{RUN}/attempts/1/jobs?per_page=100&page=2")
-    assert policy.without_api_check_runs(lambda path: {"path": path})("pulls/17") == {"path": "pulls/17"}
+        policy.without_api_check_runs(_pages(jobs), NAMES)(f"actions/runs/{RUN}/attempts/1/jobs?per_page=100&page=2")
+    assert policy.without_api_check_runs(lambda path: {"path": path}, NAMES)("pulls/17") == {"path": "pulls/17"}
 
 
 def test_verify_pr_reads_jobs_through_the_api_check_run_filter(monkeypatch):
     jobs = _pages(_candidate_jobs() + [_api_check("merge-gate", 5001)])
     monkeypatch.setattr(policy, "_api", lambda path: jobs(path) if "/jobs?" in path else
                         ({"head": {"sha": HEAD}} if path.startswith("pulls/") else {"commit": {"tree": {"sha": TREE}}}))
-    monkeypatch.setattr(release_candidate, "discover", lambda get, head: RUN)
+    monkeypatch.setattr(release_candidate, "discover", lambda get, head, policy: RUN)
     seen = {}
     monkeypatch.setattr(release_candidate, "verify", lambda get, download, expected, pins: seen.update(ok=_inventory_ok(get)))
     policy.verify_pr(17)
     assert seen["ok"]
 
 
-@pytest.mark.parametrize("variant", ["reviewed", "stale_workflow", "wrong_workflow", "wrong_recorder"])
-def test_source_repin_checks_actual_executed_bytes_before_candidate_validation(monkeypatch, variant):
-    """New workflow passes the source boundary; stale/wrong inputs fail closed."""
+def test_the_candidate_reader_compares_no_source_checksum(monkeypatch):
+    """The reviewed head and its tree bind the executed sources: verify reads no source blob."""
     import io
     import json
     import zipfile
 
-    fixture = policy.edge.approved.blob(release_candidate.WORKFLOW)
-    recorder = policy.edge.approved.blob(release_candidate.RECORDER)
-    sources = {release_candidate.WORKFLOW: fixture, release_candidate.RECORDER: recorder}
-    pins = dict(policy.APPROVED_SOURCES)
-    if variant == "stale_workflow":
-        pins[release_candidate.WORKFLOW] = "d1c7e3bc603901954ffaa3616bb1e1c003bc2ec82677c70cf4276eba26a4548c"
-    if variant == "wrong_workflow":
-        sources[release_candidate.WORKFLOW] += b"\n# unexpected change\n"
-    if variant == "wrong_recorder":
-        sources[release_candidate.RECORDER] += b"\n# unexpected change\n"
-    proof = {key: HEAD for key in ("source_commit", "head", "base", "tree")}
+    proof = {key: HEAD for key in ("source_commit", "head", "base", "tree")} | {"sources": {"anything": "else"}}
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w") as archive:
         archive.writestr(release_candidate.PROOF_FILE, json.dumps(proof))
-    artifact = {"id": 1, "name": release_candidate.ARTIFACT, "expired": False,
-                "workflow_run": {"id": 99, "head_sha": HEAD}}
+    artifact = {"id": 1, "name": release_candidate.ARTIFACT, "expired": False, "workflow_run": {"id": 99, "head_sha": HEAD}}
+
     def get(path):
+        assert not path.startswith("contents/"), path
         if path == "actions/runs/99":
             return {"status": "completed"}
         if path == "actions/runs/99/artifacts?per_page=100":
             return {"total_count": 1, "artifacts": [artifact]}
         return {}
+
     monkeypatch.setattr(release_candidate, "job_inventory", lambda *_: [])
-    monkeypatch.setattr(release_candidate, "source_bytes", lambda _get, path, _ref: sources[path])
-    reached = []
-    monkeypatch.setattr(release_candidate, "validate", lambda *_: reached.append(True) or {"source_boundary": "passed"})
+    monkeypatch.setattr(release_candidate, "validate", lambda *_: {"source_boundary": "passed"})
     expected = release_candidate.ExpectedCandidate(99, 17, HEAD, TREE)
-    if variant == "reviewed":
-        assert release_candidate.verify(get, lambda _: buffer.getvalue(), expected, pins) == {"source_boundary": "passed"}
-        assert reached == [True]
-    else:
-        with pytest.raises(release_candidate.CandidateError, match="executed CI source differs"):
-            release_candidate.verify(get, lambda _: buffer.getvalue(), expected, pins)
-        assert reached == []
+    assert release_candidate.verify(get, lambda _: buffer.getvalue(), expected, kit.policy(commit=HEAD)) == {"source_boundary": "passed"}

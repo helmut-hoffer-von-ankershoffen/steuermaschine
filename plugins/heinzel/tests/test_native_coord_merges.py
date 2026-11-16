@@ -1,10 +1,9 @@
 """`sm head combine-close`: members of a merged combine pull request. GitHub and the tracker are fakes; no test closes
 a real pull request."""
-# ruff: noqa: F811  (a fixture imported from coord_kit is also a test parameter)
 
 import json
 
-from coord_kit import app_runtime, ok, unreviewed  # noqa: F401  (fixtures)
+from coord_kit import app_runtime, ok
 
 from steuermaschine.protocols import Result
 from steuermaschine.testing import FakeCommands, invoke
@@ -69,14 +68,11 @@ def test_a_failed_close_is_reported_and_exits_1(tmp_path):
     assert done.exit_code == 1 and "CLOSE FAILED: Not Found (HTTP 404)" in done.stdout
 
 
-def test_a_combine_without_members_and_the_review_gate(tmp_path, unreviewed):
+def test_a_combine_without_members(tmp_path):
     c = FakeCommands()
     c.on(["gh", "pr", "view"], ok({"body": "", "state": "MERGED", "mergeCommit": None}))
     done = invoke(app_runtime(tmp_path, c), ["head", "combine-close", "5"])
     assert "#5 names no member" in done.stdout
-    c = world()
-    done = invoke(app_runtime(tmp_path, c, allow=False), ["head", "combine-close", "717", "--apply"])
-    assert done.exit_code == 70 and "reviews/head-combine-close.md" in done.stderr and not c.calls
 
 
 def test_apply_without_a_configured_tracker_refuses_before_the_first_write(tmp_path):

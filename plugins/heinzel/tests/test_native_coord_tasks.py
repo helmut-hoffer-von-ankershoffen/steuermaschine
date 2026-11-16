@@ -1,12 +1,11 @@
 """`sm beads tasks ...`, `sm beads refill` and `sm doc checkpoint`. The refill helpers' assertions are the former
 tests'; the tracker (bd) and GitHub are the fake process runner's: no bead is created, changed or closed."""
-# ruff: noqa: F811  (a fixture imported from coord_kit is also a test parameter)
 
 import json
 import time
 from datetime import UTC, datetime
 
-from coord_kit import NOW, app_runtime, ok, unreviewed  # noqa: F401  (fixtures)
+from coord_kit import NOW, app_runtime, ok
 
 from steuermaschine.protocols import Result
 from steuermaschine.testing import FakeCommands, invoke
@@ -157,13 +156,6 @@ def test_ids_that_are_not_of_the_projects_form_are_refused_before_bd_runs(tmp_pa
     c = world()
     assert invoke(app_runtime(tmp_path, c), ["beads", "tasks", "note", "heinzel-management-uz3c.3", "x"]).exit_code == 0
     assert c.calls[-1][2] == "heinzel-management-uz3c.3"
-
-
-def test_the_six_write_commands_share_one_review_and_are_off_until_it_is_approved(tmp_path, unreviewed):
-    for args in (["add", "x"], ["note", "abc", "x"], ["claim", "abc", "a"], ["due-set", "abc", "10:00"], ["pr", "abc", "1"], ["done", "abc", "evidence"]):
-        c = world()
-        done = invoke(app_runtime(tmp_path, c, allow=False), ["beads", "tasks", *args])
-        assert done.exit_code == 70 and "reviews/beads-tasks.md" in done.stderr and not c.calls, args
 
 
 def test_due_ls_and_show_only_read(tmp_path):

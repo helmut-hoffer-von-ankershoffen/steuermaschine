@@ -11,8 +11,6 @@ from steuermaschine.native import Group, native, runtime
 
 from .tasks_lib import beads
 
-UNIT = ("tasks.py", "tasks_lib", "asks_lib", "coord_lib")  # add --ask writes the ask row through asks_lib; the tracker directory comes from coord_lib
-REVIEW = "beads-tasks.md"  # one review covers the six write commands of this module
 
 TASKS = Group("beads tasks", H(
     "beads tasks: create, note, claim, schedule, close and list beads with this project's conventions.",
@@ -23,7 +21,7 @@ TASKS = Group("beads tasks", H(
 ID = typer.Argument(..., metavar="ID", help="The bead id, full or the short suffix.")
 
 
-@native("beads tasks add", writes=True, replaces=("hz-tasks",), files=UNIT, review=REVIEW, help=H(
+@native("beads tasks add", writes=True, replaces=("hz-tasks",), help=H(
     "Create a bead; with --ask also record the owner ask in the tracking document.",
     "Use for every actionable owner message and every new piece of work, after searching for an existing bead.",
     "creates one bead in the issue tracker (bd create); with --ask also adds one ask row to the tracking document.",
@@ -46,7 +44,7 @@ def beads_tasks_add(title: str = typer.Argument(..., metavar="TITLE", help="The 
         raise Refuse(f"the bead exists, but the tracking document has no asks table (no line starts with '{exc.args[0]}'): add the row by hand", "sm doc ask TEXT") from None
 
 
-@native("beads tasks note", writes=True, replaces=("hz-tasks",), files=UNIT, review=REVIEW, help=H(
+@native("beads tasks note", writes=True, replaces=("hz-tasks",), help=H(
     "Append a dated note to a bead; history is never replaced.",
     "Use when something about the bead changed: a finding, a repeat of the ask, a decision.",
     "appends one note to the bead (bd update --append-notes).",
@@ -56,7 +54,7 @@ def beads_tasks_note(bead: str = ID, text: str = typer.Argument(..., metavar="TE
     return beads.Tracker(runtime()).note(bead, text)
 
 
-@native("beads tasks claim", writes=True, replaces=("hz-tasks",), files=UNIT, review=REVIEW, help=H(
+@native("beads tasks claim", writes=True, replaces=("hz-tasks",), help=H(
     "Give a bead to an agent: status in progress, assignee, optionally a deadline.",
     "Use when an agent starts on a bead.",
     "sets status and assignee of the bead; with --due replaces its due label (bd update, bd label).",
@@ -67,7 +65,7 @@ def beads_tasks_claim(bead: str = ID, agent: str = typer.Argument(..., metavar="
     return beads.Tracker(runtime()).claim(bead, agent, due)
 
 
-@native("beads tasks due-set", writes=True, replaces=("hz-tasks",), files=UNIT, review=REVIEW, help=H(
+@native("beads tasks due-set", writes=True, replaces=("hz-tasks",), help=H(
     "Set or replace the deadline of a bead.",
     "Use when a deadline is agreed or moves.",
     "removes the bead's due-* labels and adds the new one (bd label).",
@@ -77,7 +75,7 @@ def beads_tasks_due_set(bead: str = ID, when: str = typer.Argument(..., metavar=
     return beads.Tracker(runtime()).due_set(bead, when)
 
 
-@native("beads tasks pr", writes=True, replaces=("hz-tasks",), files=UNIT, review=REVIEW, help=H(
+@native("beads tasks pr", writes=True, replaces=("hz-tasks",), help=H(
     "Note a pull request on its bead.",
     "Use when a pull request is opened, merged or closed for a bead.",
     "appends one note `PR #N STATE` to the bead (bd update --append-notes).",
@@ -88,7 +86,7 @@ def beads_tasks_pr(bead: str = ID, number: str = typer.Argument(..., metavar="PR
     return beads.Tracker(runtime()).pr(bead, number, state)
 
 
-@native("beads tasks done", writes=True, replaces=("hz-tasks",), files=UNIT, review=REVIEW, help=H(
+@native("beads tasks done", writes=True, replaces=("hz-tasks",), help=H(
     "Close a bead with its evidence.",
     "Use after the bead's behaviour was verified live, never before; `sm beads sweep` shows the evidence.",
     "CLOSES the bead with the reason (bd close --force).",

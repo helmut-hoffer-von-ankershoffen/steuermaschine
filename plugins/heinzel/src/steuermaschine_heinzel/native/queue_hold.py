@@ -21,7 +21,6 @@ from steuermaschine.models import Model
 from steuermaschine.native import native, runtime
 
 KIND, KEY = "heinzel.queue-hold", "hold"
-REVIEW = "queue-hold.md"
 
 
 class QueueHold(Model):
@@ -99,7 +98,7 @@ def refuse_while_held(what: str, rt: Any | None = None, pr: str = "", repo: str 
         raise Refuse(f"{what} refused: {hold.describe()}. Nothing was pushed, opened or queued", "sm queue why   (the owner of the hold lifts it: sm queue unhold)")
 
 
-@native("queue hold", writes=True, review=REVIEW, help=H(
+@native("queue hold", writes=True, help=H(
     "Hold the whole merge queue: nothing merges, and `sm head pr --live` and `sm head ship` refuse with the reason.",
     "Use when one head must merge first or nothing may merge (a release-blocking fix), instead of messaging every builder.",
     "the queue hold record in the state directory; the next `sm daemon queue` tick merges nothing.",
@@ -127,7 +126,7 @@ def queue_hold(reason: str = typer.Option(..., "--reason", metavar="TEXT", help=
     return QueueHoldChanged(held=True, hold=hold, before=before)
 
 
-@native("queue unhold", writes=True, review=REVIEW, help=H(
+@native("queue unhold", writes=True, help=H(
     "Lift the merge queue hold: the next tick merges again, and `sm head pr` and `sm head ship` work again.",
     "Use when the critical head the hold was for has merged.",
     "the queue hold record in the state directory.",

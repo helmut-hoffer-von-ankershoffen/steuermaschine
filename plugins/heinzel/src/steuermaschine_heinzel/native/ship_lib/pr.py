@@ -37,7 +37,7 @@ from pathlib import Path
 from steuermaschine.engine import Refuse
 
 from .. import pr_owned
-from . import deps, push_gate
+from . import deps, push_gate, repos
 from .deps import Done
 
 TITLE_MAX = 72
@@ -205,7 +205,7 @@ def open_pr(worktree: Path, bead: str, title: str, body_file: Path | None, reaso
             if not got or len(got) > TITLE_MAX:
                 raise Stop(1, f"PR #{number} opened but title read back as {len(got)} chars (limit {TITLE_MAX}); fix the title, then: sm head ship {number}")
             say(f"ship {number}")
-            shipped = deps.ship(str(number), reason or "", head)
+            shipped = deps.ship(repos.pr_key(repo, number), reason or "", head)
             lines.extend(shipped.stdout.splitlines())
             lines.append(str(number))
             return Done(shipped.returncode, "".join(f"{line}\n" for line in lines), shipped.stderr)

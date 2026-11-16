@@ -9,6 +9,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
+import policy_kit as kit
 import pytest
 
 from steuermaschine.app import Runtime
@@ -18,7 +19,6 @@ from steuermaschine.plugins import stack_of
 from steuermaschine.protocols import Result
 from steuermaschine.testing import fake_providers, invoke
 from steuermaschine_heinzel.native import release_read as area
-from steuermaschine_heinzel.native.release_lib import approved
 from steuermaschine_heinzel.plugin import plugin
 
 REAL = Path(__file__).parent / "fixtures" / "release"
@@ -217,41 +217,9 @@ def test_verify_mini_calls_the_read_only_check_of_the_live_service(rt, monkeypat
 
 
 # ----------------------------------------------------------------------------- pins
-def core_checkout(path: Path, workflow: bytes) -> None:
-    def git(*args):
-        subprocess.run(["git", "-C", str(path), *args], check=True, capture_output=True)
-
-    (path / ".github/workflows").mkdir(parents=True)
-    (path / "scripts").mkdir()
-    subprocess.run(["git", "init", "-q", "-b", "main", str(path)], check=True, capture_output=True)
-    for step, content in enumerate((approved.blob(".github/workflows/ci.yml"), workflow)):
-        (path / ".github/workflows/ci.yml").write_bytes(content)
-        (path / "scripts/release_candidate.py").write_bytes(approved.blob("scripts/release_candidate.py"))
-        git("add", "-A")
-        git("-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-q", "--allow-empty", "-m", f"step {step}")
-
-
-def test_pins_match_the_reviewed_files_and_a_changed_workflow_prints_the_diff_and_a_review_request(rt):
-    reviewed = approved.blob(".github/workflows/ci.yml")
-    core_checkout(rt.home / "core", reviewed + b"# one more line\n")
-    out, found = doc(rt, area.ReleasePins, "release", "pins", "HEAD~1")
-    assert out.exit_code == 0 and [p.matches for p in found.pins] == [True, True] and found.lines == ["ok   .github/workflows/ci.yml", "ok   scripts/release_candidate.py"]
-    out, found = doc(rt, area.ReleasePins, "release", "pins", "HEAD")
-    assert out.exit_code == 1 and [p.matches for p in found.pins] == [False, True]
-    assert found.pins[0].approved == approved.pins()[".github/workflows/ci.yml"] and len(found.pins[0].executed) == 12
-    text = "\n".join(found.lines)
-    assert "+# one more line" in text and "Review request: pin update for .github/workflows/ci.yml" in text
-    assert "release_lib/approved_sources/" in text and "hz-" not in text and "tools/release_candidate_policy.py" not in text
-
-
-def test_the_pins_are_the_hashes_of_the_reviewed_files_and_the_policy_uses_them():
-    import hashlib
-
-    from steuermaschine_heinzel.native.queue_lib import release_candidate
-    from steuermaschine_heinzel.native.release_lib import candidate_policy
-
-    assert candidate_policy.APPROVED_SOURCES == approved.pins() == {path: hashlib.sha256(approved.file(path).read_bytes()).hexdigest() for path in approved.FILES}
-    assert set(approved.FILES) == {release_candidate.WORKFLOW, release_candidate.RECORDER}
+def test_the_pins_command_is_gone(rt):
+    """No checksum of Core's files is kept or compared: the release commit and its ci_change verdict bind them."""
+    assert invoke(rt, ["release", "pins"]).exit_code != 0
 
 
 # ----------------------------------------------------------------------------- after, notes-audit, assets
@@ -342,8 +310,8 @@ def test_the_assets_cache_is_replaced_atomically(tmp_path, monkeypatch):
     assert json.loads(cache.read_text())["results"][0]["name"] == "b" and os.listdir(cache.parent) == ["assets.json"]
 
 
-@pytest.mark.parametrize("argv", [["release", "assets"], ["release", "pins", "origin/main"]])
-def test_without_the_core_checkout_setting_assets_and_pins_refuse_and_name_the_key(tmp_path, monkeypatch, gh, argv):
+@pytest.mark.parametrize("argv", [["release", "assets"]])
+def test_without_the_core_checkout_setting_assets_refuses_and_names_the_key(tmp_path, monkeypatch, gh, argv):
     """No machine path is a default: unset, the command refuses (usage error) and probes or reads nothing."""
     monkeypatch.setenv("HOME", str(tmp_path))
     settings, _ = stack_of(plugin).validate({"heinzel": {"release_assets_cache": str(tmp_path / "assets.json")}}, Path("."))

@@ -33,7 +33,7 @@ TABLES: dict[str, type[BaseModel]] = {"github": GitHubSettings, "sonar": SonarSe
 
 
 def unit_anchor() -> None:
-    """Anchor of the review unit of `ci cancel` (the one write here): this module and every core file it imports."""
+    """Anchor of the unit of `ci cancel` (the one write here): this module and every core file it imports."""
 
 
 def table(rt: Runtime, name: str) -> dict[str, Any]:
@@ -168,11 +168,10 @@ def register(rt: Runtime, app: typer.Typer) -> None:
         f"{PROG} ci cancel 43304628424", f"the same command with --live, then {PROG} ci active"))
     def cancel(run: str = typer.Argument(..., metavar="RUN", help="The run id."),
                live: bool = typer.Option(False, "--live", help="Really cancel it.")) -> None:
-        from ..app import fail, gate
+        from ..app import fail
 
         if not (run.isascii() and run.isdigit()):  # a run id is ASCII digits only: anything else would be spliced into the API path
             fail(f"'{run}' is not a run id (digits only)", USAGE, f"find it with: {PROG} ci active")
-        gate(rt, "ci cancel")
         show(ci_runs(rt).cancel_run(run, live=live))
 
     # ------------------------------------------------------------------ pr

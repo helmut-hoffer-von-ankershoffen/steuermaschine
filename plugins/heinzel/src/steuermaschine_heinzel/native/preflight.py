@@ -277,7 +277,7 @@ def core_worktree(worktree: Path, usage: str) -> Path:
     "              more than 4 deep, `await` inside a loop, on changed JS/TS/Python lines. No Sonar run\n"
     "  deps        [project] dependencies or optional-dependencies changed vs the base -> FAIL: plugin consumers need a\n"
     "              relock first. Unchanged and --consumers NAME: build the wheel of the head and run the Consumer check\n"
-    "              of that plugin at the plugins ref pinned in ci.yml\n"
+    "              of that plugin at the plugins ref pinned in the CI workflow\n"
     "  e2e         changed drivers under web/e2e: every owning journey and every journey whose driver imports a changed\n"
     "              helper must be a SEL browser id, or be listed under local_only with a reason\n"
     "  validation  refuses a head SHA that already has check suites on a validation/* branch: checks are posted by SHA,\n"

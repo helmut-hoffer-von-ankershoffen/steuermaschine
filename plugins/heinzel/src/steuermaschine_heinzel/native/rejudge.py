@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Any, Protocol, cast
+from typing import Any, Protocol
 
 import typer
 
@@ -22,12 +22,12 @@ from steuermaschine.github.sonar import Sonar, urllib_fetch
 from steuermaschine.helpdoc import H
 from steuermaschine.models import Model
 from steuermaschine.native import Group, native, runtime
-from steuermaschine.protocols import Providers
+
+from .queue_lib import core_facts
 
 CI_WORKFLOW = "CI"
 GATE_WORKFLOW = "Merge gate"
-GATE_FILE = "merge-gate.yml"
-GATE_CHECKS = ("merge-gate", "coverage-floor")
+GATE_CHECKS = core_facts.API_CHECKS  # the merge-gate workflow's checks (Core's release policy)
 RUN_URL = re.compile(r"/actions/runs/(\d+)")
 RATINGS = {"new_reliability_rating": "reliability", "new_security_rating": "security", "new_maintainability_rating": "maintainability"}
 LETTERS = {"1": "A", "2": "B", "3": "C", "4": "D", "5": "E"}
@@ -55,7 +55,7 @@ def edge() -> Edge:
     repo = str(rt.settings.get("repo") or "")
     if not repo:
         raise Refuse("the setting `repo` (OWNER/NAME of the core repository) is empty", "sm self config")
-    providers = cast(Providers, rt.providers)
+    providers = rt.providers
     return Edge(gh=Gh(providers.commands, repo=repo, timeout=12.0, clock=providers.clock), clock=providers.clock)
 
 
@@ -66,7 +66,7 @@ def run_of(w: Reader, run_id: str) -> dict[str, Any] | None:
 
 
 def is_gate_run(run: dict[str, Any]) -> bool:
-    return run.get("name") == GATE_WORKFLOW or str(run.get("path") or "").endswith(GATE_FILE)
+    return run.get("name") == GATE_WORKFLOW or str(run.get("path") or "").endswith(core_facts.judge_file())
 
 
 def trace(w: Reader, urls: list[str], head: str = "") -> tuple[dict[str, Any] | None, str]:
@@ -78,7 +78,7 @@ def trace(w: Reader, urls: list[str], head: str = "") -> tuple[dict[str, Any] | 
             return run, "the check's details URL"
     if not head:
         return None, "the check's details URL names no Merge gate run and the head is unknown"
-    data, why = w.gh.api(f"actions/workflows/{GATE_FILE}/runs", {"head_sha": head, "per_page": 20})
+    data, why = w.gh.api(f"actions/workflows/{core_facts.judge_file()}/runs", {"head_sha": head, "per_page": 20})
     if why:
         return None, f"the Merge gate runs of the head cannot be read: {why}"
     runs = [r for r in (data or {}).get("workflow_runs") or [] if r.get("head_sha") == head]
@@ -88,7 +88,7 @@ def trace(w: Reader, urls: list[str], head: str = "") -> tuple[dict[str, Any] | 
 
 
 def gate_checks(w: Reader, head: str) -> tuple[list[dict[str, Any]], str]:
-    """The latest merge-gate and coverage-floor check runs on the head."""
+    """The latest check runs of the merge-gate workflow on the head."""
     data, why = w.gh.api(f"commits/{head}/check-runs", {"filter": "latest", "per_page": 100})
     if why:
         return [], why
@@ -99,7 +99,9 @@ def ci_run(w: Reader, head: str) -> tuple[dict[str, Any] | None, str]:
     data, why = w.gh.api("actions/runs", {"head_sha": head, "per_page": 50})
     if why:
         return None, why
-    runs = [r for r in (data or {}).get("workflow_runs") or [] if r.get("name") == CI_WORKFLOW and r.get("head_sha") == head]
+    runs = [r for r in (data or {}).get("workflow_runs") or []
+            if (r.get("path") == core_facts.ci_path() or (not r.get("path") and r.get("name") == CI_WORKFLOW))
+            and r.get("head_sha") == head]
     return (max(runs, key=lambda r: int(r.get("id") or 0)) if runs else None), ""
 
 
@@ -165,7 +167,7 @@ def sonar_head(pr: int) -> SonarHead:
     project = str(rt.settings.get("sonar_project") or "")
     if not project:
         raise Refuse("the setting `sonar_project` is empty", "sm self config")
-    sonar = Sonar(project, fetch=fetch, clock=cast(Providers, rt.providers).clock)
+    sonar = Sonar(project, fetch=fetch, clock=rt.providers.clock)
     report = SonarHead(pr=pr, project=project)
     data, why = sonar.get("qualitygates/project_status", {"projectKey": project, "pullRequest": pr})
     if why:
@@ -214,6 +216,7 @@ class Rejudge(Model):
     live: bool = True
     state: str  # would_rerun | running | done
     sonar: str = ""
+    explicit_gate: bool = False
     verdicts: list[Verdict] = []
 
     @property
@@ -233,11 +236,66 @@ class Rejudge(Model):
         elif self.state == "done":
             out.append("NEXT     " + (f"sm queue why {self.pr}" if not self.exit_code else f"sm ci why {self.pr}"))
         else:
-            out.append(f"NEXT     sm ci merge-gate rejudge {self.pr}")
+            option = f" --gate-run {self.gate_run}" if self.explicit_gate else ""
+            out.append(f"NEXT     sm ci merge-gate rejudge {self.pr}{option}")
         return out
 
 
-def rejudge(pr: int, wait_minutes: int = 15, dry_run: bool = False) -> Rejudge:
+def bound_workflow_gate(w: Reader, run_id: str, head: str, ci_id: str, pr: int) -> dict[str, Any]:
+    """Bind an explicitly named workflow_run gate by its trusted workflow's recorded input environment.
+
+    workflow_run uses the default branch SHA, not the triggering PR SHA. GitHub can replace a posted check's
+    details URL with an unrelated check-suite URL. Never infer the target from recency or that suite.
+    """
+    if not re.fullmatch(r"[0-9]+", run_id):
+        raise Refuse("the gate run id must contain only digits", f"sm ci why {pr}")
+    gate = run_of(w, run_id)
+    if not gate or gate.get("path") != core_facts.judge_path() or gate.get("event") != "workflow_run":
+        raise Refuse("the named run is not the trusted workflow_run Merge gate", f"sm ci why {pr}")
+    if gate.get("status") != "completed":
+        raise Wait(f"Merge gate run {run_id} is not completed", f"CI run {run_id}")
+    repo, why = w.gh.repo()
+    if why:
+        raise Refuse(f"cannot identify the gate repository: {why}", f"sm ci why {pr}")
+    log = w.gh.run(["run", "view", run_id, "--repo", repo, "--log"])
+    expected = {"PR_HEAD_SHA": head, "CI_RUN_ID": ci_id, "PR_NUMBER": str(pr)}
+    observed = gate_input_environment(log.out)
+    if log.rc or any(observed.get(key) != [value] for key, value in expected.items()):
+        raise Refuse("the gate log does not bind exactly this PR head, CI run and PR number", f"sm ci why {pr}")
+    return gate
+
+
+def gate_input_environment(log: str) -> dict[str, list[str]]:
+    """Only the runner's initial environment group of the trusted coverage step can prove trigger identity."""
+    prefix = "Merge gates\tVerify the original workload and applicable coverage evidence\t"
+    command = "##[group]Run uv run --no-build --frozen --script scripts/focused_gate.py"
+    observed: dict[str, list[str]] = {}
+    state = "start"
+    for line in log.splitlines():
+        if not line.startswith(prefix):
+            continue
+        timestamp, separator, content = line[len(prefix):].removeprefix("\ufeff").partition(" ")
+        if not separator or not re.fullmatch(r"\d{4}-\d{2}-\d{2}T[\d:.]+Z", timestamp):
+            return {}
+        if state == "start":
+            if content != command:
+                return {}
+            state = "command"
+        elif content == "##[endgroup]":
+            return observed if state == "env" else {}
+        elif content == "env:":
+            if state != "command":
+                return {}
+            state = "env"
+        elif state == "env":
+            key, colon, value = content.removeprefix("  ").partition(": ")
+            if not content.startswith("  ") or not colon:
+                return {}
+            observed.setdefault(key, []).append(value)
+    return {}  # an incomplete group is not evidence
+
+
+def rejudge(pr: int, wait_minutes: int = 15, dry_run: bool = False, gate_run_id: str = "") -> Rejudge:
     """Re-run the Merge gate run of the PR's current head after its CI completed and Sonar is OK with all ratings A."""
     w = edge()
     view, why = w.gh.api(f"pulls/{pr}")
@@ -256,10 +314,15 @@ def rejudge(pr: int, wait_minutes: int = 15, dry_run: bool = False) -> Rejudge:
     if run.get("conclusion") == "cancelled":
         raise Refuse(f"CI run {run.get('id')} of head {head[:8]} was cancelled: the Merge gate does not judge a cancelled run", "sm ci rerun --dry-run")
     checks, why = gate_checks(w, head)
-    gate, found_by = trace(w, [str(c.get("details_url") or "") for c in checks], head)
+    gate: dict[str, Any] | None
+    if gate_run_id:
+        gate = bound_workflow_gate(w, gate_run_id, head, str(run.get("id")), pr)
+        found_by = "the explicitly named workflow_run and its verified input environment"
+    else:
+        gate, found_by = trace(w, [str(c.get("details_url") or "") for c in checks], head)
     if gate is None:
         raise Refuse(f"no Merge gate run to re-run: {found_by}{f' (check runs: {why})' if why else ''}", f"sm ci why {pr}")
-    if gate.get("head_sha") != head:
+    if not gate_run_id and gate.get("head_sha") != head:
         raise Refuse(f"Merge gate run {gate.get('id')} (from {found_by}) judged head {str(gate.get('head_sha') or '?')[:8]}, "
                      f"not the PR head {head[:8]}: a re-run would judge another head", f"sm ci why {pr}")
     if gate.get("status") != "completed":
@@ -271,7 +334,7 @@ def rejudge(pr: int, wait_minutes: int = 15, dry_run: bool = False) -> Rejudge:
         raise Refuse(f"Sonar is not clean for PR {pr} ({sonar.render()[0].removeprefix('SONAR    ')}): a re-judge would fail again", f"sm head sonar {pr}")
     gate_id, attempt = str(gate.get("id")), int(gate.get("run_attempt") or 1)
     result = Rejudge(pr=pr, head=head, ci_run=str(run.get("id")), gate_run=gate_id, found_by=found_by, attempt=attempt, live=not dry_run,
-                     state="would_rerun" if dry_run else "running", sonar=sonar.render()[0].removeprefix("SONAR    "))
+                     state="would_rerun" if dry_run else "running", sonar=sonar.render()[0].removeprefix("SONAR    "), explicit_gate=bool(gate_run_id))
     if dry_run:
         return result
     _, why = w.gh.api(f"actions/runs/{gate_id}/rerun", method="POST")
@@ -311,8 +374,9 @@ CI_MERGE_GATE = Group("ci merge-gate", H(
     "verdicts. Exit 1 when the re-run finished and a gate is still not green or no gate check is found."))
 def ci_merge_gate_rejudge(pr: int = typer.Argument(..., metavar="PR", help="The pull request number of the Core repository."),
                           wait: int = typer.Option(15, "--wait", metavar="MIN", min=0, help="Wait at most MIN minutes for the new verdicts (0: do not wait)."),
-                          dry_run: bool = typer.Option(False, "--dry-run", help="Check and name the run, re-run nothing.")) -> Rejudge:
-    return rejudge(pr, wait, dry_run)
+                          dry_run: bool = typer.Option(False, "--dry-run", help="Check and name the run, re-run nothing."),
+                          gate_run: str = typer.Option("", "--gate-run", metavar="RUN", help="An explicit workflow_run gate; its log must bind this PR, head and CI run.")) -> Rejudge:
+    return rejudge(pr, wait, dry_run, gate_run)
 
 
 @native("head sonar", writes=False, help=H(

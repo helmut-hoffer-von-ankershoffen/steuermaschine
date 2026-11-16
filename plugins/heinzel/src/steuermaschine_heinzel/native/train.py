@@ -41,13 +41,9 @@ from steuermaschine.protocols import Busy
 from .. import environment
 from .queue_lib import edge as base
 from .queue_lib import hzlib
-from .release_lib import approved
 from .train_lib import edge, legacy, resume_ci
 from .train_lib.names import translate
 
-# the reviewed candidate sources too: the train's releases run them, so a re-pin voids this verdict as it voids the release's
-UNIT = ("train_lib", "queue_lib", "release_lib", *(f"release_lib/{approved.DIRECTORY.name}/{name}" for name in sorted(approved.FILES.values())))
-PLAN_UNIT = ("train_lib/plan.py", "train_lib/digest.py", "train_lib/edge.py", "train_lib/names.py")  # what `release train plan` executes
 VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
 DEFERRED = "heinzel.ci_ops.deferred"  # the list of deferred runs `sm ci defer` records (key `runs`) and `sm ci deferred` prints
 
@@ -167,7 +163,7 @@ class TrainTick(Model):
         return self.exit
 
 
-@native("daemon train", writes=True, tick=True, replaces=("hz-train",), files=UNIT, help=H(
+@native("daemon train", writes=True, tick=True, replaces=("hz-train",), help=H(
     "One tick of the release train: start a runner for every active release that has none, then cut the next release when every condition holds.",
     "Use for the launchd job (every 10 minutes); by hand for a single tick only while that job is stopped.",
     "may start detached release runners (`--run`), which freeze merges, merge the release PR, tag and publish; writes the train's state, logs and notes.",
@@ -210,7 +206,7 @@ class TrainStatus(Model):
         return self.lines
 
 
-@native("release train status", replaces=("hz-train",), files=("train_status.py",), help=H(
+@native("release train status", replaces=("hz-train",), help=H(
     "The release train: every active train with its phase, every release tail with its verdict, the oldest train's state.",
     "Use when a release should have been cut or does not move.",
     "nothing (read-only).",
@@ -271,7 +267,7 @@ def clear_refusal(module: Any, version: str) -> str:
     return ""
 
 
-@native("release train clear", writes=True, replaces=("hz-train",), files=UNIT, review="daemon-train.md", help=H(
+@native("release train clear", writes=True, replaces=("hz-train",), help=H(
     "Mark one named train cleared after its cause is fixed, so that the next tick may cut again.",
     "Use after a train stopped as blocked (three failed attempts or NOT ACCEPTED) and the cause is resolved, or after its candidate was dropped.",
     "sets that version's state file to cleared and writes a note; nothing else. Refused while that train's runner holds its lock.",
@@ -313,7 +309,7 @@ class TrainNext(Model):
         return self.exit
 
 
-@native("release train next", writes=True, replaces=("hz-train",), files=UNIT, review="daemon-train.md", help=H(
+@native("release train next", writes=True, replaces=("hz-train",), help=H(
     "The N+1 batch at the cut: what merged since train N was cut, which queued PRs are green on current main, blockers, builders to nudge.",
     "Use after a cut, in the same tick; with --start to queue the green PRs and record the batch.",
     "without --start nothing; with --start queues the green PRs (`sm queue add`) and writes the batch record next-vX.json in the train's state directory.",
@@ -344,7 +340,7 @@ class TrainPlan(Model):
         return self.exit
 
 
-@native("release train plan", replaces=("hz-train",), files=PLAN_UNIT, help=H(
+@native("release train plan", replaces=("hz-train",), help=H(
     "The release candidate list as one table: state, merge state, CI, CI minutes and the next action per PR.",
     "Use when a release should take a known set of PRs and you need to see which are ready.",
     "nothing (read-only).",
@@ -382,7 +378,7 @@ class ResumedCI(Model):
         return self.exit
 
 
-@native("release train resume-ci", writes=True, replaces=("hz-ci-resume-after-tag",), files=UNIT, review="daemon-train.md", help=H(
+@native("release train resume-ci", writes=True, replaces=("hz-ci-resume-after-tag",), help=H(
     "Right after a release tag: re-run the deferred CI of open PRs that are queued or combine branches; drop runs of closed PRs.",
     "Use after a tag when the candidate window cancelled PR CI; the train calls it by itself.",
     "re-runs workflow runs on GitHub and rewrites the list of deferred runs (the one `sm ci defer` records and `sm ci deferred` prints).",

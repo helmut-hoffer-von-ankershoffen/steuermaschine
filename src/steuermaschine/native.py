@@ -3,7 +3,7 @@
     @native("queue list", help=H(...))                      # reads only: on as soon as it is merged
     def queue_list(all_: bool = typer.Option(False, "--all")) -> QueueList: ...
 
-    @native("queue add", writes=True, help=H(...))          # writes: on once reviews/queue-add.md approves this exact code
+    @native("queue add", writes=True, help=H(...))          # writes: takes the writers' lock; reviewed once per promote
     def queue_add(pr: int) -> QueueAdded: ...
 
     @native("daemon queue", writes=True, tick=True, help=H(...))   # one tick; the core adds --loop SECONDS
@@ -25,23 +25,17 @@ import typing
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import UTC
-from importlib import resources
 from pathlib import Path
 from typing import Any, TypeVar
 
 import typer
 
-from . import INTERNAL, WAITING
+from . import WAITING
 from .engine import Refuse, Wait
 from .helpdoc import H
 from .protocols import Providers
 
 F = TypeVar("F", bound=Callable[..., Any])
-
-VERDICT = "VERDICT: APPROVE"
-REVIEWED = "REVIEWED:"
-COVERS = "COVERS:"
-
 
 @dataclass(frozen=True)
 class NativeCommand:
@@ -51,13 +45,6 @@ class NativeCommand:
     writes: bool = False  # True: writes state other commands depend on, or anything outside this machine
     tick: bool = False  # True: one tick of a loop; the core adds --loop SECONDS
     replaces: tuple[str, ...] = ()  # old tool names this command takes over, for the tool map
-    review: str = ""  # file name in the package's reviews/ directory; default: the path with dashes + .md
-    files: tuple[str, ...] = ()  # the review unit: paths relative to the module's directory; default: the module and its <module>_lib package
-    exempt: str = ""  # a writer the gate cannot hold, with the reason (the run lock itself: every review's tests run through it)
-
-    @property
-    def review_file(self) -> str:
-        return self.review or self.path.replace(" ", "-") + ".md"
 
     @property
     def model(self) -> Any:
@@ -81,8 +68,8 @@ class NativeCommand:
         return found
 
     def code_files(self) -> list[Any]:
-        """The files a review of this command covers: the module that defines it and, next to it, the package
-        `<module>_lib` with the logic it moved in. A change to any of them voids the verdict."""
+        """The code of this command: the module that defines it and, next to it, the package `<module>_lib` with the
+        logic it moved in. `reviewgraph.reach` follows the imports from here (`sm self reviews`)."""
         import sys
         from pathlib import Path
 
@@ -90,69 +77,8 @@ class NativeCommand:
         source = Path(getattr(module, "__file__", "") or "")
         if not source.is_file():
             return []
-        if self.files:  # an explicit review unit: exactly the files this command executes; the reviewer checks the list is complete
-            listed, missing = [], []
-            for name in self.files:  # a file, or a directory (every .py file below it)
-                entry = source.parent / name
-                listed += sorted(entry.rglob("*.py")) if entry.is_dir() else [entry]
-                missing += [] if entry.exists() else [str(entry)]
-            if missing:
-                raise FileNotFoundError(f"@native('{self.path}', files=...) names files that do not exist: {missing}")
-            return [source, *sorted(set(listed) - {source})]
         lib = source.with_name(source.stem + "_lib")
         return [source, *sorted(p for p in lib.rglob("*.py"))] if lib.is_dir() else [source]
-
-    def imported_files(self) -> list[Path]:
-        """The first-party files the unit imports, transitively: core (`steuermaschine`) and the plugin's own package,
-        including imports from one `*_lib` package into another. A change to any of them can change what the command
-        does, so it voids the verdict too. Followed: every `import` and `from ... import` in the source (also inside
-        functions); not followed: names loaded by string at run time (they stay inside the declared unit)."""
-        unit = self.code_files()
-        return _imported(unit, _roots(self.fn.__module__)) if unit else []
-
-    def review_files(self) -> list[Path]:
-        """What the digest covers: the declared unit (`code_files()`), then the files it imports (`imported_files()`)."""
-        return [*self.code_files(), *self.imported_files()]
-
-    def labels(self) -> list[str]:
-        """The name of each file of `review_files()` in the digest: relative to the command's module for the unit, the
-        package path (`steuermaschine/engine.py`) for an imported file. The same in a checkout and in an install."""
-        files = self.review_files()
-        return [_label(path, files[0].parent) for path in files] if files else []
-
-    def code_digest(self) -> str:
-        """sha256 over the names and bytes of `review_files()`. This is what a review file must name."""
-        import hashlib
-
-        files = self.review_files()
-        if not files:
-            return ""
-        digest = hashlib.sha256()
-        for path, label in zip(files, self.labels(), strict=True):
-            digest.update(label.encode() + b"\0" + path.read_bytes() + b"\0")
-        return digest.hexdigest()
-
-    def review_state(self) -> tuple[str, str]:
-        """(state, detail). state is `approved` only when the review file's LAST non-empty line is exactly the verdict
-        line AND the file names the digest of the code as it is now. The file is package data: the verdict travels
-        with the code it approves, and no setting, environment variable or option replaces it."""
-        try:
-            text = resources.files(self.fn.__module__.split(".")[0]).joinpath("reviews", self.review_file).read_text()
-        except Exception:
-            return "missing", f"reviews/{self.review_file} does not exist"
-        lines = [line.strip() for line in text.splitlines() if line.strip()]
-        if not lines or lines[-1] != VERDICT:
-            return "open", f"the last line of reviews/{self.review_file} is not exactly `{VERDICT}`"
-        if self.review and f"{COVERS} {self.path}" not in lines:  # a file shared by several commands lists each one it approves
-            return "open", f"reviews/{self.review_file} is shared and does not list this command: it needs the line `{COVERS} {self.path}`"
-        digest = self.code_digest()
-        if not digest or f"{REVIEWED} sha256={digest}" not in lines:
-            return "stale", (f"reviews/{self.review_file} does not name the code as it is now: it needs the line `{REVIEWED} sha256={digest}` "
-                             "(the code changed after the review, or the review never named it)")
-        return "approved", f"reviews/{self.review_file}"
-
-    def reviewed(self) -> bool:
-        return self.review_state()[0] == "approved"
 
 
 CORE = "steuermaschine"
@@ -221,32 +147,10 @@ def _imports_of(path: Path, roots: dict[str, Path]) -> list[Path]:
     return found
 
 
-def _imported(unit: list[Path], roots: dict[str, Path]) -> list[Path]:
-    seen = {p.resolve() for p in unit}
-    queue, extra = [p for p in seen if p.suffix == ".py"], list[Path]()
-    while queue:
-        for hit in _imports_of(queue.pop(), roots):
-            if hit not in seen:
-                seen.add(hit)
-                extra.append(hit)
-                queue.append(hit)
-    return sorted(extra, key=_package_path)  # by package path, not by where it is installed: the same digest everywhere
-
-
 def _package_path(path: Path) -> str:
     """`steuermaschine/engine.py`: the path below the directory that holds the top-level package."""
     path = Path(path).resolve()
     for parent in path.parents:
-        if not (parent / "__init__.py").is_file():
-            return str(path.relative_to(parent))
-    return path.name
-
-
-def _label(path: Path, here: Path) -> str:
-    path, here = Path(path).resolve(), Path(here).resolve()
-    if path.is_relative_to(here):
-        return str(path.relative_to(here))
-    for parent in path.parents:  # the package path: up to the directory that holds the top-level package
         if not (parent / "__init__.py").is_file():
             return str(path.relative_to(parent))
     return path.name
@@ -260,10 +164,20 @@ class Group:
     help: str
 
 
-def native(path: str, *, help: str, writes: bool = False, tick: bool = False, replaces: tuple[str, ...] = (), review: str = "",
-           files: tuple[str, ...] = (), exempt: str = "") -> Callable[[F], F]:
+@dataclass(frozen=True)
+class Alias:
+    """A second name for a command group: `Alias("work", "beads")` mounts the group `beads` as `work` as well. The
+    commands are the same objects, so the writers' lock and the help are the original's.
+    `Alias("work focus", "focus")` mounts a group below an alias that was declared before it."""
+
+    path: str
+    target: str
+    help: str = ""
+
+
+def native(path: str, *, help: str, writes: bool = False, tick: bool = False, replaces: tuple[str, ...] = ()) -> Callable[[F], F]:
     def mark(fn: F) -> F:
-        setattr(fn, "__sm_native__", NativeCommand(" ".join(path.split()), fn, help, writes, tick, tuple(replaces), review, tuple(files), exempt))  # noqa: B010
+        setattr(fn, "__sm_native__", NativeCommand(" ".join(path.split()), fn, help, writes, tick, tuple(replaces)))  # noqa: B010
         return fn
 
     return mark
@@ -274,7 +188,7 @@ def collect(*modules: Any) -> list[Any]:
     out = []
     for module in modules:
         for value in vars(module).values():
-            if isinstance(value, Group):
+            if isinstance(value, Group | Alias):
                 out.append(value)
             elif getattr(value, "__sm_native__", None) is not None and getattr(value, "__module__", None) == module.__name__:
                 out.append(value.__sm_native__)
@@ -289,7 +203,7 @@ class NativeRuntime:
     project: Any
     say: Callable[[str], None] = field(default=lambda text: typer.echo(text, err=True))
     # every native command of the loaded plugin stack; lets a command look up others (a digest of read commands)
-    # without importing the plugin's whole registry, which would pull every module into its review unit
+    # without importing the plugin's whole registry, which would put every module into its reach (`sm self reviews`)
     commands: Callable[[], list[Any]] = field(default=list)
 
 
@@ -319,38 +233,26 @@ class using:
         return False
 
 
-# ----------------------------------------------------------------------------- the review gate
-def unit(path: str, anchor: Callable[..., Any], review: str, files: tuple[str, ...] = ()) -> NativeCommand:
-    """A review unit for a write path that is not a `@native` function: a core command, a pipeline. `anchor` is any
-    function of the module that holds the code (its module and `<module>_lib` are the unit, imports followed)."""
-    return NativeCommand(" ".join(path.split()), anchor, "", writes=True, review=review, files=tuple(files))
+# ----------------------------------------------------------------------------- write units
+def unit(path: str, anchor: Callable[..., Any]) -> NativeCommand:
+    """A write path that is not a `@native` function: a core command, a pipeline. `anchor` is any function of the
+    module that holds the code (its module and `<module>_lib` are the unit, imports followed by `reviewgraph.reach`)."""
+    return NativeCommand(" ".join(path.split()), anchor, "", writes=True)
 
 
-# The writers the gate cannot hold, by command path. A plugin's `exempt=` counts only for a path named here: the run
-# lock (`gate run`), which the tests of every review run through. Any other path with `exempt=` stays gated.
+# The writers that do not take the writers' lock, by command path: the run lock (`gate run`), which every test run goes
+# through. The core alone decides this; a plugin cannot exempt a command of its own.
 EXEMPT_PATHS: frozenset[str] = frozenset({"gate run"})
 
 
 def is_exempt(cmd: Any) -> bool:
-    """True when `cmd` declares `exempt=` and its path is on the core's allowlist (`EXEMPT_PATHS`)."""
-    return bool(getattr(cmd, "exempt", "")) and getattr(cmd, "path", "") in EXEMPT_PATHS
-
-
-def gate_problem(cmd: Any, project: Any) -> str:
-    """Why `cmd` may not run now ("" when it may): a write command runs only with an approved review of its exact
-    code. The exceptions: an exempt writer on the core's allowlist (`EXEMPT_PATHS`), and a test project
-    (`allow_unreviewed`), which no setting file or variable can set."""
-    if not getattr(cmd, "writes", False) or is_exempt(cmd) or getattr(project, "allow_unreviewed", False):
-        return ""
-    state, detail = cmd.review_state()
-    return "" if state == "approved" else str( f"`sm {cmd.path}` writes and its independent review is {state}: {detail}")
+    """True when the path of `cmd` is on the core's allowlist (`EXEMPT_PATHS`)."""
+    return getattr(cmd, "path", "") in EXEMPT_PATHS
 
 
 def call(cmd: NativeCommand, **kwargs: Any) -> Any:
-    """Run a native command from code (a pipeline step) with the same review gate as on the command line. Options
-    not given take the command's defaults; the current `runtime()` is used. Raises `Refuse` when the gate is shut."""
-    if problem := gate_problem(cmd, runtime().project):
-        raise Refuse(problem + "; nothing was run", "sm self reviews", INTERNAL)
+    """Run a native command from code (a pipeline step) as on the command line. Options not given take the
+    command's defaults; the current `runtime()` is used."""
     for name, param in inspect.signature(cmd.fn).parameters.items():
         default = param.default
         if name in kwargs or default is inspect.Parameter.empty:
@@ -402,6 +304,29 @@ def build(commands: list[Any], rt: Any, emit: Callable[..., Any], fail: Callable
         group_for(words[:-1]).command(words[-1], help=cmd.help, short_help=cmd.help.replace("\b", "").strip().splitlines()[0],
                                       context_settings=ctx_settings)(_command(cmd, rt, emit, fail))
     return app
+
+
+def mount_aliases(root: Any, commands: list[Any]) -> None:
+    """Mount every `Alias` in `commands` on the Click group `root`, in the order given. A target that is missing is skipped."""
+    import copy
+
+    for alias in (c for c in commands if isinstance(c, Alias)):
+        target = root.commands.get(alias.target)
+        if target is None or not hasattr(target, "commands"):
+            continue
+        *parents, name = alias.path.split()
+        parent = root
+        for word in parents:
+            parent = parent.commands.get(word)
+            if parent is None or not hasattr(parent, "commands"):
+                break
+        else:
+            twin = copy.copy(target)
+            twin.name, twin.commands = name, dict(target.commands)
+            if alias.help:
+                twin.help = alias.help
+                twin.short_help = alias.help.replace("\b", "").strip().splitlines()[0]
+            parent.commands[name] = twin
 
 
 def _group_command(run: Callable[..., Any]) -> Callable[..., Any]:
@@ -542,8 +467,6 @@ def _command(cmd: NativeCommand, rt: Any, emit: Callable[..., Any], fail: Callab
     @functools.wraps(cmd.fn)
     def command(*args: Any, **kwargs: Any) -> Any:
         loop = kwargs.pop("loop", 0.0) if cmd.tick else 0.0
-        if problem := gate_problem(cmd, rt.project):
-            fail(problem, INTERNAL, hint="nothing was run; `sm self reviews` lists every write command, its review file and the digest to name")
         release = _running_release()  # before the first tick: a switch during it must end the loop too
 
         def guarded(first: bool) -> int | None:

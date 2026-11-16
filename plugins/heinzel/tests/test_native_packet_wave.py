@@ -10,6 +10,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import policy_kit as kit
 import pytest
 
 # (moved: the package is imported, no path insert)
@@ -57,7 +58,7 @@ def read(path):
     return sorted(re.findall(r'classname="([^"]*)" name="([^"]*)"', open(path).read()))
 p = argparse.ArgumentParser(); s = p.add_subparsers(dest="op")
 c = s.add_parser("collect"); c.add_argument("--repo"); c.add_argument("--tree"); c.add_argument("--selection")
-c.add_argument("--lane"); c.add_argument("--python"); c.add_argument("--node-modules"); c.add_argument("-o")
+c.add_argument("--lane"); c.add_argument("--kind"); c.add_argument("--python"); c.add_argument("--node-modules"); c.add_argument("-o")
 k = s.add_parser("compare"); k.add_argument("--hosted"); k.add_argument("--pr"); k.add_argument("--result"); k.add_argument("-o")
 a = p.parse_args()
 if a.op == "collect":
@@ -94,6 +95,10 @@ def _branch(repo, name, files, start="main"):
     return _git(repo, "rev-parse", name)
 
 
+# Core's release policy and the files it pins: the lanes and their kinds come from it at each collected tree.
+CORE_POLICY = {path: blob.decode() for path, blob in kit.files("new", workflow_blob=b"name: CI\n", recorder_blob=b"# recorder\n").items()}
+
+
 @pytest.fixture
 def wave(tmp_path):
     repo = tmp_path / "core"
@@ -104,6 +109,7 @@ def wave(tmp_path):
                   "scripts/related_tests.py": "", "uv.lock": "lock\n", "pyproject.toml": "[project]\n",
                   "selector.json": json.dumps(BOUNDED), "src/heinzel/mod.py": "x = 1\n", "src/heinzel/other.py": "y = 1\n",
                   "tests/unit/a_test.py": "def test_one(): pass\n", "tests/unit/b_test.py": "def test_b(): pass\n",
+                  **CORE_POLICY,
                   "docs/readme.md": "doc\n"})
     _git(repo, "add", "-A")
     _git(repo, "commit", "-qm", "base")
@@ -123,7 +129,7 @@ def wave(tmp_path):
         sel.write_text(json.dumps({"python": [test]}))
         junit = tmp_path / f"{name}.junit.xml"
         subprocess.run([sys.executable, str(collector), "collect", "--repo", str(repo), "--tree", data[name],
-                        "--selection", str(sel), "--lane", "python", "-o", str(junit)], check=True)
+                        "--selection", str(sel), "--lane", "python", "--kind", "pytest", "-o", str(junit)], check=True)
         data[f"wt-{name}"], data[f"sel-{name}"], data[f"junit-{name}"] = wt, sel, junit
     return data
 

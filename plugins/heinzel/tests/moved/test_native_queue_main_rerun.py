@@ -1,9 +1,14 @@
 """hz-queue main-rerun and restored-by-rerun (policy 2026-11-07 (iii)+(ii)): merges only, never releases, KNOWN only."""
 
 import json
+import sys
+from pathlib import Path
 
 import pytest
 from steuermaschine_heinzel import state as statedir
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import policy_kit as kit  # noqa: E402
 
 SHA = "c68db2fc73be77813333be47781d1fb6712e2b75"
 RID = 42390245496
@@ -67,6 +72,9 @@ def q(tool, home, monkeypatch, tmp_path):
     monkeypatch.setattr(hzlib, "gh", lambda *a: q.fake.gh(*a))
     monkeypatch.setattr(hzlib, "note", q.notes.append)
     monkeypatch.setattr(hzlib, "merge_frozen", lambda *a: False)
+    # Core's release policy at main names the Test cells of a full pass: here the matrix this fake GitHub runs.
+    q.real_reviewed_policy = q.reviewed_policy
+    monkeypatch.setattr(q, "reviewed_policy", lambda sha: kit.policy(commit=sha, test_jobs=frozenset(MATRIX) - {"CI OK"}))
     return q
 
 
@@ -298,15 +306,31 @@ SHARDED = (["CI OK"] + [f"Test (ubuntu-24.04, Python {v}, {lvl})" for v in ("3.1
            + [f"Test (macos-latest, Python {v}, {lvl})" for v in ("3.12", "3.13", "3.14", "3.15") for lvl in ("unit", "integration")])
 
 
-@pytest.mark.parametrize(("names", "complete"), [
-    (MATRIX, True),
-    (SHARDED, True),  # core #592 split each Linux Python into a unit and an integration cell
-    ([n for n in SHARDED if n != "Test (ubuntu-24.04, Python 3.13, integration)"], False),
-    ([n for n in MATRIX if n != "Test (ubuntu-24.04, Python 3.15)"], False),
+@pytest.mark.parametrize(("shape", "names", "complete"), [
+    ("old", SHARDED, True),
+    ("old", [n for n in SHARDED if n != "Test (ubuntu-24.04, Python 3.13, integration)"], False),
+    ("old", MATRIX, False),  # the unsplit Linux layout is not the cells this policy names
+    ("new", ["CI OK", *kit.test_cells("new")], True),
+    ("new", kit.test_cells("new"), False),  # no aggregate
+    ("new", ["CI OK", *kit.test_cells("new")[1:]], False),
 ])
-def test_full_pass_accepts_either_complete_linux_layout(q, names, complete):
+def test_full_pass_needs_the_aggregate_and_every_test_cell_of_the_commits_policy(q, monkeypatch, shape, names, complete):
+    monkeypatch.setattr(q, "reviewed_policy", lambda sha: kit.policy(commit=sha, shape=shape))
     rows = [{"name": n, "status": "completed", "conclusion": "success"} for n in names]
-    assert q.full_pass(rows) is complete
+    assert q.full_pass(rows, SHA) is complete
+
+
+def test_full_pass_and_focused_pass_fail_closed_without_a_policy(q, monkeypatch):
+    monkeypatch.setattr(q, "reviewed_policy", lambda sha: None)
+    rows = [{"name": n, "status": "completed", "conclusion": "success"} for n in SHARDED]
+    assert q.full_pass(rows, SHA) is False and q.focused_pass(rows, SHA) is False
+
+
+def test_the_policy_of_a_main_commit_comes_from_the_contents_api(q):
+    q.fake.ghj = lambda *a, default=None: kit.contents_routes(SHA, kit.files("new")).get(a[1].split("/", 3)[3], default)
+    assert len(q.real_reviewed_policy(SHA).test_jobs) == 4
+    q.fake.ghj = lambda *a, default=None: default
+    assert q.real_reviewed_policy(SHA) is None
 
 
 

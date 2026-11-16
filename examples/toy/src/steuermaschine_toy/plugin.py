@@ -252,7 +252,7 @@ class Toy:
 
     @hookimpl
     def sm_native(self, settings):
-        from . import reset  # `sim reset`: a write command, gated by its review (reviews/sim-reset.md)
+        from . import reset  # `sim reset`: a write command (it takes the writers' lock)
 
         return native.collect(sys.modules[__name__], reset)
 

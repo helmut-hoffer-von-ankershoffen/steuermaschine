@@ -6,7 +6,7 @@
 """hz-merge-gate [audit]  |  flip [--dry-run]  |  harden
 
 The owner's rule: nothing merges unless Sonar's quality gate passes and overall reliability, security and maintainability
-are A, or at a coverage where the badge is red. `merge-gate` and `coverage-floor` (.github/workflows/merge-gate.yml in each
+are A, or at a coverage where the badge is red. the merge-gate workflow's checks (named by Core's release policy) in each
 repo) judge that; this tool makes main require them, one at a time, the moment a repo passes.
 
 `audit` prints one line per repo. `flip` adds each passing check to the repo's main ruleset, logs the date with hz-note and
@@ -22,6 +22,7 @@ from pathlib import Path
 
 from . import edge  # moved: siblings are imported relatively, no sys.path entry
 from . import hzlib  # noqa: E402
+from . import core_facts  # noqa: E402
 
 SONAR = "https://sonarcloud.io/api"
 RATINGS = {"reliability_rating": "reliability", "security_rating": "security", "sqale_rating": "maintainability"}
@@ -101,7 +102,7 @@ def write_ruleset(repo: str, data: dict, before: set[str]) -> bool:
 
 def workflow_on_main(repo: str) -> bool:
     """A required check nothing reports would block every merge, so the workflow must be on main first."""
-    return hzlib.gh("api", f"repos/{hzlib.OWNER}/{repo}/contents/.github/workflows/merge-gate.yml")[0] == 0
+    return hzlib.gh("api", f"repos/{hzlib.OWNER}/{repo}/contents/{core_facts.judge_path()}")[0] == 0
 
 
 def reported_on_a_pull_request(repo: str, check: str) -> bool:
@@ -116,7 +117,7 @@ def reported_on_a_pull_request(repo: str, check: str) -> bool:
 
 
 def passing(repo: str) -> dict[str, tuple[bool, str]]:
-    return {"merge-gate": sonar_state(repo), "coverage-floor": coverage_state(repo)}
+    return {core_facts.gate_check("sonar"): sonar_state(repo), core_facts.gate_check("coverage"): coverage_state(repo)}
 
 
 def flip(dry_run: bool = False) -> list[str]:
@@ -160,8 +161,8 @@ def status_lines() -> list[str]:
         states = passing(repo)
         data = ruleset(repo)
         names = {c["context"] for c in required_in(data)} if data else set()
-        marks = [] if states["merge-gate"][0] else ["NOT A"]
-        marks += [] if states["coverage-floor"][0] else ["RED"]
+        marks = [] if states[core_facts.gate_check("sonar")][0] else ["NOT A"]
+        marks += [] if states[core_facts.gate_check("coverage")][0] else ["RED"]
         marks += ["BYPASS"] if data and data.get("bypass_actors") else []
         marks += ["NO RULESET"] if not data else []
         need = [c for c in states if c in names]

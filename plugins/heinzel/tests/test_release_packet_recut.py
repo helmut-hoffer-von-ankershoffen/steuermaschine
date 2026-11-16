@@ -182,10 +182,13 @@ def test_reset_archives_the_cut_state_and_a_later_cut_starts_fresh():
 
 
 # ----------------------------------------------------------------------------- the packet step of the pipeline
-def test_the_packet_step_builds_the_reservation_next_to_the_pair_packet(tmp_path):
+def test_the_packet_step_builds_the_reservation_next_to_the_pair_packet(tmp_path, monkeypatch):
     from test_pipeline_cov_release_cut import context, runtime
 
     from steuermaschine.testing.fakes import FakeVcs
+    from steuermaschine_heinzel.pipelines import release_cut
+
+    monkeypatch.setattr(release_cut, "changes_since_release", lambda core, head: (RELEASE["base"], ()))  # no CI change
 
     rt = runtime(tmp_path)
     root = tmp_path / "review"

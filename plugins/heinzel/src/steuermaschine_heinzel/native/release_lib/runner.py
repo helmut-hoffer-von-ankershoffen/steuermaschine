@@ -62,25 +62,30 @@ import shutil
 import stat
 import subprocess
 import sys
-import time
 import tempfile
+import time
 import tomllib
 import urllib.error
 import urllib.request
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 
+from steuermaschine.config import child_environment
+
+from ... import state as statedir  # the plugin's state paths
+from ..queue_lib import (
+    core_facts,
+    hzlib,  # noqa: E402
+    release_flow,
+)
+from . import candidate_capacity as release_candidate_capacity
+from . import candidate_policy as release_candidate_policy
 from . import edge  # moved: siblings are imported relatively, no sys.path entry
-from ..queue_lib import hzlib  # noqa: E402
 from . import notes_audit as release_notes_audit  # noqa: E402
 from . import rejection as release_rejection
-from . import candidate_policy as release_candidate_policy
-from . import candidate_capacity as release_candidate_capacity
-from ..queue_lib import release_flow
 from . import snapshot as release_snapshot  # noqa: E402
-from steuermaschine.config import child_environment
-from ... import state as statedir  # the plugin's state paths
 
 CORE, PLUGINS = hzlib.CORE, hzlib.PLUGINS
 POLL = 30
@@ -1167,7 +1172,7 @@ def merge_release_pr(tag: str, composite_run: int | None = None) -> None:
 
 def main_tip_green() -> bool:
     tip = hzlib.gh("api", f"repos/{CORE}/commits/main", "--jq", ".sha")[1].strip()
-    latest = (hzlib.resolve_main_runs(runs(CORE, "ci.yml", branch="main")) or [])[:3]
+    latest = (hzlib.resolve_main_runs(runs(CORE, core_facts.ci_file(), branch="main")) or [])[:3]
     if any(r["status"] != "completed" for r in latest):
         return False
     if latest and latest[0]["headSha"] == tip and latest[0]["conclusion"] == "failure":
@@ -1196,6 +1201,18 @@ def main_candidate_gate(version: str) -> bool:
         return True
     gate = hzlib.main_release_gate(hzlib.gh("api", f"repos/{CORE}/commits/main", "--jq", ".sha")[1].strip())
     if gate["verdict"] != "ok":
+        # A completed, exact-source candidate is stronger evidence than an older main failure.
+        # Do not memoize this route: every resume must reverify the current PR head, and the
+        # merge guard independently verifies it again immediately before merging.
+        pr = release_pr(f"v{version}")
+        if pr and pr.get("state") == "OPEN":
+            try:
+                evidence = release_candidate_policy.verify_pr(pr["number"])
+            except Exception:  # Unavailable or malformed evidence must never open the gate.
+                pass
+            else:
+                hzlib.say(f"main gate (train path): exact candidate verified (run {evidence['run_id']})")
+                return True
         raise Stop(f"main gate (train path) refused: {gate['why']}")
     memo.write_text(json.dumps({"version": version, "kind": gate["kind"], "why": gate["why"], "run": gate["run"], "at": now_iso()}))
     hzlib.say(f"main gate (train path, candidate is the gate): {gate['why']}")
@@ -1936,6 +1953,19 @@ def drop_identity(version: str) -> dict:
             "branch": repo["branch"] is not None}
 
 
+def recorded_release_pr(data: dict[str, Any]) -> int | None:
+    """The PR number `sm release pr` recorded (release_pr_opened), or None. A malformed record refuses: it is never
+    read as no PR. Whether the PR is unmerged, and that no tag or PyPI release exists, drop_identity proves on GitHub."""
+    opened = data.get("release_pr_opened")
+    if opened is None:
+        return None
+    if (not isinstance(opened, dict) or set(opened) != {"pr", "head", "at"} or type(opened["pr"]) is not int
+            or opened["pr"] <= 0 or not isinstance(opened["head"], str) or not re.fullmatch(r"[0-9a-f]{40}", opened["head"])
+            or not isinstance(opened["at"], str) or not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z", opened["at"])):
+        raise Stop("drop refused: the receipt's release_pr_opened record is malformed; preserving it for review")
+    return opened["pr"]
+
+
 def drop_unmet(version: str, identity: dict) -> str | None:
     if identity["open"]:
         return f"release PR #{identity['open'][0]} is open"
@@ -1983,8 +2013,9 @@ def drop_candidate(version: str, reason: str, close_pr: bool) -> int:
     if recorded is not None and (not isinstance(recorded, dict) or recorded.get("version") != version
                                  or recorded.get("token") != data.get("freeze_token")):
         raise Stop("drop refused: the receipt holds a drop record of another identity; preserving it for review")
-    if not has_only_pretag_core_state({key: value for key, value in data.items() if key != "drop"}):
+    if not has_only_pretag_core_state({key: value for key, value in data.items() if key not in ("drop", "release_pr_opened")}):
         raise Stop("drop refused: the receipt records steps after the tag (PyPI, compose or acceptance)")
+    opened = recorded_release_pr(data)  # `sm release pr` records the PR it opened: pre-tag, if GitHub agrees below
     events = hold_events(data)
     owned = data.get("freeze_token") is not None
     exists = owned and owned_hold_exists(version)
@@ -1994,7 +2025,10 @@ def drop_candidate(version: str, reason: str, close_pr: bool) -> int:
     if exists:
         directory, held = pin_owned_hold(version)
     try:
-        identity = drop_identity(version)
+        identity = drop_identity(version)  # proves: no tag, no GitHub release, PyPI 404, no merged release PR
+        if opened is not None and opened not in identity["open"] + identity["closed"]:
+            raise Stop(f"drop refused: the receipt names release PR #{opened}, which GitHub does not show as an "
+                       f"unmerged PR of release/v{version}; nothing was dropped")
         unmet = drop_unmet(version, identity)
         if unmet and not close_pr:
             raise Stop(f"drop refused: {unmet}; close the PR and delete the branch, or pass --close-pr")
@@ -2016,7 +2050,8 @@ def drop_candidate(version: str, reason: str, close_pr: bool) -> int:
                   "hold": "owned" if exists else "paused" if owned else "none",
                   "evidence": {"tag": False, "github_release": False, "pypi": 404, "merged_pr": False,
                                "closed_prs": identity["closed"], "closed_by_drop": closed_now,
-                               "branch": False, "branch_deleted_by_drop": branch_deleted}}
+                               "branch": False, "branch_deleted_by_drop": branch_deleted,
+                               **({"recorded_pr": opened} if opened is not None else {})}}
         if recorded is None:
             remember(drop=record)  # durable intent before the hold goes: a retry may then find the hold absent
         else:
@@ -2151,7 +2186,7 @@ def release_core(request: str, intro: str, timeout: float, snapshot_acceptance: 
 
 # ---------------------------------------------------------------- tag-on-green-main (core ADR 0144, flag)
 
-BUMP_RUN_LISTING = "actions/workflows/ci.yml/runs?head_sha={sha}&event=push&per_page=100"
+BUMP_RUN_LISTING = "actions/workflows/{workflow}/runs?head_sha={sha}&event=push&per_page=100"  # workflow: Core's policy
 
 
 def pick_flow(request: str, composite_run: int | None) -> str:
@@ -2246,7 +2281,7 @@ def checkout_branch(work: str) -> str:
 
 
 def bump_runs(sha: str) -> list[dict] | None:
-    listing = hzlib.ghj("api", f"repos/{CORE}/" + BUMP_RUN_LISTING.format(sha=sha), default=None)
+    listing = hzlib.ghj("api", f"repos/{CORE}/" + BUMP_RUN_LISTING.format(workflow=core_facts.ci_file(), sha=sha), default=None)
     rows = listing.get("workflow_runs") if isinstance(listing, dict) else None
     return rows if isinstance(rows, list) else None
 

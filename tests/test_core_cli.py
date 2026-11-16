@@ -7,7 +7,7 @@ import pytest
 import typer
 from pydantic import BaseModel, ConfigDict, Field
 
-from steuermaschine import ALARM, API_VERSION, PROG, helpdoc, models
+from steuermaschine import ALARM, API_VERSION, PROG, helpdoc, models, verdicts
 from steuermaschine.app import OUT, Runtime, command_tree
 from steuermaschine.config import Project
 from steuermaschine.engine import Pipeline, Step, Subject, Wait
@@ -353,6 +353,43 @@ def test_review_verdict_in_json_prints_one_document_and_exits_0():
     doc = one_document(out, models.Verdict)
     assert (doc.verdict, doc.reviewer, doc.at) == ("approve", "reviewer-1", r.providers.clock.now())
     assert r.providers.store.get_receipt("verdicts", digest)["verdict"] == "approve"
+
+
+def test_an_approve_of_a_digest_bound_to_a_head_needs_the_green_check_receipt_of_that_commit():
+    r = rt()
+    digest, head = "f" * 64, "a" * 40
+    store = r.providers.store
+    store.save("runs.head.demo", "k", {"author": "builder-1", "steps": {"review": {"digest": digest}}})
+    verdicts.need_check(store, digest, head, "sm check ../wt")
+    no = invoke(r, ["review", "verdict", digest, "--approve", "--reviewer", "reviewer-1"])
+    assert no.exit_code == 1 and "no check receipt exists for exactly that commit" in no.stderr and "`sm check ../wt`" in no.stderr and head[:12] in no.stderr
+    assert store.get_receipt("verdicts", digest) is None  # nothing was recorded
+    verdicts.record_check(store, "b" * 40, {})  # another commit's receipt is not this head's
+    assert invoke(r, ["review", "verdict", digest, "--approve", "--reviewer", "reviewer-1"]).exit_code == 1
+    verdicts.record_check(store, head, {})
+    assert invoke(r, ["review", "verdict", digest, "--approve", "--reviewer", "reviewer-1"]).exit_code == 0
+    assert store.get_receipt("verdicts", digest)["verdict"] == "approve"
+
+
+def test_a_reject_needs_no_check_receipt():
+    r = rt()
+    digest = "f" * 64
+    r.providers.store.save("runs.head.demo", "k", {"author": "builder-1", "steps": {"review": {"digest": digest}}})
+    verdicts.need_check(r.providers.store, digest, "a" * 40, "sm check ../wt")
+    assert invoke(r, ["review", "verdict", digest, "--reject", "--reviewer", "reviewer-1", "--notes", "wrong"]).exit_code == 0
+    assert r.providers.store.get_receipt("verdicts", digest)["verdict"] == "reject"
+
+
+def test_a_ci_change_verdict_needs_its_kind_a_model_and_notes():
+    r = rt()
+    sha = "c" * 40
+    r.providers.store.save("review.digests", sha, {"digest": sha, "authors": ["release-driver"], "sources": ["release ci_change"]})
+    assert invoke(r, ["review", "verdict", sha, "--approve", "--reviewer", "r1", "--kind", "nope"]).exit_code == 2
+    weak = invoke(r, ["review", "verdict", sha, "--approve", "--reviewer", "r1", "--kind", "ci_change"])
+    assert weak.exit_code == 2 and "strong review" in weak.stderr
+    out = invoke(r, ["--format", "json", "review", "verdict", sha, "--approve", "--reviewer", "r1", "--kind", "ci_change",
+                     "--model", "opus", "--notes", "read .github/workflows/ci.yml"])
+    assert one_document(out, models.Verdict).kind == "ci_change" and r.providers.store.get_receipt("verdicts", sha)["kind"] == "ci_change"
 
 
 def test_focus_add_and_done_in_json_print_one_document_and_exit_0():

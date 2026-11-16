@@ -155,7 +155,6 @@ def test_verify_rederives_cases_from_junit(core, tmp_path):
     ({**BOUNDED, "pytest": ["tests/unit/"]}, "directory selection is broad"),
     ({**BOUNDED, "pytest": [], "e2e_lanes": ["cli"]}, "e2e lane cli has no focused lane mapping"),
     ({**BOUNDED, "pytest": []}, "selects no tests"),
-    ({**BOUNDED, "pytest": [f"tests/unit/{n}_test.py" for n in "abcd"]}, "empty or broad focused lane python"),
 ])
 def test_broad_or_empty_repository_selection_refuses(core, capsys, selector, message):
     _write(core["repo"], {"selector.json": json.dumps(selector)})
@@ -248,13 +247,16 @@ def test_inherited_git_environment_cannot_redirect_reads(core, monkeypatch, tmp_
     assert not (tmp_path / "caller-index").exists()
 
 
-def test_older_base_without_a_python_limit_uses_the_single_limit(core, tmp_path):
+def test_the_python_lane_has_no_maximum_whatever_the_base_says(core, capsys):
+    """Owner 2026-11-14 (bead hl17): the base's PYTHON_CI_MAX_IDS is not read; only the other lanes keep MAX_IDS."""
     repo = core["repo"]
     _git(repo, "checkout", "-q", "main")
-    _write(repo, {"scripts/focused_job.py": JOB.replace("PYTHON_CI_MAX_IDS = 3\n", "")})
-    _git(repo, "commit", "-qam", "old job")
     policy = m.Policy(m.Repo(repo), _git(repo, "rev-parse", "HEAD"))
-    assert (policy.max_ids, policy.python_max_ids) == (2, 2)
+    assert not hasattr(policy, "max_ids") and not hasattr(policy, "python_max_ids")
+    _write(repo, {"selector.json": json.dumps({**BOUNDED, "pytest": [f"tests/unit/{n}_test.py" for n in "abcd"]})})
+    _git(repo, "commit", "-qam", "selector")
+    generate(core)
+    assert "broad focused lane python" not in capsys.readouterr().err  # four ids, over the old PYTHON_CI_MAX_IDS = 3
 
 
 def test_candidate_scripts_never_execute_in_the_selector(core, tmp_path):
@@ -309,8 +311,8 @@ def _selector(core, selector):
     _git(core["repo"], "commit", "-qam", "selector")
 
 
-@pytest.mark.parametrize("vitest", [["ALL"], ["web/src/x.test.ts", "web/src/y.test.tsx", "web/e2e/z.test.mjs"]])
-def test_vitest_all_or_over_the_cap_becomes_the_whole_suite_sentinel(web_core, capsys, vitest):
+@pytest.mark.parametrize("vitest", [["ALL"]])
+def test_vitest_all_becomes_the_whole_suite_sentinel(web_core, capsys, vitest):
     _selector(web_core, {**BOUNDED, "vitest": vitest})
     code, path = generate(web_core, "--junit", f"web={web_core['web']}")
     assert code == 0, capsys.readouterr().err
@@ -351,9 +353,9 @@ def test_declared_whole_suite_is_refused_mixed_or_outside_the_web_lane(web_core,
 
 
 def test_base_without_vitest_all_keeps_refusing_the_whole_suite(core, tmp_path, capsys):
-    _selector(core, {**BOUNDED, "vitest": ["web/src/x.test.ts", "web/src/a.test.ts", "web/src/b.test.ts"]})
+    _selector(core, {**BOUNDED, "vitest": ["ALL"]})
     assert generate(core)[0] == 1
-    assert "empty or broad focused lane web" in capsys.readouterr().err
+    assert "selects the full set" in capsys.readouterr().err
     declared = tmp_path / "selection.json"
     declared.write_text(json.dumps({"python": ["tests/unit/a_test.py"], "web": ["web/ALL"]}))
     assert generate(core, "--selection", str(declared))[0] == 1
@@ -371,10 +373,31 @@ def test_a_different_base_sentinel_refuses(core):
 def test_derive_selection_maps_only_vitest_to_the_sentinel():
     whole = {**BOUNDED, "vitest": ["ALL"]}
     assert m.derive_selection(whole)[0] is None  # no VITEST_ALL on the base: refused as before
-    assert m.derive_selection(whole, vitest_all="web/ALL", max_ids=10)[0]["web"] == ["web/ALL"]
-    files = [f"web/src/t{i}.test.ts" for i in range(11)]
-    assert m.derive_selection({**BOUNDED, "vitest": files}, vitest_all="web/ALL", max_ids=10)[0]["web"] == ["web/ALL"]
-    assert m.derive_selection({**BOUNDED, "vitest": files[:10]}, vitest_all="web/ALL", max_ids=10)[0]["web"] == files[:10]
+    assert m.derive_selection(whole, vitest_all="web/ALL")[0]["web"] == ["web/ALL"]
+    files = [f"web/src/t{i}.test.ts" for i in range(300)]  # no maximum: many files stay files
+    assert m.derive_selection({**BOUNDED, "vitest": files}, vitest_all="web/ALL")[0]["web"] == sorted(files)
     full = {**BOUNDED, "full": True, "pytest": ["ALL"], "vitest": ["ALL"]}
-    assert m.derive_selection(full, vitest_all="web/ALL", max_ids=10)[0] is None
-    assert m.derive_selection({**whole, "pytest": ["ALL"]}, vitest_all="web/ALL", max_ids=10)[0] is None
+    assert m.derive_selection(full, vitest_all="web/ALL")[0] is None
+    assert m.derive_selection({**whole, "pytest": ["ALL"]}, vitest_all="web/ALL")[0] is None
+
+
+@pytest.mark.parametrize("keys", ["with", "without"])
+def test_a_selection_of_300_ids_is_accepted_whether_or_not_the_base_has_id_limits(core, keys):
+    """Owner 2026-11-14 (bead hl17, "PRs of any size"): sm reads no MAX_IDS or PYTHON_CI_MAX_IDS from Core and has no
+    maximum of its own; a base with or without the keys behaves the same."""
+    repo = core["repo"]
+    _git(repo, "checkout", "-q", "main")
+    if keys == "without":
+        job = "\n".join(line for line in JOB.splitlines() if not line.startswith(("MAX_IDS", "PYTHON_CI_MAX_IDS"))) + "\n"
+        _write(repo, {"scripts/focused_job.py": job})
+        _git(repo, "commit", "-qam", "no id limits")
+    policy = m.Policy(m.Repo(repo), _git(repo, "rev-parse", "HEAD"))
+
+    class Blobs:  # check_selection asks the tree for each test file: every one exists here
+        def blob(self, tree, path):
+            return "0" * 40
+
+    selection = {"python": [f"tests/unit/t{i}_test.py" for i in range(320)]}
+    m.check_selection(selection, Blobs(), "tree", policy)  # no refusal
+    with pytest.raises(m.ManifestError, match="empty focused lane python"):
+        m.check_selection({"python": []}, Blobs(), "tree", policy)

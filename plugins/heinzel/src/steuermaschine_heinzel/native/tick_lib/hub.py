@@ -22,10 +22,18 @@ from steuermaschine.defaults import SystemClock
 from steuermaschine.github import Gh
 
 from ..admission_lib import identity
+from ..ship_lib import repos
 
 CORE = identity.CORE
 PLUGINS = identity.PLUGINS
 split_key = identity.split_key
+
+
+def checkout_repo() -> str | None:
+    """The project repository of the current directory's origin (a bare PR number there means that repository)."""
+    return repos.repo_of_checkout(EDGE.commands) if EDGE.commands is not None else None
+
+
 RUN_URL = re.compile(r"/runs/(\d+)")
 FAILED = ("FAILURE", "CANCELLED", "TIMED_OUT")
 TEST = re.compile(r"FAILED (\S+::\S+)|^\s*FAIL\s+(\S+ > .+)$|^\s*\d+\) (\[[^\]]+\] › .+?)(?: \(\d|$)|✘\s+\d+ (\[[^\]]+\] › .+?)(?: \(\d|$)")  # noqa: RUF001
@@ -70,7 +78,7 @@ def now() -> float:
 
 
 def settled(rollup: list[dict[str, Any]]) -> bool:
-    """Every check completed (a status without a `status` field counts as not completed). `CI OK` is read only when
+    """Every check completed (a status without a `status` field counts as not completed). The aggregate is read only when
     the repository has one; others (heinzel-sf) name their gate differently. At least one check must exist."""
     return bool(rollup) and all(c.get("status") == "COMPLETED" for c in rollup)
 

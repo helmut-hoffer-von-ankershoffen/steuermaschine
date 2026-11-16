@@ -1,14 +1,13 @@
-"""What the digest of a review unit reaches, and which verdicts a change voids. Read-only.
+"""Which write paths a change reaches. Read-only.
 
     reach(units)                  one `Reach` per write path: the unit's own files and the first-party files it imports
-    fan_in(reaches)               file -> the review files whose digest covers it
-    kernel(reaches)               the files in every digest: a change to one of them voids every verdict
-    voided_by(reaches, changed)   the review files a change to these files voids
-    parsed_once()                 while open, the digest walk parses each file once (for a listing of every unit)
+    reached_by(reaches, changed)  write path -> the changed files its code covers (`sm self reviews`)
+    parsed_once()                 while open, the import walk parses each file once (for a listing of every unit)
 
-The digest itself stays `native.NativeCommand.code_digest`; this module answers the questions around it with the same
-import walk (`native._imports_of`), parsing every file once for all units instead of once per unit. Files are named
-by package path (`steuermaschine/engine.py`), the same in a checkout and in an install.
+A unit is the module of a write command with its `<module>_lib` package (`native.NativeCommand.code_files`). The walk
+follows every `import` and `from ... import` in the source (also inside functions) into core (`steuermaschine`) and the
+plugin's own package, and takes a `*_lib` package whole once one of its files is reached (`_closure`). No command declares its files. Files are named by package path
+(`steuermaschine/engine.py`), the same in a checkout and in an install.
 """
 
 from __future__ import annotations
@@ -27,13 +26,12 @@ _Cache = dict[tuple[Path, frozenset[str]], list[Path]]
 @dataclass(frozen=True)
 class Reach:
     path: str  # the command path of the write: "queue add"
-    review: str  # its review file name: "queue-add.md"
-    own: tuple[str, ...]  # the declared unit: the module and its `<module>_lib`, or `files=`
-    imported: tuple[str, ...]  # every first-party file the unit imports, transitively, outside the unit
+    own: tuple[str, ...]  # the unit: the module and its `<module>_lib`
+    imported: tuple[str, ...]  # every first-party file the unit reaches outside itself (`_closure`)
 
     @property
     def files(self) -> tuple[str, ...]:
-        """Every file the digest covers."""
+        """Every file the write path covers."""
         return (*self.own, *self.imported)
 
 
@@ -45,22 +43,34 @@ def reach(units: Iterable[Any]) -> list[Reach]:
         own = [Path(p).resolve() for p in cmd.code_files()]
         if not own:
             continue
-        imported = _closure(own, native._roots(cmd.fn.__module__), cache)
-        out.append(Reach(cmd.path, cmd.review_file, tuple(_name(p) for p in own), tuple(sorted(_name(p) for p in imported))))
+        roots = native._roots(cmd.fn.__module__)
+        imported = _closure(own, roots, cache)
+        out.append(Reach(cmd.path, tuple(_name(p, roots) for p in own), tuple(sorted(_name(p, roots) for p in imported))))
     return out
 
 
 def _closure(own: list[Path], roots: dict[str, Path], cache: _Cache) -> list[Path]:
-    """The files `own` imports, transitively, that are not in it: the walk of `native._imported` with a cache."""
+    """The files `own` reaches, transitively, that are not in it. Two rules:
+    - every import in the source is followed (`native._imports_of`);
+    - one file of a `*_lib` package brings the whole package, data files included: such a package loads its modules
+      and reads its files by name at run time, which no import shows. On the wide side on purpose: a file left out
+      is a change the reviewer is not pointed to.
+    Not taken: the `__init__.py` of the packages above a module outside a `*_lib`. The plugin's registry is one, and
+    it imports every area, so every write path would reach the whole plugin."""
     tops = frozenset(roots)
     seen = set(own)
-    queue = [p for p in own if p.suffix == ".py"]
+    queue = list(own)
     extra: list[Path] = []
+    libs: set[Path] = set()
     while queue:
-        key = (queue.pop(), tops)
-        if key not in cache:
-            cache[key] = native._imports_of(key[0], roots)
-        for hit in cache[key]:
+        path = queue.pop()
+        hits = _whole_lib(path, roots, libs)
+        if path.suffix == ".py":
+            key = (path, tops)
+            if key not in cache:
+                cache[key] = native._imports_of(path, roots)
+            hits += cache[key]
+        for hit in hits:
             if hit not in seen:
                 seen.add(hit)
                 extra.append(hit)
@@ -68,40 +78,50 @@ def _closure(own: list[Path], roots: dict[str, Path], cache: _Cache) -> list[Pat
     return extra
 
 
-def _name(path: Path) -> str:
+def _below(path: Path, roots: dict[str, Path]) -> list[Path]:
+    """The directories from the first-party package that holds `path` down to the file's own, outermost first."""
+    for root in roots.values():
+        if path.is_relative_to(root):
+            return [root, *(root.joinpath(*path.relative_to(root).parts[:i]) for i in range(1, len(path.relative_to(root).parts)))]
+    return []
+
+
+def _whole_lib(path: Path, roots: dict[str, Path], done: set[Path]) -> list[Path]:
+    """Every file of the outermost `*_lib` package that holds `path`, once per package; caches and hidden files are not code."""
+    lib = next((d for d in _below(path, roots)[1:] if d.name.endswith("_lib")), None)
+    if lib is None or lib in done:
+        return []
+    done.add(lib)
+    return sorted(f.resolve() for f in lib.rglob("*") if f.is_file() and f.suffix != ".pyc"
+                  and not any(part.startswith(".") or part == "__pycache__" for part in f.relative_to(lib).parts))
+
+
+def _name(path: Path, roots: dict[str, Path]) -> str:
+    """The package path of a file (`steuermaschine/engine.py`); a data file is named below its package as well."""
+    for root in roots.values():
+        if path.is_relative_to(root):
+            return path.relative_to(root.parent).as_posix()
     return Path(native._package_path(path)).as_posix()
 
 
-def fan_in(reaches: Iterable[Reach]) -> dict[str, list[str]]:
-    """File -> the review files whose digest covers it (sorted), the file in the most digests first."""
-    table: dict[str, set[str]] = {}
-    for unit in reaches:
-        for name in unit.files:
-            table.setdefault(name, set()).add(unit.review)
-    return {name: sorted(table[name]) for name in sorted(table, key=lambda n: (-len(table[n]), n))}
-
-
-def kernel(reaches: Iterable[Reach]) -> list[str]:
-    """The files every unit's digest covers. Empty without units."""
-    units = list(reaches)
-    if not units:
-        return []
-    return sorted(set.intersection(*(set(unit.files) for unit in units)))
-
-
-def voided_by(reaches: Iterable[Reach], changed: Iterable[str]) -> list[str]:
-    """The review files whose verdict a change to `changed` voids. A changed file is a package path or any path that
-    ends with one (`src/steuermaschine/engine.py`, as `git diff --name-only` prints it)."""
+def reached_by(reaches: Iterable[Reach], changed: Iterable[str]) -> dict[str, list[str]]:
+    """Write path -> the files of `changed` its code covers, for every write path the change reaches, in the order of
+    `reaches`. A changed file is a package path or any path that ends with one (`src/steuermaschine/engine.py`, as
+    `git diff --name-only` prints it)."""
     names = [Path(c).as_posix() for c in changed]
-    hit = {unit.review for unit in reaches if any(c == f or c.endswith("/" + f) for f in unit.files for c in names)}
-    return sorted(hit)
+    out: dict[str, list[str]] = {}
+    for unit in reaches:
+        hit = sorted({c for c in names for f in unit.files if c == f or c.endswith("/" + f)})
+        if hit:
+            out[unit.path] = hit
+    return out
 
 
 @contextlib.contextmanager
 def parsed_once() -> Iterator[None]:
-    """While open, `native._imports_of` answers from memory after the first parse of a file, so the digests of many
-    units cost one parse per file instead of one per unit and call (`sm self reviews`: 103 s without, 3 s with, on 77
-    write paths). The digest and its files are the same; only for a listing: the files must not change while it is open."""
+    """While open, `native._imports_of` answers from memory after the first parse of a file, so the reach of many
+    units costs one parse per file instead of one per unit and call (`sm self reviews`: 103 s without, 3 s with, on 77
+    write paths). Only for a listing: the files must not change while it is open."""
     real, cache = native._imports_of, _Cache()
 
     def cached(path: Path, roots: dict[str, Path]) -> list[Path]:

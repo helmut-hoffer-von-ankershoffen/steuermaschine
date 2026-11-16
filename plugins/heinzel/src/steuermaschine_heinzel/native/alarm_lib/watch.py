@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from ..go_lib import legacy
 from ..go_lib.probes import World, rehearsal_state
+from ..queue_lib import core_facts
 from . import rules
 
 
@@ -46,7 +47,7 @@ def collect(w: World, now: float) -> list[dict]:
         return [{"name": j.get("name"), "conclusion": j.get("conclusion"), "status": j.get("status")} for j in jobs] if isinstance(jobs, list) else []
 
     def main_red():
-        runs = gh(["run", "list", "-R", repo, "--workflow", "ci.yml", "--branch", "main", "--status", "completed", "-L", "1", "--json", "databaseId,headSha,conclusion"])
+        runs = gh(["run", "list", "-R", repo, "--workflow", core_facts.ci_file(), "--branch", "main", "--status", "completed", "-L", "1", "--json", "databaseId,headSha,conclusion"])
         if not isinstance(runs, list):
             raise RuntimeError("main runs unreadable")
         if not runs or (runs[0].get("conclusion") or "").lower() == "success":

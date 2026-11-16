@@ -96,6 +96,44 @@ def test_a_wrong_digest_a_reject_and_a_self_review_are_refused():
     assert "reject" in e2.advance(pl2, "/wt", Options(approved=DIGEST)).phase
 
 
+def test_an_approved_digest_bound_to_a_head_does_not_resume_without_the_heads_check_receipt():
+    """Fail closed, for every review stop: the engine itself asks for the receipt on resume. A pipeline sets nothing
+    for it, so none can leave it out; an approval recorded before the digest was bound does not pass either."""
+    from steuermaschine import verdicts
+
+    p = fake_providers()
+    pl, calls = make(p)  # a plain review stop: no option names the check
+    e = engine(p)
+    e.advance(pl, "/wt", Options())
+    approve(p)  # recorded before anything bound the digest to a head
+    verdicts.need_check(p.store, DIGEST, "a" * 40, "tool check /wt", base="b" * 40)
+    r = e.advance(pl, "/wt", Options(approved=DIGEST))
+    assert (r.status, r.exit_code) == ("refused", REFUSED) and "no check receipt exists" in r.phase and "`tool check /wt`" in r.phase
+    verdicts.record_check(p.store, "a" * 40, {"base": "c" * 40})  # measured from another base: still no
+    assert "measured from cccccccccccc" in e.advance(pl, "/wt", Options(approved=DIGEST)).phase and calls == ["build"]
+    p2 = fake_providers()  # the same run with the receipt from the bound base goes on
+    pl2, _ = make(p2)
+    e2 = engine(p2)
+    e2.advance(pl2, "/wt", Options())
+    approve(p2)
+    verdicts.need_check(p2.store, DIGEST, "a" * 40, "tool check /wt", base="b" * 40)
+    verdicts.record_check(p2.store, "a" * 40, {"base": "b" * 40})
+    assert e2.advance(pl2, "/wt", Options(approved=DIGEST)).status != "refused"
+
+
+def test_the_engine_reaches_the_check_receipt_without_the_verdicts_module():
+    """Digest locality: engine.py is in every review digest, so it imports nothing for this (also not inside a function)."""
+    import ast
+    import inspect
+
+    from steuermaschine import engine as engine_module
+    from steuermaschine import verdicts
+
+    tree = ast.parse(inspect.getsource(engine_module))
+    imported = {alias.name for node in ast.walk(tree) if isinstance(node, ast.ImportFrom) for alias in node.names}
+    assert "verdicts" not in imported and verdicts.missing_check is engine_module.missing_check and verdicts.KIND == engine_module.DIGEST_KIND
+
+
 def test_after_approval_a_dry_run_stops_before_the_first_external_step():
     p = fake_providers()
     pl, calls = make(p)

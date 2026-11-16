@@ -24,23 +24,10 @@ from typing import Callable
 
 from . import hzlib
 from . import release_candidate as rc
+from . import core_policy
 from . import job_proof
 from . import edge  # moved: records, processes and what used to be separate scripts
 
-# Historical approval stays separate from the moving release admission pins.
-# Extending this allow-list requires independent source review, as candidate pins do.
-CHECKPOINT_SOURCES = (
-    {
-        ".github/workflows/ci.yml": "1e8c09bc3ba6ec2332f40e9d7eefb5addbe065dd93dc15a0b2725a760894deb9",
-        "scripts/release_candidate.py": "596afe5f2c5aff2fe384d795af0bf9d1872ab53f41e17080bce43b7e389e0b78",
-    },
-    # 0.9.38: PR 727, run 43085994845, source commit 5ccc1afe; equals the
-    # release-candidate-source proof and the executed blobs at that commit.
-    {
-        ".github/workflows/ci.yml": "c1e5d8a6dbc90d6b12ddb8184199692c002ca4ceea963f410030e85d4547e473",
-        "scripts/release_candidate.py": "596afe5f2c5aff2fe384d795af0bf9d1872ab53f41e17080bce43b7e389e0b78",
-    },
-)
 MAX_SEGMENTS = 20
 MAX_CONFIG = 8192
 MAX_REGISTRY = 48 * 1024
@@ -104,16 +91,15 @@ def read_config(state: Path) -> dict | None:
     config = json.loads(path.read_bytes(), object_pairs_hook=rc.unique_object)
     require(
         isinstance(config, dict)
-        and set(config) == {"schema", "pr", "run", "core_repo", "sources"}
+        and set(config) == {"schema", "pr", "run", "core_repo"}
         and type(config["schema"]) is int
-        and config["schema"] == 1
+        and config["schema"] == 2  # 1 carried source pins: Core's commit and its verdict bind the sources now
         and type(config["pr"]) is int
         and config["pr"] > 0
         and type(config["run"]) is int
         and config["run"] > 0
         and isinstance(config["core_repo"], str)
-        and Path(config["core_repo"]).is_absolute()
-        and config["sources"] in CHECKPOINT_SOURCES,
+        and Path(config["core_repo"]).is_absolute(),
         "checkpoint configuration differs from independently reviewed source policy",
     )
     return config
@@ -145,10 +131,6 @@ def download(path: str, limit: int) -> bytes:
 
 def merged_candidate(config: dict, api: Callable, read: Callable) -> dict:
     """Authenticate historical MERGED release evidence without pretending the PR is open."""
-    require(
-        config["sources"] in CHECKPOINT_SOURCES,
-        "unreviewed historical candidate source pins",
-    )
     run_id, number = config["run"], config["pr"]
     run, pr = api(f"actions/runs/{run_id}"), api(f"pulls/{number}")
     head, squash = pr.get("head", {}).get("sha"), pr.get("merge_commit_sha")
@@ -156,6 +138,9 @@ def merged_candidate(config: dict, api: Callable, read: Callable) -> dict:
         rc.valid_sha(head) and rc.valid_sha(squash),
         "release head or actual squash missing",
     )
+    # The workflow and the inventory are Core's reviewed release policy at the exact release head; a release whose
+    # head has no policy (older than the manifest) cannot be a checkpoint.
+    policy = core_policy.at_commit_api(api, head)
     require(
         pr.get("number") == number
         and pr.get("state") == "closed"
@@ -179,7 +164,7 @@ def merged_candidate(config: dict, api: Callable, read: Callable) -> dict:
         and run.get("head_sha") == head
         and run.get("repository", {}).get("full_name") == hzlib.CORE
         and run.get("head_repository", {}).get("full_name") == hzlib.CORE
-        and run.get("path") == rc.WORKFLOW,
+        and run.get("path") == policy.workflow,
         "release checkpoint requires genuine original candidate success",
     )
     require(
@@ -265,9 +250,8 @@ def merged_candidate(config: dict, api: Callable, read: Callable) -> dict:
         and proof.get("run_id") == run_id
         and proof.get("run_attempt") == 1
         and proof["head"] == head
-        and proof["base"] == pr.get("base", {}).get("sha")
-        and proof.get("sources") == config["sources"],
-        "candidate source identity or reviewed pins differ",
+        and proof["base"] == pr.get("base", {}).get("sha"),
+        "candidate source identity differs",
     )
     source, released, merged = (
         api(f"commits/{sha}") for sha in (proof["source_commit"], head, squash)
@@ -287,21 +271,9 @@ def merged_candidate(config: dict, api: Callable, read: Callable) -> dict:
         and [p.get("sha") for p in merged.get("parents", [])] == [proof["base"]],
         "release source or squash parent differs",
     )
-    require(
-        set(config["sources"]) == {rc.WORKFLOW, rc.RECORDER},
-        "incomplete candidate source pins",
-    )
-    for path, expected in config["sources"].items():
-        require(
-            hashlib.sha256(
-                rc.source_bytes(api, path, proof["source_commit"])
-            ).hexdigest()
-            == expected,
-            "candidate executed source is not independently reviewed",
-        )
     jobs = rc.quarantine_lane([job_proof.log_proven(job, run_id, lambda job_id: read(f"actions/jobs/{job_id}/logs", MAX_JOB_LOG))
-                               for job in rc.job_inventory(api, run_id)], run_id, head)
-    inventory = rc.expected_jobs("pull_request")
+                               for job in rc.job_inventory(api, run_id)], run_id, head, policy)
+    inventory = policy.expected_jobs("pull_request")
     require(
         len(jobs) == len(inventory)
         and {job.get("name") for job in jobs} == set(inventory),
@@ -339,7 +311,7 @@ def merged_candidate(config: dict, api: Callable, read: Callable) -> dict:
 
 
 def main_run(api: Callable, head: str) -> int:
-    data = api(f"actions/workflows/ci.yml/runs?head_sha={head}&event=push&per_page=1")
+    data = api(f"{core_policy.at_commit_api(api, head).workflow_runs}?head_sha={head}&event=push&per_page=1")
     rows = data.get("workflow_runs", [])
     require(len(rows) == 1, "missing or ambiguous resulting-main workflow")
     run = rows[0]
@@ -360,7 +332,8 @@ def main_run(api: Callable, head: str) -> int:
 
 def actual_main_ci(api: Callable, head: str, push_id: int) -> dict:
     """Bind the actual-main CI runs across events to the canonical push proof."""
-    data = api(f"actions/workflows/ci.yml/runs?branch=main&head_sha={head}&per_page=100")
+    policy = core_policy.at_commit_api(api, head)
+    data = api(f"{policy.workflow_runs}?branch=main&head_sha={head}&per_page=100")
     require(isinstance(data, dict), "invalid actual-main CI response")
     rows = data.get("workflow_runs")
     require(
@@ -378,7 +351,7 @@ def actual_main_ci(api: Callable, head: str, push_id: int) -> dict:
         require(
             type(identifier) is int and identifier > 0 and identifier not in seen
             and row.get("head_sha") == head and row.get("head_branch") == "main"
-            and row.get("path") == rc.WORKFLOW
+            and row.get("path") == policy.workflow
             and isinstance(repository, dict) and repository.get("full_name") == rc.REPOSITORY,
             "mismatched actual-main CI run identity",
         )
@@ -670,11 +643,10 @@ def establish(state, pin, number, run, core_repo, *, apply=False):
     """
     require(not hzlib.merge_frozen(), "merge freeze or release hold is present")
     config = {
-        "schema": 1,
+        "schema": 2,
         "pr": number,
         "run": run,
         "core_repo": str(Path(core_repo).resolve()),
-        "sources": dict(CHECKPOINT_SOURCES[-1]),
     }
     proof = verify_configured(config, pin)
     with timed_phase("final_hold_guard"):

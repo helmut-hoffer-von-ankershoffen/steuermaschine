@@ -1,11 +1,10 @@
 """The structural part of the promote gate. These rules hold for ALL slices of the plugin.
 
-- main blocks: moved libraries expose functions only. An `if __name__ == "__main__"` is a second way in that no review
-  gate sees. The invariant is "no entry outside the registry reaches a write".
+- main blocks: moved libraries expose functions only. An `if __name__ == "__main__"` is a second way in that no command
+  registers. The invariant is "no entry outside the registry reaches a write".
 - process starts: nothing starts an old tool script; processes go through the one runner (no `subprocess`).
 - path defaults: no setting defaults to a real path of this machine (that is how a test once wrote into a real file).
 - read commands that reach a write: a command registered `writes=False` reaches no GitHub write and no push.
-- review units with gaps: a write command's review digest covers every `*_lib` package its module imports.
 
 What a slice brought before the rule existed is listed in tests/gate_known.json with its owner. A finding that is
 not listed fails; a listed one that is gone fails too, so the file can only shrink. bin/gate_known.py maintains it.
@@ -23,7 +22,7 @@ import gate_known
 from steuermaschine_heinzel import native
 
 KNOWN = gate_known.load()
-RULES = ["main blocks", "process starts", "path defaults", "read commands that reach a write", "review units with gaps"]
+RULES = ["main blocks", "process starts", "path defaults", "read commands that reach a write"]
 
 
 @pytest.fixture(scope="module")
@@ -50,10 +49,15 @@ def commands():
     return [c for c in native.commands() if hasattr(c, "fn")]
 
 
-def test_every_write_command_has_a_review_file_name_and_a_digest():
-    for cmd in commands():
-        if cmd.writes:
-            assert cmd.review_file.endswith(".md") and len(cmd.code_digest()) == 64, cmd.path
+def test_every_write_command_has_code_that_self_reviews_can_follow():
+    from steuermaschine.reviewgraph import reach
+
+    writers = [cmd for cmd in commands() if cmd.writes]
+    found = reach(writers)
+    assert [unit.path for unit in found] == [cmd.path for cmd in writers]  # none without a module on disk
+    registry = {"steuermaschine_heinzel/plugin.py", "steuermaschine_heinzel/native/__init__.py", "steuermaschine_heinzel/pipelines/__init__.py"}
+    # the registry imports every area: a write path that reaches it reaches the whole plugin, and the list says nothing
+    assert not [(unit.path, sorted(registry & set(unit.files))) for unit in found if registry & set(unit.files)]
 
 
 def test_command_paths_are_unique():

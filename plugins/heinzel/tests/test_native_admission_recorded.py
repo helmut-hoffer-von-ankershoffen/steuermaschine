@@ -48,5 +48,4 @@ def test_registrations():
 
     reg = {c.path: c for c in native.commands() if hasattr(c, "writes")}
     assert {"head hash": False, "head blockers": False, "head prepare": True, "head apply": True}.items() <= {p: c.writes for p, c in reg.items()}.items()
-    assert reg["head apply"].review_file == "head-apply.md"  # whether it carries a verdict is the gate's business, not this test's
 

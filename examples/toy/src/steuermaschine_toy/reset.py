@@ -1,8 +1,7 @@
-"""The toy's one native write command, to show the review gate in a project that is not Heinzelmännchen.
+"""The toy's one native write command, to show a write command in a project that is not Heinzelmännchen.
 
-`sm sim reset` empties the simulated world. It is registered `writes=True`, so the core runs it only once
-`reviews/sim-reset.md` in this package ends with `VERDICT: APPROVE` and names the digest of this module
-(`sm self reviews` prints it). Until then every call is refused with exit 70 and nothing is run.
+`sm sim reset` empties the simulated world. It is registered `writes=True`: it runs under the writers' lock, and
+`sm self reviews` names it when a change reaches this module.
 """
 
 from __future__ import annotations

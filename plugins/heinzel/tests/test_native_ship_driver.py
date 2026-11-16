@@ -132,16 +132,6 @@ def test_a_stop_of_the_pipeline_is_returned_as_it_is_and_never_waits(tmp_path, m
     assert result.status == "review" and result.next == "sm ship WT" and not result.merged
 
 
-def test_the_pipeline_review_gate_is_checked_first(tmp_path, monkeypatch):
-    rt = runtime(tmp_path)
-    monkeypatch.setattr(ship_driver, "gate_problem", lambda cmd, project: "`sm head admit` writes and its independent review is open")
-    fake = FakeEngine()
-    monkeypatch.setattr(ship_driver, "engine", lambda: fake)
-    with native(rt), pytest.raises(Refuse, match="nothing was run"):
-        ship_driver.ship(worktree(tmp_path), live=False, approved="", author="", set_=None, wait=None)
-    assert not fake.calls
-
-
 # ----------------------------------------------------------------------------- --wait
 def waiting(tmp_path, monkeypatch, view, listing, minutes=10):
     rt = runtime(tmp_path, gh=FakeGh().on("pr view 7", view))
@@ -197,7 +187,7 @@ def test_a_repository_is_required_for_the_wait(tmp_path):
 def test_the_help_is_in_contract_form():
     text = ship_driver.ship.__sm_native__.help
     assert missing(text) == "" and disorder(text, "sm") == ""
-    assert ship_driver.ship.__sm_native__.writes and ship_driver.ship.__sm_native__.review == "ship.md"
+    assert ship_driver.ship.__sm_native__.writes  # R3: no per-command review file any more
 
 
 def test_a_new_head_of_the_same_branch_does_not_rewrite_the_remembered_selection(tmp_path):

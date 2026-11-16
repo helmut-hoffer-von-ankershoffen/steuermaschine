@@ -221,9 +221,7 @@ def _pipeline_command(rt: Runtime, sub: typer.Typer, pl: Pipeline) -> None:
             if not eq or name not in pl.inputs:
                 fail(f"--set {pair}: expected NAME=VALUE with NAME one of: {', '.join(pl.inputs) or 'none'}", USAGE)
             inputs[name] = value
-        if not plan and (problem := native_mod.gate_problem(pl.unit, rt.project)):
-            fail(problem, INTERNAL, hint="nothing was run; `sm self reviews` lists every write path, its review file and the digest to name")
-        writer = None if plan else pl.unit or native_mod.unit(f"{pl.subject} {pl.verb}", _pipeline_command, "")
+        writer = None if plan else pl.unit or native_mod.unit(f"{pl.subject} {pl.verb}", _pipeline_command)
         with native_mod.writing(rt, writer) as pending:  # a run holds the writers' lock and waits out a switch, as a typed write does
             if pending is not None:
                 fail(f"a promote (pid {pending}) is switching the live sm: `sm {pl.subject} {pl.verb}` writes and waits until it is done",
@@ -332,17 +330,27 @@ def _review(rt: Runtime, app: typer.Typer, hidden: bool = False) -> None:
                 reject: bool = typer.Option(False, "--reject", help="The bytes are wrong: the run stays stopped."),
                 reviewer: str = typer.Option(..., "--reviewer", metavar="NAME", help="Who reviewed; must differ from the run's author."),
                 model: str = typer.Option("", "--model", help="The reviewer's model, recorded as evidence."),
-                notes: str = typer.Option("", "--notes", help="What was checked and what was not."), as_json: bool = JSON) -> None:
+                notes: str = typer.Option("", "--notes", help="What was checked and what was not."),
+                kind: str = typer.Option("", "--kind", metavar="KIND", help="ci_change: a strong review of a commit whose CI paths changed since the last "
+                                         "release (the release gate asks for it; needs --model and --notes naming the paths)."),
+                as_json: bool = JSON) -> None:
         if approve == reject:
             fail("give exactly one of --approve and --reject", USAGE)
-        gate(rt, "review verdict")
+        if kind not in verdicts.KINDS:
+            fail(f"--kind {kind}: expected one of {', '.join(k for k in verdicts.KINDS if k)}", USAGE)
+        if kind == verdicts.CI_CHANGE and not (model.strip() and notes.strip()):
+            fail("a ci_change verdict is a strong review: give --model and --notes naming the CI paths you read", USAGE)
         store = rt.providers.store
         authors = verdicts.authors_of(store, digest, go_mod.run_states(store))
         if not authors:
             fail(f"no run is waiting for a review of {digest[:12]} and no command registered it (`prepare` does): check the digest in the brief", USAGE)
         if reviewer in authors:
             fail(f"{reviewer} drives the run that produced these bytes: a different agent must review")
+        if approve and (unchecked := verdicts.missing_check(store, digest)):
+            fail(unchecked)
         data = {"digest": digest, "verdict": "approve" if approve else "reject", "reviewer": reviewer, "model": model, "notes": notes, "at": rt.providers.clock.now()}
+        if kind:
+            data["kind"] = kind
         try:
             store.put_receipt("verdicts", digest, data)
         except FileExistsError:
@@ -376,7 +384,6 @@ def _focus(rt: Runtime, app: typer.Typer, hidden: bool = False) -> None:
             for_: str = typer.Option("", "--for", metavar="VERSION", help="The version this entry ships in."),
             note: str = typer.Option("", "--note", help="Why it is on the critical path."),
             as_json: bool = JSON) -> None:
-        gate(rt, "focus add")
         store = rt.providers.store
         with locked(store, "focus.list"):
             data = store.load("focus", "list") or {}
@@ -388,7 +395,6 @@ def _focus(rt: Runtime, app: typer.Typer, hidden: bool = False) -> None:
         "Take one entry off the critical path.", "Use when it shipped or the owner changed course.", "the focus list on this machine.",
         f"{PROG} focus done ~/work/fix-login", f"{PROG} go"))
     def done(key: str = typer.Argument(..., metavar="KEY", help="The entry as `focus list` shows it, or its worktree path."), as_json: bool = JSON) -> None:
-        gate(rt, "focus done")
         store = rt.providers.store
         with locked(store, "focus.list"):
             data = store.load("focus", "list") or {}
@@ -430,7 +436,6 @@ def _alarm(rt: Runtime, app: typer.Typer) -> None:
     def ack(key: str = typer.Argument(..., metavar="KEY", help="The alarm key as `alarm list` prints it."), as_json: bool = JSON) -> None:
         if key not in {a["key"] for a in rows()}:
             fail(f"no alarm {key} holds now", USAGE)
-        gate(rt, "alarm ack")
         store = rt.providers.store
         with locked(store, "alarms.acks"):
             data = store.load("alarms", "acks") or {}
@@ -471,7 +476,6 @@ def _self(rt: Runtime, app: typer.Typer) -> None:
             if check and any(r.state == "old" for r in found.moves):
                 raise typer.Exit(ALARM)
             return
-        gate(rt, "self migrate-state")
         log = rt.project.home / "state-migrations.log"
         log.parent.mkdir(parents=True, exist_ok=True)
 
@@ -563,21 +567,46 @@ def _self(rt: Runtime, app: typer.Typer) -> None:
         found = rt.plugin.gates(rt.settings) if rt.plugin else []
         emit(as_json, [{"name": g.name, "describe": g.describe} for g in found], [f"{g.name}: {g.describe}" for g in found] or ["this project has no gates"], models.GateRow)
 
-    @self_.command("reviews", context_settings=CTX, short_help="Every write command, its review file, the review's state and the code digest a verdict must name.", help=H(
-        "Every write command, its review file, the review's state and the code digest a verdict must name.",
-        "Use when a write command refuses as not reviewed, and when you review one.", "nothing (read-only).",
-        f"{PROG} self reviews", "the reviewer ends the file with `REVIEWED: sha256=DIGEST` and `VERDICT: APPROVE`"))
-    def reviews(as_json: bool = JSON) -> None:
-        rows = []
-        with reviewgraph.parsed_once():  # every unit asks for its imports three times: one parse per file for all of them
-            for cmd in write_units(rt):
-                state, detail = cmd.review_state()
-                if native_mod.is_exempt(cmd) and state != "approved":
-                    state, detail = "exempt", f"runs without a verdict: {cmd.exempt}"
-                rows.append({"path": cmd.path, "file": f"reviews/{cmd.review_file}", "state": state, "detail": detail, "digest": cmd.code_digest(),
-                             "files": cmd.labels()})
-        emit(as_json, rows, [f"{r['state']:<9} {PROG} {r['path']:<24} {r['file']}\n          sha256={r['digest']}  ({len(r['files'])} file(s))" for r in rows]
-             or ["no write command is registered"], models.ReviewRow)
+    @self_.command("reviews", context_settings=CTX, short_help="Which write commands the diff since the last promoted commit reaches.", help=H(
+        "Which write commands the diff since the last promoted commit reaches: the paths whose code it changes, each with\n"
+        "the changed files it covers, and the changed files no write path covers. A promote needs one independent verdict\n"
+        "on its exact commit (bin/promote_verdict.py); this list tells the reviewer what to read first: changes to the promote\n"
+        "gate itself (bin/promote*, bin/rollback, bin/check) come first, as GATE CODE. A diff that reaches\n"
+        "no write path still needs that verdict; CI covers the rest. Run it with the candidate's own sm (bin/sm-dev) when\n"
+        "the candidate adds write commands: the reach is computed from the code of the sm that runs.",
+        "Use when you review a candidate for bin/promote, and before you ask for that review.", "nothing (read-only; it runs git diff in REPO).",
+        f"{PROG} self reviews --repo . --base v1.2.3",
+        "read the diff, then record the verdict: bin/promote_verdict.py record --reviewer NAME COMMIT"))
+    def reviews(repo: str = typer.Option(".", "--repo", metavar="DIR", help="The checkout of the candidate; its HEAD is the candidate."),
+                base: str = typer.Option("", "--base", metavar="REV", help="Where the diff starts (default: the commit the live stable release was built from)."),
+                as_json: bool = JSON) -> None:
+        start = base or promoted_commit()
+        if not start:
+            fail("no promoted release is known to this sm (it was not started by a stable launcher): give --base REV", USAGE)
+        git = rt.providers.commands
+        found = [git.run(["git", "-C", repo, "rev-parse", "--verify", f"{rev}^{{commit}}"], timeout=30) for rev in (start, "HEAD")]
+        if any(r.rc != 0 for r in found):
+            fail(f"{repo}: cannot resolve {start} and HEAD to commits: {(found[0].err or found[1].err).strip()[:200]}", USAGE)
+        old, new = (r.out.strip() for r in found)
+        diff = git.run(["git", "-C", repo, "diff", "--name-only", "--no-renames", old, new], timeout=60)
+        if diff.rc != 0:
+            fail(f"{repo}: git diff {old[:12]} {new[:12]} failed: {diff.err.strip()[:200]}", USAGE)
+        changed = sorted({line.strip() for line in diff.out.splitlines() if line.strip()})
+        with reviewgraph.parsed_once():  # every unit asks for its imports: one parse per file for all of them
+            hits = reviewgraph.reached_by(reviewgraph.reach(write_units(rt)), changed)
+        gate_code = [c for c in changed if c.startswith(GATE_CODE)]
+        covered = {f for files in hits.values() for f in files} | set(gate_code)
+        unreached = [c for c in changed if c not in covered]
+        lines = [f"base {old[:12]}  head {new[:12]}: {len(changed)} changed file(s), {len(hits)} write path(s) reached"]
+        if gate_code:
+            lines.append(f"GATE CODE (read first: it decides what goes live, partly with the candidate's own copy): {', '.join(gate_code)}")
+        lines += [f"reached  {PROG} {p}\n         {', '.join(f)}" for p, f in hits.items()]
+        if unreached:
+            lines.append(f"in no write path ({len(unreached)}): {', '.join(unreached)}")
+        if not hits:
+            lines.append("the diff reaches no write path: CI covers it; the promote still needs one verdict on the head")
+        emit(as_json, {"base": old, "head": new, "changed": changed, "gate": gate_code, "reached": [{"path": p, "files": f} for p, f in hits.items()],
+                       "unreached": unreached}, lines, models.ReviewReach)
 
     @self_.command("plugins", context_settings=CTX, short_help="The loaded plugins in order (base first, later ones are outer layers) and the hooks each implements.", help=H(
         "The loaded plugins in order (base first, later ones are outer layers) and the hooks each implements.",
@@ -619,7 +648,7 @@ def _self(rt: Runtime, app: typer.Typer) -> None:
         raise typer.Exit(1 if problems else 0)
 
 
-# ----------------------------------------------------------------------------- the write paths and their review units
+# ----------------------------------------------------------------------------- the write paths and their units
 def _move_state(move: Any) -> str:
     if statemove.pending([move]):
         return "old"
@@ -648,7 +677,7 @@ def _exclusive_writers(rt: Runtime, wait: int) -> Iterator[None]:
 
 
 def _core_unit() -> None:
-    """Anchor of the review unit of the core's own local writers in this module (`review verdict`, `focus add|done`,
+    """Anchor of the unit of the core's own local writers in this module (`review verdict`, `focus add|done`,
     `alarm ack`): this file and every core file it imports."""
 
 
@@ -658,8 +687,7 @@ CORE_WRITERS = ("review verdict", "focus add", "focus done", "alarm ack", "self 
 def core_units() -> list[Any]:
     from .github import cli as github_cli
 
-    return [*(native_mod.unit(path, _core_unit, "core-local-writers.md") for path in CORE_WRITERS),
-            native_mod.unit("ci cancel", github_cli.unit_anchor, "ci-cancel.md")]
+    return [*(native_mod.unit(path, _core_unit) for path in CORE_WRITERS), native_mod.unit("ci cancel", github_cli.unit_anchor)]
 
 
 def natives(rt: Runtime) -> list[Any]:
@@ -674,11 +702,22 @@ def natives(rt: Runtime) -> list[Any]:
 
 
 def write_units(rt: Runtime) -> list[Any]:
-    """Every write path of this project with its review unit: the core's writers, the plugin's write commands and
-    its pipelines. Each runs only once its review file approves its exact digest."""
+    """Every write path of this project with its unit (its code): the core's writers, the plugin's write commands and
+    its pipelines. `self reviews` names those a change reaches."""
     writers = [c for c in natives(rt) if getattr(c, "writes", False)]
     pipelines = [pl.unit for pl in (rt.pipelines() if rt.project else []) if pl.unit is not None]
     return [*core_units(), *writers, *pipelines]
+
+
+GATE_CODE = ("bin/promote", "bin/rollback", "bin/check")  # the promote gate of this repository: promote, promote_lib.sh, promote_verdict.py
+
+
+def promoted_commit() -> str:
+    """The commit the live stable release was built from: bin/promote names each release directory after the first 12
+    characters of its commit, and the launcher passes the pointer to it ($STEUERMASCHINE_RELEASE). "" when unknown."""
+    pointer = native_mod._release()
+    name = Path(pointer).name if pointer else ""
+    return name if len(name) >= 7 and all(c in "0123456789abcdef" for c in name) else ""
 
 
 def writes_of(rt: Runtime) -> dict[str, bool]:
@@ -688,13 +727,6 @@ def writes_of(rt: Runtime) -> dict[str, bool]:
     out.update({f"{PROG} {pl.subject} {pl.verb}": True for pl in (rt.pipelines() if rt.project else [])})
     out.update({f"{PROG} {path}": True for path in (*CORE_WRITERS, "ci cancel")})
     return out
-
-
-def gate(rt: Runtime, path: str) -> None:
-    """The review gate for a core writer: refuses (exit 70) unless its unit is approved."""
-    cmd = next(u for u in core_units() if u.path == path)
-    if problem := native_mod.gate_problem(cmd, rt.project):
-        fail(problem, INTERNAL, hint="nothing was run; `sm self reviews` lists every write path, its review file and the digest to name")
 
 
 # ----------------------------------------------------------------------------- merging the plugin's app, running
@@ -713,6 +745,7 @@ def command_tree(rt: Runtime) -> Any:
     if native_app is not None:  # after the Typer apps: a native command replaces whatever has its path; groups merge
         built = typer.main.get_command(native_app)
         _merge_deep(root, built)
+        native_mod.mount_aliases(root, natives(rt))
         rt.plugin_paths |= {c.path.split()[0] for c in (rt.plugin.native(rt.settings) if rt.plugin else [])} - RESERVED
     dispatch.add_format_option(root, choose_format)  # `--format` after the command, for every command of every layer
     return root

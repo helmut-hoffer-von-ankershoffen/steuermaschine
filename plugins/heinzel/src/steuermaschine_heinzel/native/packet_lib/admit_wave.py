@@ -54,6 +54,8 @@ from pathlib import Path
 from typing import Any
 
 from . import ops
+from ..queue_lib import core_policy
+from ..queue_lib.release_candidate import CandidateError
 from steuermaschine.config import child_environment
 
 PREPARE = ("sm", "head", "prepare")  # the command a built packet goes to next
@@ -281,8 +283,13 @@ def _collect_lanes(inp: Inputs, out_dir: Path, head_tree: str, result_tree: str,
     lines, junit = [], {}
     for lane in sorted(inp.selection):
         for label, tree in (("pr", head_tree), ("main", result_tree)):
+            try:  # the lane's kind is Core's fact: its reviewed release policy at this exact tree
+                kind = core_policy.collected_kind(inp.core, tree, lane)
+            except CandidateError as error:
+                raise Refused(f"collect {lane} on the {label} tree: {error}") from error
             cmd = [sys.executable, "-I", str(inp.collector), "collect", "--repo", str(inp.core), "--tree", tree,
-                   "--selection", str(sel), "--lane", lane, "-o", str(out_dir / f"{lane}.{label}-collected.xml")]
+                   "--selection", str(sel), "--lane", lane, "--kind", kind,
+                   "-o", str(out_dir / f"{lane}.{label}-collected.xml")]
             if inp.python:
                 cmd += ["--python", inp.python]
             if inp.node_modules:

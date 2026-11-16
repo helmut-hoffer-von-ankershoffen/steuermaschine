@@ -570,7 +570,7 @@ def rejudge_after(rt: NativeRuntime, pr: int) -> tuple[list[str], bool]:
         return [f"re-judge: FAILED: {type(error).__name__}: {error}", f"re-judge: NEXT sm ci merge-gate rejudge {pr}"], True
 
 
-@native("ci sonar-close", writes=True, replaces=("hz-sonar-close",), files=("ci_ops.py", "ci_ops_lib", "rejudge.py"), help=H(
+@native("ci sonar-close", writes=True, replaces=("hz-sonar-close",), help=H(
     "Close reviewed Sonar findings with their written reason: main's file/rule rows, or exact reviewed issues of one PR.",
     "Use after a finding was reviewed as a false positive or accepted and its row is in the reviewed manifest.",
     "nothing without --apply (a preview); with --apply it comments the reason on each planned issue and transitions it in Sonar.",

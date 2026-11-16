@@ -34,7 +34,7 @@ intentional main-admission policy change, not a fix or authority to release; inc
 All red-main exceptions require proven failed completed CI; unavailable or inconclusive main evidence holds core.
 Owner 11-07 FIX-FORWARD LANE (bead ox6): add --fix-forward --for "JOB=BEAD[@PR]" [--reviewed R] [--dry-run] N lets one
 core fix PR merge while main is red, through the normal train (GitHub's required checks, no --admin, no force-push).
-It is admitted only when: PR CI on its current head is fully green (every check SUCCESS/SKIPPED/NEUTRAL incl. CI OK,
+It is admitted only when: PR CI on its current head is fully green (every check SUCCESS/SKIPPED/NEUTRAL incl. the aggregate,
 none failed, cancelled, pending or deferred by hz-ci-defer); hz-diff-guard PASS or --reviewed; the PR title is
 fix|test|ci (no feat, no "!"); every failing job of the red main run is mapped by --for (JOB = case-insensitive
 substring; a bare BEAD covers every job) to a flaky/bug/broken-test bead addressed by this PR or by @PR, an earlier
@@ -43,7 +43,7 @@ and no release/* run or unfinished hz-release. The head is pinned (a new push ne
 hz-note. It does not clear the pinned failure: the next first-attempt full main pass does, as before.
 Owner-delegated policy 11-07 MAIN-RERUN (research/main-red-policy-2026-11-07.md (iii)+(ii)), MERGES ONLY: `main-rerun
 [--dry-run]` (each tick runs it too) reruns the failed jobs of main's latest run once (`gh run rerun --failed`) when that
-run is attempt 1, completed red, and EVERY failing job except CI OK matches by job name an entry of
+run is attempt 1, completed red, and EVERY failing job except the aggregate matches by job name an entry of
 research/known-failures.toml within its `until` (default `added` + 7 days; past it the entry is not KNOWN); never with
 a release/* run, merge freeze or unfinished hz-release; never twice per run; logged with hz-note. A separately reviewed
 research/known-main-infra.toml can classify one exact main attempt of a pinned-tool HTTP 504 incident. Manual reruns
@@ -72,6 +72,8 @@ from . import known_main_infra  # noqa: E402
 from ..admission_lib import repair_main  # noqa: E402
 from . import main_batch  # noqa: E402
 from . import main_checkpoint  # noqa: E402
+from . import release_candidate as rc  # noqa: E402
+from . import core_facts  # noqa: E402
 from . import main_plan  # noqa: E402
 from . import release_flow  # noqa: E402
 from ... import state as statedir  # the plugin's state paths
@@ -258,7 +260,7 @@ def assess(item: dict, merge) -> str:
         detail = "checks " + ", ".join(c.get("name") or "?" for c in bad) + (f"; tests {', '.join(tests)}" if tests else "; no failing test found in the log")
         stuck_or_merged(item, "needs work", detail)
         return "done"
-    if item.get("reviewed_progress_main") and not any(c.get("name") == "CI OK" and c.get("conclusion") == "SUCCESS" and c.get("status") == "COMPLETED" for c in rollup):
+    if item.get("reviewed_progress_main") and not any(c.get("name") == aggregate() and c.get("conclusion") == "SUCCESS" and c.get("status") == "COMPLETED" for c in rollup):
         return "wait"
     status = info.get("mergeStateStatus")
     if status == "BEHIND" and repo != hzlib.CORE:
@@ -367,7 +369,7 @@ def latest_required_timeout(runs: list[dict]) -> dict:
             or type(run.get("id")) is not int or type(run.get("run_attempt")) is not int
             or (run.get("id"), run.get("head_sha"), run.get("head_branch"), run.get("event"), run.get("path"),
                 run.get("run_attempt"), run.get("status"), run.get("conclusion"))
-            != (run_id, sha, "main", "push", ".github/workflows/ci.yml", 1, "completed", "cancelled")
+            != (run_id, sha, "main", "push", core_facts.at_main().workflow, 1, "completed", "cancelled")
             or not isinstance(run.get("repository"), dict) or run["repository"].get("full_name") != hzlib.CORE
             or not isinstance(run.get("head_repository"), dict) or run["head_repository"].get("full_name") != hzlib.CORE
             or type(run.get("check_suite_id")) is not int or run["check_suite_id"] <= 0):
@@ -381,7 +383,7 @@ def latest_required_timeout(runs: list[dict]) -> dict:
             or len({j["id"] for j in jobs}) != len(jobs) or len({j["name"] for j in jobs}) != len(jobs)):
         return {}
     bad = {j["name"]: j for j in jobs if j.get("conclusion") not in {"success", "skipped", "neutral"}}
-    if set(bad) != {"Secret scan", "CI OK"} or bad["CI OK"].get("conclusion") != "failure":
+    if set(bad) != {"Secret scan", aggregate()} or bad[aggregate()].get("conclusion") != "failure":
         return {}
     job = bad["Secret scan"]
     if (job.get("conclusion") != "cancelled" or type(job.get("runner_id")) is not int or job["runner_id"] <= 0
@@ -400,10 +402,10 @@ def latest_required_timeout(runs: list[dict]) -> dict:
                 or not any(s.get("conclusion") == "cancelled"
                            and started <= datetime.fromisoformat(s["started_at"])
                            < datetime.fromisoformat(s["completed_at"]) <= completed for s in steps)
-                or not isinstance(bad["CI OK"].get("steps"), list)
-                or not all(isinstance(s, dict) for s in bad["CI OK"]["steps"])
+                or not isinstance(bad[aggregate()].get("steps"), list)
+                or not all(isinstance(s, dict) for s in bad[aggregate()]["steps"])
                 or not any(s.get("name") == "Fail if any required job failed" and s.get("conclusion") == "failure"
-                           for s in bad["CI OK"]["steps"])):
+                           for s in bad[aggregate()]["steps"])):
             return {}
     except (KeyError, TypeError, ValueError):
         return {}
@@ -447,7 +449,7 @@ def main_state() -> str:
     successfully merged --fixes-main PR followed by its successful main CI can supersede it. Pending runs,
     diagnostic, safety-fix or mitigation merges and reruns of the failed commit do not clear the pin.
     """
-    runs = hzlib.ghj("run", "list", "-R", hzlib.CORE, "--workflow", "ci.yml", "--branch", "main", "-L", "10", "--json", "status,conclusion,databaseId,headSha,displayTitle,attempt")
+    runs = hzlib.ghj("run", "list", "-R", hzlib.CORE, "--workflow", ci_workflow(), "--branch", "main", "-L", "10", "--json", "status,conclusion,databaseId,headSha,displayTitle,attempt")
     runs = hzlib.resolve_main_runs(runs)
     if not isinstance(runs, list) or not runs:
         return "unknown"
@@ -515,19 +517,41 @@ def attempt_jobs(run_id: int, attempt: int) -> list[dict] | None:
     return jobs
 
 
-def full_pass(jobs: list[dict] | None) -> bool:
-    """Every job completed green and the full matrix (CI OK, ubuntu and macOS unit/integration cells) succeeded."""
+def aggregate() -> str:
+    """The aggregate job of Core's CI, from Core's release policy at main (CandidateError when unreadable)."""
+    return core_facts.at_main().aggregate
+
+
+def ci_workflow() -> str:
+    """The file name of Core's CI workflow, from its release policy at main, for `gh run list --workflow`."""
+    return core_facts.at_main().workflow_file
+
+
+def reviewed_policy(sha: str):
+    """Core's reviewed release policy at main commit `sha` (core_policy), or None when it is absent or garbled."""
+    from . import core_policy
+
+    def read(path: str):
+        value = hzlib.ghj("api", f"repos/{hzlib.CORE}/{path}", default=None)
+        rc.require(value is not None, f"{path} unreadable")
+        return value
+
+    try:
+        return core_policy.at_commit_api(read, sha)
+    except rc.CandidateError:
+        return None
+
+
+def full_pass(jobs: list[dict] | None, sha: str) -> bool:
+    """Every job completed green and the full matrix succeeded: the aggregate and every Test cell Core's reviewed
+    release policy at `sha` names. No policy at that commit: not a full pass (fail closed)."""
     if not jobs or any(j.get("status") != "completed" or j.get("conclusion") not in ("success", "skipped", "neutral") for j in jobs):
         return False
+    policy = reviewed_policy(sha)
+    if policy is None:
+        return False
     names = {j["name"] for j in jobs if j.get("conclusion") == "success"}
-    versions = ("3.12", "3.13", "3.14", "3.15")
-    levels = ("unit", "integration")
-    required = {"CI OK"}
-    required.update(f"Test (macos-latest, Python {v}, {level})" for v in versions for level in levels)
-    # Linux cells: one per Python, or (since core #592) one per Python and level; either layout must be complete.
-    linux = all(f"Test (ubuntu-24.04, Python {v})" in names
-                or all(f"Test (ubuntu-24.04, Python {v}, {level})" in names for level in levels) for v in versions)
-    return linux and required.issubset(names)
+    return {policy.aggregate, *policy.test_jobs}.issubset(names)
 
 
 def later_main_passes() -> bool:
@@ -535,7 +559,7 @@ def later_main_passes() -> bool:
     pinned = load().get("main_failure", {})
     if not pinned:
         return False
-    runs = hzlib.ghj("run", "list", "-R", hzlib.CORE, "--workflow", "ci.yml", "--branch", "main", "-L", "10", "--json", "status,conclusion,databaseId,headSha,displayTitle,attempt")
+    runs = hzlib.ghj("run", "list", "-R", hzlib.CORE, "--workflow", ci_workflow(), "--branch", "main", "-L", "10", "--json", "status,conclusion,databaseId,headSha,displayTitle,attempt")
     runs = hzlib.resolve_main_runs(runs, restoration_read=True)
     if not isinstance(runs, list) or not runs or any(r.get("batch_unknown") for r in runs) or not all(valid_main_run(r) for r in runs):
         return False
@@ -545,7 +569,7 @@ def later_main_passes() -> bool:
     run = hzlib.ghj("api", f"repos/{hzlib.CORE}/actions/runs/{done[0]['databaseId']}", default={}) or {}
     if not isinstance(run, dict) or type(run.get("run_attempt")) is not int or run.get("run_attempt") != 1 or run.get("status") != "completed" or run.get("head_sha") != done[0]["headSha"] or run.get("conclusion") != "success":
         return False
-    if not full_pass(attempt_jobs(done[0]["databaseId"], 1)):
+    if not full_pass(attempt_jobs(done[0]["databaseId"], 1), done[0]["headSha"]):
         return False
     comparison = hzlib.ghj("api", f"repos/{hzlib.CORE}/compare/{pinned.get('headSha')}...{done[0]['headSha']}", default={}) or {}
     return isinstance(comparison, dict) and comparison.get("status") == "ahead"
@@ -575,7 +599,7 @@ def failed_tests(job: dict) -> list[str]:
 
 
 def known_failures(jobs: list[dict]) -> tuple[list[str], dict]:
-    """(failing jobs without the aggregate CI OK, {job: bead or None}) against in-date entries only.
+    """(failing jobs without the aggregate, {job: bead or None}) against in-date entries only.
 
     A job is KNOWN when an entry matches its NAME, or (bead 4mgv) when its log names at least one FAILED pytest id and
     every one of them matches an entry: a test-id entry never covers a job that also failed for any other test, and a
@@ -583,7 +607,7 @@ def known_failures(jobs: list[dict]) -> tuple[list[str], dict]:
     """
     from . import known_failures as hz_digest
     known = known_registry()
-    failed = [j for j in jobs if j["name"] != "CI OK" and j.get("conclusion") not in GREEN_JOB]
+    failed = [j for j in jobs if j["name"] != aggregate() and j.get("conclusion") not in GREEN_JOB]
     beads = {}
     for job in failed:
         bead = hz_digest.known_bead([job["name"]], known)
@@ -611,7 +635,7 @@ def main_attempt_failures(run: int, sha: str, jobs: list[dict], *, restoring: bo
     if repair:
         if restoring and recorded.get("repair_receipt_sha256") != repair["receipt_sha256"]:
             return [], {}, ""  # only the rerun this repair requested restores
-        names = [job["name"] for job in jobs if job["name"] != "CI OK" and job.get("conclusion") not in GREEN_JOB]
+        names = [job["name"] for job in jobs if job["name"] != aggregate() and job.get("conclusion") not in GREEN_JOB]
         return names, dict.fromkeys(names, REPAIRED), ""
     if restoring and "infra_receipt_sha256" in recorded:
         if (not receipt or recorded.get("sha") != sha
@@ -619,7 +643,7 @@ def main_attempt_failures(run: int, sha: str, jobs: list[dict], *, restoring: bo
                 or recorded.get("infra_rerun_requested") is not True):
             return [], {}, ""  # a scoped rerun cannot be restored by a generic registry entry
     if receipt and (not restoring or "infra_receipt_sha256" in recorded):
-        names = [job["name"] for job in jobs if job["name"] != "CI OK" and job["conclusion"] == "failure"]
+        names = [job["name"] for job in jobs if job["name"] != aggregate() and job["conclusion"] == "failure"]
         return names, dict.fromkeys(names, receipt["bead"]), receipt["receipt_sha256"]
     failed, beads = known_failures(jobs)
     return failed, beads, ""
@@ -632,7 +656,7 @@ def tagged(beads: dict) -> str:
 def main_rerun_plan() -> tuple[str, str, dict]:
     """Read-only: ('rerun', what, facts), ('none', why) when there is nothing to rerun, or ('refuse', why).
     Reruns only main's latest run, only attempt 1, only when every failing job is KNOWN in date and no release runs."""
-    rows = hzlib.ghj("run", "list", "-R", hzlib.CORE, "--workflow", "ci.yml", "--branch", "main", "-L", "10",
+    rows = hzlib.ghj("run", "list", "-R", hzlib.CORE, "--workflow", ci_workflow(), "--branch", "main", "-L", "10",
                      "--json", "status,conclusion,databaseId,headSha,attempt", default=None)
     if not isinstance(rows, list) or not rows or not all(valid_main_run(r) for r in rows):
         return "refuse", "main CI evidence is unknown", {}
@@ -660,7 +684,7 @@ def main_rerun_plan() -> tuple[str, str, dict]:
         return "refuse", f"run {rid} job list is incomplete", {}
     failed, beads, infra_digest = main_attempt_failures(rid, latest["headSha"], jobs)
     if not failed:
-        return "refuse", f"run {rid} has no failing job besides CI OK: not a KNOWN job flake", {}
+        return "refuse", f"run {rid} has no failing job besides {aggregate()}: not a KNOWN job flake", {}
     if refusing := rerun_refusing_jobs(jobs, beads):
         return "refuse", (f"run {rid}: {', '.join(refusing)} would run again on attempt 2, and Core's focused jobs refuse any run "
                           f"attempt but 1, so a rerun can never make main green; a repair ends in a fresh attempt-1 push run: "
@@ -747,7 +771,7 @@ def _main_rerun(dry_run: bool = False, auto: bool = False) -> int:
 def rerun_restoration() -> dict:
     """Read-only: {run, sha, beads, jobs} when main's latest completed run is attempt 2 of the same run, fully green, and
     every failing job of attempt 1 was KNOWN (in date). Lifts the red-main hold for MERGES only; {} otherwise."""
-    runs = hzlib.ghj("run", "list", "-R", hzlib.CORE, "--workflow", "ci.yml", "--branch", "main", "-L", "10", "--json", "status,conclusion,databaseId,headSha,displayTitle,attempt")
+    runs = hzlib.ghj("run", "list", "-R", hzlib.CORE, "--workflow", ci_workflow(), "--branch", "main", "-L", "10", "--json", "status,conclusion,databaseId,headSha,displayTitle,attempt")
     runs = hzlib.resolve_main_runs(runs)
     if not isinstance(runs, list) or not runs or any(r.get("batch_unknown") for r in runs) or not all(valid_main_run(r) for r in runs):
         return {}
@@ -767,17 +791,18 @@ def rerun_restoration() -> dict:
     if not failed or not all(beads.values()):
         return {}  # an UNKNOWN attempt-1 failure keeps the old rule: only a first-attempt full pass restores
     repaired = set(beads.values()) == {REPAIRED}
-    # A repaired main never ran its tests on attempt 1 (no plan); attempt 2 is its first focused run, judged by CI OK.
-    if not (full_pass(second) or (repaired and focused_pass(second))):
+    # A repaired main never ran its tests on attempt 1 (no plan); attempt 2 is its first focused run, judged by the aggregate.
+    if not (full_pass(second, sha) or (repaired and focused_pass(second, sha))):
         return {}
     return {"run": rid, "sha": sha, "jobs": failed, "beads": sorted(set(beads.values())), **({"repaired": True} if repaired else {})}
 
 
-def focused_pass(jobs: list[dict] | None) -> bool:
-    """Every job completed green and the aggregate CI OK succeeded (a focused main: the owning lanes only)."""
+def focused_pass(jobs: list[dict] | None, sha: str) -> bool:
+    """Every job completed green and the policy's aggregate succeeded (a focused main: the owning lanes only)."""
     if not jobs or any(j.get("status") != "completed" or j.get("conclusion") not in GREEN_JOB for j in jobs):
         return False
-    return any(j["name"] == "CI OK" and j.get("conclusion") == "success" for j in jobs)
+    policy = reviewed_policy(sha)
+    return policy is not None and any(j["name"] == policy.aggregate and j.get("conclusion") == "success" for j in jobs)
 
 
 def restored_by_rerun() -> bool:
@@ -925,7 +950,7 @@ def release_active() -> str:
 def main_red_jobs() -> dict:
     """The red main run that holds the queue and its failed jobs: the latest completed main run when it failed, else the
     pinned failure run. {"run": id, "sha": ..., "jobs": [names]} or {} when it cannot be proven."""
-    runs = hzlib.ghj("run", "list", "-R", hzlib.CORE, "--workflow", "ci.yml", "--branch", "main", "-L", "10",
+    runs = hzlib.ghj("run", "list", "-R", hzlib.CORE, "--workflow", ci_workflow(), "--branch", "main", "-L", "10",
                      "--json", "status,conclusion,databaseId,headSha", default=None)
     if not isinstance(runs, list) or not all(valid_main_run(r) for r in runs):
         return {}
@@ -942,7 +967,7 @@ def main_red_jobs() -> dict:
     jobs = payload.get("jobs") if isinstance(payload, dict) else None
     if not isinstance(jobs, list) or not jobs:
         return {}
-    failed = [j["name"] for j in jobs if isinstance(j, dict) and isinstance(j.get("name"), str) and j["name"] != "CI OK"
+    failed = [j["name"] for j in jobs if isinstance(j, dict) and isinstance(j.get("name"), str) and j["name"] != aggregate()
               and j.get("conclusion") in ("failure", "timed_out", "cancelled", "startup_failure")]
     return {"run": run["databaseId"], "sha": run["headSha"], "jobs": failed} if failed else {}
 
@@ -987,8 +1012,8 @@ def fix_forward_check(number: str, mapping: list[dict], reviewed: bool, guard_pa
             bad.append(f"{name} deferred by sm ci defer")
     if bad:
         problems.append(("refuse", "PR CI not fully green on the current head: " + "; ".join(bad[:6])))
-    if not any(c.get("name") == "CI OK" and c.get("conclusion") == "SUCCESS" for c in checks):
-        problems.append(("refuse", "CI OK is not SUCCESS on the current head"))
+    if not any(c.get("name") == aggregate() and c.get("conclusion") == "SUCCESS" for c in checks):
+        problems.append(("refuse", f"{aggregate()} is not SUCCESS on the current head"))
     if not (guard_pass or reviewed):
         problems.append(("refuse", "sm head guard did not PASS and no --reviewed independent review"))
     red = main_red_jobs()
@@ -1062,7 +1087,7 @@ def reviewed_exception(item: dict) -> str:
 
 
 def main_observations() -> list[dict] | None:
-    rows = hzlib.ghj("run", "list", "-R", hzlib.CORE, "--workflow", "ci.yml", "--branch", "main", "-L", "10",
+    rows = hzlib.ghj("run", "list", "-R", hzlib.CORE, "--workflow", ci_workflow(), "--branch", "main", "-L", "10",
                      "--json", "status,conclusion,databaseId,headSha", default=None)
     return rows if isinstance(rows, list) and rows and all(valid_main_run(row) for row in rows) else None
 
@@ -1138,18 +1163,39 @@ def plan_guard(item: dict, earlier, refusal: list[str]):
     return guard
 
 
+ASKS_EVERY = 300  # seconds between two reads of the tracker for the ask alarm
+_asks_read = 0.0
+
+
+def record_asks(now: float) -> None:
+    """The combined ask alarm (`sm alarm asks`), at most every ASKS_EVERY seconds; a failure is logged, never stops merges."""
+    global _asks_read
+    if now - _asks_read < ASKS_EVERY:
+        return
+    _asks_read = now
+    try:
+        import importlib
+
+        from steuermaschine.native import runtime
+
+        # by name: an import statement would put the alarm code into the review digest of every queue writer
+        asks = importlib.import_module("steuermaschine_heinzel.native.alarm_lib.asks")
+        rt = runtime()
+        labels = list(rt.settings.get("alarm_ask_labels") or asks.AskAlarmSettings.model_fields["alarm_ask_labels"].default)
+        asks.record(rt.providers.commands, rt.providers.store, rt.settings, labels, now)
+    except Exception as error:  # noqa: BLE001 - an alarm read must not stop merges
+        log(f"ask alarm failed: {error!r}")
+
+
 def tick(now: float | None = None) -> None:
     """Run one tick under the runner's queue lock."""
     now = time.time() if now is None else now
     merge = hzlib.load("merge_train")
-    try:  # the moment a repo passes, main requires its gate
-        hzlib.load("merge_gate").flip()
-    except Exception as error:  # a failed flip leaves the gate as it was and must not stop merges that are allowed
-        log(f"flip failed: {error!r}")
     try:  # one rerun of main's failed KNOWN jobs (policy 2026-11-07); a failure here never stops merges
         _main_rerun(auto=True)
     except Exception as error:
         log(f"main-rerun failed: {error!r}")
+    record_asks(now)
     data = load()
     try:  # a needs-work row at its unchanged pinned head whose checks turned green is queued again
         recheck_needs_work(data["items"], merge)
@@ -1368,7 +1414,7 @@ def _publish_batch(base: str, prs: list[str]) -> bool:
     final = members[-1][1]
     found = None
     for attempt in range(7):
-        payload = hzlib.ghj("api", f"repos/{hzlib.CORE}/actions/workflows/ci.yml/runs?event=push&branch=main&head_sha={final}&per_page=100", default={}) or {}
+        payload = hzlib.ghj("api", f"repos/{hzlib.CORE}/{core_facts.at_main().workflow_runs}?event=push&branch=main&head_sha={final}&per_page=100", default={}) or {}
         runs = payload.get("workflow_runs", [])
         matches = [r for r in runs if isinstance(r, dict) and str(r.get("display_title", "")).startswith(main_batch.PREFIX) and main_batch.valid_run(r, {"run": r.get("id"), "prs": members})]
         if len(matches) == 1:
@@ -1395,7 +1441,7 @@ def _publish_batch(base: str, prs: list[str]) -> bool:
 
 
 def site_only(item: dict) -> bool:
-    """Same test as ci.yml's site_only: such a PR runs the site's tests alone and cannot break the app's, so it isn't capped."""
+    """Same test as the CI workflow's site_only: such a PR runs the site's tests alone and cannot break the app's, so it isn't capped."""
     info = hzlib.ghj("pr", "view", item["pr"], "-R", item["repo"], "--json", "files", default={}) or {}
     paths = [f["path"] for f in info.get("files", []) if isinstance(f, dict)]
     return bool(paths) and all(SITE_PATH.fullmatch(p) and not SITE_EXCEPT.fullmatch(p) for p in paths)
@@ -1681,7 +1727,7 @@ def why() -> int:
     if data["last_batch"]:
         age = int((time.time() - data["last_batch"]) / 60)
         print(f"last batch {age} min ago" + ("" if age >= BATCH_SECONDS / 60 else " (cadence: one per 5 minutes)"))
-    runs = hzlib.ghj("run", "list", "-R", hzlib.CORE, "--workflow", "ci.yml", "--branch", "main", "-L", "5",
+    runs = hzlib.ghj("run", "list", "-R", hzlib.CORE, "--workflow", ci_workflow(), "--branch", "main", "-L", "5",
                      "--json", "status,conclusion,databaseId,headSha,attempt,createdAt") or []
     for r in runs[:5]:
         print(f"main run {r.get('databaseId')} {str(r.get('headSha'))[:8]} attempt {r.get('attempt')} {r.get('status')} {r.get('conclusion') or ''}")
@@ -1725,10 +1771,16 @@ def why() -> int:
 
 
 def main(argv: list[str]) -> int:
-    """Every command; an unreadable state file refuses with exit 1 (and its alarm), never as an empty queue."""
+    """Every command; an unreadable state file refuses with exit 1 (and its alarm), never as an empty queue. Core's
+    release policy at main unreadable (no manifest yet): one line and exit 1, nothing merges."""
     try:
         return _main(argv)
     except StateUnreadable as error:
+        print(f"sm queue: REFUSED: {error}", file=sys.stderr)
+        return 1
+    except rc.CandidateError as error:
+        if argv[:1] == ["checkpoint"]:
+            raise  # the checkpoint command reports its own refusal (sm queue checkpoint)
         print(f"sm queue: REFUSED: {error}", file=sys.stderr)
         return 1
 

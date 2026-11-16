@@ -445,6 +445,10 @@ def evidence(decision):
 
 
 def reject(rel, args):
+    if args.version != VERSION:
+        from . import tail_rejection
+
+        return tail_rejection.reject(rel, args)
     decision = {'version': args.version, 'receipt_sha256': args.expected_receipt_sha256,
                 'token': args.expected_freeze_token, 'run': args.failed_compose_run,
                 'attempt': args.failed_compose_attempt, 'head': args.expected_compose_head,

@@ -1,12 +1,11 @@
 """`sm doc section` (the core's docsection) and `sm beads agents add|list`. The agent test's assertions are the former
 tool's; the section reader had no test before."""
-# ruff: noqa: F811  (a fixture imported from coord_kit is also a test parameter)
 
 import json
 import subprocess
 import sys
 
-from coord_kit import app_runtime, unreviewed  # noqa: F401  (fixtures)
+from coord_kit import app_runtime
 
 from steuermaschine import docsection
 from steuermaschine.commands import doc as docs
@@ -85,7 +84,7 @@ def test_agent_add(tmp_path):
     assert m.add("5y1", "649", "abc", "Opus", doc=d).startswith("already")
 
 
-def test_agents_commands_add_once_list_and_need_the_table(tmp_path, unreviewed):
+def test_agents_commands_add_once_list_and_need_the_table(tmp_path):
     (tmp_path / "research").mkdir()
     table = tmp_path / "research" / "agent-ids.md"
     table.write_text("# Agents\n\n| Bead | Work | Agent | Model |\n|---|---|---|---|")
@@ -98,8 +97,6 @@ def test_agents_commands_add_once_list_and_need_the_table(tmp_path, unreviewed):
     assert listed.rows[-1] == "| x | - | b7 | opus |" and len(listed.rows) == 3
     other = tmp_path / "other.md"
     assert invoke(app_runtime(tmp_path, agents_table=str(other)), ["beads", "agents", "list"]).exit_code == 2
-    done = invoke(app_runtime(tmp_path, allow=False), ["beads", "agents", "add", "x", "1", "c1", "opus"])
-    assert done.exit_code == 70 and "reviews/beads-agents-add.md" in done.stderr
 
 
 ADDER = """
@@ -160,7 +157,7 @@ def test_add_matches_whole_cells_and_cleans_the_cells_it_writes(tmp_path):
     assert (tmp_path / "a.md.lock").exists()
 
 
-def test_agents_add_command_refuses_an_unusable_table_with_exit_1(tmp_path, unreviewed):
+def test_agents_add_command_refuses_an_unusable_table_with_exit_1(tmp_path):
     (tmp_path / "research").mkdir()
     table = tmp_path / "research" / "agent-ids.md"
     table.write_text("not a table\n")

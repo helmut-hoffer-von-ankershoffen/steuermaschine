@@ -14,6 +14,7 @@ from ..admission_lib import focused_admit as a
 from ..admission_lib import focused_update as git
 from . import release_scope as scope
 from ... import environment  # moved: the process context is a typed model
+from ..queue_lib import core_facts
 
 MODE = 'release-main-only/v1'
 HOOKS = {'pre-commit', 'commit-msg', 'pre-push'}
@@ -240,7 +241,7 @@ def remote_identity(rt, packet):
 def _run_shape(row, *, identity, head, branch, event, verdict, workflow, repo_id):
     require((row['id'], row['head_sha'], row['head_branch'], row['event'], row['status'], row['conclusion'],
              row['run_attempt'], row['workflow_id'], row['path'], row['repository']['id'], row['head_repository']['id']) ==
-            (identity, head, branch, event, 'completed', verdict, 1, workflow, '.github/workflows/ci.yml', repo_id, repo_id)
+            (identity, head, branch, event, 'completed', verdict, 1, workflow, core_facts.at(head).workflow, repo_id, repo_id)
             and type(row['run_attempt']) is int, 'canonical original release or main CI identity changed')
 
 
