@@ -161,6 +161,17 @@ class Subprocess:
             return Result(124, "", f"timed out after {timeout}s: {argv[0]}")
         return Result(p.returncode, p.stdout, p.stderr)
 
+    def run_bytes(self, argv: list[str], cwd: str, timeout: float, env: dict[str, str]) -> tuple[int, bytes]:
+        """Capture literal output for callers that must not decode or rewrite it."""
+        self._refuse_in_tests(argv)
+        try:
+            p = subprocess.run(argv, cwd=cwd, timeout=timeout, env=env, capture_output=True, check=False)
+        except FileNotFoundError:
+            return 127, b""
+        except subprocess.TimeoutExpired:
+            return 124, b""
+        return p.returncode, p.stdout
+
     def passthrough(self, argv: list[str], cwd: str | None = None, env: dict[str, Any] | None = None, timeout: float | None = None) -> int:
         self._refuse_in_tests(argv)
         try:

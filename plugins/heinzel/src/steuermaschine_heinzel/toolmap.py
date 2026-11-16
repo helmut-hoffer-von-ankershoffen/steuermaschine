@@ -32,6 +32,7 @@ ROWS = [
     ToolMapRow(tool="hz-merged-via", path="head combine-close", owner="heinzel-native-coord", note="close members of a merged combine PR; dry run unless --apply"),
     ToolMapRow(tool="hz-focused-manifest", path="head manifest", owner="heinzel-native-admission", note="packet of the release commit; also the engine of hz-admit-wave"),
     ToolMapRow(tool="hz-diff-guard", path="head guard", owner="heinzel-native-ops", note="PASS or FLAG for a PR diff; also called by hz-ship and hz-queue"),
+    ToolMapRow(tool="raw-transfer", path="head raw-transfer", owner="heinzel-native-ops"),
     ToolMapRow(tool="hz-push-gate", kind="internal", note="called by hz-ship --push (sm head push)"),
     ToolMapRow(tool="hz-preflight-ci-meta", kind="internal", note="called by hz-ship --push and hz-preflight-head"),
     ToolMapRow(tool="hz-ci-cause", path="ci why", owner="heinzel-native-status", note="classify failed jobs of a run or PR"),

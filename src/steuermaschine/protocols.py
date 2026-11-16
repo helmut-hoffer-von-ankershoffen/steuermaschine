@@ -206,6 +206,13 @@ class Commands(Protocol):
     def passthrough(self, argv: list[str], cwd: str | None = None, env: dict[str, Any] | None = None, timeout: float | None = None) -> int: ...  # the child owns the terminal; 124 on timeout
 
 
+@runtime_checkable
+class BinaryCommands(Protocol):
+    """Optional literal process output for byte-sensitive readers."""
+
+    def run_bytes(self, argv: list[str], cwd: str, timeout: float, env: dict[str, str]) -> tuple[int, bytes]: ...
+
+
 @dataclass
 class Providers:
     """One of each. None means the project has none; a step that needs it refuses with a clear message."""

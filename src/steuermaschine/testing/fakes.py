@@ -269,6 +269,10 @@ class FakeCommands:
     def on(self, prefix: list[str], result: Result | Callable[[list[str]], Result]) -> None:
         self.rules.append((prefix, result))
 
+    def run_bytes(self, argv: list[str], cwd: str, timeout: float, env: dict[str, str]) -> tuple[int, bytes]:
+        result = self.run(argv, cwd, timeout, env)
+        return result.rc, result.out.encode()
+
     def passthrough(self, argv: list[str], cwd: str | None = None, env: dict[str, Any] | None = None, timeout: float | None = None) -> int:
         return self.run(argv, cwd=cwd, env=env, timeout=timeout).rc
 
