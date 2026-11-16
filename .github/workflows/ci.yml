@@ -32,6 +32,7 @@ jobs:
         env:
           CONFIDENTIAL_TERMS: ${{ secrets.PRIVATE_TERMS }}
           BEFORE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
           if [ -z "$CONFIDENTIAL_TERMS" ]; then
             if [ "$GITHUB_REF" = refs/heads/main ]; then echo "::error::PRIVATE_TERMS secret missing"; exit 1; fi
@@ -39,7 +40,16 @@ jobs:
           fi
           uv run --no-build --script scripts/check_confidentiality.py --require
           case "$BEFORE" in ""|0000000000000000000000000000000000000000) BEFORE=$(git merge-base origin/main HEAD) ;; esac
-          if [ "$GITHUB_REF" = refs/heads/main ]; then range=HEAD; else range="$BEFORE..HEAD"; fi
+          if [ "$GITHUB_REF" = refs/heads/main ]; then
+            range=HEAD
+          elif [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            # Scan every actual PR commit, not GitHub's synthetic merge commit identity.
+            test -n "$PR_HEAD"
+            git merge-base --is-ancestor "$PR_HEAD" HEAD
+            range="$BEFORE..$PR_HEAD"
+          else
+            range="$BEFORE..HEAD"
+          fi
           uv run --no-build --script scripts/check_confidentiality.py --require --messages "$range"
       - name: Conventional Commits (the commits this push or PR adds)
         env:
