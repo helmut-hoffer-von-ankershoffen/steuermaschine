@@ -20,7 +20,7 @@ strings, as `strings` would show them.
 without terms: it names a machine, not a mailbox, and would be published with every commit.
 
 CI main may opt into `--github-owner-squash`: only the unchanged author email of the approved public baseline
-is exempt, after GitHub verifies both commits' owner squash provenance. Names, committer fields, messages,
+is exempt, after GitHub verifies both commits' owner merge provenance. Names, committer fields, messages,
 trailers and files are still scanned. Local hooks never enable this exception.
 
 Usage: uv run --script scripts/check_confidentiality.py [OPTION] [FILE ...]
@@ -77,7 +77,7 @@ class OwnerSquashProof:
     """CI-only provenance for author email, never a message or another identity field.
 
     Only the unchanged email from the reviewed baseline is eligible. GitHub must attest both that baseline
-    and the candidate: exact single-parent commit, verified signature, owner account, web-flow committer,
+    and the candidate: exact squash or two-parent merge topology, verified signature, owner account, web-flow committer,
     and merged PR on this project's default branch. Other owner-account emails remain scanned.
     Missing or inconsistent evidence means scan the email normally.
     """
@@ -121,6 +121,7 @@ class OwnerSquashProof:
             return False
         commit = _github_api(f"repos/{name}/commits/{sha}")
         verification = commit["commit"]["verification"]
+        parents = [parent["sha"] for parent in commit["parents"]]
         if (commit["sha"] != sha or commit["author"]["id"] != owner["id"]
                 or commit["author"]["login"] != owner["login"]
                 or commit["committer"]["login"] != "web-flow"
@@ -129,8 +130,9 @@ class OwnerSquashProof:
                 or commit["commit"]["committer"]["email"] != "noreply@github.com"
                 or verification["verified"] is not True or verification["reason"] != "valid"
                 or not verification["signature"] or not verification["payload"]
-                or len(commit["parents"]) != 1
-                or commit["parents"][0]["sha"] != _git("show", "-s", "--format=%P", sha).strip()):
+                or len(parents) not in (1, 2)
+                or (sha == APPROVED_EMAIL_BASELINE and len(parents) != 1)
+                or parents != _git("show", "-s", "--format=%P", sha).split()):
             return False
         # Associated PRs alone are not proof: bind the merged PR's exact result and repository.
         pulls = _github_api(f"repos/{name}/commits/{sha}/pulls?per_page=100")
@@ -144,7 +146,10 @@ class OwnerSquashProof:
                     and pull["base"]["repo"]["id"] == repo["id"]
                     and pull["base"]["repo"]["full_name"] == name and pull["base"]["ref"] == "main"
                     and pull["merged_by"]["id"] == owner["id"]
-                    and pull["merged_by"]["login"] == owner["login"]):
+                    and pull["merged_by"]["login"] == owner["login"]
+                    # A merge must bind both ordered parents to the exact PR base and head.
+                    and (len(parents) == 1 or (parents[0] == pull["base"]["sha"]
+                                              and parents[1] == pull["head"]["sha"]))):
                 return True
         return False
 
