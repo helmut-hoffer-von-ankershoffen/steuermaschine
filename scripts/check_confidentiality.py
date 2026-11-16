@@ -19,6 +19,10 @@ strings, as `strings` would show them.
 `--identity` also refuses an email git made up from the machine's name (`name@Some-MacBook-Air.local`), with or
 without terms: it names a machine, not a mailbox, and would be published with every commit.
 
+CI main may opt into `--github-owner-squash`: only the unchanged author email of the approved public baseline
+is exempt, after GitHub verifies both commits' owner squash provenance. Names, committer fields, messages,
+trailers and files are still scanned. Local hooks never enable this exception.
+
 Usage: uv run --script scripts/check_confidentiality.py [OPTION] [FILE ...]
     [FILE ...]          files, or every tracked file
     --commit-msg FILE   a commit message (commit-msg hook)
@@ -52,6 +56,9 @@ from steuermaschine_heinzel.confidentiality import (
     text_bytes,
 )
 
+# Reviewed public baseline for the unchanged author-email exception. The address itself is never stored here.
+APPROVED_EMAIL_BASELINE = "686250077c0568d4787da1b48a6db23084c2b324"
+
 
 def _git(*args: str) -> str:
     return subprocess.run(["git", *args], check=True, capture_output=True, text=True, timeout=60).stdout
@@ -69,17 +76,26 @@ def _github_api(path: str):
 class OwnerSquashProof:
     """CI-only provenance for author email, never a message or another identity field.
 
-    No email allow-list: GitHub must attest the exact single-parent commit, verified signature,
-    owner account, web-flow committer, and merged PR on this project's default branch.
+    Only the unchanged email from the reviewed baseline is eligible. GitHub must attest both that baseline
+    and the candidate: exact single-parent commit, verified signature, owner account, web-flow committer,
+    and merged PR on this project's default branch. Other owner-account emails remain scanned.
     Missing or inconsistent evidence means scan the email normally.
     """
 
     def __init__(self):
         self.repo = None
+        self.approved_email = None
 
     def eligible(self, sha: str, author_email: str) -> bool:
         """Fail closed on failed lookups or malformed proof without leaking API data."""
         try:
+            if self.approved_email is None:
+                baseline_email = _git("show", "-s", "--format=%ae", APPROVED_EMAIL_BASELINE).strip()
+                if author_email != baseline_email or not self._eligible(APPROVED_EMAIL_BASELINE, baseline_email):
+                    return False
+                self.approved_email = baseline_email
+            if author_email != self.approved_email:
+                return False
             return self._eligible(sha, author_email)
         except (OSError, ValueError, KeyError, TypeError, AttributeError, subprocess.SubprocessError):
             return False

@@ -54,7 +54,7 @@ jobs:
           else
             range="$BEFORE..HEAD"
           fi
-          # Only verified GitHub-generated owner squash author-email metadata can be exempted on main.
+          # Only the approved baseline's unchanged email, on verified owner squashes, can be exempted on main.
           # Local hooks and PR scans stay strict; messages, names and committer fields are always scanned.
           if [ "$GITHUB_REF" = refs/heads/main ]; then
             uv run --no-build --script scripts/check_confidentiality.py --require --messages "$range" --github-owner-squash

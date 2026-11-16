@@ -55,6 +55,14 @@ def checker(tmp_path, monkeypatch):
     # Separate response values: mutating a PR cannot silently mutate the attested repository or owner.
     answers = deepcopy(answers)
     answers["repos/sample/project/pulls/1"] = deepcopy(pull)
+    baseline = module.APPROVED_EMAIL_BASELINE
+    baseline_commit = deepcopy(commit)
+    baseline_commit["sha"] = baseline
+    baseline_pull = deepcopy(pull)
+    baseline_pull.update(number=2, merge_commit_sha=baseline)
+    answers[f"repos/sample/project/commits/{baseline}"] = baseline_commit
+    answers[f"repos/sample/project/commits/{baseline}/pulls?per_page=100"] = [{"number": 2, "merge_commit_sha": baseline}]
+    answers["repos/sample/project/pulls/2"] = baseline_pull
     fields = ["Public author", EMAIL, "GitHub", "noreply@github.com", "fix: public body\n\nModel: fixture\n"]
     calls = []
 
@@ -62,6 +70,9 @@ def checker(tmp_path, monkeypatch):
         if args[0] == "rev-list":
             return SHA
         if args[0] == "show":
+            if args[2] == "--format=%ae":
+                assert args[3] == baseline
+                return EMAIL
             return PARENT
         if args[0] == "log":
             if "%x00" in args[2]:
@@ -87,7 +98,31 @@ def scan_ci(module):
 def test_only_verified_owner_squash_author_email_is_exempt(checker):
     module, _, _, calls = checker
     assert scan_ci(module) == 0
-    assert len(calls) == 4
+    assert len(calls) == 7
+
+
+def test_different_email_of_the_same_verified_owner_is_not_exempt(checker):
+    module, answers, fields, _ = checker
+    fields[1] = "other-fictional-marker@example.invalid"
+    answers[f"repos/sample/project/commits/{SHA}"]["commit"]["author"]["email"] = fields[1]
+    # The new email has full owner-squash provenance, but was not the approved baseline email.
+    assert module.OwnerSquashProof()._eligible(SHA, fields[1])
+    assert scan_ci(module) == 1
+
+
+@pytest.mark.parametrize("failure", ["unsigned", "different-email", "wrong-merge", "missing-commit"])
+def test_baseline_itself_requires_exact_verified_squash_proof(checker, failure):
+    module, answers, _, _ = checker
+    baseline = f"repos/sample/project/commits/{module.APPROVED_EMAIL_BASELINE}"
+    if failure == "unsigned":
+        answers[baseline]["commit"]["verification"]["verified"] = False
+    elif failure == "different-email":
+        answers[baseline]["commit"]["author"]["email"] = "other@example.invalid"
+    elif failure == "wrong-merge":
+        answers["repos/sample/project/pulls/2"]["merge_commit_sha"] = SHA
+    else:
+        del answers[baseline]
+    assert scan_ci(module) == 1
 
 
 @pytest.mark.parametrize("field", [0, 2, 3, 4])
