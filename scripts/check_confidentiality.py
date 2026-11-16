@@ -23,6 +23,7 @@ Usage: uv run --script scripts/check_confidentiality.py [OPTION] [FILE ...]
     [FILE ...]          files, or every tracked file
     --commit-msg FILE   a commit message (commit-msg hook)
     --messages A..B     the messages of a range of commits
+    --messages-exclude SHA  exclude commits reachable from a known public commit
     --text TEXT         a string, such as a pull request title or branch
     --identity          the author and committer git will record, and that their emails are not machine hostnames
     --branch            the current branch's name (pre-push hook)
@@ -32,6 +33,7 @@ Usage: uv run --script scripts/check_confidentiality.py [OPTION] [FILE ...]
 import argparse
 import contextlib
 import os
+import re
 import subprocess
 import sys
 from collections.abc import Iterator
@@ -85,7 +87,8 @@ def sources(args: argparse.Namespace) -> Iterator[tuple[str, str]]:
     if args.commit_msg:
         yield "commit message", Path(args.commit_msg).read_text(encoding="utf-8")
     elif args.messages:
-        for sha in _git("rev-list", args.messages).split():
+        exclude = [f"^{args.messages_exclude}"] if args.messages_exclude else []
+        for sha in _git("rev-list", args.messages, *exclude, "--").split():
             yield f"commit {sha[:12]}", _git("log", "-1", "--format=%an <%ae>%n%cn <%ce>%n%B", sha)
     elif args.branch:
         yield "branch", _git("rev-parse", "--abbrev-ref", "HEAD")
@@ -109,11 +112,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("files", nargs="*")
     parser.add_argument("--commit-msg")
     parser.add_argument("--messages")
+    parser.add_argument("--messages-exclude")
     parser.add_argument("--text")
     parser.add_argument("--identity", action="store_true")
     parser.add_argument("--branch", action="store_true")
     parser.add_argument("--require", action="store_true")
     args = parser.parse_args(argv)
+    if args.messages_exclude is not None and (not args.messages or not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", args.messages_exclude)):
+        parser.error("--messages-exclude requires --messages and a full public commit ID")
 
     # Independent of the term list, which plugin developers usually don't have.
     problems = identity_problems() if args.identity else []

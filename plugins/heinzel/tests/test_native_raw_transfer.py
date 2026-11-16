@@ -1,10 +1,12 @@
 """The raw transfer inventories local Git objects with the configured terms."""
 
 import json
+import sys
 from pathlib import Path
 
 import pytest
 
+from steuermaschine.config import child_environment
 from steuermaschine.defaults import Subprocess
 from steuermaschine.engine import Refuse
 from steuermaschine.native import NativeRuntime, using
@@ -132,3 +134,35 @@ def test_no_policy_refuses_before_network_or_git(tmp_path, monkeypatch):
     with using(NativeRuntime(fake_providers(commands=commands), settings, None)), pytest.raises(Refuse, match="No confidential terms"):
         raw_transfer(tmp_path, "a" * 40, "b" * 40, "refs/heads/new")
     assert commands.calls == []
+
+def test_push_message_scope_keeps_the_new_merge_and_branch_side(repo):
+    script = Path(__file__).resolve().parents[3] / "scripts/check_confidentiality.py"
+    commit(repo, "base", "--allow-empty")
+    git(repo, "switch", "-qc", "feature")
+    before = commit(repo, TERM, "--allow-empty")
+    outgoing = commit(repo, TERM + " feature", "--allow-empty")
+    git(repo, "switch", "-q", "main")
+    inherited = commit(repo, TERM + " public main", "--allow-empty")
+    git(repo, "switch", "-q", "feature")
+    git(repo, "merge", "--no-ff", "-m", TERM + " merge", "main")
+    merge = git(repo, "rev-parse", "HEAD")
+
+    def checker(*args: str) -> Result:
+        return Subprocess().run(
+            [sys.executable, str(script), "--require", "--messages", f"{before}..HEAD", *args],
+            cwd=str(repo),
+            timeout=10,
+            env=child_environment(CONFIDENTIAL_TERMS=TERM),
+        )
+
+    old = checker()
+    assert old.rc == 1 and f"commit {inherited[:12]}:" in old.err
+    scoped = checker("--messages-exclude", inherited)
+    assert scoped.rc == 1
+    assert {line.split(":")[0] for line in scoped.err.splitlines() if line.startswith("commit ")} == {
+        f"commit {outgoing[:12]}",
+        f"commit {merge[:12]}",
+    }
+    assert TERM not in scoped.err
+    invalid = checker("--messages-exclude=--all")
+    assert invalid.rc == 2 and "requires --messages and a full public commit ID" in invalid.err
