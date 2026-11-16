@@ -42,7 +42,8 @@ def api(path):
 
 
 def read(path):
-    return command(["gh", "api", f"repos/{REPOSITORY}/{path}"], limit=5 * 1024 * 1024)
+    flags = ["--allow-escape-sequences"] if path.endswith("/logs") else []
+    return command(["gh", "api", *flags, f"repos/{REPOSITORY}/{path}"], limit=5 * 1024 * 1024)
 
 
 def verified_segment(request, fp, fg):
@@ -105,6 +106,29 @@ def verified_segment(request, fp, fg):
         "attempt": 1,
         "manifest_sha256": scope.manifest_digest,
     }
+
+
+def verified_full_pr(request, fp, fg):
+    """Consume protected Core's complete ordinary-PR proof, never a synthetic focused manifest."""
+    if not callable(getattr(fg, "full_pr_jobs", None)):
+        raise ValueError("protected Core does not yet support full PR evidence")
+    head, base, tree = request["head"], request["reader_head"], request["tree"]
+    fp.require(all(fp.valid_sha(value) for value in (head, base, tree)), "invalid full PR identity")
+    # The legacy coverage reader reads the protected workflow from its working directory.
+    workflow = Path(fg.WORKFLOW)
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_bytes(fg.git("show", f"{base}:{fg.WORKFLOW}"))
+
+    class EvidenceGate(fg.Gate):
+        def github(self, path):
+            return api(path)
+
+    gate = EvidenceGate(REPOSITORY, str(request["pr"]), head)
+    verdict = fg.verify(gate, request["run"], "{}", read)
+    fp.require(verdict == "Whole-project coverage measured by full PR CI", "not ordinary full PR evidence")
+    _pr, merge, current = fg.pull_identity(gate, head)
+    fp.require(current == base and fp.object_id(f"{merge}^{{tree}}") == tree, "full PR merge tree or main moved")
+    return {"type": "full-pr/v1", "head": head, "base": base, "tree": tree, "run": request["run"], "attempt": 1}
 
 
 def main():
@@ -181,6 +205,8 @@ def main():
                 )
                 result = json.loads(legacy or "{}", object_pairs_hook=fp.unique_object)
                 fp.require(isinstance(result, dict), "invalid focused registry")
+        elif request.get("mode") == "full-pr":
+            result = verified_full_pr(request, fp, fg)
         else:
             result = verified_segment(request, fp, fg)
         print(
