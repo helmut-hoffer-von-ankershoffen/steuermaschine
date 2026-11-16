@@ -151,3 +151,29 @@ def test_update_all_head_selects_without_crashing(tmp_path):
     changed = ["src/heinzel/modules/system/_plugin_releases.py"]
     data = select.classify(select.Repo(UPDATE_ALL), changed)
     assert data["files"] == changed and data["pytest"] != ["ALL"] and data["pytest"]
+
+
+def test_selection_remains_conservative_without_a_local_core_checkout(tmp_path):
+    """Exercise the selector's lane decisions in CI, where a core checkout is not present."""
+    core = tmp_path / "core"
+    for rel, text in {"Makefile": "E2E_SUPERVISED := tests/e2e/supervised_test.py\n",
+                      "scripts/related_tests.py": GRAPH_WITHOUT_TREES,
+                      "src/heinzel/modules/system/update/_all.py": "",
+                      "tests/unit/update_all_test.py": "",
+                      "tests/e2e/supervised_test.py": ""}.items():
+        path = core / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+    repo = select.Repo(core)
+    assert select.classify(repo, [])['jobs'] == select.JOBS_ALWAYS
+    for sensitive in ("src/heinzel/kernel/_errors.py", "unrecognized/location"):
+        chosen = select.classify(repo, [sensitive])
+        assert chosen['full'] and chosen['pytest'] == ['ALL'] and chosen['vitest'] == ['ALL']
+    docs = select.classify(repo, ["docs/guide.md"])
+    assert not docs['full'] and 'site-tests' in docs['jobs'] and 'test-linux' not in docs['jobs']
+    python = select.classify(repo, ["src/heinzel/modules/system/update/_all.py"])
+    assert 'tests/unit/update_all_test.py' in python['pytest'] and 'coverage' in python['jobs']
+    e2e = select.classify(repo, ["tests/e2e/supervised_test.py"])
+    assert 'supervised' in e2e['e2e_lanes'] and 'e2e-supervised' in e2e['jobs']
+    desktop = select.classify(repo, ["desktop/main.js", "plugins/weather/plugin.py"])
+    assert {'electron', 'local-plugins', 'core-wheel'} <= set(desktop['jobs'])
