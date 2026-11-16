@@ -26,5 +26,9 @@ def repo_of_checkout(commands: Any, cwd: str | None = None) -> str | None:
 
 def pr_key(repo: str, number: int | str) -> str:
     """The PR key `hzlib.split_key` reads: the bare number for the core repository, else `WORD NUMBER` (`plugins 38`)."""
+    if repo.lower() == hzlib.CORE.lower():
+        return str(number)
     word = next((w for w, r in hzlib.SHORT.items() if w and r.lower() == repo.lower()), "")
-    return f"{word} {number}" if word and repo.lower() != hzlib.CORE.lower() else str(number)
+    if not word:
+        raise ValueError(f"repository {repo} is not supported by the merge queue")
+    return f"{word} {number}"

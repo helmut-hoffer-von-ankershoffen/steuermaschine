@@ -597,6 +597,19 @@ def test_the_ship_step_of_a_plugins_pr_gets_the_plugins_key():
     assert repos.pr_key(PLUGINS, 38) == "plugins 38" and repos.pr_key(CORE, 801) == "801"
     assert repos.known_repo("https://github.com/Helmut-Hoffer-von-Ankershoffen/heinzel-plugins.git") == PLUGINS
     assert repos.known_repo("git@github.com:someone/plugins.git") is None
+    with pytest.raises(ValueError, match="not supported by the merge queue"):
+        repos.pr_key("helmut-hoffer-von-ankershoffen/steuermaschine", 11)
+
+
+@pytest.mark.parametrize("live", [False, True])
+def test_pr_refuses_an_unsupported_repository_before_publication(rt, gh, worktree, live, monkeypatch):
+    repo = "helmut-hoffer-von-ankershoffen/steuermaschine"
+    gh.on("remote get-url origin", f"git@github.com:{repo}.git\n")
+    configure = deps.configure
+    monkeypatch.setattr(deps, "configure", lambda: {**configure(), "repo": repo})
+    out = invoke(rt, ["head", "pr", "abc", "fix: keep the draft", "--body-file", str(worktree), *(["--live"] if live else [])])
+    assert out.exit_code == 2 and "not supported by the merge queue" in out.stderr
+    assert not published(gh) and keys(rt) == []
 
 
 def test_head_pr_refuses_another_agents_branch_naming_the_owner_and_nothing_is_published(rt, gh, worktree, monkeypatch, tmp_path):
