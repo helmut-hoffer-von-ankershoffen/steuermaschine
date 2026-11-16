@@ -44,9 +44,11 @@ BRANCH = "fix/update-all"
 def clean_overrides():
     common.OVERRIDE.clear()
     changes = release_cut.changes_since_release
+    origin = release_cut.official_origin
     yield
     common.OVERRIDE.clear()
     release_cut.changes_since_release = changes
+    release_cut.official_origin = origin
 
 
 def runtime(tmp_path: Path, gh: FakeGh | None = None, vcs: FakeVcs | None = None, reviewed: bool = True, core: str | None = None) -> Runtime:
@@ -243,8 +245,12 @@ class CutFakes:
     def __init__(self, tmp_path: Path):
         self.tmp, self.calls, self.resumes = tmp_path, [], []
         release_cut.changes_since_release = self.ci  # restored by clean_overrides
+        release_cut.official_origin = self.origin  # this composition fixture has no real Git clone
         common.OVERRIDE.update({"release notes-audit": self.notes, "release admit prepare": self.prepare,
                                 "release admit apply": self.apply, "release resume": self.resume, "release verify": self.verify})
+
+    def origin(self, clone, repository):
+        assert clone == str(self.tmp / "clone") and repository == "o/core"
 
     def ci(self, core, head):
         self.calls.append("ci change")
