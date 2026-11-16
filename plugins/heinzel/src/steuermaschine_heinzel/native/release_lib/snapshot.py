@@ -10,7 +10,7 @@ from ..queue_lib import hzlib
 
 SHA = re.compile(r"[a-f0-9]{64}")
 COMMIT = re.compile(r"[a-f0-9]{40}")
-APPROVED_ACCEPTANCE_SHA256 = '11d306cdeb053d8da262b0efa9ff351f0abda147efc02173514075398529935a'
+APPROVED_ACCEPTANCE_SHA256 = '006799afd5c960ba396e59ea6f6987b093514f0f074dcdbc19066187391bfdc6'
 
 VERSION = re.compile(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)")
 
