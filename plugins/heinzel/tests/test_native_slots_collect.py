@@ -83,16 +83,71 @@ def test_collect_lists_merged_and_closed_entries_whose_tree_nothing_wants(world)
     assert forge.calls == [] and not gh.writes()  # a dry run: no variable written
 
 
-def test_collect_without_forge_reads_github_and_apply_refuses(world):
-    rt, forge, gh = world
-    expected = collected(rt, "--all")
+def github_fallback(rt, forge, gh):
+    """Route the real GitHub provider to scripted gh responses and mutable fixture values."""
+    variables = dict(forge.variables)
     for name in collect.NAMES:
-        gh.on(f"actions/variables/{name}", {"value": forge.variables[name]} if name in forge.variables else 404)
+        gh.on(f"repos/{REPO}/actions/variables/{name}",
+              lambda _cmd, name=name: {"value": variables[name]} if name in variables else 404)
+
+    def write(cmd):
+        assert cmd[1:3] == ["variable", "set"] and cmd[4:7] == ["-R", REPO, "--body"]
+        variables[cmd[3]] = cmd[7]
+        return ""
+
+    gh.on(f"repos/{REPO}/actions/runs?", {"total_count": 0, "workflow_runs": []})
+    gh.on("variable set", write)
     rt.providers.forge = None
+    return variables
+
+
+def test_collect_without_forge_reads_github_and_apply_requires_opt_in(world, monkeypatch):
+    rt, forge, gh = world
+    monkeypatch.delenv("SM_GITHUB__VARIABLE_WRITES", raising=False)
+    expected = collected(rt, "--all")
+    values = github_fallback(rt, forge, gh)
     assert collected(rt, "--all") == expected
-    out = invoke(rt, ["head", "slots", "apply", "--approved", expected["digest"]])
-    assert out.exit_code == 1 and "no forge provider" in out.stderr + out.stdout
-    assert not gh.writes() and forge.calls == []
+    denied = invoke(rt, ["head", "slots", "apply", "--approved", expected["digest"]])
+    assert denied.exit_code == 1 and "variable writes are off" in denied.stderr + denied.stdout
+    assert values == forge.variables and not gh.writes()
+
+    monkeypatch.setenv("SM_GITHUB__VARIABLE_WRITES", "true")
+    # A separate default GitHub setting must never redirect this reviewed project registry.
+    monkeypatch.setenv("SM_GITHUB__REPO", "other/wrong")
+    denied = invoke(rt, ["head", "slots", "apply", "--approved", "0" * 64])
+    assert denied.exit_code == 1 and not gh.writes()
+    out = invoke(rt, ["--format", "json", "head", "slots", "apply", "--approved", expected["digest"]])
+    assert out.exit_code == 0, out
+    assert values == (forge.variables | collect.new_values(forge.variables, expected["transaction"]))
+    assert len(gh.writes()) == 2 and forge.calls == []
+    receipt = rt.providers.store.get_receipt("heinzel.slots.collect", expected["digest"][:16])
+    assert receipt["transaction"] == expected["transaction"] and receipt["partial"] is False
+
+
+@pytest.mark.parametrize("unavailable", [False, True])
+def test_configured_slot_writer_refuses_when_idle_actions_cannot_be_established(world, monkeypatch, unavailable):
+    rt, forge, gh = world
+    digest = collected(rt)["digest"]
+    values = github_fallback(rt, forge, gh)
+    monkeypatch.setenv("SM_GITHUB__VARIABLE_WRITES", "true")
+    gh.on(f"repos/{REPO}/actions/runs?status=queued", 403 if unavailable else {"total_count": 1, "workflow_runs": [{"id": 19, "status": "queued"}]})
+    out = invoke(rt, ["head", "slots", "apply", "--approved", digest])
+    assert out.exit_code == (1 if unavailable else 75), out
+    assert values == forge.variables and not gh.writes()
+
+
+def test_configured_slot_writer_records_unconfirmed_write(world, monkeypatch):
+    rt, forge, gh = world
+    digest = collected(rt)["digest"]
+    values = github_fallback(rt, forge, gh)
+    monkeypatch.setenv("SM_GITHUB__VARIABLE_WRITES", "true")
+    gh.on(f"variable set {collect.NAMES[1]}", 403)
+    out = invoke(rt, ["head", "slots", "apply", "--approved", digest])
+    assert out.exit_code == 1 and "did not confirm" in out.stderr + out.stdout
+    assert values[collect.NAMES[0]] != forge.variables[collect.NAMES[0]]
+    assert values[collect.NAMES[1]] == forge.variables[collect.NAMES[1]]
+    receipt = rt.providers.store.get_receipt("heinzel.slots.collect", digest[:16])
+    assert receipt["partial"] is True and receipt["written"] == [collect.NAMES[0]]
 
 
 def test_collect_without_forge_refuses_unreadable_registry(world):

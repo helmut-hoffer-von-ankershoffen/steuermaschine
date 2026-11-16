@@ -27,6 +27,7 @@ from .settings import GitHubSettings, SonarSettings
 if TYPE_CHECKING:
     from ..app import Runtime
     from ..models import Model
+    from ..native import NativeRuntime
     from .forge import GitHub
 
 TABLES: dict[str, type[BaseModel]] = {"github": GitHubSettings, "sonar": SonarSettings}  # the core tables this package reads
@@ -36,7 +37,7 @@ def unit_anchor() -> None:
     """Anchor of the unit of `ci cancel` (the one write here): this module and every core file it imports."""
 
 
-def table(rt: Runtime, name: str) -> dict[str, Any]:
+def table(rt: Runtime | NativeRuntime, name: str) -> dict[str, Any]:
     """One core table, layered like every setting: environment SM_<TABLE>__<FIELD>, project file, user file, defaults."""
     from ..app import fail
 
