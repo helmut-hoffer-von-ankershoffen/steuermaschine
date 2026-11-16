@@ -467,3 +467,39 @@ def test_superseded_direct_uv_workflow_is_not_the_reviewed_current_contract(monk
     )
     monkeypatch.setattr(snapshot.hzlib, "gh", lambda *args: (0, base64.b64encode(previous).decode()))
     assert not snapshot.workflow_supports_snapshot("c" * 40)
+
+
+def test_tagged_adoption_without_owned_hold_preserves_foreign_holds(tool, home, monkeypatch):
+    rel = tool("hz-release")
+    rel.remember(version="1.2.3")
+    incident = rel.paths()[0]
+    incident.write_text("incident hold")
+    root = rel.hzlib.release_holds()
+    root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    foreign = root / ("a" * 32)
+    foreign.write_text("9.9.9")
+    monkeypatch.setattr(rel, "has_tag", lambda repo, tag: tag == "v1.2.3")
+    rel.release_snapshot_freeze()
+    rel.release_snapshot_freeze()  # A later tail resume must also be harmless.
+    assert incident.read_text() == "incident hold" and foreign.read_text() == "9.9.9"
+    assert "freeze_token" not in rel.state()
+
+
+def test_missing_hold_needs_a_tag_and_invalid_token_still_refuses(tool, home, monkeypatch):
+    rel = tool("hz-release")
+    rel.remember(version="1.2.3")
+    monkeypatch.setattr(rel, "has_tag", lambda *_: False)
+    with pytest.raises(rel.Stop, match="hold identity"):
+        rel.release_snapshot_freeze()
+    rel.remember(freeze_token="invalid")
+    monkeypatch.setattr(rel, "has_tag", lambda *_: True)
+    with pytest.raises(rel.Stop, match="hold identity"):
+        rel.release_snapshot_freeze()
+
+
+def test_tagged_adoption_rejects_orphan_hold_history(tool, home, monkeypatch):
+    rel = tool("hz-release")
+    rel.remember(version="1.2.3", hold_events=[{"action": "pause", "version": "1.2.3"}])
+    monkeypatch.setattr(rel, "has_tag", lambda *_: True)
+    with pytest.raises(rel.Stop, match="hold history"):
+        rel.release_snapshot_freeze()

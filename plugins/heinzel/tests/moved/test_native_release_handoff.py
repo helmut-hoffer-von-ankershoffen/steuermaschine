@@ -258,3 +258,16 @@ def test_r3_previous_accepted_reads_a_finished_legacy_global_receipt(rel, home):
     assert rel.previous_accepted("0.9.31") is True, "only an older release counts as previous"
     rel.global_receipt().write_text(json.dumps(LEGACY | {"accepted": True}))
     assert rel.previous_accepted("0.9.32")
+
+
+def test_tagged_snapshot_adoption_without_hold_hands_off_and_preserves_incident(rel, home, monkeypatch):
+    _through_tail(rel, monkeypatch, True)
+    rel.remember(version="1.2.4")
+    incident = rel.paths()[0]
+    incident.write_text("foreign incident")
+    monkeypatch.setattr(rel, "has_tag", lambda repo, tag: tag == "v1.2.4")
+    monkeypatch.setattr(rel, "pinned_snapshot", lambda version: {"version": version})
+    assert rel.release_core("1.2.4", "", 1, True, candidate_gate=True) == 0
+    tail = json.loads(rel.tail_receipt("1.2.4").read_text())
+    assert tail["finished"] is True and tail["accepted"] is True
+    assert "freeze_token" not in tail and incident.read_text() == "foreign incident"
