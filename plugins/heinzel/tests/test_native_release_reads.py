@@ -60,6 +60,27 @@ def doc(rt, model, *args):
 
 
 # ----------------------------------------------------------------------------- status
+def test_candidate_verify_uses_strict_policy_and_returns_evidence(rt, monkeypatch):
+    evidence = {"run_id": 91, "head": "a" * 40, "tree": "b" * 40, "run_attempt": 1}
+    calls = []
+    monkeypatch.setattr(area.candidate_policy, "verify_pr", lambda pr: calls.append(pr) or evidence)
+    out = invoke(rt, ["--format", "json", "release", "candidate-verify", "123"])
+    assert out.exit_code == 0
+    assert json.loads(out.stdout) == {"pr": 123, "evidence": evidence}
+    assert calls == [123]
+
+
+def test_candidate_verify_refuses_failed_policy_and_invalid_pr(rt, monkeypatch):
+    def refuse(pr):
+        raise area.candidate_policy.release_candidate.CandidateError("candidate job failed")
+
+    monkeypatch.setattr(area.candidate_policy, "verify_pr", refuse)
+    out = invoke(rt, ["release", "candidate-verify", "123"])
+    assert out.exit_code == 1
+    assert "candidate job failed" in out.stderr
+    assert invoke(rt, ["release", "candidate-verify", "0"]).exit_code == 2
+
+
 def test_status_without_a_release_in_flight_reads_the_real_train_files(rt, gh):
     out = invoke(rt, ["release", "status"])
     assert out.exit_code == 0 and out.stdout.strip() == "no release in flight"  # 0.9.35 is done, 0.9.36 is cleared

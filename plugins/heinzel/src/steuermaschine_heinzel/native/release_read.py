@@ -25,13 +25,36 @@ from steuermaschine.models import Model
 from steuermaschine.native import native, runtime
 
 from .. import state as statedir  # the plugin's state paths
-from .release_lib import approved
+from .release_lib import approved, candidate_policy
 from .release_lib.binding import assets_cache, captured, conf, core_repo, moved, release_dir, required_core_checkout, train_state_dir
 from .release_lib.names import translate, translated
 
 FIRST_ATTEMPT_RULE = ("first-attempt rule: only attempt 1 of the full candidate run counts; a rerun never makes a candidate green "
                       "(a green attempt 2 is evidence for one owner waiver of a KNOWN job, nothing else)")
 VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
+
+
+class CandidateVerification(Model):
+    pr: int
+    evidence: dict
+
+    def render(self) -> list[str]:
+        return [f"candidate verified for PR #{self.pr}: run {self.evidence['run_id']}, "
+                f"head {self.evidence['head']}, tree {self.evidence['tree']}"]
+
+
+@native("release candidate-verify", help=H(
+    "Verify the exact first-attempt candidate evidence for a release PR.",
+    "Use to inspect the same strict evidence used by the release runner.",
+    "nothing (read-only).",
+    "sm release candidate-verify 123", "sm release candidate VERSION",
+    "Verifies the PR head, tree, original job inventory and reviewed source artifact; it does not accept a release."))
+def release_candidate_verify(pr: int = typer.Argument(..., min=1, metavar="PR", help="The release pull request number.")) -> CandidateVerification:
+    try:
+        evidence = candidate_policy.verify_pr(pr)
+    except candidate_policy.release_candidate.CandidateError as exc:
+        raise Refuse(f"candidate verification refused: {exc}", "sm release candidate-verify --help") from exc
+    return CandidateVerification(pr=pr, evidence=evidence)
 
 
 def github() -> GitHub:
