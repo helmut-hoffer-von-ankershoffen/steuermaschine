@@ -93,6 +93,90 @@ def test_compose_replacement_command_routes_and_releases_tail_lock(tmp_path, mon
     assert gh.calls == []
 
 
+def capacity_args(version="0.9.49", mode="prepare", *extra):
+    return ["release", "acceptance-capacity", version, "--mode", mode, "--failed-run", "123",
+            "--failed-attempt", "1", "--receipt-sha256", "a" * 64, *extra]
+
+
+@pytest.mark.parametrize(("version", "mode", "extra"), [
+    ("patch", "prepare", []),
+    ("0.9.49", "retry", []),
+    ("0.9.49", "request", []),
+    ("0.9.49", "prepare", ["--audit-sha256", "b" * 64]),
+    ("0.9.49", "request", ["--audit-sha256", "short"]),
+])
+def test_capacity_cli_refuses_invalid_options_before_tail_access(tmp_path, monkeypatch, version, mode, extra):
+    gh = FakeGh()
+    rt = make(tmp_path, monkeypatch, gh)
+    out = invoke(rt, capacity_args(version, mode, *extra))
+    assert out.exit_code == 1 and "exact release version" in out.stderr
+    assert not (statedir.root() / "release").exists()
+    assert gh.calls == []
+
+
+@pytest.mark.parametrize("outcome", ["prepare", "request", "capacity-refusal", "unavailable"])
+def test_capacity_cli_routes_exact_evidence_and_releases_tail(tmp_path, monkeypatch, outcome):
+    from steuermaschine_heinzel.native.release_lib import acceptance_capacity
+    from steuermaschine_heinzel.native.release_lib.candidate_capacity import InvalidCapacity
+
+    gh = FakeGh()
+    rt = make(tmp_path, monkeypatch, gh)
+    tail = statedir.root() / "release/v0.9.49.json"
+    tail.parent.mkdir(parents=True)
+    tail.write_text('{"accepted": false}')
+    before = tail.read_bytes()
+    bound = []
+    mode = "request" if outcome == "request" else "prepare"
+    audit = "b" * 64
+    marker = "release-" + "c" * 32
+
+    def recover(module, version, run_id, attempt, receipt_sha, audit_sha):
+        bound.append(module)
+        assert (version, run_id, attempt, receipt_sha, audit_sha) == (
+            "0.9.49", 123, 1, "a" * 64, audit if mode == "request" else None,
+        )
+        assert module.paths()[1] == tail and module.TAIL_LOCK[0] == version
+        if outcome == "capacity-refusal":
+            raise InvalidCapacity("Mac job executed")
+        if outcome == "unavailable":
+            raise OSError("private provider detail")
+        return {"audit_sha256": audit, "replacement_marker": marker if mode == "request" else None,
+                "head": "d" * 40, "mac_job": 456, "linux_artifact": 789}
+
+    monkeypatch.setattr(acceptance_capacity, "recover", recover)
+    args = capacity_args("0.9.49", mode, *(["--audit-sha256", audit] if mode == "request" else []))
+    out = invoke(rt, args)
+    if outcome == "prepare":
+        assert out.exit_code == 0 and f"Prepared capacity audit {audit}" in out.stdout
+        assert "Mac job 456" in out.stdout and "Linux receipt 789" in out.stdout
+    elif outcome == "request":
+        assert out.exit_code == 0 and marker in out.stdout and "Original rejection 123 preserved" in out.stdout
+    elif outcome == "capacity-refusal":
+        assert out.exit_code == 1 and "Mac job executed" in out.stderr
+    else:
+        assert out.exit_code == 1 and "evidence could not be authenticated" in out.stderr
+        assert "private provider detail" not in out.stderr
+    assert len(bound) == 1 and bound[0].TAIL_LOCK is None and bound[0].RECEIPT_OVERRIDE is None
+    assert tail.read_bytes() == before and gh.calls == []
+
+
+def test_capacity_cli_missing_receipt_and_lock_contention_refuse_before_remote_access(tmp_path, monkeypatch):
+    import fcntl
+
+    gh = FakeGh()
+    rt = make(tmp_path, monkeypatch, gh)
+    absent = invoke(rt, capacity_args())
+    assert absent.exit_code == 1 and "tail receipt is absent" in absent.stderr
+    tail = statedir.root() / "release/v0.9.49.json"
+    tail.parent.mkdir(parents=True, exist_ok=True)
+    tail.write_text('{"accepted": false}')
+    with tail.with_suffix(".lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        busy = invoke(rt, capacity_args())
+    assert busy.exit_code == 1 and "tail of v0.9.49 is running" in busy.stderr
+    assert gh.calls == []
+
+
 def pypi(monkeypatch, rules: dict):
     class Reply:
         status = 200

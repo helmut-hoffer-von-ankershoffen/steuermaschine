@@ -363,6 +363,17 @@ def test_the_keep_file_is_kept_on_every_call_and_a_closed_pr_in_it_is_skipped(tm
     assert world.cancelled == ["2"] and "kept 1 fix/603 CI" in done.stdout and "keep file: PR #7 is CLOSED, not open; not kept" in done.stdout
 
 
+def test_explicit_keep_does_not_resolve_the_same_pr_again_from_the_keep_file(tmp_path, monkeypatch):
+    keep = tmp_path / "keep.txt"
+    keep.write_text("603\n")
+    world = canned()
+    rt = runtime(tmp_path, monkeypatch, world, ci_ops_keep_file=str(keep))
+    done = invoke(rt, ["ci", "defer", "--cancel", "--keep", "603,598"])
+    assert done.exit_code == 0 and "kept 1 fix/603 CI" in done.stdout
+    assert world.cancelled == ["2"]
+    assert sum("pr view 603 " in call for call in world.gh_lines()) == 1
+
+
 def test_an_unreadable_or_malformed_keep_file_refuses_before_any_call(tmp_path, monkeypatch):
     for setting, text in (("missing.txt", None), ("bad.txt", "603 fix-later\n")):
         path = tmp_path / setting
