@@ -23,6 +23,7 @@ Usage: uv run --script scripts/check_confidentiality.py [OPTION] [FILE ...]
     [FILE ...]          files, or every tracked file
     --commit-msg FILE   a commit message (commit-msg hook)
     --messages A..B     the messages of a range of commits
+    --messages-exclude SHA  exclude commits reachable from a known public commit
     --text TEXT         a string, such as a pull request title or branch
     --identity          the author and committer git will record, and that their emails are not machine hostnames
     --branch            the current branch's name (pre-push hook)
@@ -35,85 +36,19 @@ import os
 import re
 import subprocess
 import sys
-import unicodedata
-from collections.abc import Iterable, Iterator
-from dataclasses import dataclass
+from collections.abc import Iterator
 from pathlib import Path
 
-DEFAULT_TERMS_FILES = (
-    Path("~/.config/heinzel-dev/confidential-terms"),
-    Path("~/.config/steuermaschine/private-terms"),
+# The standalone check runs before workspace dependencies are installed.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "plugins/heinzel/src"))
+from steuermaschine_heinzel.confidentiality import (
+    Finding,
+    hostname_email,
+    load_terms,
+    patterns,
+    scan,
+    text_bytes,
 )
-ANYWHERE = 6  # words at least this long match inside other words too
-NOT_A_LETTER_BEFORE, NOT_A_LETTER_AFTER = r"(?<![^\W\d_])", r"(?![^\W\d_])"
-PRINTABLE = re.compile(rb"[\x20-\x7e]{4,}")
-# Domains that name a machine or a home or company network, not a mailbox; git builds such an email from the hostname
-# when user.email isn't set.
-HOST_DOMAINS = (".local", ".localdomain", ".lan", ".home", ".internal")
-
-
-@dataclass(frozen=True)
-class Finding:
-    """Where a term was found; `term` is its 1-based number in the list, so the term itself stays private."""
-
-    where: str
-    line: int
-    term: int
-
-    def __str__(self) -> str:
-        """`path:line: confidential term #N`."""
-        return f"{self.where}:{self.line}: confidential term #{self.term}"
-
-
-def load_terms() -> list[str]:
-    """The configured terms, or none: `$CONFIDENTIAL_TERMS` (CI), else `$CONFIDENTIAL_TERMS_FILE`, else both default files."""
-    if text := os.environ.get("CONFIDENTIAL_TERMS"):
-        return parse(text)
-    override = os.environ.get("CONFIDENTIAL_TERMS_FILE")
-    paths = [Path(override)] if override else list(DEFAULT_TERMS_FILES)
-    terms: list[str] = []
-    for path in paths:
-        if (path := path.expanduser()).is_file():
-            terms += parse(path.read_text(encoding="utf-8"))
-    return terms
-
-
-def parse(text: str) -> list[str]:
-    """One term per line; blank lines and `#` comments are skipped."""
-    return [term for line in text.splitlines() if (term := line.split("#", 1)[0].strip())]
-
-
-def patterns(terms: Iterable[str]) -> list[re.Pattern[str]]:
-    """Case-insensitive patterns, as described in the module docstring."""
-    compiled: list[re.Pattern[str]] = []
-    for term in terms:
-        words = normalize(term).split()
-        body = r"[\W_]*".join(map(re.escape, words))
-        if len(words) > 1 or len(words[0]) < ANYWHERE:
-            body = NOT_A_LETTER_BEFORE + body + NOT_A_LETTER_AFTER
-        compiled.append(re.compile(body, re.IGNORECASE))
-    return compiled
-
-
-def normalize(text: str) -> str:
-    """Fold compatibility characters and drop invisible ones (zero-width spaces, joiners, soft hyphens)."""
-    return "".join(c for c in unicodedata.normalize("NFKC", text) if unicodedata.category(c) != "Cf")
-
-
-def scan(where: str, text: str, compiled: list[re.Pattern[str]]) -> Iterator[Finding]:
-    """Find the terms in `text`.
-
-    Yields:
-        A finding per line and term.
-    """
-    text = normalize(text)
-    seen: set[tuple[int, int]] = set()
-    for index, pattern in enumerate(compiled, start=1):
-        for match in pattern.finditer(text):
-            line = text.count("\n", 0, match.start()) + 1
-            if (line, index) not in seen:
-                seen.add((line, index))
-                yield Finding(where, line, index)
 
 
 def _git(*args: str) -> str:
@@ -126,25 +61,7 @@ def _read(path: Path) -> str | None:
         data = path.read_bytes()
     except OSError:
         return None
-    if b"\0" in data or not _is_utf8(data):
-        return "\n".join(run.decode("ascii") for run in PRINTABLE.findall(data))
-    return data.decode("utf-8")
-
-
-def _is_utf8(data: bytes) -> bool:
-    try:
-        data.decode("utf-8")
-    except UnicodeDecodeError:
-        return False
-    return True
-
-
-def hostname_email(ident: str) -> str | None:
-    """The email of a `git var GIT_*_IDENT` line if its domain is a machine's hostname, else `None`."""
-    match = re.search(r"<([^>]*)>", ident)
-    email = match[1] if match else ""
-    domain = email.rpartition("@")[2].lower().rstrip(".")
-    return email if "." not in domain or domain.endswith(HOST_DOMAINS) else None
+    return text_bytes(data)
 
 
 def identity_problems() -> list[str]:
@@ -170,7 +87,8 @@ def sources(args: argparse.Namespace) -> Iterator[tuple[str, str]]:
     if args.commit_msg:
         yield "commit message", Path(args.commit_msg).read_text(encoding="utf-8")
     elif args.messages:
-        for sha in _git("rev-list", args.messages).split():
+        exclude = [f"^{args.messages_exclude}"] if args.messages_exclude else []
+        for sha in _git("rev-list", args.messages, *exclude, "--").split():
             yield f"commit {sha[:12]}", _git("log", "-1", "--format=%an <%ae>%n%cn <%ce>%n%B", sha)
     elif args.branch:
         yield "branch", _git("rev-parse", "--abbrev-ref", "HEAD")
@@ -194,17 +112,20 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("files", nargs="*")
     parser.add_argument("--commit-msg")
     parser.add_argument("--messages")
+    parser.add_argument("--messages-exclude")
     parser.add_argument("--text")
     parser.add_argument("--identity", action="store_true")
     parser.add_argument("--branch", action="store_true")
     parser.add_argument("--require", action="store_true")
     args = parser.parse_args(argv)
+    if args.messages_exclude is not None and (not args.messages or not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", args.messages_exclude)):
+        parser.error("--messages-exclude requires --messages and a full public commit ID")
 
     # Independent of the term list, which plugin developers usually don't have.
     problems = identity_problems() if args.identity else []
     for problem in problems:
         print(problem, file=sys.stderr)
-    terms = load_terms()
+    terms = load_terms(os.environ)
     if not terms:
         if args.require:
             print("No confidential terms configured; set CONFIDENTIAL_TERMS.", file=sys.stderr)
