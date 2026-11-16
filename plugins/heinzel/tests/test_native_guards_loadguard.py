@@ -122,16 +122,6 @@ def cmd(monkeypatch, tmp_path):
     return build, load, conf
 
 
-def test_the_tick_is_off_until_its_review_is_approved(cmd, monkeypatch):
-    from steuermaschine.native import NativeCommand
-
-    monkeypatch.setattr(NativeCommand, "review_state", lambda self: ("open", f"reviews/{self.review_file} has no verdict (test)"))  # whatever the shipped review files say
-    build, _, _ = cmd
-    runtime, commands = build(reviewed=False)
-    off = invoke(runtime, ["daemon", "loadguard"])
-    assert off.exit_code == 70 and "independent review is open" in off.stderr and "daemon-loadguard.md" in off.stderr and commands.calls == []
-
-
 def test_one_tick_makes_exactly_these_calls_in_this_order_and_records_what_it_paused(cmd):
     build, load, _ = cmd
     runtime, commands = build()

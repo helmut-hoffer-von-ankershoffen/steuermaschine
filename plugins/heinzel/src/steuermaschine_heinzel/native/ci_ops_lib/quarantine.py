@@ -7,8 +7,8 @@ main's CI runs (push and nightly schedule), remembered per run in the store (kin
 
 Digest lines:
   QUARANTINE n/8: bead test age, days left          every entry (a known flake is out of the required jobs)
-  QUARANTINE-EXPIRING(bead) ... until D             at most 1 day left: fix it or it fails CI OK
-  QUARANTINE-OVERDUE(bead) ... past until D         the required `Quarantine registry` job fails CI OK now
+  QUARANTINE-EXPIRING(bead) ... until D             at most 1 day left: fix it or it fails the aggregate
+  QUARANTINE-OVERDUE(bead) ... past until D         the required `Quarantine registry` job fails the aggregate now
   QUARANTINE-STREAK(bead) ... failed N days in a row  3+ days: the bead is flagged with a note (once a day)
 Pure functions are tested in tests/test_native_ci_ops_quarantine.py.
 
@@ -25,6 +25,8 @@ import tomllib
 from pathlib import Path
 
 from steuermaschine.github import Gh
+
+from ..queue_lib import core_facts
 
 REPORTS = "heinzel.ci_ops.quarantine_reports"  # per run id: the quarantine reports of that run's artifacts
 FLAGGED = "heinzel.ci_ops.quarantine_flagged"  # per day: the bead notes written that day
@@ -91,10 +93,10 @@ def registry_lines(entries, today):
         left = (e["until"] - today).days
         if left < 0:
             lines.append(f"QUARANTINE-OVERDUE({e['bead']}) {_short(e['test'])} past until {e['until']}: the required "
-                         "`Quarantine registry` job fails CI OK; fix the test or remove the entry")
+                         f"`Quarantine registry` job fails {core_facts.aggregate()}; fix the test or remove the entry")
         elif left <= 1:
             lines.append(f"QUARANTINE-EXPIRING({e['bead']}) {_short(e['test'])} until {e['until']}: fix it now or it "
-                         "fails CI OK")
+                         f"fails {core_facts.aggregate()}")
     return lines
 
 

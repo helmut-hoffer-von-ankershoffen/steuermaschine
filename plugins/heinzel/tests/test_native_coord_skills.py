@@ -1,11 +1,10 @@
 """`sm doc skills generate|check|link` and the core's skillgen: role skill references from the command tree. The
 assertions of the former skills tests that still apply (front matter, description, line limit, stale file, link) moved
 here; the tool-to-skill mapping file is gone, so its tests have no successor."""
-# ruff: noqa: F811  (a fixture imported from coord_kit is also a test parameter)
 
 import json
 
-from coord_kit import app_runtime, unreviewed  # noqa: F401  (fixtures)
+from coord_kit import app_runtime
 
 from steuermaschine import PROG, helpdoc, skillgen
 from steuermaschine.app import command_tree
@@ -98,14 +97,6 @@ def test_the_skills_directory_defaults_to_the_tracker_repository_and_must_exist(
     assert done.exit_code == 2 and f"{tmp_path}/skills does not exist" in done.stderr
     skills_of(tmp_path)
     assert invoke(app_runtime(tmp_path), ["doc", "skills", "generate"]).exit_code == 0
-
-
-def test_the_write_commands_are_off_until_reviewed(tmp_path, unreviewed):
-    root = skills_of(tmp_path)
-    for args, name in ((["generate"], "doc-skills-generate.md"), (["link"], "doc-skills-link.md")):
-        done = invoke(app_runtime(tmp_path, allow=False, skills_dir=str(root), skills_link_dirs=[str(tmp_path / "x")]), ["doc", "skills", *args])
-        assert done.exit_code == 70 and f"reviews/{name}" in done.stderr
-    assert not (root / "INDEX.md").exists() and not (tmp_path / "x").exists()
 
 
 def test_mentions_are_read_from_code_only_and_resolve_to_the_longest_path():

@@ -40,7 +40,9 @@ import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-LANE_KIND = {"python": "pytest", "python312": "pytest", "macos": "pytest", "browser": "e2e", "web": "vitest"}
+# The lane kinds this collector lists. Which kind a lane has is Core's fact: the caller reads it from Core's reviewed
+# release policy at the collected tree (queue_lib/core_policy) and passes it with --kind.
+KINDS = ("pytest", "e2e", "vitest")
 
 
 class CollectError(RuntimeError):
@@ -107,9 +109,8 @@ def extract(repo: Path, tree: str, dest: Path) -> None:
 
 
 def collect(repo: Path, tree: str, selection: dict, lane: str, python: str, node_modules: Path | None,
-            work: Path) -> list[tuple[str, str]]:
-    kind = LANE_KIND.get(lane)
-    require(kind, f"unknown lane {lane}")
+            work: Path, kind: str) -> list[tuple[str, str]]:
+    require(kind in KINDS, f"unknown lane kind {kind} for lane {lane}")
     ids = selection.get(lane) or []
     require(ids, f"lane {lane} has no selection")
     dest = Path(tempfile.mkdtemp(prefix=f"collect-{lane}-{tree[:8]}-", dir=work))
@@ -165,6 +166,7 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument("--tree", required=True)
     c.add_argument("--selection", type=Path, required=True)
     c.add_argument("--lane", required=True)
+    c.add_argument("--kind", required=True, choices=KINDS, help="the lane's kind in Core's release policy at TREE")
     c.add_argument("--python", default=sys.executable)
     c.add_argument("--node-modules", type=Path)
     c.add_argument("--work", type=Path, default=Path(tempfile.gettempdir()) / "collect-cases-work")
@@ -179,7 +181,7 @@ def main(argv: list[str] | None = None) -> int:
         if a.cmd == "collect":
             a.work.mkdir(parents=True, exist_ok=True)
             cases = collect(a.repo, a.tree, json.loads(a.selection.read_text()), a.lane, a.python,
-                            a.node_modules, a.work)
+                            a.node_modules, a.work, a.kind)
             write_junit(cases, a.output)
             print(f"{a.lane} {a.tree[:12]} {len(cases)} cases digest {digest(cases)}", file=sys.stderr)
             return 0

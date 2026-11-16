@@ -66,7 +66,8 @@ sm head ship . --live      # continues: merge, tag, finished
 | `sm pr ...`, `sm ci ...` | One pull request, the CI runs, and why something does not merge |
 | `sm focus ...` | The heads or versions the owner declared the critical path |
 | `sm alarm ...` | Stalls and failures that need someone now |
-| `sm gate run -- CMD` | Run a heavy local command under the machine's run lock |
+| `sm gate run -- CMD` | Run a heavy local command under the machine's run lock; `--bg` starts it in the background, `sm gate wait ID` returns its exit code |
+| `sm gate status` | Who holds the run lock, who waits for it and why, the load and the background runs |
 | `sm lim CMD` | Run a command and print only what matters |
 | `sm self ...` | Configuration, plugins, help lint, the command tree, JSON schemas |
 

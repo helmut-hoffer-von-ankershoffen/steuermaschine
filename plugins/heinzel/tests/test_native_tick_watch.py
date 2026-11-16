@@ -167,7 +167,7 @@ def test_a_green_pr_in_text_and_json_after_one_poll(tmp_path, monkeypatch):
     done = invoke(build(tmp_path, monkeypatch, gh, clock), ["ci", "watch", "795", "--timeout", "40"])
     assert (done.exit_code, done.stdout) == (0, "PR #795: green\n")
     assert clock.slept == [30]  # one poll through the clock provider, no real sleep
-    assert gh.lines() == [f"pr view 795 -R {REPO} --json state,statusCheckRollup"] * 2 and not gh.writes()
+    assert [ln for ln in gh.lines() if ln.startswith("pr view")] == [f"pr view 795 -R {REPO} --json state,mergeCommit,statusCheckRollup"] * 2 and not gh.writes()
     gh = FakeGh().on("pr view 795", pr_view(check("CI OK")))
     doc = json.loads(invoke(build(tmp_path, monkeypatch, gh), ["--format", "json", "ci", "watch", "795"]).stdout)
     result = tick.Watched.model_validate(doc)
@@ -192,10 +192,10 @@ def test_a_red_pr_names_the_failing_checks_and_the_tests_from_the_log(tmp_path, 
 def test_merged_closed_and_another_repository(tmp_path, monkeypatch):
     gh = FakeGh().on("pr view 38", pr_view(state="MERGED"))
     done = invoke(build(tmp_path, monkeypatch, gh), ["ci", "watch", "plugins", "38"])
-    assert (done.exit_code, done.stdout) == (0, "PR plugins #38: merged\n") and gh.lines()[0].startswith(f"pr view 38 -R {PLUGINS} ")
+    assert (done.exit_code, done.stdout) == (0, "PR plugins #38: merged\n") and gh.lines()[-1].startswith(f"pr view 38 -R {PLUGINS} ")
     gh = FakeGh().on("pr view 7", pr_view(state="CLOSED"))
     done = invoke(build(tmp_path, monkeypatch, gh), ["ci", "watch", "https://github.com/a/b/pull/7"])
-    assert (done.exit_code, done.stdout) == (1, "PR b #7: closed\n") and gh.lines()[0].startswith("pr view 7 -R a/b ")
+    assert (done.exit_code, done.stdout) == (1, "PR b #7: closed\n") and gh.lines()[-1].startswith("pr view 7 -R a/b ")
     gh = FakeGh().on("pr view 9", pr_view(check("CI OK")))
     assert invoke(build(tmp_path, monkeypatch, gh), ["ci", "watch", "9", "-R", "a/b"]).stdout == "PR b #9: green\n"
 
@@ -205,7 +205,7 @@ def test_repo_option_reads_the_named_repository_for_a_pr_and_a_run(tmp_path, mon
     for repo in ("plugins", PLUGINS):
         gh = FakeGh().on("pr view 38", pr_view(check("CI OK")))
         done = invoke(build(tmp_path, monkeypatch, gh), ["ci", "watch", "38", "--repo", repo])
-        assert (done.exit_code, done.stdout) == (0, "PR plugins #38: green\n") and gh.lines()[0].startswith(f"pr view 38 -R {PLUGINS} ")
+        assert (done.exit_code, done.stdout) == (0, "PR plugins #38: green\n") and gh.lines()[-1].startswith(f"pr view 38 -R {PLUGINS} ")
         assert not any(f"-R {CORE} " in line for line in gh.lines())
     gh = FakeGh().on("run view 41295168692", {"status": "completed", "conclusion": "success", "jobs": []})
     doc = invoke(build(tmp_path, monkeypatch, gh), ["--format", "json", "ci", "watch", "41295168692", "-R", "plugins"])
@@ -251,3 +251,24 @@ def test_the_command_is_read_only_and_its_help_meets_the_contract():
     assert command.writes is False and command.replaces == ("hz-watch",) and command.path == "ci watch"
     assert contract_gaps(tick.ci_watch) == {}
     assert "hz-" not in command.help
+
+
+def test_a_bare_number_is_a_pr_of_the_worktrees_repository_and_the_state_is_githubs(tmp_path, monkeypatch):
+    """rir8/8o5e: `sm ci watch 107` in a plugins worktree read core's merged #107 and printed merged for an OPEN plugins PR."""
+    gh = FakeGh().on("remote get-url origin", "git@github.com:helmut-hoffer-von-ankershoffen/heinzel-plugins.git\n")
+    gh.on("pr view 107 -R " + PLUGINS, pr_view(check("CI OK"), state="OPEN"))
+    gh.on("pr view 107 -R " + CORE, pr_view(state="MERGED"))
+    done = invoke(build(tmp_path, monkeypatch, gh), ["ci", "watch", "107"])
+    assert (done.exit_code, done.stdout) == (0, "PR plugins #107: green\n")
+    assert not any(ln.startswith("pr view 107 -R " + CORE + " ") for ln in gh.lines())
+    # an unknown origin falls back to the core repository, an explicit repository wins over the worktree
+    gh = FakeGh().on("remote get-url origin", "https://example.org/x/y.git\n").on("pr view 107", pr_view(state="MERGED"))
+    assert invoke(build(tmp_path, monkeypatch, gh), ["ci", "watch", "107"]).stdout == "PR #107: merged\n"
+    gh = FakeGh().on("remote get-url origin", "git@github.com:helmut-hoffer-von-ankershoffen/heinzel-plugins.git\n").on("pr view 5", pr_view(state="MERGED"))
+    assert invoke(build(tmp_path, monkeypatch, gh), ["ci", "watch", "5", "-R", "core"]).stdout == "PR heinzel #5: merged\n"  # not the plugins worktree's repository
+
+
+def test_merged_shows_the_merge_commit_only_when_github_gives_one(tmp_path, monkeypatch):
+    merged = pr_view(state="MERGED") | {"mergeCommit": {"oid": "0123456789abcdef"}}
+    gh = FakeGh().on("pr view 8", merged)
+    assert invoke(build(tmp_path, monkeypatch, gh), ["ci", "watch", "8"]).stdout == "PR #8: merged (012345678)\n"

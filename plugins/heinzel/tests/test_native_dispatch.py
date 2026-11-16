@@ -94,24 +94,15 @@ def test_status_without_runs_and_with_a_paused_admission(rt, tmp_path):
     assert "9 dispatch dispatch e2e web-2 [3/3 green] (since 21:00)" in text and "admission paused" in text
 
 
-def test_write_commands_are_off_until_their_review_is_approved(rt, monkeypatch):
-    from steuermaschine.native import NativeCommand
+def test_the_files_the_write_commands_reach():
+    from steuermaschine.reviewgraph import reach
 
-    monkeypatch.setattr(NativeCommand, "review_state", lambda self: ("open", f"reviews/{self.review_file} has no verdict"))
-    for argv in (["ci", "one", "dispatch", "validation/clock", "--suite", "web-2"], ["ci", "one", "rerun", "589"], ["head", "validate", "."],
-                 ["ci", "window", "run", "."], ["ci", "window", "release"]):
-        off = invoke(rt(reviewed=False), argv)
-        assert off.exit_code == 70 and "writes and its independent review is open" in off.stderr and "nothing was run" in off.stderr, argv
-
-
-def test_the_review_units_and_files_of_the_write_commands():
-    by_path = {cmd.path: cmd for cmd in (fn.__sm_native__ for fn in (dispatch.ci_one_dispatch, dispatch.ci_one_rerun, window.head_validate,
-                                                                     window.ci_window_run, window.ci_window_release))}
-    assert by_path["ci one rerun"].review_file == by_path["ci one dispatch"].review_file == "ci-one-dispatch.md"
-    assert by_path["ci one rerun"].code_digest() == by_path["ci one dispatch"].code_digest()
+    by_path = {found.path: found.files for found in reach(fn.__sm_native__ for fn in (dispatch.ci_one_dispatch, dispatch.ci_one_rerun, window.head_validate,
+                                                                                    window.ci_window_run, window.ci_window_release))}
+    assert by_path["ci one rerun"] == by_path["ci one dispatch"]
     for path in ("head validate", "ci window run", "ci window release"):
-        names = {f.name for f in by_path[path].code_files()}
-        assert by_path[path].review_file == "head-validate.md" and {"window.py", "dispatch.py", "focused.py", "rules.py", "lock.py", "refuse.py"} <= names, path
+        names = {name.rsplit("/", 1)[-1] for name in by_path[path]}
+        assert {"window.py", "dispatch.py", "focused.py", "rules.py", "lock.py", "refuse.py"} <= names, path
 
 
 def test_one_dispatch_makes_exactly_these_github_calls_in_this_order(rt, registry):
@@ -437,8 +428,8 @@ def test_runs_in_flight_are_counted_from_githubs_inventory_and_a_full_set_waits_
     assert done.exit_code == 75 and "4 runs in flight + 2 wanted > cap 5" in done.stderr and "Nothing was pushed" in done.stderr, done
     assert gh.git == [] and not [call for call in gh.calls if "POST" in call or "--method" in call]
     gh.on("actions/runs?status=in_progress", [{"total_count": 2, "workflow_runs": [run(1), run(7, "ci.yml", "release/v1")]}])
-    held = invoke(runtime, ["head", "validate", ".", "--max-wait", "0"])
-    assert held.exit_code == 75 and "a release/* run is active" in held.stderr and gh.git == []
+    held = invoke(runtime, ["head", "validate", ".", "--os", "macos-latest", "--max-wait", "0"])  # macOS lanes wait for the candidate; Linux lanes go on
+    assert held.exit_code == 75 and "a release/* run is active" in held.stderr and "needs macOS" in held.stderr and gh.git == []
     gh.on("actions/runs?status=in_progress", [{"total_count": 9, "workflow_runs": [run(1)]}])  # a truncated listing
     unsure = invoke(runtime, ["head", "validate", ".", "--max-wait", "0"])
     assert unsure.exit_code == 1 and "cannot count the focused runs in flight" in unsure.stderr and gh.git == []
@@ -461,9 +452,9 @@ def test_a_second_command_for_the_same_head_waits_and_leaves_the_first_ones_turn
 
 def test_a_second_head_waits_for_the_window_with_exit_75_and_pushes_nothing(rt, lanes):
     runtime = rt(commands=remote())
-    window.the_window(runtime).enter("fix/other", "b" * 40, 2, in_flight=0, owner="other", pid=1, host="elsewhere")
+    window.the_window(runtime).enter("fix/other", "b" * 40, 4, in_flight=0, owner="other", pid=1, host="elsewhere")  # 4 of the 5 runs
     done = invoke(runtime, ["head", "validate", ".", "--max-wait", "0"])
-    assert done.exit_code == 75 and "fix/other bbbbbbbbb holds the window" in done.stderr and "Nothing was pushed" in done.stderr
+    assert done.exit_code == 75 and "hold the window: fix/other" in done.stderr and "Nothing was pushed" in done.stderr
     assert runtime.providers.commands.git == [] and lanes["started"] == []
     status = invoke(runtime, ["ci", "window", "status"]).stdout
     assert "active   fix/other bbbbbbbbb" in status and "waiting  1. feat/x aaaaaaaaa (2 runs)" in status
@@ -637,3 +628,18 @@ def test_a_stop_during_the_cleanup_lets_it_finish(rt, lanes, monkeypatch):
     done = invoke(runtime, ["head", "validate", "."])
     assert done.exit_code == 0 and "VALIDATED" in done.stdout and "a stop signal came during the cleanup; the cleanup finished first" in done.stdout, done
     assert [name for name, _ in lanes["deleted"]] == [VBRANCH, V2] and window.the_window(runtime).status().active is None
+
+
+def test_the_account_caps_come_from_the_settings_and_reach_the_capacity_rule(rt, tmp_path):
+    assert dispatch.caps({}) == dispatch.c.Caps() and dispatch.caps(None) == dispatch.c.Caps()
+    assert dispatch.caps({"ci_job_cap": 40, "ci_macos_cap": 0}) == dispatch.c.Caps(jobs=40, macos=0)
+    runtime = rt(commands=remote())
+    assert (runtime.settings.get("ci_job_cap"), runtime.settings.get("ci_macos_cap")) == (dispatch.c.JOB_CEILING, dispatch.c.ARM_LIMIT)  # the defaults of the table
+    dispatch.bound(runtime, [], [])
+    assert dispatch.c.Caps() == focused.CAPS
+    focused.bind(focused.EDGE, focused.R, focused.STATE, focused.CORE_CLONE, focused.SCRATCH, dispatch.c.Caps(jobs=2, macos=1))
+    try:
+        assert focused.CAPS.jobs == 2
+    finally:
+        focused.bind(focused.EDGE, focused.R, focused.STATE, focused.CORE_CLONE, focused.SCRATCH)
+    assert dispatch.c.Caps() == focused.CAPS

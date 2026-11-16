@@ -17,7 +17,7 @@ Everything you commit is public at once. Write nothing that must stay private: n
 
 ```
 src/steuermaschine/      core: generic; names no project, person, company or private path
-plugins/heinzel/         the large plugin: src/steuermaschine_heinzel/{plugin.py,native/,pipelines/,reviews/}, tests/
+plugins/heinzel/         the large plugin: src/steuermaschine_heinzel/{plugin.py,native/,pipelines/}, tests/
 examples/toy, layer/     small plugins: the quick start, and proof that plugins stack
 tests/                   core tests (tests/test_core_<module>.py), tests/projects
 docs/                    DESIGN.md and the runbooks
@@ -49,7 +49,7 @@ make check            # what hosted CI runs: lint, type check, tests with covera
 The `sm` on the PATH is a stable install: a commit built with `git archive` into its own directory and environment. Nothing in it points at a checkout.
 
 - `bin/promote --check` tests everything a promote would, without switching.
-- `bin/promote` builds the committed HEAD, runs the smoke list and the review gate, and switches atomically.
+- `bin/promote` builds the committed HEAD, runs the smoke list, requires the commit verdict, and switches atomically.
 - `bin/rollback` switches back.
 
 Only the coordinator promotes, and never during a running admission or release.
@@ -60,14 +60,16 @@ Two different things carry the word.
 
 **Verdicts on a run** are product behaviour. A pipeline stops at a digest of prepared bytes; a reviewer who is not the author records `sm review verdict DIGEST --approve --reviewer NAME`; the apply step refuses without it. Do not weaken this.
 
-**Verdicts on code** decide whether a write command may run at all. Today each write command is closed until its file in `reviews/` names the exact digest of its code and ends with `VERDICT: APPROVE`. The digest covers the command's module, its `_lib` package and every first-party file they import. `sm self reviews` lists the state.
+**Verdicts on code** decide whether a commit of sm may go live. `bin/promote` switches only a commit with one
+independent verdict on that exact commit, recorded outside the tree (`$SM_STABLE/verdicts/<commit>`) by
+`bin/promote_verdict.py record`, run by the reviewer as itself (`STEUERMASCHINE_AGENT`, when set, must equal `--reviewer`). The
+verdict names the commit and the base the reviewer diffed from (the live release). Both the candidate's checker and
+the live release's checker must accept it. All agents share one git identity, so independence also rests on the
+coordinator dispatching a different agent. Write commands check nothing at run time. `sm self reviews` lists the gate
+code first, then the write paths the diff since the live release reaches.
 
-- Never write a `REVIEWED:` or `VERDICT:` line yourself. Only the independent reviewer does.
-- A change to a file in a digest voids that verdict. Seven core files are in every digest: `__init__.py`, `config.py`, `engine.py`, `helpdoc.py`, `models.py`, `native.py`, `protocols.py`. Touch them only when the task needs it, and say so in the hand-over.
-- Do not delete review files. The installed tool reads them; without them every write command refuses.
-- Do not widen a digest: no module below `native/` or `pipelines/` imports `plugin.py` or `native/__init__.py`. Reach other commands by name with `pipelines.common.command(path)` or `runtime().commands()`.
-
-This per-command gate is planned to be replaced by one independent verdict per promoted commit. Until that change is live, the rules above hold.
+- Never record a verdict on your own commits.
+- No command declares a review file or its files: `@native` takes `writes=`, `tick=` and `replaces=` only. `sm self reviews` computes what a write path reaches from its imports, and takes a `*_lib` package whole.
 
 ## Hard rules
 
@@ -81,6 +83,8 @@ This per-command gate is planned to be replaced by one independent verdict per p
 - **The core stays clean.** ruff, mypy strict, pyright, 90 % line and branch coverage, no dead code. The plugin's debt in `docs/debt.json` may only fall.
 - **Privacy.** Never print, log or commit a configuration value, a home path, a person's or company's name, a token or a private repository name. `scripts/check_confidentiality.py` and gitleaks gate the tree and the commit messages.
 - **Heavy runs go through the run lock:** `sm gate run -- <command>` for the full suite, type checks, builds and pushes.
+  In the background: `sm gate run --bg -- <command>`, then `sm gate wait ID`; never `nohup sh -c "... &"` (such a job
+  starts with SIGINT ignored, and tests that stop their children with it hang).
 - **Never `git stash`.** The stash is shared by all worktrees. Commit a WIP instead.
 
 ## Commits
@@ -94,3 +98,4 @@ Conventional Commits, one area per commit, subject at most 72 characters. End th
 - Edit a verdict line or `tests/gate_known.json` by hand.
 - Change release commands while a release is in flight.
 - Change repository settings, or open or merge a pull request, unless asked.
+- Hard-code another repository's facts (job names, counts, lanes, contexts, file bytes or digests). Read them from that repository's reviewed policy at the exact commit being checked (for Heinzel: `scripts/release_policy.json`, through `queue_lib/core_policy.py`), never from a working tree, the environment or a copy here. The commit and its review verdict bind them, not a checksum; a CI change is judged by the not-CI paths of the base (`core_policy.ci_changes`).

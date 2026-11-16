@@ -114,15 +114,26 @@ def evaluate(facts):
             elif lane != "web" or tests != [sentinel]:
                 reasons.append(f"the whole Vitest suite {sentinel} is only a web lane on its own, not {lane} {tests}")
     checks = {c["name"]: c.get("conclusion") for c in facts["checks"]}
+    if facts.get("gate_checks") is None:
+        reasons.append("no reviewed release policy at Core's main: the focused job and gate check names are unknown")
     for lane in sorted(plan.get("selection") or {}):
-        if checks.get(f"Focused tests ({lane})") != "success":
-            reasons.append(f"coverage floor evidence missing: `Focused tests ({lane})` on the head is {checks.get(f'Focused tests ({lane})') or 'absent'}")
+        job = str(facts.get("focused_job") or "{lane}").replace("{lane}", lane)
+        if checks.get(job) != "success":
+            reasons.append(f"coverage floor evidence missing: `{job}` on the head is {checks.get(job) or 'absent'}")
     if plan.get("production") and "python" not in (plan.get("selection") or {}):
         reasons.append("the plan has production files but no python coverage lane")
-    for name in ("coverage-floor", "merge-gate"):
+    for name in facts.get("gate_checks") or ():  # the merge-gate workflow's checks, from Core's release policy
         if checks.get(name) == "failure":
             reasons.append(f"{name} check on the head failed")
     return [r for r in reasons if r]
+
+
+def _policy_names() -> dict:
+    """The focused job template and the merge-gate checks of Core's release policy at main (None: unreadable)."""
+    from ..queue_lib import core_facts
+
+    policy = core_facts.safe()
+    return {"gate_checks": sorted(policy.api_checks) if policy else None, "focused_job": policy.focused_job if policy else ""}
 
 
 def gather(target, core, repo, base, git=run, gh=run, decode=decode_plan):
@@ -143,7 +154,8 @@ def gather(target, core, repo, base, git=run, gh=run, decode=decode_plan):
     ancestor = bool(plan) and subprocess_ok(git, core, plan.get("base"), main)
     checks = json.loads(gh(["gh", "api", f"repos/{repo}/commits/{head}/check-runs?per_page=100"])).get("check_runs", [])
     return {"pr": prs[0] if prs else None, "head": head, "main": main, "plan": plan, "protected": protected, "blobs": blobs,
-            "base_is_ancestor": ancestor, "checks": checks, "vitest_all": sentinel[0] if sentinel else None}
+            "base_is_ancestor": ancestor, "checks": checks, "vitest_all": sentinel[0] if sentinel else None,
+            **_policy_names()}
 
 
 def subprocess_ok(git, core, ancestor, main):

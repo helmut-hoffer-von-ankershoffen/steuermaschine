@@ -84,7 +84,7 @@ def test_a_stale_sampler_is_judged_on_one_live_sample_that_is_not_stored(tmp_pat
     assert ["launchctl", "list", "io.github.helmut-hoffer-von-ankershoffen.heinzel.daemon"] in commands.calls
 
 
-def test_sample_appends_one_line_and_is_off_without_its_review(tmp_path, monkeypatch):
+def test_sample_appends_one_line(tmp_path, monkeypatch):
     monkeypatch.setattr(watch, "probe_web", lambda port: 1 / 0)
     rt = runtime_for(tmp_path, quiet_machine(), leakwatch_daemon_label="io.example.daemon")
     out = invoke(rt, ["mini", "leakwatch", "sample"])
@@ -93,11 +93,6 @@ def test_sample_appends_one_line_and_is_off_without_its_review(tmp_path, monkeyp
     doc = leakwatch.LeakSample.model_validate_json(invoke(rt, ["--format", "json", "mini", "leakwatch", "sample"]).stdout)
     lines = (tmp_path / "leak" / "samples.jsonl").read_text().splitlines()
     assert len(lines) == 2 and json.loads(lines[0])["running"] is False and doc.file == str(tmp_path / "leak" / "samples.jsonl") and doc.web_seconds is None
-    # an unreviewed state, set explicitly: the test must not depend on what the review file says today
-    from steuermaschine.native import NativeCommand
-    monkeypatch.setattr(NativeCommand, "review_state", lambda self: ("open", "no verdict"))
-    blocked = invoke(runtime_for(tmp_path, quiet_machine(), reviewed=False), ["mini", "leakwatch", "sample"])
-    assert blocked.exit_code == 70 and len((tmp_path / "leak" / "samples.jsonl").read_text().splitlines()) == 2
 
 
 def test_thresholds_can_be_overridden_and_an_unset_state_directory_refuses(tmp_path):

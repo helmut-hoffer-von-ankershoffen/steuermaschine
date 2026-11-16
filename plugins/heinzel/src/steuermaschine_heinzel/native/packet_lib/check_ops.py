@@ -15,6 +15,8 @@ from typing import Any
 
 from steuermaschine.models import Model
 
+from ..queue_lib import core_policy
+from ..queue_lib.release_candidate import CandidateError
 from . import admit_wave as aw
 from . import collect_cases as cc
 from .ops import PacketRefused
@@ -56,9 +58,13 @@ class CasesCompared(Model):
 
 def collect(repo: Path, tree: str, selection: Path, lane: str, output: Path, *, python: str | None, node_modules: Path | None, run: Runner) -> CasesCollected:
     """One collection run of the moved collector, in its own isolated interpreter, through `run`."""
+    try:
+        kind = core_policy.collected_kind(Path(repo).expanduser(), tree, lane)
+    except CandidateError as error:
+        raise PacketRefused(f"collecting {lane} on {tree[:12]}: {error}") from error
     work = Path(tempfile.mkdtemp(prefix="cases-collect-"))
     cmd = [sys.executable, "-I", str(aw.DEFAULT_COLLECTOR), "collect", "--repo", str(Path(repo).expanduser()), "--tree", tree,
-           "--selection", str(selection), "--lane", lane, "-o", str(output), "--work", str(work)]
+           "--selection", str(selection), "--lane", lane, "--kind", kind, "-o", str(output), "--work", str(work)]
     cmd += ["--python", python] if python else []
     cmd += ["--node-modules", str(Path(node_modules).expanduser())] if node_modules else []
     try:

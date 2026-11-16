@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from steuermaschine import API_VERSION, INTERNAL, USAGE
+from steuermaschine import API_VERSION, USAGE
 from steuermaschine.app import Runtime, natives, write_units
 from steuermaschine.commands import doc, gate, lim, window
 from steuermaschine.config import Project, Settings
@@ -62,7 +62,7 @@ class Done(Model):
         return [f"lim of {self.by}"]
 
 
-@native("lim", writes=True, review="own-lim.md", help=H(
+@native("lim", writes=True, help=H(
     "A project's own output limiter, replacing the core's.",
     "Use when testing the order rule.",
     "writes a log of its own.",
@@ -105,13 +105,11 @@ def test_lim_alone_writes_the_full_output_below_the_state_directory():
     assert len(Path(found.log).read_text().splitlines()) == 80
 
 
-def test_lim_writes_only_with_an_approved_review(monkeypatch):
-    from steuermaschine.native import NativeCommand
-
-    # lim has its verdict now: open it here, so the test does not depend on the review file's current state
-    monkeypatch.setattr(NativeCommand, "review_state", lambda self: ("open", f"reviews/{self.review_file} has no verdict"))
-    done = invoke(core_alone(reviewed=False), ["lim", "--", "true"])
-    assert done.exit_code == INTERNAL and "reviews/lim.md" in done.stderr
+def test_lim_runs_without_a_per_command_review_file():
+    commands = FakeCommands()
+    commands.on(["true"], Result(0, "", ""))
+    done = invoke(core_alone(reviewed=False, commands=commands), ["lim", "--", "true"])
+    assert done.exit_code == 0, done.stderr
 
 
 def test_lim_takes_the_directory_a_plugin_hands_in(tmp_path):
@@ -200,18 +198,15 @@ def test_window_status_takes_the_window_a_plugin_hands_in():
 
 
 # ----------------------------------------------------------------------------- the order rule for core commands
-def test_a_plugin_command_at_a_core_path_replaces_it_and_brings_its_own_review():
+def test_a_plugin_command_at_a_core_path_replaces_it_and_is_the_write_unit_at_that_path():
     rt = stacked(Replaces(), reviewed=False)
     (cmd,) = [c for c in natives(rt) if getattr(c, "path", "") == "lim"]
-    assert cmd.fn is own_lim and cmd.review_file == "own-lim.md"
-    refused = invoke(rt, ["lim"])
-    assert refused.exit_code == INTERNAL and "own-lim.md" in refused.stderr and "reviews/lim.md" not in refused.stderr
-    assert invoke(stacked(Replaces()), ["lim"]).stdout.strip() == "lim of the plugin"
-    rows = json.loads(invoke(rt, ["--format", "json", "self", "reviews"]).stdout)
-    assert [r["file"] for r in rows if r["path"] == "lim"] == ["reviews/own-lim.md"]
+    assert cmd.fn is own_lim
+    assert invoke(rt, ["lim"]).stdout.strip() == "lim of the plugin"
+    assert [u.fn for u in write_units(rt) if u.path == "lim"] == [own_lim]
 
 
-@pytest.mark.parametrize("path", ["gate run", "gate status", "lim", "doc section", "ci window status"])
+@pytest.mark.parametrize("path", ["gate run", "gate wait", "gate status", "lim", "doc section", "ci window status"])
 def test_the_core_commands_follow_the_help_contract(path):
     assert invoke(core_alone(), [*path.split(), "--help"]).exit_code == 0
     lint = json.loads(invoke(core_alone(), ["--format", "json", "self", "lint"]).stdout)

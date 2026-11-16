@@ -9,7 +9,7 @@ every check is green at that exact head. A red or conflicted PR is reported and 
 The core queue may use queue_core to merge a green, behind PR without updating it; direct and non-core calls still update.
 The advisory `review` check is ignored, and so are `merge-gate` and `coverage-floor` only until main requires them; GitHub
 refuses the merge itself once they are required. BEHIND is updated again, UNKNOWN is waited out, and while
-~/.cache/hz-merge-freeze exists nothing merges to core main. A repository with no `CI OK` check is judged on all its checks.
+~/.cache/hz-merge-freeze exists nothing merges to core main. A repository with no aggregate check is judged on all its checks.
 
 One narrow waiver (research/release-pr-acceptance-advisory.md): on a core release/vX.Y.Z PR, the pull_request-triggered
 `Acceptance (<os>)` dry runs test the PUBLISHED build, not the candidate. They are advisory only when the previous
@@ -34,6 +34,7 @@ from ... import environment  # moved: the process context is a typed model
 from . import hzlib  # noqa: E402
 from steuermaschine.config import child_environment
 from ... import state as statedir  # the plugin's state paths
+from . import core_facts  # noqa: E402
 
 CORE = "helmut-hoffer-von-ankershoffen/heinzel"
 FREEZE = statedir.path("merge-freeze")
@@ -42,7 +43,7 @@ RELEASE_DIR = statedir.path("release")  # hz-release tail receipts vX.Y.Z.json
 INTERVENTIONS = edge.records_dir() / "research/mini-onboarding-2026-11-07/interventions.log"
 RELEASE_BRANCH = re.compile(r"release/v([0-9]+)\.([0-9]+)\.([0-9]+)")
 LOGGED: set[tuple[str, str, frozenset]] = set()  # (pr, head, checks) already logged: once per decision, not per poll
-NEVER_WAIVED = {"CI OK", *hzlib.GATE_CHECKS}  # the ruleset's required checks; candidate CI jobs are never named Acceptance (
+NEVER_WAIVED = core_facts.CONTEXTS  # the ruleset's required checks (Core's release policy); candidate CI jobs are never named Acceptance (
 MAX_MERGE_DIAGNOSTIC_BYTES = 512
 TERMINAL_ESCAPE = re.compile(r"\x1b(?:\][^\x07\x1b]*(?:\x07|\x1b\\)|\[[0-?]*[ -/]*[@-~])")
 MERGE_CREDENTIAL = re.compile(
@@ -105,7 +106,7 @@ def read_back(repo: str, pr: str) -> str:
 
 
 def settled(rollup: list) -> bool:
-    """Every check completed (a status without a `status` field counts as not completed). `CI OK` is read only when
+    """Every check completed (a status without a `status` field counts as not completed). The aggregate is read only when
     the repository has one; others (heinzel-sf) name their gate differently. At least one check must exist."""
     return bool(rollup) and all(c.get("status") == "COMPLETED" for c in rollup)
 

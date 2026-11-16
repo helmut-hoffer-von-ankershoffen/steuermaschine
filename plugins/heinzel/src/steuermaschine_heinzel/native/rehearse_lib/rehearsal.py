@@ -22,7 +22,7 @@ verdict is `incomplete`. When a PR enters the merge queue, a focused admission p
 own running lanes as well, so admission or the candidate gets its idle window: verdict `incomplete` with `preempted`,
 which the alarm reader prints as INFO only (expected, no WARN).
 A rehearsal still open after 180 minutes is closed the same way and its own still-active runs are cancelled, so it
-never blocks admission for longer. It gates nothing and is no CI OK or release evidence.
+never blocks admission for longer. It gates nothing and is no aggregate or release evidence.
 Result: the store, kind `heinzel.rehearse.state`, with `last.verdict` green|red|incomplete, the failed lanes with
 their run URLs and the merges since the last green rehearsal; one journal line per verdict.
 Cost: 8 hosted jobs, about 25 Linux and 36 macOS runner minutes. Lanes run `make test-e2e SUITE=<lane>` exactly as

@@ -3,9 +3,19 @@
 import json
 import time
 
+import policy_kit as kit
 import pytest
 
 from steuermaschine_heinzel.native.combine_lib import combine as c
+
+PINS = tuple(sorted((kit.WORKFLOW, kit.RECORDER)))
+
+
+@pytest.fixture(autouse=True)
+def pinned_from_policy(monkeypatch):
+    """The pinned files are the workflow and recorder of Core's release policy at main; here the kit's, no GitHub read."""
+    monkeypatch.setattr(c, "PINNED", PINS)
+    monkeypatch.setattr(c, "approved_sources", lambda gh, repo: PINS)
 
 
 def member(n, **kw):
@@ -55,6 +65,29 @@ def test_refusals():
     assert "solo class" in c.refusal(member(1, files=["src/auth/x.py"]), "web")
     assert "never combined" in c.refusal(member(1), "tools")
     assert c.refusal(member(1, files=[pinned]), "tools").startswith("tools") is True
+
+
+def test_unknown_pinned_files_refuse_every_member(monkeypatch):
+    monkeypatch.setattr(c, "PINNED", None)
+    assert "pinned files unknown" in c.refusal(member(1), "web")
+
+
+def test_pinned_files_are_the_workflow_and_recorder_of_the_policy_at_core_main(monkeypatch):
+    monkeypatch.undo()
+    head = "e" * 40
+    answers = {"repos/o/core/commits/main": {"sha": head},
+               **{f"repos/o/core/{path}": value for path, value in kit.contents_routes(head, kit.files("new")).items()}}
+
+    def gh(*args):
+        assert args[0] == "api"
+        return (0, json.dumps(answers[args[1]])) if args[1] in answers else (1, "HTTP 404")
+
+    assert c.approved_sources(gh, "o/core") == PINS
+    del answers[f"repos/o/core/contents/{kit.PATH}?ref={head}"]
+    assert c.approved_sources(gh, "o/core") is None
+    assert c.approved_sources(lambda *a: (0, "not json"), "o/core") is None
+    comb = c.Combiner(type("Ctx", (), {"gh": staticmethod(gh), "repo": "o/core"})())
+    assert comb.c.repo == "o/core" and c.PINNED is None
 
 
 def test_topo_and_clusters():

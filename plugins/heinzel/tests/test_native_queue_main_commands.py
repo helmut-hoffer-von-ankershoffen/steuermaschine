@@ -94,12 +94,3 @@ def test_checkpoint_refuses_evidence_it_cannot_accept_as_a_refusal_not_a_traceba
     assert not gh.writes()
 
 
-def test_both_commands_refuse_without_an_approved_review(rt, gh, monkeypatch):
-    # an unreviewed state, set explicitly: the test must not depend on what the review file says today
-    from steuermaschine.native import NativeCommand
-    monkeypatch.setattr(NativeCommand, "review_state", lambda self: ("open", "no verdict"))
-    rt.project.allow_unreviewed = False
-    for argv in (["queue", "main-rerun"], ["queue", "checkpoint", "--pr", "1", "--run", "1", "--core-repo", "."]):
-        out = invoke(rt, argv)
-        assert out.exit_code == 70 and "review" in out.stderr
-    assert not gh.calls

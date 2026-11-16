@@ -4,9 +4,8 @@ The logic is the moved step runner in `release_lib/runner.py` (see `port/move.py
 locks, its receipts and its steps are unchanged. This module turns typed options into the runner's argument list,
 runs it in process, shows its progress and returns a result model. Nothing here starts an old script.
 
-Review unit of every command here: this file, `release_lib/` with the reviewed source files the candidate pins are
-computed from, and `queue_lib/` (the runner merges through the queue's merge train and reads GitHub through the
-queue's shared library).
+Review unit of every command here: this file, `release_lib/`, and `queue_lib/` (the runner merges through the queue's
+merge train, reads GitHub through the queue's shared library and Core's release policy through core_policy).
 """
 
 from __future__ import annotations
@@ -31,13 +30,9 @@ from steuermaschine.native import native, runtime
 from steuermaschine.protocols import Busy
 
 from .queue_lib import hzlib
-from .release_lib import approved
 from .release_lib.binding import moved
 from .release_lib.names import translate
 
-# The review unit: the release library, EVERY reviewed source file the pins are computed from (they are data, not
-# `.py`, so they are named one by one: replacing one of them is a re-pin and must void the verdict), the queue library.
-UNIT = ("release_lib", *(f"release_lib/{approved.DIRECTORY.name}/{name}" for name in sorted(approved.FILES.values())), "queue_lib")
 EXACT = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
 STEP = re.compile(r"^ok {3}(?P<name>.+?)(?P<already> \(already\))?$")
 
@@ -180,7 +175,7 @@ def outcome(module, action: str, version: str, code: int, lines: list[str], erro
                       lines=lines + [line for line in errors if not line.startswith("STOPPED: ")])
 
 
-@native("release resume", writes=True, replaces=("hz-release",), files=UNIT, help=H(
+@native("release resume", writes=True, replaces=("hz-release",), help=H(
     "Take one core release through its steps; every step is checked first, so the same command continues where it stopped.",
     "Use when a release is due, stopped or paused; the release train calls it for every cut.",
     "freezes merges, opens and merges the release PR, dispatches PyPI, compose and acceptance, writes receipts, holds and the public verdict.",
@@ -243,7 +238,7 @@ def release_resume(
     return outcome(module, action, version, code, lines, errors)
 
 
-@native("release plugin", writes=True, replaces=("hz-release",), files=UNIT, review="release-resume.md", help=H(
+@native("release plugin", writes=True, replaces=("hz-release",), help=H(
     "Release a plugin whose version on the plugins repository's main is not on PyPI yet, and verify PyPI.",
     "Use after a plugin PR with a version bump merged.",
     "dispatches the plugins repository's release workflow (publish to PyPI) and writes the dispatch and its run ID into the\n"
@@ -262,7 +257,7 @@ def release_plugin(name: str = typer.Argument(..., metavar="NAME", help="The plu
     return outcome(module, "plugin", "", code, lines, errors)
 
 
-@native("release pr", writes=True, files=UNIT, help=H(
+@native("release pr", writes=True, help=H(
     "Push the reviewed, prepared release branch and open its release PR; never merges it.",
     "Use when the release branch release/vX.Y.Z was prepared in the release checkout and its exact head was reviewed\n"
     "(resume refuses to touch an existing branch and preserves it).",
@@ -285,7 +280,7 @@ def release_pr(version: str = typer.Argument(..., metavar="VERSION", help="The e
     return outcome(module, "pr", version, code, lines, errors)
 
 
-@native("release repair-receipt", writes=True, replaces=("hz-release",), files=UNIT, help=H(
+@native("release repair-receipt", writes=True, replaces=("hz-release",), help=H(
     "Move plugin release stamps out of the core release receipt into their own file (one-time repair).",
     "Use when `sm release verify --mini` says the global release receipt has no exact version.",
     "with --apply: copies the core receipt to a backup, writes the stamps to the plugin receipt and removes them from the core\n"
@@ -340,7 +335,7 @@ class ReleaseDrop(Model):
         return self.exit
 
 
-@native("release drop", writes=True, replaces=("hz-release",), files=UNIT, help=H(
+@native("release drop", writes=True, replaces=("hz-release",), help=H(
     "Drop a candidate that is provably before publication, so that a fresh cut of the same version starts clean.",
     "Use when a candidate failed and will be cut again (first-attempt rule: a failed candidate is never rerun green).",
     "removes ONLY the hold this release owns and archives its receipt; with --close-pr it closes the release PR and deletes its branch.",

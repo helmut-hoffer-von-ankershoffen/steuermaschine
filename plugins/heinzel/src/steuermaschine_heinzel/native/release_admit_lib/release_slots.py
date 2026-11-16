@@ -30,6 +30,7 @@ from . import focused_release as release
 from . import release_identity as hzlib
 from steuermaschine.config import child_environment
 from ... import state as statedir  # the plugin's state paths
+from ..queue_lib import core_facts
 
 
 class Runtime(_slots.Runtime):
@@ -108,8 +109,9 @@ def release_guard(rt, packet, review_root, workflow, desired, *, paused, excepti
     repo_id = release.remote_identity(rt, packet)
     source_info = packet['release']
     root = f'repos/{rt.repo}'
-    ci = rt.api(f'{root}/actions/workflows/ci.yml')
-    require(type(ci['id']) is int and ci['id'] == workflow and ci['path'] == '.github/workflows/ci.yml'
+    policy = core_facts.at(source_info['head'])
+    ci = rt.api(f'{root}/actions/workflows/{policy.workflow_file}')
+    require(type(ci['id']) is int and ci['id'] == workflow and ci['path'] == policy.workflow
             and ci['state'] == 'active', 'canonical release CI workflow changed')
     require(not rt.pages(f"{root}/actions/workflows/{workflow}/runs?head_sha={source_info['head']}", 'workflow_runs'),
             'prospective release candidate CI already exists')

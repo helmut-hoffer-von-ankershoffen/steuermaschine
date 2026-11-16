@@ -13,13 +13,12 @@ from urllib.parse import quote
 
 from . import focused_admit as a
 from . import focused_update as git
+from ..queue_lib import core_policy
+from ..queue_lib.release_candidate import CandidateError
 from steuermaschine.config import search_path
 
 MODE = 'resulting-main-only/v1'
 APP = 15368
-CONTEXTS = {'CI OK', 'merge-gate', 'coverage-floor'}
-JUDGE = '.github/workflows/merge-gate.yml'
-CI = '.github/workflows/ci.yml'
 STEP_COVERAGE = 'Verify the original workload and applicable coverage evidence'
 STEP_REPORT = "Report both verdicts; a gate that didn't pass, or didn't run, fails closed"
 STEP_SONAR = 'Quality gate passes, all ratings A, pull request and project'
@@ -75,7 +74,15 @@ def load_packet(path, review_root, pr):
     return packet, raw
 
 
-def _rules(rt, base):
+def _policy(rt, base):
+    """Core's reviewed release policy at the protected main commit: the required contexts and the CI aggregate."""
+    try:
+        return core_policy.at_commit_api(lambda path: rt.api(f'repos/{rt.repo}/{path}'), base)
+    except CandidateError as exc:
+        raise a.AdmissionError(f'no reviewed release policy at main {base}: {exc}') from exc
+
+
+def _rules(rt, base, policy):
     branch = rt.api(f'repos/{rt.repo}/branches/main')
     require(branch.get('name') == 'main' and branch.get('protected') is True
             and branch['commit']['sha'] == base, 'protected main identity changed')
@@ -95,7 +102,7 @@ def _rules(rt, base):
         raise a.AdmissionError('effective branch rules exceed pagination bound')
     encoded = [a.canonical(row) for row in rows]
     require(rows and len(set(encoded)) == len(rows), 'missing or duplicated effective branch rules')
-    contexts = set()
+    contexts, required = set(), set(policy.required_contexts)
     for row in rows:
         if row['type'] != 'required_status_checks':
             continue
@@ -106,11 +113,11 @@ def _rules(rt, base):
                 'effective required checks are strict or unknown')
         for check in parameters['required_status_checks']:
             name, integration = check['context'], check.get('integration_id')
-            require(name in CONTEXTS and name not in contexts and (
-                integration == APP or (name == 'CI OK' and integration is None)
+            require(name in required and name not in contexts and (
+                integration == APP or (name == policy.aggregate and integration is None)
             ), 'unexpected required context or integration')
             contexts.add(name)
-    require(contexts == CONTEXTS, 'required context inventory changed')
+    require(contexts == required, 'required context inventory changed')
     return digest(a.canonical(sorted(row.decode() for row in encoded)))
 
 
@@ -138,26 +145,26 @@ def _pull(rt, original):
     return {'head': pull['head']['sha'], 'branch': branch, 'title': pull['title']}
 
 
-def _checks(rt, original):
+def _checks(rt, original, policy):
     path = f"repos/{rt.repo}/commits/{original['head']}/check-runs?filter=latest"
     rows = rt.pages(path, 'check_runs')
-    checks = {}
+    checks, required = {}, set(policy.required_contexts)
     for row in rows:
         name = row['name']
-        if name not in CONTEXTS:
+        if name not in required:
             continue
         require(name not in checks and positive(row.get('id')) and row['head_sha'] == original['head']
                 and row['app']['id'] == APP and row['status'] == 'completed' and row['conclusion'] == 'success',
                 'required check is ambiguous or not genuine green evidence')
         checks[name] = row['id']
-        if name == 'CI OK':
+        if name == policy.aggregate:
             require(row['details_url'] == (f"https://github.com/{rt.repo}/actions/runs/{original['ci_run']}"
-                                          f"/job/{row['id']}"), 'CI OK is not from the original workload')
-    require(set(checks) == CONTEXTS and len(set(checks.values())) == len(CONTEXTS), 'missing required check evidence')
+                                          f"/job/{row['id']}"), f'{name} is not from the original workload')
+    require(set(checks) == required and len(set(checks.values())) == len(required), 'missing required check evidence')
     return checks
 
 
-def _run(rt, original, *, judge, attempt=False):
+def _run(rt, original, *, judge, workflow, attempt=False):
     root = f'repos/{rt.repo}'
     run_id = original['judge_run' if judge else 'ci_run']
     record = rt.api(f'{root}/actions/runs/{run_id}' + ('/attempts/1' if attempt else ''))
@@ -166,7 +173,7 @@ def _run(rt, original, *, judge, attempt=False):
     require(record['id'] == run_id and type(record['run_attempt']) is int and record['run_attempt'] == 1
             and record['status'] == 'completed' and record['conclusion'] == 'success'
             and record['event'] == ('workflow_run' if judge else 'pull_request')
-            and record['path'] == (JUDGE if judge else CI) and record['head_branch'] == branch
+            and record['path'] == workflow and bool(workflow) and record['head_branch'] == branch
             and record['head_sha'] == head and _official(record['repository'], rt, original)
             and _official(record['head_repository'], rt, original)
             and positive(record.get('workflow_id')) and positive(record.get('check_suite_id')),
@@ -180,10 +187,11 @@ def live_proof(rt, packet):
     root = f'repos/{rt.repo}'
     require(rt.api(f'{root}/git/ref/heads/main')['object']['sha'] == base, 'protected main changed')
     pull = _pull(rt, original)
-    rules = _rules(rt, base)
-    checks = _checks(rt, original)
-    ci = _run(rt, original, judge=False)
-    judge = _run(rt, original, judge=True)
+    policy = _policy(rt, base)
+    rules = _rules(rt, base, policy)
+    checks = _checks(rt, original, policy)
+    ci = _run(rt, original, judge=False, workflow=policy.workflow)
+    judge = _run(rt, original, judge=True, workflow=policy.judge_workflow)
     latest = rt.api(f"{root}/actions/workflows/{ci['workflow_id']}/runs?head_sha={original['head']}"
                     '&event=pull_request&per_page=1')['workflow_runs']
     require(len(latest) == 1 and latest[0]['id'] == ci['id'], 'a newer CI run superseded original evidence')
@@ -204,15 +212,17 @@ def judgment_steps(rt, packet, live):
     original, judge = packet['original'], live['judge']
     root = f'repos/{rt.repo}'
     ci = live['ci']
+    policy = _policy(rt, packet['manifest']['base'])
+    aggregate = policy.aggregate
     ci_jobs = rt.pages(f"{root}/actions/runs/{ci['id']}/attempts/1/jobs", 'jobs')
-    ci_ok = [job for job in ci_jobs if job['name'] == 'CI OK']
-    require(len(ci_ok) == 1 and ci_ok[0]['id'] == live['checks']['CI OK']
+    ci_ok = [job for job in ci_jobs if job['name'] == aggregate]
+    require(len(ci_ok) == 1 and ci_ok[0]['id'] == live['checks'][aggregate]
             and ci_ok[0]['run_id'] == ci['id'] and ci_ok[0]['run_attempt'] == 1
             and ci_ok[0]['head_sha'] == original['head'] and ci_ok[0]['status'] == 'completed'
-            and ci_ok[0]['conclusion'] == 'success', 'current CI OK is not the original attempt job')
-    workflow = rt.api(f'{root}/actions/workflows/merge-gate.yml')
-    require(workflow['id'] == judge['workflow_id'] and workflow['path'] == JUDGE
-            and _run(rt, original, judge=True, attempt=True) == judge,
+            and ci_ok[0]['conclusion'] == 'success', f'current {aggregate} is not the original attempt job')
+    workflow = rt.api(f'{root}/actions/workflows/{policy.judge_file}')
+    require(workflow['id'] == judge['workflow_id'] and workflow['path'] == policy.judge_workflow
+            and _run(rt, original, judge=True, workflow=policy.judge_workflow, attempt=True) == judge,
             'canonical first-attempt protected workflow is unavailable')
     jobs = rt.pages(f"{root}/actions/runs/{judge['id']}/attempts/1/jobs", 'jobs')
     require(len(jobs) == 1, 'protected judge job inventory changed')
@@ -239,7 +249,7 @@ def judgment_steps(rt, packet, live):
         step = steps.get(name, {})
         require(step.get('status') == 'completed' and step.get('conclusion') == 'success', 'required protected judge step did not succeed')
         paths[key] = f"actions/jobs/{job['id']}/steps/{step['number']}/logs"
-    for name in ('merge-gate', 'coverage-floor'):
+    for name in sorted(policy.api_checks):
         check_id = live['checks'][name]
         published = rt.api(f'{root}/check-runs/{check_id}')
         require(published['id'] == check_id and published['name'] == name and published['head_sha'] == original['head']
@@ -306,6 +316,8 @@ def release_registry_proof(source, main, before, after, required):
 def replay_original(rt, packet, snapshot, original_plan, live):
     """Use the actual protected judge's archived reader to replay original artifacts."""
     original, base = packet['original'], packet['manifest']['base']
+    policy = _policy(rt, base)
+    judge_workflow, gate_checks = policy.judge_workflow, sorted(policy.api_checks)
     git._official_origin(snapshot, rt.repo)
     git._plain_history(rt.core)
     git._plain_history(snapshot)
@@ -318,13 +330,14 @@ def replay_original(rt, packet, snapshot, original_plan, live):
     try:
         require(repo == rt.repo, 'historical protected reader repository changed')
         bindings = {path: git._git(snapshot, 'rev-parse', f"{original['judge_source']}:{path}").stdout.decode().strip()
-                    for path in (JUDGE, 'scripts')}
+                    for path in (judge_workflow, 'scripts')}
         driver = source / 'resulting-main-replay.py'
         driver.write_bytes(Path(__file__).with_name('focused_replay.py').read_bytes())
         driver.with_suffix('.py.lock').write_bytes((source / 'scripts/focused_gate.py.lock').read_bytes())
         token = rt.run('gh', 'auth', 'token', '--hostname', 'github.com').stdout.decode().strip()
         require(token and '\n' not in token, 'GitHub evidence authentication unavailable')
-        request = dict(token=token, repository=rt.repo, original=original, plan=original_plan, live=live, paths=paths)
+        request = dict(token=token, repository=rt.repo, original=original, plan=original_plan, live=live, paths=paths,
+                       gate_checks=gate_checks)
         environment = {'PATH': search_path(), 'HOME': str(rt.home), 'GIT_NO_REPLACE_OBJECTS': '1',
                        'GIT_CONFIG_NOSYSTEM': '1', 'UV_PYTHON': '3.14.8'}
         result = subprocess.run(['uv', 'run', '--no-build', '--frozen', '--script', str(driver)],

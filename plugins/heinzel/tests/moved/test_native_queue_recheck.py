@@ -49,6 +49,15 @@ def view(monkeypatch, q, head=PIN, gate="SUCCESS", state="OPEN", draft=False, ga
     return seen
 
 
+def test_tick_does_not_change_repository_rulesets(queue, monkeypatch, home):
+    loaded = []
+    original = queue.lib.load
+    monkeypatch.setattr(queue.lib, "load", lambda name: loaded.append(name) or original(name))
+    monkeypatch.setattr(queue, "_main_rerun", lambda **kw: None)
+    queue.tick(now=10_000)
+    assert "merge_gate" not in loaded
+
+
 def test_a_green_needs_work_row_at_its_pinned_head_is_requeued_and_merges(queue, monkeypatch, home):
     needs_work(queue)
     view(monkeypatch, queue)

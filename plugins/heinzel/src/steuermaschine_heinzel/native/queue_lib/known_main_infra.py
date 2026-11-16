@@ -5,6 +5,7 @@ import re
 import tomllib
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from . import core_facts  # noqa: E402
 
 GREEN_JOB = ("success", "skipped", "neutral")
 # These steps can fail before lint/test execution or during pinned tool validation.
@@ -20,7 +21,8 @@ MAX_VALIDITY = timedelta(hours=24)
 
 
 def failure_inventory(jobs: list[dict], run: int, sha: str) -> list[dict] | None:
-    """Read a complete first-attempt failure inventory, including CI OK."""
+    """Read a complete first-attempt failure inventory, including the aggregate."""
+    aggregate = core_facts.aggregate()
     seen = set()
     failed = []
     for job in jobs:
@@ -43,12 +45,12 @@ def failure_inventory(jobs: list[dict], run: int, sha: str) -> list[dict] | None
             return None
         step = bad_steps[0]
         number, name = step.get("number"), step.get("name")
-        permitted = {AGGREGATE_STEP} if job["name"] == "CI OK" else SETUP_STEPS
+        permitted = {AGGREGATE_STEP} if job["name"] == aggregate else SETUP_STEPS
         if type(number) is not int or number <= 0 or not isinstance(name, str) or name not in permitted:
             return None
         failed.append({"id": job_id, "name": job["name"], "step_number": number, "step_name": name})
     names = {job["name"] for job in failed}
-    if len(names) != len(failed) or len(failed) < 2 or "CI OK" not in names:
+    if len(names) != len(failed) or len(failed) < 2 or aggregate not in names:
         return None
     return sorted(failed, key=lambda job: job["id"])
 

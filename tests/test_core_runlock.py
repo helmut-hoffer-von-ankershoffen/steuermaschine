@@ -282,3 +282,136 @@ def test_status_shows_both_lanes(tmp_path):
     assert (status.light_slots_in_use, status.light_slots, status.light_holders) == (1, 4, ["pid 77"])
     text = "\n".join(status.render())
     assert "heavy slots in use 0/3" in text and "light slots in use 1/4" in text and "light: pid 77" in text
+
+
+# ---- scheduling: the start bar, the reserved slot of the focus head, the push lane, and who holds or waits and why
+
+
+class Ps(Commands):
+    """Answers the CPU listing of `status` as well as the parent lookup."""
+
+    def run(self, argv, cwd=None, timeout=None, env=None):
+        if argv[:2] == ["ps", "-Ao"]:
+            return Result(0, " 12.5  100 /usr/bin/idle\n320.0  200 /opt/bin/node\n  0.0  300 sleepy\n 88,0  400 pytest worker\nnonsense\n")
+        return super().run(argv, cwd=cwd, timeout=timeout, env=env)
+
+
+def test_no_heavy_command_starts_at_or_above_the_start_bar_and_the_wait_names_the_load(tmp_path):
+    rl, said = lock(tmp_path, load=10.0, start_load=10.0)
+    out = rl.run(Request(argv=["pytest", "t.py"], max_wait_seconds=6, priority=2))
+    assert (out.status, out.exit_code) == ("gave_up", 75) and rl.commands.ran == []
+    assert "load 10 is at or above 10: no heavy command starts above it" in out.reason and "waiting 0s: load 10 is at or above 10" in said[0]
+    below, _ = lock(tmp_path, load=9.9, start_load=10.0)
+    assert below.run(Request(argv=["pytest", "t.py"])).status == "ran"
+    off, _ = lock(tmp_path, load=39.0)  # no start bar: only max_load counts, as before
+    assert off.run(Request(argv=["pytest", "t.py"])).status == "ran"
+    light, _ = lock(tmp_path, load=30.0, start_load=10.0)  # the light lane has no load bar
+    assert light.run(Request(argv=["ruff", "check"], max_wait_seconds=1)).lane == "light"
+
+
+def test_a_command_that_waits_for_the_load_starts_by_itself_when_it_falls(tmp_path):
+    rl, said = lock(tmp_path, start_load=10.0)
+    rl.load = lambda: 6.0 if len(rl.clock.slept) >= 2 else 12.0  # the load of a gate that just ended, falling
+    out = rl.run(Request(argv=["pytest", "b.py"]))
+    assert out.status == "ran" and out.waited_seconds == 10 and "waiting 0s: load 12 is at or above 10" in said[0] and "acquired after 10s" in said[1]
+
+
+def test_the_last_slot_is_reserved_for_the_focus_head_and_goes_by_its_own_bar(tmp_path):
+    focus = lambda cwd: "/work/release-fix" if cwd.startswith("/work/release-fix") else ""  # noqa: E731
+    policy = dict(heavy_slots=2, reserved_slots=1, start_load=10.0, extra_slot_load=20.0, focus=focus)
+    with lock(tmp_path)[0].p.slot_file(0).open("a+") as taken:  # the one general slot is in use
+        fcntl.flock(taken, fcntl.LOCK_EX)
+        taken.truncate(0)
+        taken.write("77 /w sleep 9\n")
+        taken.flush()
+        other, _ = lock(tmp_path, load=5.0, **policy)
+        out = other.run(Request(argv=["pytest", "t.py"], cwd="/work/other", max_wait_seconds=6))
+        assert out.exit_code == 75 and "held by 77 /w sleep 9; 1 more slot(s) are reserved for a focus head" in out.reason
+        head, _ = lock(tmp_path, load=15.0, **policy)  # above the start bar, below the focus head's
+        out = head.run(Request(argv=["pytest", "t.py"], cwd="/work/release-fix/tests"))
+        assert (out.status, out.lane) == ("ran", "heavy") and head.commands.ran[0][1]["WORKERS"] == "4"  # the budget is shared
+        hot, _ = lock(tmp_path, load=20.0, **policy)
+        out = hot.run(Request(argv=["pytest", "t.py"], cwd="/work/release-fix", max_wait_seconds=6))
+        assert out.exit_code == 75 and "load 20 is at or above 20" in out.reason and "the bar of a focus head" in out.reason
+        status = other.status()
+        assert status.reserved_slots == 1 and "1 of the 2 heavy slots reserved for a focus head" in "\n".join(status.render())
+    alone, _ = lock(tmp_path, heavy_slots=1, reserved_slots=1)  # the only slot is never reserved
+    assert alone.p.general_slots == 1 and alone.run(Request(argv=["pytest", "t.py"], cwd="/work/other")).status == "ran"
+    broken, _ = lock(tmp_path, heavy_slots=2, reserved_slots=1, focus=lambda cwd: (_ for _ in ()).throw(OSError("no store")))
+    assert broken.run(Request(argv=["pytest", "t.py"], cwd="/work/other")).status == "ran"  # an unreadable focus list stops nobody
+
+
+def test_a_push_is_exclusive_by_itself_gets_the_machine_alone_and_waits_for_a_quiet_one(tmp_path):
+    from steuermaschine.runlock import PUSH_COMMANDS
+
+    seen = []
+
+    class Probe(Commands):
+        def passthrough(self, argv, cwd=None, env=None, timeout=None):  # what another command sees while the push runs
+            other, _ = lock(tmp_path, load=5.0)
+            seen.append((other.status().exclusive, other.run(Request(argv=["pytest", "t.py"], max_wait_seconds=1, priority=2)).exit_code))
+            return 0
+
+    rl, said = lock(tmp_path, commands=Probe(), exclusive_commands=PUSH_COMMANDS, start_load=10.0)
+    out = rl.run(Request(argv=["git", "push", "origin", "HEAD:refs/heads/fix/x"], cwd="/w"))
+    assert (out.status, out.lane) == ("ran", "heavy") and "exclusive: no other heavy run starts" in said[0] and seen == [(True, 75)]
+    wrapped, said = lock(tmp_path, exclusive_commands=PUSH_COMMANDS)
+    assert wrapped.run(Request(argv=["env", "NO_PREFLIGHT=1", "git", "push"])).status == "ran" and "exclusive" in said[0]
+    for argv in (["git", "pushx"], ["git", "status"], ["pytest", "git push"], ["sh", "-c", "git push"]):
+        plain, said = lock(tmp_path, exclusive_commands=PUSH_COMMANDS)
+        assert plain.run(Request(argv=argv)).status == "ran" and "exclusive" not in said[0], argv
+    docs, said = lock(tmp_path, exclusive_commands=PUSH_COMMANDS, is_light=lambda argv: True)  # a push the policy calls light stays light
+    assert docs.run(Request(argv=["git", "push"])).lane == "light"
+    with rl.p.slot_file(1).open("a+") as busy:  # a heavy run is going: the push waits for an idle machine
+        fcntl.flock(busy, fcntl.LOCK_EX)
+        waits, _ = lock(tmp_path, exclusive_commands=PUSH_COMMANDS)
+        out = waits.run(Request(argv=["git", "push"], max_wait_seconds=6))
+        assert out.exit_code == 75 and "waits for the machine to be idle (1 heavy run(s) still going)" in out.reason
+    loud, _ = lock(tmp_path, load=11.0, exclusive_commands=PUSH_COMMANDS, start_load=10.0, extra_slot_load=20.0, focus=lambda cwd: "/w")
+    out = loud.run(Request(argv=["git", "push"], cwd="/w", max_wait_seconds=6))  # also a focus head's push wants the quiet machine
+    assert out.exit_code == 75 and "load 11 is at or above 10" in out.reason and "focus head" not in out.reason
+
+
+def test_a_push_that_waits_holds_new_heavy_runs_off(tmp_path):
+    import os
+
+    rl, _ = lock(tmp_path)
+    rl._prepare()
+    (rl.p.urgent / str(os.getpid())).touch()  # a push waits for the machine (an exclusive request queues as urgent)
+    out = rl.run(Request(argv=["pytest", "t.py"], max_wait_seconds=1))
+    assert out.exit_code == 75 and "priority gates are ahead" in out.reason
+
+
+def test_status_names_who_holds_who_waits_and_why(tmp_path):
+    import os
+
+    seen = {}
+
+    class Inside(Ps):
+        def passthrough(self, argv, cwd=None, env=None, timeout=None):  # while the heavy run goes on
+            waiter = RunLock(Policy(directory=tmp_path, start_load=10.0, heavy_slots=1), Ps(), FakeClock(), load=lambda: 4.0, pid=lambda: os.getppid())
+            gave_up = waiter.run(Request(argv=["pytest", "tests/b.py"], cwd="/work/b", max_wait_seconds=1, environ={"SM_CALLER": "builder-b"}))
+            assert gave_up.exit_code == 75 and not (waiter.p.runs / f"{os.getppid()}.json").exists()  # a request that gave up leaves no record
+            record = Policy(directory=tmp_path).runs / f"{os.getppid()}.json"
+            waiter._note(Request(argv=["pytest", "tests/b.py"], cwd="/work/b", environ={"SM_CALLER": "builder-b"}), "waiting", FakeClock().now() - 90,
+                         "the heavy slot is held by someone")
+            (waiter.p.runs / "999999999.json").write_text("{}")  # a record whose process is gone
+            assert record.exists()
+            seen["status"] = RunLock(Policy(directory=tmp_path, start_load=10.0, heavy_slots=1), Ps(), FakeClock(), load=lambda: 12.0).status()
+            record.unlink()
+            return 0
+
+    rl = RunLock(Policy(directory=tmp_path, start_load=10.0, heavy_slots=1, focus=lambda cwd: "/work/a"), Inside(), FakeClock(), load=lambda: 4.0, pid=os.getpid)
+    assert rl.run(Request(argv=["pytest", "tests/a.py"], cwd="/work/a")).status == "ran"
+    status = seen["status"]
+    running, waiting = status.runs
+    assert (running.pid, running.state, running.kind, running.cwd, running.command, running.focus) == (os.getpid(), "running", "focus", "/work/a", "pytest tests/a.py", "/work/a")
+    assert (waiting.pid, waiting.state, waiting.kind, waiting.caller, waiting.seconds) == (os.getppid(), "waiting", "heavy", "builder-b", 90.0)
+    assert not (tmp_path / "runlock.runs" / "999999999.json").exists()
+    text = "\n".join(status.render())
+    assert f"held by {os.getpid()} /work/a pytest tests/a.py [focus, 0s]" in text
+    assert f"waiting: pid {os.getppid()} [heavy] 90s /work/b: pytest tests/b.py -- the heavy slot is held by someone" in text
+    assert "start bar: no heavy start at or above load 10 (NO heavy command starts now)" in text
+    assert status.busiest == ["pid 200 node 320 %", "pid 400 pytest worker 88 %", "pid 100 idle 12 %"] and "the load is made by: pid 200 node 320 %" in text
+    after = rl.status()
+    assert after.runs == [] and after.busiest == [] and "(open)" in "\n".join(after.render())  # the record goes with the run; below the bar nobody is named

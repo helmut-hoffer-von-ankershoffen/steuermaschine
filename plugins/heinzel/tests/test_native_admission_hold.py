@@ -128,7 +128,7 @@ def test_a_validation_wait_names_the_pending_admission(rt):
 
 def test_status_marks_a_gone_waiter_and_drop_removes_it(rt):
     dead = os.getpid() + 7_000_000  # no such process
-    line(rt).enter("fix/one", A, 1, in_flight=0, owner="one", pid=os.getpid(), host=socket.gethostname())
+    line(rt).enter("fix/one", A, 5, in_flight=0, owner="one", pid=os.getpid(), host=socket.gethostname())
     line(rt).enter("fix/dead", B, 1, in_flight=0, owner="dead", pid=dead, host=socket.gethostname())
     text = invoke(rt, ["ci", "window", "status"]).stdout
     assert "waiting  1." not in text and "gone     fix/dead bbbbbbbbb" in text and "ci window drop bbbbbbbbb" in text
@@ -139,7 +139,7 @@ def test_status_marks_a_gone_waiter_and_drop_removes_it(rt):
 
 
 def test_drop_never_removes_a_live_or_unknown_waiter_without_proof_of_ownership(rt, tmp_path):  # review R2: unknown liveness is not a dead command
-    line(rt).enter("fix/one", A, 1, in_flight=0, owner="one", pid=os.getpid(), host=socket.gethostname())
+    line(rt).enter("fix/one", A, 5, in_flight=0, owner="one", pid=os.getpid(), host=socket.gethostname())
     line(rt).enter("fix/live", B, 1, in_flight=0, owner="live", pid=os.getpid(), host=socket.gethostname())
     line(rt).enter("fix/away", "c" * 40, 1, in_flight=0, owner="away", pid=5, host="another-machine")
     live = invoke(rt, ["ci", "window", "drop", B])

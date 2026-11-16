@@ -16,7 +16,6 @@ from .agents_lib.table import AgentsSettings
 
 __all__ = ["AgentsSettings"]
 
-UNIT = ("agents.py", "agents_lib", "coord_lib")  # the review unit: the table's path comes from coord_lib's tracker directory
 
 AGENTS = Group("beads agents", H(
     "beads agents: the routing table of running agents (bead, pull request, agent id, model).",
@@ -33,7 +32,7 @@ def _file() -> Path:
     return path
 
 
-@native("beads agents add", writes=True, replaces=("hz-agent",), files=UNIT, help=H(
+@native("beads agents add", writes=True, replaces=("hz-agent",), help=H(
     "Add one agent to the routing table: bead, pull request, agent id, model, once per agent id.",
     "Use at the moment an agent is started, so it can be messaged and resumed after a context reset.",
     "adds one row at the end of the routing table file (setting agents_table), under a lock and by an atomic rename;\n"

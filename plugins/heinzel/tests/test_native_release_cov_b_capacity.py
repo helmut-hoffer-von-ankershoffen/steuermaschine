@@ -4,10 +4,17 @@ import json
 from datetime import UTC
 from types import SimpleNamespace
 
+import policy_kit as kit
 import pytest
 
 from steuermaschine_heinzel.native.queue_lib import hzlib
 from steuermaschine_heinzel.native.release_lib import candidate_capacity as cap
+
+
+@pytest.fixture(autouse=True)
+def reviewed_policy(monkeypatch):
+    """Core's release policy at the release head: the old CI shape, describing the fixture workflow and recorder."""
+    monkeypatch.setattr(cap, "reviewed", lambda head: kit.policy(commit=head))
 
 
 def fake_get(monkeypatch, table):
@@ -213,8 +220,7 @@ def workflow(needs_test="", needs_ci="[build, test, notifier]"):
 def closure_data(text, names):
     import base64
 
-    from steuermaschine_heinzel.native.queue_lib import release_candidate as strict
-    return {"blobs": {strict.WORKFLOW: base64.b64encode(text.encode()).decode()},
+    return {"blobs": {kit.WORKFLOW: base64.b64encode(text.encode()).decode()}, "proof": {"head": "1" * 40},
             "jobs": [{"id": i, "name": n} for i, n in names.items()]}
 
 
@@ -417,20 +423,18 @@ def candidate_data(run_id=9):
     import base64
 
     from steuermaschine_heinzel.native.queue_lib import release_candidate as strict
-    from steuermaschine_heinzel.native.release_lib import approved
-    from steuermaschine_heinzel.native.release_lib import candidate_policy as policy
     proof = {"schema": 1, "repository": strict.REPOSITORY, "event": "pull_request", "version": VERSION, "run_id": run_id,
-             "run_attempt": 1, "sources": policy.APPROVED_SOURCES, "pr": 5, "head": H, "tree": T, "base": B, "source_commit": S}
+             "run_attempt": 1, "sources": {}, "pr": 5, "head": H, "tree": T, "base": B, "source_commit": S}
     run = {"id": run_id, "run_attempt": 1, "status": "completed", "conclusion": "failure", "event": "pull_request",
-           "path": strict.WORKFLOW, "head_branch": f"release/v{VERSION}", "head_sha": H,
+           "path": kit.WORKFLOW, "head_branch": f"release/v{VERSION}", "head_sha": H,
            "repository": {"full_name": strict.REPOSITORY}, "head_repository": {"full_name": strict.REPOSITORY}}
     pr = {"state": "open", "draft": False, "number": 5, "title": f"chore(release): v{VERSION}",
           "head": {"sha": H, "ref": f"release/v{VERSION}", "repo": {"full_name": strict.REPOSITORY}},
           "base": {"sha": B, "ref": "main", "repo": {"full_name": strict.REPOSITORY}}}
     head = {"sha": H, "commit": {"tree": {"sha": T}}}
     source = {"sha": S, "commit": {"tree": {"sha": T}}, "parents": [{"sha": B}, {"sha": H}]}
-    blobs = {path: base64.b64encode(approved.blob(path)).decode() for path in policy.APPROVED_SOURCES}
-    inventory = strict.expected_jobs("pull_request")
+    blobs = {kit.WORKFLOW: base64.b64encode(kit.workflow_bytes()).decode()}  # the workflow, for its needs graph
+    inventory = kit.expected_jobs("pull_request")
     jobs, annots, n = [], {}, 100
     for name, expected in inventory.items():
         n += 1
@@ -468,9 +472,8 @@ def test_identity_accepts_and_refuses():
     broken(lambda d: d["run"].update(head_branch="release/v9.9.9"), "noncanonical release identity")
     broken(lambda d: d["proof"].update(schema=2), "source proof protocol")
     broken(lambda d: d["head"].update(sha="x"), "source tree/parents")
-    broken(lambda d: d["blobs"].pop(next(iter(d["blobs"]))), "fingerprint inventory")
-    import base64
-    broken(lambda d: d["blobs"].update({next(iter(d["blobs"])): base64.b64encode(b"tampered").decode()}), "differs from reviewed pins")
+    broken(lambda d: d["blobs"].pop(next(iter(d["blobs"]))), "executed workflow missing")
+    broken(lambda d: d["blobs"].update({"scripts/other.py": ""}), "executed workflow missing")
 
 
 def test_original_accepts_and_refuses():
@@ -558,7 +561,7 @@ def evidence_world(monkeypatch, **over):
     import zipfile
 
     from steuermaschine_heinzel.native.queue_lib import release_candidate as strict
-    from steuermaschine_heinzel.native.release_lib import candidate_policy as policy
+    policy = kit.policy(commit=H)
     proof = {"pr": 5, "head": H, "source_commit": S, "schema": 1}
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as z:
@@ -572,14 +575,14 @@ def evidence_world(monkeypatch, **over):
     monkeypatch.setattr(cap, "get", lambda path: table[path])
     monkeypatch.setattr(cap, "paged", lambda path, key: next(v for k, v in paged_table.items() if path.startswith(k)))
     monkeypatch.setattr(cap, "download", lambda artifact_id: raw)
-    monkeypatch.setattr(cap.strict, "source_bytes", lambda get, path, source: path.encode())
+    monkeypatch.setattr(cap.strict, "source_bytes", lambda get, path, source, pinned: path.encode())
     return table, policy
 
 
 def test_source_evidence_collects(monkeypatch):
     _table, policy = evidence_world(monkeypatch)
     out = cap.source_evidence(9, 1)
-    assert out["pr"] == {"n": 5} and set(out["blobs"]) == set(policy.APPROVED_SOURCES) and out["jobs"] == [{"id": 1}]
+    assert out["pr"] == {"n": 5} and set(out["blobs"]) == {policy.workflow} and out["jobs"] == [{"id": 1}]
 
 
 def test_source_evidence_refusals(monkeypatch):

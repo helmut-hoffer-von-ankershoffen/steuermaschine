@@ -142,8 +142,8 @@ def test_unmet_mirrors_the_core_fail_open_rules():
     assert m.unmet({"web/src/a.ts": "M"}, {}, {"web": ["web/ALL"], "e2e-web-1": ["tests/e2e/web-1"]}) is None
     assert m.unmet({"web/src/a.ts": "M"}, {}, {"web": ["web/ALL"]}) == "web production without Vitest and browser selections"
     assert m.unmet({}, {"src/heinzel/a.py": "b"}, {}) == "Python production without a Python selection"
-    many = {f"src/heinzel/m{i}.py": "b" for i in range(101)}
-    assert "exceed the scoped coverage bound" in m.unmet({}, many, {"python": ["x"]})
+    many = {f"src/heinzel/m{i}.py": "b" for i in range(301)}
+    assert m.unmet({}, many, {"python": ["x"]}) is None  # no coverage-file bound (owner 2026-11-14: PRs of any size)
     assert m.unmet({"desktop/README.md": "M", "desktop/managed/x.ts": "M"}, {}, {}) is None
 
 

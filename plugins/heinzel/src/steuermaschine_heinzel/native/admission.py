@@ -51,7 +51,6 @@ def require_verdict(digest: str) -> None:
 
 
 ERRORS = (_a.AdmissionError, OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError)
-REVIEW = "head-apply.md"
 RECEIPTS_HINT = "reviewed receipts for such runs: --nonconsumers FILE or the setting admission_nonconsumers_file"
 
 
@@ -200,7 +199,7 @@ def _prepare(packet: Path | None, core_repo: Path | None, review_root: Path, pr:
         _refuse(error, core_repo or (core_repos[0] if core_repos else None), nonconsumers)
 
 
-@native("head apply", writes=True, review=REVIEW, replaces=("hz-focused-admit",), help=H(
+@native("head apply", writes=True, replaces=("hz-focused-admit",), help=H(
     "Apply one approved prepared transaction: the single registry slot write, with receipt.",
     "Use after an independent reviewer approved the sha256 of prepare.out.",
     "one repository variable (a focused plan slot); pauses and restores the merge queue; writes a receipt.",

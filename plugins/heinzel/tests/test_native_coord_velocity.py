@@ -1,10 +1,9 @@
 """`sm doc velocity` and `sm doc velocity-record` on the fake process runner; the measurement itself is tested by the
 moved tests in test_native_coord_velocity_moved.py, whose fake GitHub this file reuses."""
-# ruff: noqa: F811  (a fixture imported from coord_kit is also a test parameter)
 
 import json
 
-from coord_kit import app_runtime, unreviewed  # noqa: F401  (fixtures)
+from coord_kit import app_runtime
 from test_native_coord_velocity_moved import FakeGh
 
 from steuermaschine.protocols import Result
@@ -60,12 +59,10 @@ def test_record_keeps_the_first_observation_in_the_state_home_by_default(tmp_pat
     assert len(journal.read_text().splitlines()) == 1
 
 
-def test_record_refuses_a_short_head_an_unusable_journal_and_runs_only_after_review(tmp_path, unreviewed):
+def test_record_refuses_a_short_head_and_an_unusable_journal(tmp_path):
     rt = app_runtime(tmp_path, Commands(), velocity_cache_dir=str(tmp_path / "cache"))
     assert invoke(rt, ["doc", "velocity-record", "466:abc"]).exit_code == 2
     (tmp_path / "cache").mkdir()
     (tmp_path / "cache" / "eligibility.jsonl").mkdir()
     done = invoke(rt, ["doc", "velocity-record", "466:" + "a" * 40])
     assert done.exit_code == 1 and "the journal is unusable" in done.stderr
-    done = invoke(app_runtime(tmp_path, Commands(), allow=False), ["doc", "velocity-record", "466:" + "a" * 40])
-    assert done.exit_code == 70 and "reviews/doc-velocity-record.md" in done.stderr

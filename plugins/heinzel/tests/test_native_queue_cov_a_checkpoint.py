@@ -5,6 +5,7 @@ import subprocess
 import zipfile
 from types import SimpleNamespace
 
+import policy_kit as kit
 import pytest
 
 from steuermaschine_heinzel.native.queue_lib import hzlib
@@ -14,7 +15,12 @@ from steuermaschine_heinzel.native.queue_lib import release_candidate as rc
 HEAD = "a" * 40
 BASE = "b" * 40
 TREE = "c" * 40
-SRC = mc.CHECKPOINT_SOURCES[-1]
+
+
+@pytest.fixture(autouse=True)
+def main_policy(monkeypatch):
+    """Core's release policy at each main commit names the workflow whose runs are read; here the kit's."""
+    monkeypatch.setattr(mc.core_policy, "at_commit_api", lambda api, sha: kit.policy(commit=sha))
 
 
 def test_require_and_canonical():
@@ -49,7 +55,7 @@ def test_timed_phase_reports_on_success_and_on_refusal():
 
 
 def config(**more):
-    return {"schema": 1, "pr": 5, "run": 9, "core_repo": "/core", "sources": dict(SRC), **more}
+    return {"schema": 2, "pr": 5, "run": 9, "core_repo": "/core", **more}
 
 
 def test_read_config_accepts_only_the_reviewed_shape(tmp_path):
@@ -59,7 +65,7 @@ def test_read_config_accepts_only_the_reviewed_shape(tmp_path):
     path = mc.config_path(state)
     path.write_text(json.dumps(config()))
     assert mc.read_config(state) == config()
-    for bad in (config(schema=2), config(pr=0), config(run="9"), config(core_repo="relative"), config(sources={"x": "y"}), {"schema": 1}, [1], config(pr=True)):
+    for bad in (config(schema=1), config(pr=0), config(run="9"), config(core_repo="relative"), config(sources={"x": "y"}), {"schema": 1}, [1], config(pr=True)):
         path.write_text(json.dumps(bad))
         with pytest.raises(rc.CandidateError, match="differs from independently reviewed"):
             mc.read_config(state)
@@ -119,7 +125,7 @@ def test_main_run():
 
 
 def ci_row(identifier, event="push", created="2026-11-13T10:00:00+00:00", status="completed", conclusion="success", **more):
-    return {"id": identifier, "head_sha": HEAD, "head_branch": "main", "path": rc.WORKFLOW, "repository": {"full_name": rc.REPOSITORY}, "event": event,
+    return {"id": identifier, "head_sha": HEAD, "head_branch": "main", "path": kit.WORKFLOW, "repository": {"full_name": rc.REPOSITORY}, "event": event,
             "workflow_id": 3, "run_attempt": 1, "status": status, "conclusion": conclusion, "created_at": created, "head_repository": {"full_name": rc.REPOSITORY}, **more}
 
 
@@ -260,7 +266,7 @@ def test_establish_writes_only_when_applied(tmp_path, monkeypatch):
     assert mc.establish(state, {}, 5, 9, tmp_path) == proof() and not mc.config_path(state).exists()
     assert mc.establish(state, {}, 5, 9, tmp_path, apply=True) == proof()
     written = json.loads(mc.config_path(state).read_text())
-    assert written["pr"] == 5 and written["core_repo"] == str(tmp_path.resolve()) and written["sources"] == SRC
+    assert written["pr"] == 5 and written["core_repo"] == str(tmp_path.resolve()) and written["schema"] == 2 and "sources" not in written
     assert [p.name for p in state.parent.iterdir()] == ["queue.checkpoint.json"]
     monkeypatch.setattr(hzlib, "merge_frozen", lambda legacy=None: True)
     with pytest.raises(rc.CandidateError, match=r"freeze or release hold is set|is present"):

@@ -22,12 +22,9 @@ from steuermaschine.runlock import Request
 
 from .lock import lock_of
 from .packet_lib import admit_wave as aw
-from .packet_lib import check_ops, ops, wave_ops
+from .packet_lib import check_ops, ops, route_plan, wave_ops
 from .packet_lib import floor_check as fc
 from .packet_lib import focused_manifest as fm
-
-# The packet builders write local files (the packet, the collected cases) that admission binds: one review unit.
-PACKET_REVIEW = "head-packet-writes.md"
 
 
 def _refuse(error: ops.PacketRefused, next_cmd: str) -> NoReturn:
@@ -55,7 +52,7 @@ def _head_of(target: str, core: Path) -> str:
     return str(head)
 
 
-@native("head manifest", writes=True, review=PACKET_REVIEW, replaces=("hz-focused-manifest",), help=H(
+@native("head manifest", writes=True, replaces=("hz-focused-manifest",), help=H(
     "Build one focused admission packet from Git objects, or regenerate a packet and compare bytes (--verify).",
     "Use when a single packet is built or checked by hand; `sm head packet preopen` calls the same code.",
     "writes the packet file given with --output (a local file); --verify reads only. Never fetches, never writes the registry.",
@@ -92,14 +89,14 @@ def head_manifest(
 
 
 @native("head size", writes=False, replaces=("hz-wave-size",), help=H(
-    "Size one admission wave: test ids per lane, production files, overlaps and merge conflicts, against the limits.",
-    "Use before building packets for more than one head, and when a single head might be over a lane limit.",
+    "Size one admission wave: test ids per lane, production files, overlaps and merge conflicts.",
+    "Use before building packets for more than one head, to see what they share and whether they conflict.",
     "nothing (read-only).",
     "sm head size fix/a ~/Code/heinzel-b:fix/b --base origin/main",
     "sm head packet preopen BRANCH --main SHA ... for each head that fits",
-    "Each argument is a branch, optionally WORKTREE:BRANCH. Limits come from the base: web and browser lanes 10 test ids,\n"
-    "python 32, 100 production files; with the base's whole-suite sentinel a web lane over its limit counts as the one id\n"
-    "web/ALL. Exit 1: the wave does not fit or a merge conflicts; the output names the branch to move out."))
+    "Each argument is a branch, optionally WORKTREE:BRANCH. No lane and no production count has a maximum (PRs of any\n"
+    "size); with the base's whole-suite sentinel a web lane holding it counts as the one id web/ALL. Exit 1: a merge\n"
+    "conflicts; the output names the branch to move out."))
 def head_size(
     branches: list[str] = typer.Argument(..., metavar="[WORKTREE:]BRANCH...", help="The heads of the wave."),
     core: Path | None = typer.Option(None, "--core", help="Core repository for arguments without a worktree (default: setting core_repo_dir)."),
@@ -109,6 +106,39 @@ def head_size(
         return ops.size_wave(branches, _core(core), base)
     except ops.PacketRefused as error:
         _refuse(error, "sm head size --help")
+
+
+@native("head plan", writes=False, help=H(
+    "Print the route one head takes through admission: tier, size, every limit and whether it binds, the route, the review stops.",
+    "Use at the START of a head or a bundle, and again after every merge into it: before building, not at the last step.",
+    "nothing (read-only: local Git objects and the base's own selector; no network, nothing fetched).",
+    "sm head plan ~/Code/heinzel-fix",
+    "the ROUTE line marked TAKEN (sm ship WORKTREE); a CLOSED route names the sanctioned way instead",
+    "Tier: focused (a reviewed plan names the tests), merge (the base's Core selects the lanes itself) or full (the selector asks for\n"
+    "everything). Limits are the integer MAX constants the base's scripts/focused_plan.py and scripts/focused_job.py define at that\n"
+    "commit. One binds only when the base applies it to what the plan measures (diff bytes, production files, a lane's test ids);\n"
+    "every other one is listed as unknown and closes no route. sm holds no copy of them. Routes:\n"
+    "focused admit, the protected-producer route (`sm head admit` takes it by itself when a protected focused-CI source changes) and\n"
+    "the release path. Exit 1: no route is open for the head as it is. --base is read locally: fetch first when main moved."))
+def head_plan(
+    worktree: Path = typer.Argument(..., metavar="WORKTREE", help="The worktree of the head; its committed HEAD is planned."),
+    base: str = typer.Option("origin/main", "--base", help="Base revision, read locally, never fetched."),
+) -> route_plan.RoutePlan:
+    return plan_route(worktree, base)
+
+
+def plan_route(worktree: Path, base: str = "origin/main") -> route_plan.RoutePlan:
+    """The route plan of the committed HEAD of WORKTREE (shared by `sm head plan` and `sm ship --plan`)."""
+    path = Path(os.path.realpath(os.path.expanduser(str(worktree))))
+    if not path.is_dir():
+        raise Refuse(f"{path} is not a directory", "sm head plan --help", code=2)
+    repo = fm.Repo(path)
+    try:
+        branch = repo.out("rev-parse", "--abbrev-ref", "HEAD").decode().strip()
+        return route_plan.plan(repo, "HEAD", base, worktree=str(path), branch=branch,
+                               merge_tier_mode=str(runtime().settings.get("merge_tier_mode") or "auto"))
+    except (fm.ManifestError, OSError, ValueError, SyntaxError) as error:
+        raise Refuse(f"cannot plan the route of {path}: {error}", "sm head plan --help") from error
 
 
 @native("head floor", writes=False, replaces=("hz-floor-check",), help=H(
@@ -174,7 +204,7 @@ def _gated(cmd: list[str]) -> SimpleNamespace:
     return SimpleNamespace(returncode=outcome.exit_code, stdout="", stderr=outcome.reason)
 
 
-@native("head packet preopen", writes=True, review=PACKET_REVIEW, replaces=("hz-admit-wave",), help=H(
+@native("head packet preopen", writes=True, replaces=("hz-admit-wave",), help=H(
     "Build the pre-open packet of one head at an exact main: collected cases, the pair, the builder's REVIEW.md, verified.",
     "Use when the head merges cleanly onto the current main and its local focused run is green.",
     "writes packet files under the review root (sel.json, collected cases, packet.json, REVIEW.md, wave.json); nothing outside this machine.",
@@ -202,7 +232,7 @@ def head_packet_preopen(
         _refuse(error, "sm head packet preopen --help")
 
 
-@native("head packet predict", writes=True, review=PACKET_REVIEW, replaces=("hz-admit-wave",), help=H(
+@native("head packet predict", writes=True, replaces=("hz-admit-wave",), help=H(
     "Build the packet of a later head against the PREDICTED main after the earlier head(s) merge; for review, not admissible.",
     "Use when a head depends on heads that are still in CI, to have its packet reviewed while they merge.",
     "writes packet files under the review root, and predicted commit objects and scratch refs in --core-repo (a scratch clone, never the shared repository).",
@@ -230,7 +260,7 @@ def head_packet_predict(
         _refuse(error, "sm head packet predict --help")
 
 
-@native("head packet bind", writes=True, review=PACKET_REVIEW, replaces=("hz-admit-wave",), help=H(
+@native("head packet bind", writes=True, replaces=("hz-admit-wave",), help=H(
     "Rebind a predicted packet to the real main, only when main and the resulting tree are byte-equal to the prediction.",
     "Use after the earlier head(s) merged and the real main commit is in the scratch clone (this command never fetches).",
     "writes the bound packet directory under the review root (default PREDICT_DIR/bound-MAIN12); nothing outside this machine.",
@@ -278,7 +308,7 @@ CASES = Group("head cases", H(
     "sm head manifest BRANCH --base MAIN --selection SEL.json --junit python=python.collected.xml --output PACKET.json"))
 
 
-@native("head cases collect", writes=True, review=PACKET_REVIEW, replaces=("collect_cases.py",), help=H(
+@native("head cases collect", writes=True, replaces=("collect_cases.py",), help=H(
     "List the test cases of one lane's selection on an exact Git tree, without running them, as the hosted job reports them.",
     "Use when a lane's cases are needed for a tree other than the one that was run (a resulting tree).",
     "writes the JUnit file given with --output (a local file); extracts the tree into a temporary directory and removes it.",
@@ -290,7 +320,7 @@ def head_cases_collect(
     repo: Path | None = typer.Option(None, "--repo", help="Git repository holding the tree (default: setting core_repo_dir)."),
     tree: str = typer.Option(..., "--tree", help="The exact tree (or commit) to collect on."),
     selection: Path = typer.Option(..., "--selection", help="JSON {lane: [test ids]}."),
-    lane: str = typer.Option(..., "--lane", help="The lane of the selection to collect: python, python312, macos, browser or web."),
+    lane: str = typer.Option(..., "--lane", help="The lane of the selection to collect: one of the focused lanes of Core's release policy at TREE."),
     output: Path = typer.Option(..., "--output", "-o", help="The JUnit file to write."),
     python: str | None = typer.Option(None, "--python", help="Interpreter with the checkout's test dependencies (default: this command's own)."),
     node_modules: Path | None = typer.Option(None, "--node-modules", help="web/node_modules for the web lane."),
@@ -301,7 +331,7 @@ def head_cases_collect(
         _refuse(error, "sm head cases collect --help")
 
 
-@native("head cases compare", writes=True, review=PACKET_REVIEW, replaces=("collect_cases.py",), help=H(
+@native("head cases compare", writes=True, replaces=("collect_cases.py",), help=H(
     "Compare three case inventories: the run's JUnit, the head-tree collection and the resulting-tree collection.",
     "Use after collecting a lane on both trees, before a packet carries cases for the resulting tree.",
     "writes the differing ids to the file given with --output (a local file); without --output nothing.",

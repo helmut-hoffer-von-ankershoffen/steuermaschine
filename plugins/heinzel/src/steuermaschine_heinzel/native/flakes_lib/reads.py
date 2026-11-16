@@ -13,6 +13,8 @@ from typing import Any
 
 from steuermaschine.github.logs import failing_tests
 
+from ..queue_lib import core_facts
+
 FIELDS = "databaseId,attempt,conclusion,status,headBranch,headSha,event,createdAt,displayTitle"
 GH_TIMEOUT = 120.0
 
@@ -35,7 +37,7 @@ class Reads:
         return self.cache / f"{self.repo.replace('/', '_')}-{suffix}"
 
     def run_list(self, limit: int, main_only: bool) -> list[dict[str, Any]]:
-        args = ["run", "list", "-R", self.repo, "--workflow", "ci.yml"]
+        args = ["run", "list", "-R", self.repo, "--workflow", core_facts.ci_file()]
         if main_only:
             args += ["--branch", "main", "--status", "completed"]
         listed = self._json(self.gh(*args, "-L", str(limit), "--json", FIELDS), [])

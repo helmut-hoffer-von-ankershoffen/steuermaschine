@@ -1,4 +1,4 @@
-"""`sm head validate` and `sm ci window`: hosted validation of a head on a throwaway commit, one head at a time.
+"""`sm head validate` and `sm ci window`: hosted validation of a head on a throwaway commit, several heads at once under the cap.
 
 The line of heads, the per-branch rule and the cap are the core's (`steuermaschine.window`); the runs are started by
 the single-lane library (`dispatch_lib/focused.py`) with all of its guards; each lane runs on its own throwaway child
@@ -173,7 +173,8 @@ def in_flight(lanes: int = 0, wants_arm: bool = False) -> int:
     """Focused runs in flight, counted as the start itself counts them: GitHub's own inventory of active runs of the
     focused workflow plus the tracked receipts, whoever started them. Refuses (SystemExit, as the library does) when
     the inventory is uncertain, when a start in doubt is unreconciled, or when the whole lane set could not start now
-    for another reason than the cap (a release run, the job ceiling while main waits)."""
+    for another reason than the cap (a macOS lane beside a release run, the job ceiling while main waits). A Linux
+    lane set beside a release candidate passes here; each lane's own start then checks the job ceiling."""
     with focused.admission_lock():
         pending = focused.STATE.with_suffix(".pending")
         if pending.exists():
@@ -186,7 +187,7 @@ def in_flight(lanes: int = 0, wants_arm: bool = False) -> int:
                 runs[run["id"]] = {**run, "headBranch": run["head_branch"]}
         tracked = {row["run"] for row in focused.rows(strict=True) if row.get("result") is None}
         count = len(tracked | {rid for rid, run in runs.items() if focused.workflow_path(run) == f".github/workflows/{c.WORKFLOW}"})
-        if lanes and (why := c.capacity_refusal(runs.values(), [], 0, wants_arm)):  # a release run: no lane would start
+        if lanes and (why := c.capacity_refusal(runs.values(), [], 0, wants_arm, caps=focused.CAPS)):  # macOS beside a release run: no lane would start
             raise SystemExit(why)
         return count
 
@@ -339,7 +340,7 @@ def validate(rt, worktree: str, lanes: list[str], os_name: str, serial: bool, dr
     with stoppable() as stopper:
         try:
             try:
-                while True:  # one head at a time, one request per branch, and the cap: wait, never force
+                while True:  # heads in parallel under the cap, one request per branch: wait, never force
                     release_hold(rt)
                     decision = window.enter(branch, head, len(lanes), in_flight(len(lanes), arm), owner=owner, pid=os.getpid(), host=socket.gethostname())
                     if decision.passed is not None:
@@ -477,14 +478,14 @@ def lanes_of(text: str) -> list[str]:
     return lanes
 
 
-@native("head validate", writes=True, replaces=("hz-ci-one",), files=("dispatch.py", "dispatch_lib", "lock.py", "lock_lib"), review="head-validate.md", help=H(
+@native("head validate", writes=True, replaces=("hz-ci-one",), help=H(
     "Run full hosted e2e lanes for a head on a throwaway child commit, never on the head SHA itself.",
     "Use before a packet is built, when a head touches web, e2e drivers or journeys (the candidate runs every journey on Linux).",
     "pushes one validation/<branch>-<lane>-<sha8> per lane through the run lock, dispatches one hosted run on each, deletes them afterwards.",
     "sm head validate ~/Code/heinzel-e2e-details --lanes web-1,web-2",
     "sm head admit WORKTREE   (when it prints VALIDATED); on a failure fix all of it in ONE new commit and validate again",
-    "The validation window: one head at a time, one request per branch (a newer head replaces a waiting older one), and at most\n"
-    "5 focused runs in flight; it waits (--max-wait, then exit 75: the same command again) and never forces. `sm ci window status`\n"
+    "The validation window: several heads at once while all their runs fit under the cap of 5 focused runs in flight, one\n"
+    "request per branch (a newer head replaces a waiting older one); it waits (--max-wait, then exit 75: the same command again) and never forces. `sm ci window status`\n"
     "shows the line. Lanes run in parallel, each on its own branch: the focused workflow keeps one pending run per ref\n"
     "(--serial: one after another).\n" + TRAP + "\n"
     "Detached (an agent's tool call ends after 10 minutes): --detach starts the same validation in the background and returns\n"
@@ -624,8 +625,8 @@ CI_WINDOW = Group("ci window", H(
     "sm head validate WORKTREE"))
 
 
-@native("ci window run", writes=True, replaces=("hz-ci-one",), files=("dispatch.py", "dispatch_lib", "lock.py", "lock_lib"), review="head-validate.md", help=H(
-    "Several heads through `sm head validate`, one head at a time, in the order given.",
+@native("ci window run", writes=True, replaces=("hz-ci-one",), help=H(
+    "Several heads through `sm head validate`, in parallel as far as the cap allows, in the order given.",
     "Use when two or more heads need hosted lanes before admission and you want them serialised, not racing for runners.",
     "nothing without --run (prints the order); with --run each head pushes and deletes its validation branch and starts hosted runs.",
     "sm ci window run ~/Code/heinzel-e2e-details ~/Code/heinzel-chat-composer --lanes web-1,web-2",
@@ -685,7 +686,7 @@ def remove_branch(rt, name: str) -> str:
     return f"removed {name}" if removed else f"did not remove {name}"
 
 
-@native("ci window release", writes=True, replaces=("hz-ci-one",), files=("dispatch.py", "dispatch_lib", "lock.py", "lock_lib"), review="head-validate.md", help=H(
+@native("ci window release", writes=True, replaces=("hz-ci-one",), help=H(
     "End the turn of a validation whose command is gone, and remove the validation branches it left behind.",
     "Use when `sm ci window status` shows a holder whose command is gone, or `sm head validate` names a leftover branch.",
     "the window's state on this machine; with --remove-branch deletes that validation/* branch on the remote when no run is active on it.",
@@ -696,10 +697,11 @@ def remove_branch(rt, name: str) -> str:
     "--remove-branch NAME works with or without a held window; without NAME it removes the branches the released holder recorded."))
 def ci_window_release(force: bool = typer.Option(False, "--force", help="End the turn although the holder's command still runs."),
                       remove: bool = typer.Option(False, "--remove", help="Also remove the validation branch the released holder recorded."),
-                      remove_branch_name: str = typer.Option("", "--remove-branch", metavar="NAME", help="Remove this leftover validation/* branch.")) -> WindowRelease:
+                      remove_branch_name: str = typer.Option("", "--remove-branch", metavar="NAME", help="Remove this leftover validation/* branch."),
+                      branch: str = typer.Option("", "--branch", metavar="BRANCH", help="Which holder, when several heads hold the window (needed with --force then).")) -> WindowRelease:
     rt = runtime()
     dispatch.bound(rt, [], [])
-    found: Released = the_window(rt).release(force=force)
+    found: Released = the_window(rt).release(force=force, branch=branch)
     notes, removed = [], ""
     left = left_branches(found.turn.data) if found.released and found.turn else []
     targets = [remove_branch_name] if remove_branch_name else left if remove else []
@@ -712,7 +714,7 @@ def ci_window_release(force: bool = typer.Option(False, "--force", help="End the
     return WindowRelease(released=found.released, reason=found.reason, branch_removed=removed, notes=notes)
 
 
-@native("ci window release-hold", writes=True, replaces=("hz-ci-one",), files=("dispatch.py", "dispatch_lib", "lock.py", "lock_lib"), review="head-validate.md", help=H(
+@native("ci window release-hold", writes=True, replaces=("hz-ci-one",), help=H(
     "Remove a stale admission hold of the validation window by hand.",
     "Use when `sm ci window status` shows a hold whose admission is long gone (a reused pid keeps it looking alive) and no validation can start.",
     "the window's state on this machine: that one hold.",
@@ -761,7 +763,7 @@ def matches(turn: Turn, head: str) -> bool:
     return turn.branch == head or (len(head) >= 7 and re.fullmatch(r"[0-9a-f]+", head) is not None and turn.head.startswith(head))
 
 
-@native("ci window drop", writes=True, replaces=("hz-ci-one",), files=("dispatch.py", "dispatch_lib", "lock.py", "lock_lib"), review="ci-window-drop.md", help=H(
+@native("ci window drop", writes=True, replaces=("hz-ci-one",), help=H(
     "Take a waiting head out of the validation window's line: its command is gone, or you own the head and give up its turn.",
     "Use when `sm ci window status` lists a head that no longer needs hosted validation, or a waiter whose command died.",
     "the window's state on this machine; for a waiter whose command still runs here, stops that command (SIGTERM) first.",
@@ -777,9 +779,9 @@ def ci_window_drop(head: str = typer.Argument(..., metavar="HEAD", help="The bra
     rt = runtime()
     window = the_window(rt)
     found = window.status()
-    if found.active is not None and matches(found.active, head):
-        raise Refuse(f"{found.active.branch} {found.active.head[:9]} holds the window, it does not wait: drop takes waiting heads only",
-                     "sm ci window release   (ends the turn of a holder whose command is gone)")
+    if holding := next((turn for turn in (found.actives or ([found.active] if found.active else [])) if matches(turn, head)), None):
+        raise Refuse(f"{holding.branch} {holding.head[:9]} holds the window, it does not wait: drop takes waiting heads only",
+                     f"sm ci window release --branch {holding.branch}   (ends the turn of a holder whose command is gone)")
     targets = [turn for turn in [*found.waiting, *found.gone] if matches(turn, head)]  # a gone waiter is still in the stored line until someone looks
     if not targets:
         raise Refuse(f"no waiting head matches {head!r}", "sm ci window status")

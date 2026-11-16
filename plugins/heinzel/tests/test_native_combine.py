@@ -5,6 +5,9 @@ imports renamed); the command tests run the command tree on a scripted `gh pr li
 import json
 from pathlib import Path
 
+import policy_kit as kit
+import pytest
+
 from steuermaschine.app import Runtime
 from steuermaschine.config import Project
 from steuermaschine.plugins import stack_of
@@ -15,6 +18,14 @@ from steuermaschine_heinzel.native.combine_lib import combine as hc
 from steuermaschine_heinzel.plugin import plugin
 
 NOW = 1762589400.0  # 2026-11-08 08:10Z
+
+
+@pytest.fixture(autouse=True)
+def pinned_from_policy(monkeypatch):
+    """The pinned files are the workflow and recorder of Core's release policy at main; here the kit's, no GitHub read."""
+    pins = tuple(sorted((kit.WORKFLOW, kit.RECORDER)))
+    monkeypatch.setattr(hc, "PINNED", pins)
+    monkeypatch.setattr(hc, "approved_sources", lambda gh, repo: pins)
 
 
 # ------------------------------------------------------------- moved: pure

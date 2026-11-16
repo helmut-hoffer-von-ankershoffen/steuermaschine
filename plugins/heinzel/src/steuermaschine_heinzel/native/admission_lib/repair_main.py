@@ -10,8 +10,8 @@ supported could add the missing plan (every admission binds the CURRENT main as 
 This route admits exactly one headless `push-tree:<main tree>` with base `main^`, and only when all of this holds,
 re-proved at prepare and again before and after the one slot write:
 
-1. main's latest push run of ci.yml is attempt 1, completed, failed, and its only failing jobs are "Changed paths"
-   (failed step: the focused plan resolver) and the aggregate "CI OK"; the resolver's log says there is no plan.
+1. main's latest push run of the CI workflow is attempt 1, completed, failed, and its only failing jobs are "Changed
+   paths" (failed step: the focused plan resolver) and the aggregate; the resolver's log says there is no plan.
 2. main is the single-parent squash of one merged PR whose head is the packet head, the merge queue recorded that
    merge, and an admission receipt of that head is on record (the original pair was admitted and written).
 3. the packet's resulting-main plan has main's exact parent and tree, and the same selection and case digests as the
@@ -31,13 +31,13 @@ from pathlib import Path
 from typing import Any
 
 from ... import state as statedir  # the plugin's state paths
+from ..queue_lib import core_facts
 from . import focused_admit as a
 from . import focused_resulting as resulting
 
 MODE = 'repair-main/v1'
-CI = '.github/workflows/ci.yml'
 JOB, STEP = 'Changed paths', 'Resolve the exact reviewed focused plan'
-AGGREGATE, AGGREGATE_STEP = 'CI OK', 'Fail if any required job failed'
+AGGREGATE_STEP = 'Fail if any required job failed'
 MESSAGE = b'No focused plan for this exact source. Submit an independently reviewed scope manifest.'
 GREEN = ('success', 'skipped', 'neutral')
 RECEIPTS = 'focused-admission-receipts'
@@ -65,21 +65,23 @@ def positive(value: object) -> bool:
 def failed_run(rt: Any, main: str) -> dict[str, Any]:
     """main's latest push run: attempt 1, failed only because the resolver found no plan for main's tree."""
     root = f'repos/{rt.repo}'
-    runs = rt.api(f'{root}/actions/workflows/ci.yml/runs?branch=main&event=push&per_page=1').get('workflow_runs')
+    policy = core_facts.at(main) if re.fullmatch(r'[0-9a-f]{40}', str(main)) else core_facts.at_main()
+    aggregate = policy.aggregate
+    runs = rt.api(f'{root}/{policy.workflow_runs}?branch=main&event=push&per_page=1').get('workflow_runs')
     require(isinstance(runs, list) and len(runs) == 1, "main's latest push run is unavailable")
     run = runs[0]
-    require(positive(run.get('id')) and run.get('head_sha') == main and run.get('path') == CI
+    require(positive(run.get('id')) and run.get('head_sha') == main and run.get('path') == policy.workflow
             and run.get('event') == 'push' and run.get('head_branch') == 'main',
-            "main's latest push run of ci.yml is not a run of the current main")
+            "main's latest push run of the CI workflow is not a run of the current main")
     require(run.get('status') == 'completed' and run.get('conclusion') == 'failure',
             f"main's latest push run {run.get('id')} did not fail")
     require(run.get('run_attempt') == 1, f"main's run {run['id']} was already rerun: this route repairs attempt 1 only")
     jobs = rt.pages(f"{root}/actions/runs/{run['id']}/attempts/1/jobs", 'jobs')
     require(jobs and all(job.get('status') == 'completed' for job in jobs), f"run {run['id']} job list is incomplete")
     failed = {job['name']: job for job in jobs if job.get('conclusion') not in GREEN}
-    require(set(failed) == {JOB, AGGREGATE} and len([job for job in jobs if job.get('conclusion') not in GREEN]) == 2,
-            f"run {run['id']} failed in {sorted(failed)}, not only in '{JOB}' and '{AGGREGATE}'")
-    for name, step in ((JOB, STEP), (AGGREGATE, AGGREGATE_STEP)):
+    require(set(failed) == {JOB, aggregate} and len([job for job in jobs if job.get('conclusion') not in GREEN]) == 2,
+            f"run {run['id']} failed in {sorted(failed)}, not only in '{JOB}' and '{aggregate}'")
+    for name, step in ((JOB, STEP), (aggregate, AGGREGATE_STEP)):
         job = failed[name]
         require(positive(job.get('id')) and job.get('run_id') == run['id'] and job.get('run_attempt') == 1
                 and job.get('head_sha') == main, f"job '{name}' is not a job of run {run['id']}")
@@ -88,7 +90,7 @@ def failed_run(rt: Any, main: str) -> dict[str, Any]:
     log = rt.run('gh', 'api', '--allow-escape-sequences', f"{root}/actions/jobs/{failed[JOB]['id']}/logs", timeout=60).stdout
     require(isinstance(log, bytes) and len(log) <= MAX_LOG_BYTES and MESSAGE in log,
             f"the '{STEP}' log does not report a missing focused plan")
-    return dict(run=run['id'], attempt=1, jobs={JOB: failed[JOB]['id'], AGGREGATE: failed[AGGREGATE]['id']},
+    return dict(run=run['id'], attempt=1, jobs={JOB: failed[JOB]['id'], aggregate: failed[aggregate]['id']},
                 log_sha256=digest(log))
 
 

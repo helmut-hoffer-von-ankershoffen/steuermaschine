@@ -26,7 +26,6 @@ from .go import world
 
 SERVICE = "api.typesafe.ai"
 RUN_ID_FLOOR = 100000  # a number above this is a run id, below it a pull request number
-UNIT = ("ci_classify_lib",)  # the review unit beside this module: the client library; the condenser of what is sent is the core's github/logs.py, in the digest as an import
 
 
 class ClassifySettings(BaseModel):
@@ -58,7 +57,7 @@ class Classification(Model):
                 "advisory only: the label decides nothing; read the cause with sm ci why"]
 
 
-@native("ci classify", writes=True, review="ci-classify.md", files=UNIT, replaces=("hz-faillog",), help=H(
+@native("ci classify", writes=True, replaces=("hz-faillog",), help=H(
     "Ask the paid outside classifier service for the cause class of one failed run. Advisory label; off by default.",
     "Use after the owner switched the setting ci_classifier on, and only when `sm ci why` left a failure's class unclear.",
     f"sends the condensed PUBLIC failed-step log of the run (at most {jev.MAX_STATE_CHARS} characters) to {SERVICE}, which bills each call; "

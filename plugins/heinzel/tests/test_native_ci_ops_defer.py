@@ -196,20 +196,6 @@ def test_without_cancel_it_is_a_dry_run_in_text_and_json(env):
     assert not any("-X" in call for call in world.calls)
 
 
-def test_the_write_commands_are_off_until_their_review_is_approved(tmp_path, monkeypatch):
-    from steuermaschine.native import NativeCommand
-
-    # an unreviewed state, set explicitly: the test must not depend on what reviews/ci-*.md says today
-    monkeypatch.setattr(NativeCommand, "review_state", lambda self: ("open", f"the last line of reviews/{self.review_file} is not exactly the verdict line"))
-    world = canned()
-    gated = runtime(tmp_path, monkeypatch, world, reviewed=False)
-    for argv in (["ci", "defer"], ["ci", "defer", "--cancel"]):
-        off = invoke(gated, argv)
-        assert off.exit_code == 70 and "independent review is open" in off.stderr and "reviews/ci-defer.md" in off.stderr, argv
-    assert world.calls == []
-    assert invoke(gated, ["ci", "deferred"]).exit_code == 0  # the list only reads: on without a review
-
-
 def test_a_live_deferral_makes_exactly_these_calls_in_this_order(env):
     world, rt = env
     done = invoke(rt, ["--format", "json", "ci", "defer", "--cancel", "--if-main-starved", "--keep", "603"])

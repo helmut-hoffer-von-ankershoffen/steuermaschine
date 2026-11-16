@@ -23,8 +23,9 @@ from steuermaschine.native import native
 from . import merge_tier
 from .go import world
 from .go_lib import legacy, probes
+from .queue_lib import core_facts
 
-REQUIRED = ("CI OK", "merge-gate", "coverage-floor")
+REQUIRED = core_facts.CONTEXTS  # the required contexts of Core's release policy at main
 
 
 class WhySettings(BaseModel):
@@ -145,9 +146,9 @@ def check_runs(w: probes.World, sha: str) -> list[dict[str, Any]]:
 
 
 def gate_notes(runs: list[dict[str, Any]]) -> merge_tier.Verdict:
-    """The informative clauses of the newest coverage-floor summary (the merge gate's verdict): reviewed workflow change,
+    """The informative clauses of the newest summary of a merge-gate check (the merge gate's verdict): reviewed workflow change,
     advisory lanes (consumers: N failing: a, b) and reruns. They never make a check red; its conclusion does."""
-    floor = sorted((r for r in runs if r.get("name") == "coverage-floor"), key=lambda r: r.get("completed_at") or "9")
+    floor = sorted((r for r in runs if r.get("name") in core_facts.API_CHECKS and r.get("summary")), key=lambda r: r.get("completed_at") or "9")
     return merge_tier.verdict(str(floor[-1].get("summary") or "") if floor else "")
 
 
@@ -180,7 +181,7 @@ def explain(w: probes.World, number: int) -> PullRequestWhy:
     "Use when a green PR is unmerged after 15 minutes; that is an incident, not a wait.",
     "nothing (read-only; four GitHub reads, the queue state file and the hold files).",
     "sm why 795", "the command on the WHY line; if it names none, sm queue why",
-    "Lines: the PR's state and GitHub merge state; CI OK, merge-gate and coverage-floor with their latest result and any older\n"
+    "Lines: the PR's state and GitHub merge state; every required check of Core's release policy with its latest result and any older\n"
     "non-success duplicate on the same head; its queue entry; freeze and release holds; main's latest CI run; what the last\n"
     "queue tick waited on; its role in a combine PR; WHY."))
 def why(pr: int = typer.Argument(..., metavar="PR", help="PR number in the Core repository.")) -> PullRequestWhy:

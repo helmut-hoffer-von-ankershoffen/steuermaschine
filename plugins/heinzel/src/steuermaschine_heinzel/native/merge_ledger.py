@@ -28,17 +28,14 @@ from steuermaschine.native import native, runtime
 from steuermaschine.protocols import Busy
 
 from . import merge_tier
+from .queue_lib import core_facts
 from .tasks_lib import beads
 
-UNIT = ("merge_ledger.py", "merge_tier.py", "tasks_lib", "asks_lib", "coord_lib")
 SEEN = "heinzel.merge_tier.flakes"  # store kind: one record per harvested ledger (artifact name or main run)
 JUDGE = "heinzel.merge_tier.judge"  # store lock: one main judge at a time
 FILING = "heinzel.merge_tier.filing"  # store lock: one run at a time files flaky beads (tick and a manual call)
 FILING_PAUSE, JUDGE_PATIENCE = 5.0, 120.0  # seconds: between two tries for the filing lock; how long the main judge waits for it
 PROOFS = "heinzel.merge_tier.main_proof"  # store kind: one record per main commit the judge accepted
-GATE_WORKFLOW = "merge-gate.yml"
-CI_WORKFLOW = "ci.yml"
-FULL_JOB = "CI OK"
 GREEN_RUNS = 30
 SLOTS = ("FOCUSED_CI_PLANS", *(f"FOCUSED_CI_PLANS_V2_{i}" for i in range(4)))
 
@@ -156,7 +153,7 @@ def _ledger_text(rt: Any, gh: Gh, run: int, name: str) -> str:
         return "\n".join(p.read_text(errors="replace") for p in sorted(Path(scratch).rglob("*")) if p.is_file())
 
 
-@native("ci flake-ledger", writes=True, tick=True, files=UNIT, review="ci-flake-ledger.md", help=H(
+@native("ci flake-ledger", writes=True, tick=True, help=H(
     "File one flaky bead per job that passed only on a rerun, from the merge gate's flake ledgers.",
     "Use at every tick (or as a daemon with --loop): a pass after a rerun is a flake, never hidden.",
     "creates or notes beads labelled flaky (bd create, bd update --append-notes); remembers each ledger it read.",
@@ -169,7 +166,7 @@ def ci_flake_ledger(runs: int = typer.Option(20, "--runs", min=1, max=100, help=
     gh = _gh(rt)
     if _merge_tier(rt, gh) is None:
         return Harvest(state="not-merge-tier")
-    rows, why, _more = gh.pages(f"actions/workflows/{GATE_WORKFLOW}/runs", {"status": "completed"}, key="workflow_runs", limit=runs)
+    rows, why, _more = gh.pages(f"actions/workflows/{core_facts.judge_file()}/runs", {"status": "completed"}, key="workflow_runs", limit=runs)
     if why:
         raise Refuse(f"cannot list the merge gate runs: {why}", "sm ci flake-ledger")
     store, found, filed = rt.providers.store, [], []
@@ -196,7 +193,7 @@ def _accepted(gh: Gh, sha: str) -> bool:
 
 def _ci_ok(gh: Gh, run: int) -> bool:
     jobs, _why = gh.api(f"actions/runs/{run}/jobs", {"filter": "latest", "per_page": 100})
-    return any(j.get("name") == FULL_JOB and j.get("conclusion") == "success" for j in (jobs or {}).get("jobs", []))
+    return any(j.get("name") == core_facts.aggregate() and j.get("conclusion") == "success" for j in (jobs or {}).get("jobs", []))
 
 
 def _ancestor(rt: Any, core: str, older: str, newer: str) -> bool:
@@ -204,9 +201,9 @@ def _ancestor(rt: Any, core: str, older: str, newer: str) -> bool:
 
 
 def last_green(rt: Any, gh: Gh, core: str, head: str) -> str | None:
-    """Core focused_plan.last_green_main: the newest main commit before HEAD whose push run passed CI OK (latest
+    """Core focused_plan.last_green_main: the newest main commit before HEAD whose push run passed the aggregate (latest
     attempt) and that carries the hz/main-proof status."""
-    runs, _why = gh.api(f"actions/workflows/{CI_WORKFLOW}/runs", {"branch": "main", "event": "push", "status": "success", "per_page": GREEN_RUNS})
+    runs, _why = gh.api(f"actions/workflows/{core_facts.ci_file()}/runs", {"branch": "main", "event": "push", "status": "success", "per_page": GREEN_RUNS})
     for run in (runs or {}).get("workflow_runs", []):
         sha = str(run.get("head_sha") or "")
         if len(sha) != 40 or sha == head or not _ancestor(rt, core, sha, head):
@@ -217,7 +214,7 @@ def last_green(rt: Any, gh: Gh, core: str, head: str) -> str | None:
 
 
 def _push_run(gh: Gh, sha: str) -> dict[str, Any] | None:
-    runs, _why = gh.api(f"actions/workflows/{CI_WORKFLOW}/runs", {"branch": "main", "event": "push", "head_sha": sha, "per_page": 10})
+    runs, _why = gh.api(f"actions/workflows/{core_facts.ci_file()}/runs", {"branch": "main", "event": "push", "head_sha": sha, "per_page": 10})
     found = [r for r in (runs or {}).get("workflow_runs", []) if r.get("head_sha") == sha]
     return found[0] if found else None
 
@@ -257,20 +254,20 @@ def _judge(rt: Any, gh: Gh, core: str, sha: str, run: int, base: str) -> dict[st
     return dict(proof)
 
 
-@native("queue main-proof", writes=True, tick=True, files=UNIT, review="queue-main-proof.md", help=H(
+@native("queue main-proof", writes=True, tick=True, help=H(
     "Judge the newest green main push with main's own merge gate (main mode) and post the hz/main-proof status.",
     "Use at every tick (or as a daemon with --loop): until a main commit carries the status, every main push runs the full set.",
     "posts one commit status (hz/main-proof, success) on the main commit the judge accepted; files flaky beads for its reruns.",
     "sm queue main-proof",
     "sm go",
-    "The base is the last main commit that carries the status and whose push run passed CI OK (none yet: the commit's parent, and\n"
+    "The base is the last main commit that carries the status and whose push run passed the aggregate (none yet: the commit's parent, and\n"
     "the judge requires the full set). A main run that is not finished or not green waits; a cancelled run replaced by a newer\n"
     "push is not red, the newer one is judged. Needs the setting core_repo_dir (a clone of the Core, the objects the judge reads).\n"
     "--check only answers, in a few reads, whether the judge can run (state ready): the queue's loop asks it at every tick\n"
     "and starts the judge detached, once per main commit. One judge at a time: a second one waits (exit 75)."))
 def queue_main_proof(sha: str | None = typer.Option(None, "--sha", metavar="SHA", help="Judge this main commit instead of the tip (it must still be the tip)."),
                      dry_run: bool = typer.Option(False, "--dry-run", help="Find the run and the base; judge and post nothing."),
-                     check: bool = typer.Option(False, "--check", help="Only say whether the judge's inputs are complete (main's push run finished green with CI OK, "
+                     check: bool = typer.Option(False, "--check", help="Only say whether the judge's inputs are complete (main's push run finished green with the aggregate, "
                                                                        "its commit in the Core clone): state ready. Reads only; finds no base, judges and posts nothing.")) -> MainProof:
     rt: Any = runtime()
     gh = _gh(rt)
@@ -299,7 +296,7 @@ def queue_main_proof(sha: str | None = typer.Option(None, "--sha", metavar="SHA"
         if rt.providers.commands.run(["git", "-C", core, "cat-file", "-e", f"{head}^{{commit}}"], timeout=60).rc != 0:
             return MainProof(state="waiting", sha=head, run=int(run["id"]),
                              reason="main's commit is not in the Core clone (core_repo_dir) yet: fetch main there, the judge reads its objects")
-        return MainProof(state="ready", sha=head, run=int(run["id"]), reason="its push run is green with CI OK: the judge can run")
+        return MainProof(state="ready", sha=head, run=int(run["id"]), reason=f"its push run is green with {core_facts.aggregate()}: the judge can run")
     base = last_green(rt, gh, core, head)
     if base is None:
         parent = rt.providers.commands.run(["git", "-C", core, "rev-parse", "--verify", f"{head}^1"], timeout=60)

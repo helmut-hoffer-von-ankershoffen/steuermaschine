@@ -23,8 +23,6 @@ from .admission_lib.hold import admission_hold
 from .release_admit_lib import release_ops
 
 ERRORS = release_ops.ERRORS
-UNIT = ("release_admit.py", "release_admit_lib", "admission_lib")  # the route runs the PR admission's modules too
-REVIEW = "release-admit-apply.md"
 WAIT_HELP = "Wait while a validation run (or another uncovered run) is active; the admission hold keeps new validations from starting."
 
 
@@ -32,7 +30,7 @@ def _refuse(error: Exception) -> NoReturn:
     raise Refuse(f"release-main admission refused: {error}", "") from error
 
 
-@native("release admit prepare", writes=True, review=REVIEW, files=UNIT, replaces=("hz-focused-admit",), help=H(
+@native("release admit prepare", writes=True, replaces=("hz-focused-admit",), help=H(
     "Prepare the registry transaction for one reviewed release main manifest; stores it and its arguments next to the packet.",
     "Use before the release branch is pushed and before its PR is opened, on current main.",
     "prepare.out and prepare.args.json next to the packet; takes the release-window lock; nothing on GitHub but reads. No variable is written.",
@@ -65,7 +63,7 @@ def release_admit_prepare(
         _refuse(error)
 
 
-@native("release admit apply", writes=True, review=REVIEW, files=UNIT, replaces=("hz-focused-admit",), help=H(
+@native("release admit apply", writes=True, replaces=("hz-focused-admit",), help=H(
     "Apply one approved release-main transaction: the single registry slot write, with journal and receipt.",
     "Use after an independent reviewer approved the sha256 of prepare.out.",
     "one repository variable (a focused plan slot); pauses and restores the merge queue; writes the attempt journal and a receipt; "

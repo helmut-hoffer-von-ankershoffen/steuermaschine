@@ -97,7 +97,7 @@ def test_main_plan_is_none_when_unreadable(tmp_path):
 
 def gate_world(**over) -> World:
     return World(**{
-        f"actions/workflows/{merge_ledger.GATE_WORKFLOW}/runs": {"workflow_runs": [{"id": 11}], "total_count": 1},
+        "actions/workflows/merge-gate.yml/runs": {"workflow_runs": [{"id": 11}], "total_count": 1},
         "actions/runs/11/artifacts": {"artifacts": [{"name": "flake-ledger-11-2"}, {"name": "coverage-total"},
                                                     {"name": "flake-ledger-11-1", "expired": True}]},
         **over})
@@ -117,7 +117,7 @@ def test_harvest_files_one_flaky_bead_per_job_once(tmp_path):
 
 def test_harvest_does_nothing_without_the_merge_tier_and_refuses_unreadable_runs(tmp_path):
     assert "has no merge tier" in invoke(rt(tmp_path, gate_world(plan='VITEST_ALL = "x"\n')), ["ci", "flake-ledger"]).stdout
-    broken = gate_world(**{f"actions/workflows/{merge_ledger.GATE_WORKFLOW}/runs": Result(1, "", "boom")})
+    broken = gate_world(**{"actions/workflows/merge-gate.yml/runs": Result(1, "", "boom")})
     assert invoke(rt(tmp_path, broken), ["ci", "flake-ledger"]).exit_code == 1
     no_artifacts = gate_world(**{"actions/runs/11/artifacts": Result(1, "", "boom")})
     assert "cannot list the artifacts of run 11" in invoke(rt(tmp_path, no_artifacts), ["ci", "flake-ledger"]).stderr
@@ -132,9 +132,9 @@ def proof_world(conclusion="success", ci_ok="success", status=(), **over) -> Wor
         "git/ref/heads/main": {"object": {"sha": HEAD}},
         f"commits/{HEAD}/statuses": list(status),
         f"commits/{GREEN}/statuses": [{"context": "hz/main-proof", "state": "success"}],
-        f"actions/workflows/{merge_ledger.CI_WORKFLOW}/runs?branch=main&event=push&head_sha={HEAD}&per_page=10":
+        f"actions/workflows/ci.yml/runs?branch=main&event=push&head_sha={HEAD}&per_page=10":
             {"workflow_runs": [{"id": 21, "head_sha": HEAD, "status": "completed", "conclusion": conclusion, "html_url": "u"}]},
-        f"actions/workflows/{merge_ledger.CI_WORKFLOW}/runs?branch=main&event=push&status=success&per_page=30":
+        f"actions/workflows/ci.yml/runs?branch=main&event=push&status=success&per_page=30":
             {"workflow_runs": [{"id": 21, "head_sha": HEAD}, {"id": 19, "head_sha": "d" * 40}, {"id": 20, "head_sha": GREEN}]},
         "actions/runs/21/jobs": {"jobs": [{"name": "CI OK", "conclusion": ci_ok}]},
         "actions/runs/20/jobs": {"jobs": [{"name": "CI OK", "conclusion": "success"}]},
@@ -179,9 +179,9 @@ def test_bootstrap_without_an_accepted_commit_uses_the_parent(tmp_path):
     (lambda: proof_world(status=[{"context": "hz/main-proof", "state": "success"}]), "already", ""),
     (lambda: proof_world(conclusion="failure"), "waiting", "a rerun of a red main run is a valid repair"),
     (lambda: proof_world(ci_ok="failure"), "waiting", "valid repair"),
-    (lambda: proof_world(**{f"actions/workflows/{merge_ledger.CI_WORKFLOW}/runs?branch=main&event=push&head_sha={HEAD}&per_page=10":
+    (lambda: proof_world(**{f"actions/workflows/ci.yml/runs?branch=main&event=push&head_sha={HEAD}&per_page=10":
                             {"workflow_runs": []}}), "waiting", "no push run yet"),
-    (lambda: proof_world(**{f"actions/workflows/{merge_ledger.CI_WORKFLOW}/runs?branch=main&event=push&head_sha={HEAD}&per_page=10":
+    (lambda: proof_world(**{f"actions/workflows/ci.yml/runs?branch=main&event=push&head_sha={HEAD}&per_page=10":
                             {"workflow_runs": [{"id": 21, "head_sha": HEAD, "status": "in_progress"}]}}), "waiting", "not finished"),
 ])
 def test_nothing_is_posted_before_a_green_finished_main_run(tmp_path, world, state, reason):

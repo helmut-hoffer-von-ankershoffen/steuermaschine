@@ -7,10 +7,10 @@ web / browser ...), production files, protected files (focused_plan PROTECTED_FI
 conflicts against the base and against each other. Selection and limits come from the base's own affected.py and
 focused_plan/focused_job via hz_focused_manifest.py (nothing from the candidate runs).
 
-Exit 1 (REFUSED) when the union is over a focused-admission lane limit (web/browser <= MAX_IDS = 10 test ids,
-python <= 32, <= 100 production files), a branch alone is over it, or any merge conflicts; the output names the
+Exit 1 (REFUSED) when any merge conflicts (no lane has an id maximum and production files have no bound: owner
+2026-11-14, PRs of any size); the output names the
 branch to move out of the wave. The union selection is the union of the branches' selections. When the base's
-focused_job.py has VITEST_ALL, a web lane with Vitest "ALL" or more than MAX_IDS files is the whole suite
+focused_job.py has VITEST_ALL, a web lane with Vitest "ALL" is the whole suite
 `web/ALL`, which counts as one id (web=1/10 (whole suite)); without it such a lane stays over the limit.
 Exit 0 fits, 2 usage."""
 import sys
@@ -34,8 +34,7 @@ def facts_for(repo, base, branch, policy):
     tree = lines[0].strip()
     changed = fm.changed_paths(repo.raw_diff(base, tree), policy)
     result = fm.repo_selection(repo, base, tree, changed)
-    selection, reasons = fm.derive_selection(result, vitest_all=getattr(policy, "vitest_all", None),
-                                             max_ids=policy.max_ids)
+    selection, reasons = fm.derive_selection(result, vitest_all=getattr(policy, "vitest_all", None))
     if selection is None:  # full/broad selection: still report counts, but it can never fit
         selection = {"python": sorted(result["pytest"]), "web": sorted(result["vitest"])}
         selection = {k: v for k, v in selection.items() if v}
@@ -56,16 +55,21 @@ def pair_conflicts(repo, facts):
 
 
 def limits_of(policy):
-    return {"python": policy.python_max_ids, "default": policy.max_ids, "production": fm.MAX_COVERED_FILES,
+    return {"python": None, "default": None, "production": None,
             "vitest_all": getattr(policy, "vitest_all", None)}
 
 
 def lane_limit(lane, limits):
+    """The id limit of a lane: None, no lane has a maximum (kept for the report shape)."""
     return limits["python"] if lane == "python" else limits["default"]
 
 
+def over_limit(n, limit):
+    return limit is not None and n > limit
+
+
 def union_counts(facts, limits=None):
-    """Union ids per lane; with the base's VITEST_ALL a web lane holding it or over the cap is that one id."""
+    """Union ids per lane; with the base's VITEST_ALL a web lane holding it is that one id."""
     lanes, prod = {}, set()
     for f in facts:
         for lane, ids in f["selection"].items():
@@ -73,7 +77,7 @@ def union_counts(facts, limits=None):
         prod.update(f["production"])
     sentinel = (limits or {}).get("vitest_all")
     web = lanes.get("web")
-    if sentinel and web and (sentinel in web or len(web) > lane_limit("web", limits)):
+    if sentinel and web and sentinel in web:
         lanes["web"] = {sentinel}
     return lanes, prod
 
@@ -88,8 +92,7 @@ def to_move(facts, limits):
     best, score = None, None
     for f in facts:
         lanes, prod = union_counts([g for g in facts if g is not f], limits)
-        excess = sum(max(len(ids) - lane_limit(lane, limits), 0) for lane, ids in lanes.items())
-        excess += max(len(prod) - limits["production"], 0)
+        excess = sum(max(len(ids) - lane_limit(lane, limits), 0) for lane, ids in lanes.items() if lane_limit(lane, limits) is not None)
         if score is None or excess <= score:
             best, score = f["branch"], excess
     return best
@@ -101,10 +104,8 @@ def evaluate(facts, limits):
     over = {}
     problems = []
     for lane, ids in sorted(lanes.items()):
-        if len(ids) > lane_limit(lane, limits):
+        if over_limit(len(ids), lane_limit(lane, limits)):
             over[lane] = (len(ids), lane_limit(lane, limits))
-    if len(prod) > limits["production"]:
-        over["production"] = (len(prod), limits["production"])
     for dim, (n, limit) in over.items():
         problems.append(f"union {dim}: {n} > {limit}")
     for f in facts:
@@ -126,8 +127,8 @@ def report(facts, pairs, limits):
         lines.append(f"{f['branch']} {f['head'][:10]}: files={len(f['changed'])} test ids: {counts}; production={len(f['production'])}; "
                      f"protected={len(f['protected'])}{' ' + ','.join(f['protected']) if f['protected'] else ''}")
     lanes, prod = union_counts(facts, limits)
-    lines.append("union: " + (" ".join(f"{lane}={len(ids)}/{lane_limit(lane, limits)}{whole(ids, limits)}" for lane, ids in sorted(lanes.items())) or "no test ids")
-                 + f"; production={len(prod)}/{limits['production']}")
+    lines.append("union: " + (" ".join(f"{lane}={len(ids)}{'' if lane_limit(lane, limits) is None else '/' + str(lane_limit(lane, limits))}{whole(ids, limits)}" for lane, ids in sorted(lanes.items())) or "no test ids")
+                 + f"; production={len(prod)}")
     for (a, b), files in overlaps(facts).items():
         lines.append(f"overlap {a} x {b}: {len(files)} file(s): {', '.join(files[:5])}{' ...' if len(files) > 5 else ''}")
     for a, b in pairs:

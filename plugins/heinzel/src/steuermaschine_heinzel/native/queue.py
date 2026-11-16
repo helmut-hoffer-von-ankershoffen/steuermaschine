@@ -376,7 +376,7 @@ def _main_proof(module: Any) -> None:
     hz/main-proof without a manual call, and never let the tick wait for the judge.
 
     Once per tick: `sm queue main-proof --check` (a few reads) says whether the judge's inputs are complete: main's push
-    run finished green with CI OK and its commit is in the Core clone. Not complete, already proven, or no main proof at
+    run finished green with the aggregate and its commit is in the Core clone. Not complete, already proven, or no main proof at
     this Core: a log line, and a later tick looks again. Complete: ONE attempt per main commit, recorded in the queue state (`main_proof`) before
     `sm queue main-proof --sha SHA` starts detached in its own session (its own judge lock, its own review gate, output
     in main-proof.log next to the queue state); the tick returns at once. A judge that fails is not started again for

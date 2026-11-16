@@ -17,9 +17,9 @@ from steuermaschine.models import Model
 from steuermaschine.native import Group, native, runtime
 from steuermaschine.plugins import old_variable
 
-from . import queue_hold
+from . import branch_owner, queue_hold
 from .queue_lib import hzlib
-from .ship_lib import deps, pr, push_gate, ship
+from .ship_lib import deps, pr, push_gate, repos, ship
 from .ship_lib.deps import Done
 
 
@@ -37,11 +37,10 @@ GROUP = Group("head", H(
     "depends on the command; push and guard only read, pr pushes and opens the PR, ship queues it.",
     "sm head push 801", "the NEXT line the command prints"))
 
-# The review unit of the write commands: everything they execute. ship_lib calls the queue's add (native/queue.py),
+# What the write commands execute: ship_lib calls the queue's add (native/queue.py),
 # the diff guard and the edges (queue_lib), and the preflight area's CI meta preflight (`meta_of`) and its check of
 # the title and body a PR would publish (`texts_check`) in native/preflight.py + preflight_lib. `head combine-close`
 # (native/merges.py) and `head merge-ready` (native/merge_ready.py) are other areas' commands; nothing here runs them.
-UNIT = ("ship_lib", "queue_lib", "queue.py", "preflight.py", "preflight_lib")
 def _translate(text: str) -> list[str]:
     """The lines of the moved code's output (it names the sm commands itself)."""
     return text.splitlines()
@@ -104,7 +103,7 @@ def head_guard(pr: list[str] = typer.Argument(..., metavar="PR", help="A PR numb
     return _result("guard", " ".join(pr), done, {0: "pass", 1: "flag", 2: "unreadable"})
 
 
-@native("head ship", writes=True, files=UNIT, replaces=("hz-ship",), help=H(
+@native("head ship", writes=True, replaces=("hz-ship",), help=H(
     "Guard the diff, then queue the PR for merge; with a reason from an independent review, queue as reviewed.",
     "Use when a PR is open and its head is final.",
     "adds the PR to the merge queue (and a note when a reason is given); nothing when the guard answers NEEDS_REVIEW.",
@@ -146,7 +145,7 @@ def is_focus(worktree: Path) -> bool:
     return any(str(key).startswith(("/", "~")) and Path(str(key)).expanduser().resolve() == here for key in listed)
 
 
-@native("head pr", writes=True, files=UNIT, replaces=("hz-pr-open",), help=H(
+@native("head pr", writes=True, replaces=("hz-pr-open",), help=H(
     "From a clean worktree to a queued PR: checks, one pinned push under the run lock, the PR, then ship.",
     "Use when the head is committed on a work branch. Without --live it checks and prints what it would run.",
     "nothing without --live. With --live: pushes the branch, opens the PR, queues it. It never switches auto-merge on.",
@@ -156,8 +155,9 @@ def is_focus(worktree: Path) -> bool:
     "commit-message rule and the confidential terms before anything is pushed or opened; nothing you wrote is printed\n"
     "before that. It pushes the checked commit (SHA:refs/heads/BRANCH) and ships only this repository's PR at that SHA.\n"
     "Exit 75: the push check says WAIT, or the run lock was not free within head_pr_lock_max_wait_seconds.\n"
-    "A focus head (`sm focus add`) or a release/* branch pushes with `sm gate run --exclusive`: its pre-push hook's timed\n"
-    "session starts only on an idle machine, and no other heavy command starts until the push ends.\n"
+    "The push takes the run lock's push lane (setting lock_push_lane; a focus head or a release/* branch asks for it itself with\n"
+    "`sm gate run --exclusive`): its pre-push hook's timed session starts only on an idle machine below the start bar, and no other\n"
+    "heavy command starts until the push ends.\n"
     "Exit 2 after the PR is open: the guard answered NEEDS_REVIEW. It does not run the repository's `make pr`.\n"
     "While `sm queue hold` holds the queue, --live refuses with the hold's reason (exit 1, nothing pushed)."))
 def head_pr(
@@ -174,7 +174,9 @@ def head_pr(
         queue_hold.refuse_while_held(f"sm head pr {bead} --live")
     conf = deps.configure()
     commands = runtime().providers.commands
-    forge = GitHub(commands, repo=str(conf.get("repo") or hzlib.CORE))
+    branch_owner.guard_write(commands, worktree, record=live)  # one writer per branch: another agent's branch is refused, naming its owner
+    # the repository is the one the worktree's origin names (a plugins worktree opens a plugins PR), else the configured one
+    forge = GitHub(commands, repo=repos.repo_of_checkout(commands, str(Path(worktree).expanduser().resolve())) or str(conf.get("repo") or hzlib.CORE))
     done = pr.open_pr(worktree, bead, title, body_file, reason, commands=commands, forge=forge, live=live,
                       max_wait=int(conf.get("head_pr_lock_max_wait_seconds") or ShipSettings.model_fields["head_pr_lock_max_wait_seconds"].default),
                       critical=is_focus(worktree))

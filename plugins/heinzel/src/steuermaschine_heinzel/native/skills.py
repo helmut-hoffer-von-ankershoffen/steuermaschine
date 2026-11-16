@@ -18,7 +18,6 @@ from steuermaschine.native import Group, native, runtime
 
 from .coord_lib.base import tracker_dir
 
-UNIT = ("skills.py", "coord_lib")  # the review unit: the default skills directory is in the tracker's repository (coord_lib)
 
 
 class SkillsSettings(BaseModel):
@@ -29,7 +28,7 @@ class SkillsSettings(BaseModel):
     skills_link_dirs: list[str] = Field([], description="Directories that get one symbolic link per skill (the agents' skill directories).")
     # old name kept: agent types of the skills on disk
     skills_allow_words: list[str] = Field(["hz-builder", "hz-chore"], description="Words that look like old tool names and are not (agent types, flags).")
-    skills_unlisted_ok: list[str] = Field(["self", "tools", "review", "focus"], description="Command paths (and everything below them) that no skill has to name.")
+    skills_unlisted_ok: list[str] = Field(["self", "tools", "review", "focus", "work"], description="Command paths (and everything below them) that no skill has to name.")
 
 
 SKILLS = Group("doc skills", H(
@@ -87,7 +86,7 @@ def _old_names() -> dict[str, str]:
     return {row.tool: (f"{PROG} {row.path}" if row.path else "") for row in ROWS}
 
 
-@native("doc skills generate", writes=True, replaces=("hz-skills",), files=UNIT, help=H(
+@native("doc skills generate", writes=True, replaces=("hz-skills",), help=H(
     "Write each skill's command reference and the command index from the command tree.",
     "Use after a command or a skill changed, before `sm doc skills check`.",
     "rewrites <skill>/references/tools.md of every skill and INDEX.md in the skills directory; nothing else. Not committed.",
@@ -118,7 +117,7 @@ def doc_skills_check(ctx: typer.Context) -> SkillCheck:
     return SkillCheck(skills_dir=str(skills), problems=problems)
 
 
-@native("doc skills link", writes=True, replaces=("hz-skills",), files=UNIT, help=H(
+@native("doc skills link", writes=True, replaces=("hz-skills",), help=H(
     "Link every role skill into the agents' skill directories.",
     "Use after a skill was added or the skills directory moved.",
     "creates or repairs one symbolic link per skill in each directory of the setting skills_link_dirs; nothing else.",

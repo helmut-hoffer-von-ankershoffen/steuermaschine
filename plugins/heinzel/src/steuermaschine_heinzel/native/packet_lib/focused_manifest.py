@@ -16,17 +16,18 @@ case inventory comes from Git objects in the Core repository:
 - config_blob: the tree's `pyproject.toml` blob;
 - selection: the base's own `scripts/affected.py` run on a checkout of the tree
   (web-1/web-2 browser lanes map to the `browser` lane), or a reviewed --selection.
-  A full, "ALL", directory, empty or over-limit selection refuses like the resolver,
-  except Vitest: when the base's focused_job.py has VITEST_ALL ("web/ALL"), a Vitest
-  "ALL" or more than MAX_IDS Vitest files becomes the web lane ["web/ALL"] (the whole
-  suite, no file filter). The sentinel is only accepted alone in the web lane.
+  A full, "ALL", directory or empty selection refuses like the resolver; no lane has a
+  maximum number of ids (owner 2026-11-14: sm reads no MAX_IDS or PYTHON_CI_MAX_IDS).
+  Vitest: when the base's focused_job.py has VITEST_ALL ("web/ALL"), a Vitest "ALL"
+  becomes the web lane ["web/ALL"] (the whole suite, no file filter). The sentinel is
+  only accepted alone in the web lane.
 
 case_sha256 is the canonical digest of each lane's JUnit `[classname, name]` pairs
 (Core `focused_coverage.cases_digest`), read from --junit files of the focused run.
 Every pytest case must belong to a selected test file and every selected file must
 have a case. For ["web/ALL"] every JUnit classname must be a Vitest file of the tree
 (web/**.test|spec.*, relative to web/) and every such file must have a case. Base
-limits (LANES, MAX_IDS, PYTHON_CI_MAX_IDS, VITEST_ALL, TOKEN, PATH) are read from
+facts (LANES, VITEST_ALL, TOKEN, PATH; no id maximum) are read from
 base sources with `ast`; no Core or candidate module is imported here.
 The base's affected.py and related_tests.py run with `python3 -I` from a directory
 outside the candidate tree, which is read as data only and never on sys.path; no
@@ -63,7 +64,6 @@ HEX = re.compile(r"[0-9a-f]{64}")
 PREOPEN_PR_REF = "refs/pull/*/merge"
 MAIN_REF = "refs/heads/main"
 MAX_DIFF = 1024 * 1024
-MAX_COVERED_FILES = 100
 MAX_JUNIT = 32 * 1024 * 1024
 KIND_PREFIX = {"pytest": "tests/", "vitest": "web/", "e2e": "tests/e2e/", "managed": "desktop/managed/test/",
                "node": "desktop/test/", "consumer": "plugins/"}
@@ -261,9 +261,7 @@ class Policy:
             # Round 2 (S10): tracked files matching a pattern are pinned too (focused_plan.protected_blobs).
             self.patterns = tuple(ast.literal_eval(plan["PROTECTED_PATTERNS"])) if "PROTECTED_PATTERNS" in plan else ()
             self.lanes = {k: tuple(v) for k, v in ast.literal_eval(plan["LANES"]).items()}
-            self.max_ids = int(ast.literal_eval(job["MAX_IDS"]))
-            # Older bases had one limit for every lane.
-            self.python_max_ids = int(ast.literal_eval(job.get("PYTHON_CI_MAX_IDS", job["MAX_IDS"])))
+            # No lane has an id maximum (owner 2026-11-14, bead hl17): MAX_IDS and PYTHON_CI_MAX_IDS are not read.
             # Older bases have no whole-suite web selection: None keeps refusing Vitest ALL as before.
             self.vitest_all = ast.literal_eval(job["VITEST_ALL"]) if "VITEST_ALL" in job else None
         except (KeyError, ValueError, TypeError) as exc:
@@ -324,9 +322,7 @@ def check_selection(selection: Any, repo: Repo, tree: str, policy: Policy) -> No
             "missing or unknown focused lane")
     for lane, tests in selection.items():
         kind = policy.lanes[lane][2]
-        limit = policy.python_max_ids if lane == "python" else policy.max_ids
-        require(isinstance(tests, list) and 0 < len(tests) <= limit,
-                f"empty or broad focused lane {lane} ({len(tests) if isinstance(tests, list) else '?'} > {limit})")
+        require(isinstance(tests, list) and len(tests) > 0, f"empty focused lane {lane}")  # no maximum
         require(len(set(tests)) == len(tests), f"duplicate selection in {lane}")
         whole = [(owner, token) for owner, token in policy.whole.items() if token in tests]
         if whole:  # a whole suite names no file: only alone, only in its own lane, no blob to pin
@@ -354,8 +350,6 @@ def desktop_unit(path: str) -> bool:
 def unmet(changed: dict[str, str], production: dict[str, str], selection: dict[str, list[str]]) -> str | None:
     """Core focused_plan._unmet: the first lane requirement a selection misses. The merge tier then runs the full set
     (fail-open), so for a merge-tier base this is a note, not a refusal."""
-    if len(production) > MAX_COVERED_FILES:
-        return f"{len(production)} production files exceed the scoped coverage bound of {MAX_COVERED_FILES}"
     if production and "python" not in selection:
         return "Python production without a Python selection"
     browser = {"browser", "macos-browser", "e2e-web-1", "e2e-web-2"}
@@ -371,7 +365,7 @@ def check_scope(changed: dict[str, str], production: dict[str, str], selection: 
     """Older bases refuse a selection that misses a lane; a merge-tier base returns why CI runs the full set."""
     if policy is not None and policy.merge_tier:
         return unmet(changed, production, selection)
-    require(len(production) <= MAX_COVERED_FILES, "too many production files")
+    # No bound on the number of covered production files (owner 2026-11-14: PRs of any size).
     require(not production or "python" in selection, "Python production requires a Linux coverage selection")
     if any(web_production(p) for p in changed):
         require("web" in selection and {"browser", "macos-browser"} & selection.keys(),
@@ -421,11 +415,10 @@ def base_protected_blobs(repo: Repo, base: str, treeish: str) -> dict[str, str] 
     return blobs
 
 
-def derive_selection(result: dict[str, Any], *, vitest_all: str | None = None,
-                     max_ids: int | None = None) -> tuple[dict[str, list[str]] | None, list[str]]:
+def derive_selection(result: dict[str, Any], *, vitest_all: str | None = None) -> tuple[dict[str, list[str]] | None, list[str]]:
     """Map the advisory selection to focused lanes; return (selection or None, refusal reasons).
 
-    With the base's VITEST_ALL, a Vitest "ALL" or more than max_ids Vitest files is the whole suite. A merge-tier
+    With the base's VITEST_ALL, a Vitest "ALL" is the whole suite. A merge-tier
     base's selector maps the lanes itself (affected.focused_lanes, carried as result["focused"]): taken as it is.
     """
     if isinstance(result.get("focused"), dict):
@@ -433,8 +426,7 @@ def derive_selection(result: dict[str, Any], *, vitest_all: str | None = None,
         if lanes is None:
             return None, [f"the base selector runs the full set: {reason}", *result["reasons"]]
         return {lane: list(tests) for lane, tests in lanes.items()}, []
-    whole_web = vitest_all is not None and (
-        "ALL" in result["vitest"] or (max_ids is not None and len(result["vitest"]) > max_ids))
+    whole_web = vitest_all is not None and "ALL" in result["vitest"]
     if result["full"] or "ALL" in result["pytest"] or ("ALL" in result["vitest"] and not whole_web):
         return None, ["repository selector selects the full set", *result["reasons"]]
     refusals = [f"directory selection is broad: {p}" for p in result["pytest"] if p.endswith("/")]
@@ -563,7 +555,7 @@ def build(repo: Repo, head: str, base: str, *, selection: dict[str, list[str]] |
     config_blob = repo.blob(tree, "pyproject.toml")
 
     advisory = repo_selection(repo, base, tree, changed)
-    derived, refusals = derive_selection(advisory, vitest_all=policy.vitest_all, max_ids=policy.max_ids)
+    derived, refusals = derive_selection(advisory, vitest_all=policy.vitest_all)
     if selection is None:
         require(derived is not None, "refused: " + "; ".join(refusals[:8]) + " (supply a reviewed --selection)")
         selection = derived

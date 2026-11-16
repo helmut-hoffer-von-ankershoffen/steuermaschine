@@ -31,6 +31,7 @@ from . import receipt_guard
 from ... import environment  # moved: the process context is a typed model
 from ... import state as statedir  # the plugin's state paths
 from .. import pr_owned  # added (m598): PRs opened by sm head pr
+from ..queue_lib import core_facts
 
 NAMES = ('FOCUSED_CI_PLANS', *(f'FOCUSED_CI_PLANS_V2_{i}' for i in range(4)))
 ACTIVE = ('queued', 'in_progress', 'waiting', 'pending', 'requested')
@@ -239,7 +240,8 @@ def version_locks(cache):
 
 
 def reader_contract(core, base):
-    for path, count in (('.github/workflows/ci.yml', 2), ('.github/workflows/merge-gate.yml', 1)):
+    policy = core_facts.at(base) if a.SHA.fullmatch(str(base)) else core_facts.at_main()
+    for path, count in ((policy.workflow, 2), (policy.judge_workflow, 1)):
         text = a._run(['git', 'show', f'{base}:{path}'], cwd=core).decode()
         for name in NAMES:
             require(text.count(f'{name}: ${{{{ vars.{name} }}}}') == count, 'trusted main lacks all registry reader injections')
@@ -576,7 +578,7 @@ def prepare(rt, packet_path, review_root, protected=False, pr=None, nonconsumers
                                  resulting_main=is_main, protected_producer=protected)
         if resulting_main_only:
             require(not {'scripts/focused_gate.py', 'scripts/focused_gate.py.lock', 'scripts/merge_gate.py',
-                         'scripts/merge_gate.py.lock', resulting.JUDGE} & packet['manifest']['changed'].keys(),
+                         'scripts/merge_gate.py.lock', resulting._policy(rt, base).judge_file} & packet['manifest']['changed'].keys(),
                     'resulting-main-only refuses protected judgment source changes')
         repo_variables, org_variables = rt.variables()
         require(not set(NAMES) & org_variables.keys(), 'organization focused transport ambiguity')

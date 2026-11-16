@@ -35,6 +35,13 @@ def test_an_invalid_result_exits_1_and_writes_nothing(tmp_path):
     assert run.returncode == 1 and "not installed" in run.stderr
 
 
+def test_dictionary_settings_remain_valid_toml(tmp_path):
+    run, new = migrate(tmp_path, '[project]\nname = "p"\nplugin = "heinzel"\n\n[heinzel]\n'
+                                 'brief_clones = {core = "heinzel", "pet🐾" = "steuermaschine"}\n')
+    assert run.returncode == 0, run.stderr
+    assert new["heinzel"]["brief_clones"] == {"core": "heinzel", "pet🐾": "steuermaschine"}
+
+
 def test_the_user_config_can_live_beside_the_release(tmp_path, monkeypatch):
     from steuermaschine import config
 

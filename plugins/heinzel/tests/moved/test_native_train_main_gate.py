@@ -178,6 +178,7 @@ def rel(tool, home, monkeypatch):
 
 def test_candidate_gate_refuses_unknown_and_remembers_a_pass_outside_the_receipt(rel, home, monkeypatch):
     calls = []
+    monkeypatch.setattr(rel, "release_pr", lambda tag: None)
     verdict = {"verdict": "refuse", "kind": "unknown", "why": "run 1 at aaa failure: UNKNOWN failing job(s) Lint", "run": 1}
     monkeypatch.setattr(rel.hzlib, "main_release_gate", lambda tip: calls.append(tip) or verdict)
     with pytest.raises(rel.Stop, match="main gate \\(train path\\) refused: .*UNKNOWN failing job"):
@@ -191,6 +192,27 @@ def test_candidate_gate_refuses_unknown_and_remembers_a_pass_outside_the_receipt
     assert rel.main_candidate_gate("0.9.29") is True and calls == [TIP, TIP]
     with pytest.raises(rel.Stop):
         rel.main_candidate_gate("0.9.30")
+
+
+def test_candidate_gate_rechecks_exact_pr_when_main_is_unknown(rel, home, monkeypatch):
+    monkeypatch.setattr(rel.hzlib, "main_release_gate", lambda tip: {"verdict": "refuse", "why": "UNKNOWN"})
+    monkeypatch.setattr(rel, "release_pr", lambda tag: {"number": 17, "state": "OPEN"} if tag == "v0.9.29" else None)
+    calls = []
+    monkeypatch.setattr(rel.release_candidate_policy, "verify_pr", lambda number: calls.append(number) or {"run_id": 42})
+    assert rel.main_candidate_gate("0.9.29") is True
+    assert rel.main_candidate_gate("0.9.29") is True
+    assert calls == [17, 17]
+    assert not (statedir.root() / "release-main-gate.json").exists()
+
+
+def test_candidate_gate_refuses_when_exact_candidate_is_unverifiable(rel, monkeypatch):
+    monkeypatch.setattr(rel.hzlib, "main_release_gate", lambda tip: {"verdict": "refuse", "why": "UNKNOWN"})
+    monkeypatch.setattr(rel, "release_pr", lambda tag: {"number": 17, "state": "OPEN"})
+    def fail(number):
+        raise ValueError("invalid candidate")
+    monkeypatch.setattr(rel.release_candidate_policy, "verify_pr", fail)
+    with pytest.raises(rel.Stop, match="UNKNOWN"):
+        rel.main_candidate_gate("0.9.29")
 
 
 def test_default_release_path_still_requires_first_attempt_green_tip(rel, monkeypatch):

@@ -12,7 +12,7 @@ from ... import environment  # moved: the process context is a typed model
 from ..queue_lib import edge as _base
 from ..queue_lib.edge import PACKAGE, configure, fresh, module_of, moved, note, records_dir, setting  # noqa: F401 - the moved code's edge
 from ..queue_lib.edge import run as _run
-from . import approved, moved_map
+from . import moved_map
 
 _base.MAPS.setdefault("release_lib", moved_map)  # the moved code loads a moved tool by its old file name
 
@@ -43,8 +43,6 @@ def core_checkout() -> str:
     return str(_conf.get("core_checkout") or "")
 
 
-def approved_pins() -> dict[str, str]:
-    return approved.pins()
 
 
 def sm() -> list[str]:

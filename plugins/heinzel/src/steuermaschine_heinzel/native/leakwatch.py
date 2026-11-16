@@ -147,7 +147,7 @@ def leakwatch_check() -> LeakCheck:
     return LeakCheck(findings=watch.findings(samples, cfg, now), samples=len(samples), judged_on=judged, newest_sample_age_minutes=age)
 
 
-@native("mini leakwatch sample", writes=True, review="mini-leakwatch-sample.md", replaces=("hz-leakwatch",), help=H(
+@native("mini leakwatch sample", writes=True, replaces=("hz-leakwatch",), help=H(
     "Take one sample of the live hz and append it to the samples file. For the service manager, every five minutes.",
     "Use for the sampler job; by hand only to prove the sampler works.",
     "appends one JSON line to samples.jsonl in the leak watch state directory (rotated at 20 MB). Read-only toward hz: ps, lsof, netstat, launchctl list, one local GET.",

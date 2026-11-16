@@ -129,18 +129,6 @@ def test_dry_run_in_text_changes_nothing(tmp_path, monkeypatch):
     assert doc.state == "planned" and not doc.live and doc.picked[0].runs[0].state == "would_rerun" and doc.rerun == []
 
 
-def test_rerun_is_off_until_its_review_is_approved(tmp_path, monkeypatch):
-    from steuermaschine.native import NativeCommand
-
-    # an unreviewed state, set explicitly: the test must not depend on what reviews/ci-*.md says today
-    monkeypatch.setattr(NativeCommand, "review_state", lambda self: ("open", f"the last line of reviews/{self.review_file} is not exactly the verdict line"))
-    world = world_with_deferred(tmp_path)
-    for argv in (["ci", "rerun"], ["ci", "rerun", "--dry-run"], ["ci", "rerun", "--all"]):
-        off = invoke(runtime(tmp_path, monkeypatch, world, reviewed=False), argv)
-        assert off.exit_code == 70 and "independent review is open" in off.stderr and "reviews/ci-rerun.md" in off.stderr, argv
-    assert world.calls == []
-
-
 def test_it_waits_with_exit_75_and_re_runs_nothing(tmp_path, monkeypatch):
     world = world_with_deferred(tmp_path)
     world.all_runs = [{"status": "in_progress", "headBranch": "release/v1.2.3", "databaseId": 50}]

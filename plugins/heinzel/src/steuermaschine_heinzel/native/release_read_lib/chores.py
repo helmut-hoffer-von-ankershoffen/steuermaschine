@@ -1,5 +1,4 @@
-"""Hand chores scripted: overdue-triage, pin-diagnose, post-publish (see `hz-chores --help`)."""
-import argparse, hashlib, json, os, re, subprocess, sys
+import argparse, json, os, re, subprocess
 from . import edge  # moved: records, processes and what used to be separate scripts
 CORE = "helmut-hoffer-von-ankershoffen/heinzel"
 CORE_DIR = edge.core_checkout()  # moved: the read-only core checkout, from the plugin's settings
@@ -20,26 +19,6 @@ def triage(beads, shows, merged):
     return out
 
 
-def approved_sources(path=None):
-    from ..release_lib import candidate_policy as p
-    return p.APPROVED_SOURCES
-
-
-def sha(data):
-    return hashlib.sha256(data).hexdigest()
-
-
-def find_approved_blob(history, want):
-    """history: [(commit, bytes)] newest first; returns the commit whose content hashes to want, else None."""
-    return next((c for c, data in history if sha(data) == want), None)
-
-
-def skeleton(name, old, new, want, got):
-    return (f"Review request: pin update for {name}\n  approved {want[:12]} (commit {old})\n  executed {got[:12]} (ref {new})\n"
-            f"  Q1: does the diff above weaken a check or widen what the candidate trusts? yes/no with reasons\n"
-            f"  Q2: is every changed line needed for the release? Then update APPROVED_SOURCES in tools/release_candidate_policy.py")
-
-
 def sh(*a):
     return edge.run(a, capture_output=True, text=True).stdout
 
@@ -55,22 +34,6 @@ def cmd_triage(a):
         print(f"  {i}  {t}  merged: {','.join('#%d' % n for n in prs)}  -> bd close {i} --reason 'merged #{prs[-1]}'")
 
 
-def cmd_pin(a):
-    for name, want in approved_sources().items():
-        got_b = edge.run(["git", "-C", CORE_DIR, "show", f"{a.ref}:{name}"], capture_output=True).stdout
-        if sha(got_b) == want:
-            print(f"ok   {name}"); continue
-        revs = sh("git", "-C", CORE_DIR, "log", "--format=%H", "-n", "60", a.ref, "--", name).split()
-        hist = [(c, edge.run(["git", "-C", CORE_DIR, "show", f"{c}:{name}"], capture_output=True).stdout) for c in revs]
-        old = find_approved_blob(hist, want)
-        print(f"DIFF {name}: executed {sha(got_b)[:12]} != approved {want[:12]}")
-        if old:
-            print(sh("git", "-C", CORE_DIR, "diff", old, a.ref, "--", name)[:6000])
-        else:
-            print("  approved blob not found in the last 60 commits of this file")
-        print(skeleton(name, old or "unknown", a.ref, want, sha(got_b)))
-
-
 def cmd_post(a):
     v = a.version
     print(f"Post-publish checklist for v{v} (run in order):\n  1. sm release train resume-ci --dry-run ; then without --dry-run\n"
@@ -83,8 +46,6 @@ def main(argv=None):
     p = argparse.ArgumentParser(prog="sm release after", description=__doc__)
     s = p.add_subparsers(dest="c", required=True)
     s.add_parser("overdue-triage", help="list overdue beads whose referenced PRs are merged").set_defaults(f=cmd_triage)
-    q = s.add_parser("pin-diagnose", help="compare executed pinned files at REF with APPROVED_SOURCES, print diff and review skeleton")
-    q.add_argument("ref", nargs="?", default="origin/main"); q.set_defaults(f=cmd_pin)
     r = s.add_parser("post-publish", help="print the release-post-publish checklist"); r.add_argument("version"); r.set_defaults(f=cmd_post)
-    a = p.parse_args(argv); a.f(a)
+    a = p.parse_args(argv); return a.f(a) or 0
 

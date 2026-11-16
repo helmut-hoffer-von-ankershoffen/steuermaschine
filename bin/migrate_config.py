@@ -19,6 +19,15 @@ import tomllib
 from pathlib import Path
 
 
+def toml_value(value):
+    """Serialize nested settings as TOML, including inline tables."""
+    if isinstance(value, dict):
+        return "{" + ", ".join(f"{json.dumps(str(key), ensure_ascii=False)} = {toml_value(item)}" for key, item in value.items()) + "}"
+    if isinstance(value, list):
+        return "[" + ", ".join(toml_value(item) for item in value) + "]"
+    return json.dumps(value, allow_nan=False, ensure_ascii=False)
+
+
 def emit(data: dict) -> str:
     out = ["# steuermaschine user config for this release. Written by bin/promote (bin/migrate_config.py).",
            "# To change a value: edit ~/.config/steuermaschine/migrate-values.toml and promote, or edit this file (it is carried forward).", ""]
@@ -26,7 +35,7 @@ def emit(data: dict) -> str:
         out.append(f"[{table}]")
         for key, value in values.items():
             if value is not None:
-                out.append(f"{key} = {json.dumps(value) if not isinstance(value, bool) else str(value).lower()}")
+                out.append(f"{key} = {toml_value(value)}")
         out.append("")
     return "\n".join(out)
 

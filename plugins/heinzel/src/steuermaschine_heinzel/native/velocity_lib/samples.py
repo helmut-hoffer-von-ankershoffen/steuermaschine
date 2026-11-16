@@ -25,6 +25,7 @@ import secrets
 import stat
 import statistics
 from urllib.parse import urlencode
+from ..queue_lib import core_facts
 
 CORE = "helmut-hoffer-von-ankershoffen/heinzel"
 MAX_CALLS = 15
@@ -255,7 +256,7 @@ def eligible_observation(cache, repo, pr):
 def count_ci(api, repo, pr, observed_at):
     until = pr.get("mergedAt") or observed_at
     params = urlencode({"branch": pr["headRefName"], "event": "pull_request", "per_page": 100, "created": f"{pr['createdAt']}..{until}"})
-    data = api.read(f"repos/{repo}/actions/workflows/ci.yml/runs?{params}")
+    data = api.read(f"repos/{repo}/actions/workflows/{core_facts.ci_file()}/runs?{params}")
     runs = data.get("workflow_runs", [])
     return {"pr_ci_runs_observed": len(runs), "pr_ci_attempts_observed": sum(r.get("run_attempt", 1) for r in runs), "pr_ci_run_count_complete": data.get("total_count") == len(runs), "count_binding": "branch and PR lifetime; branch reuse remains a limitation"}
 
@@ -269,7 +270,7 @@ def repository_matches(value, repo, database_id=None):
 
 
 def ci_binding(run, pr, repo, observed_at):
-    if run.get("event") != "pull_request" or run.get("head_branch") != pr["headRefName"] or run.get("path", "").split("@")[0] != ".github/workflows/ci.yml" or not repository_matches(run.get("repository"), repo):
+    if run.get("event") != "pull_request" or run.get("head_branch") != pr["headRefName"] or run.get("path", "").split("@")[0] != core_facts.ci_path() or not repository_matches(run.get("repository"), repo):
         raise Unavailable("CI run does not match selected PR repository/branch/workflow")
     associations = run.get("pull_requests") or []
     base_id = (pr.get("baseRepository") or {}).get("databaseId")

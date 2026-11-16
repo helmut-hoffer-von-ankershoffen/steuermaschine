@@ -75,8 +75,12 @@ class FileStore:
     def put_receipt(self, kind: str, key: str, data: dict[str, Any]) -> None:
         path = self._path("receipts", kind, key)
         path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "x") as handle:  # "x": a receipt is written once
-            handle.write(json.dumps(data, indent=1, sort_keys=True) + "\n")
+        draft = path.with_name(f".{path.name}.{os.getpid()}.draft")  # whole or not at all: a reader never sees half a receipt
+        draft.write_text(json.dumps(data, indent=1, sort_keys=True) + "\n")
+        try:
+            os.link(draft, path)  # a receipt is written once: FileExistsError when it is there
+        finally:
+            draft.unlink()
 
     def get_receipt(self, kind: str, key: str) -> dict[str, Any] | None:
         try:

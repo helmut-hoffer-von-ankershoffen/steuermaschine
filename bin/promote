@@ -13,6 +13,8 @@
 #   bin/promote --recheck    run the quality gate again although it passed for this commit (receipt: $SM_STABLE/gate-passed/)
 # Layout: $SM_STABLE (default ~/Code/steuermaschine-stable)/releases/<commit>/{src,venv}, current -> releases/<commit>,
 # previous -> the one before; ~/.local/bin/sm -> $SM_STABLE/bin/sm. bin/rollback switches back.
+# A switch needs one independent verdict on the exact commit, recorded outside the tree: bin/promote_verdict.py, checked
+# by the candidate's checker and by the live release's (verdict_holds in bin/promote_lib.sh).
 set -u
 here="$(cd "$(dirname "$0")/.." && pwd)"
 stable="${SM_STABLE:-$HOME/Code/steuermaschine-stable}"
@@ -20,7 +22,7 @@ accept=0; check=0; force=0; recheck=0; redok=""; want_reason=0; want_wait=0; wai
 for a in "$@"; do
   if [ "$want_reason" = 1 ]; then redok="$a"; want_reason=0; continue; fi
   if [ "$want_wait" = 1 ]; then case "$a" in ''|*[!0-9]*) echo "promote: --wait-idle takes minutes" >&2; exit 2 ;; esac; wait_min="$a"; want_wait=0; continue; fi
-  case "$a" in --red-gate-ok) want_reason=1 ;; --wait-idle) want_wait=1 ;; --recheck) recheck=1 ;; --accept-diff) accept=1 ;; --check) check=1 ;; --force-during-run) force=1 ;; -h|--help) sed -n '2,15p' "$0"; exit 0 ;; *) echo "promote: unknown argument $a" >&2; exit 2 ;; esac
+  case "$a" in --red-gate-ok) want_reason=1 ;; --wait-idle) want_wait=1 ;; --recheck) recheck=1 ;; --accept-diff) accept=1 ;; --check) check=1 ;; --force-during-run) force=1 ;; -h|--help) sed -n '2,17p' "$0"; exit 0 ;; *) echo "promote: unknown argument $a" >&2; exit 2 ;; esac
 done
 [ "$want_wait" = 0 ] || { echo "promote: --wait-idle takes minutes" >&2; exit 2; }
 [ "$want_reason" = 0 ] || { echo "promote: --red-gate-ok takes a reason" >&2; exit 2; }
@@ -110,12 +112,9 @@ out="$(cd "$empty" && SM_HEINZEL__NO_SUCH_SETTING=1 "$cand" tools gaps 2>&1)"; r
 rmdir "$empty" 2>/dev/null
 [ "$fail" = 0 ] || die "smoke list failed; the stable install is unchanged"
 
-say "   review gate: every gated write command of the candidate approved at its exact digest (allow-list: bin/promote-allow.toml)"
-reviews_json="$(mktemp)"; gate_dir="$(mktemp -d)"
-(cd "$gate_dir" && "$cand" --format json self reviews) >"$reviews_json" 2>/dev/null || { rm -rf "$reviews_json" "$gate_dir"; die "the candidate cannot list its review units"; }
-"$rel/venv/bin/python" "$rel/src/bin/review_gate.py" "$reviews_json" "$rel/src/bin/promote-allow.toml" "$(date -u +%Y-%m-%d)" 2>&1 | sed 's/^/    /' >&2
-gate_rc="${PIPESTATUS[0]}"; rm -rf "$reviews_json" "$gate_dir"
-[ "$gate_rc" = 0 ] || die "a gated write command of the candidate is not approved; promoting would switch it off. Get its verdict at the candidate's digest (sm self reviews), or add a reviewed entry to bin/promote-allow.toml"
+say "   verdict: one independent verdict on $id, the diff from the live release, outside the tree ($stable/verdicts/)"
+verdict_holds "$rel/venv/bin/python" "$stable" "$here" "$full" "$rel/src/bin/promote_verdict.py" 2>&1 | sed 's/^/    /' >&2
+[ "${PIPESTATUS[0]}" = 0 ] || die "no valid independent verdict on $id. The reviewer reads the diff from the live release (sm self reviews --repo $here), then: bin/promote_verdict.py record \"$stable\" $here $full --reviewer NAME"
 
 say "4/5 compare with the running stable (read-only commands: stdout, stderr, exit code)"
 cur="$stable/current/venv/bin/steuermaschine"
@@ -152,6 +151,8 @@ live_rel=""; [ -x "$stable/current/venv/bin/steuermaschine" ] && live_rel="$(cd 
 migrate_state_to "$cand" "$rel/user-config.toml" "${live_rel:+$live_rel/venv/bin/steuermaschine}" "${live_rel:+$live_rel/user-config.toml}" 2>&1 | sed 's/^/    /' >&2
 [ "${PIPESTATUS[0]}" = 0 ] || die "the state could not be migrated; nothing switched (the lines above name the path; run bin/promote again once it is fixed)"
 
+# Another promote or a rollback may have moved the live release while this one waited: the verdict names its base.
+verdict_holds "$rel/venv/bin/python" "$stable" "$here" "$full" "$rel/src/bin/promote_verdict.py" >/dev/null 2>&1 || die "the verdict on $id no longer holds (the live release moved while this promote waited, or the verdict changed); nothing switched"
 say "5/5 switch"
 install_launcher "$stable" || die "the launcher could not be written"
 point_current "$stable" "$id" || die "switch failed"

@@ -34,7 +34,7 @@ class RepoError(Exception):
     """The checkout is unusable as the core repository (no Makefile, no tests), or git failed."""
 
 
-# Every CI job the ordinary pull request of a core change can start (ci.yml). "full" is all of them.
+# Every CI job the ordinary pull request of a core change can start (the CI workflow). "full" is all of them.
 JOBS_FULL = [
     "lint",
     "setup",
@@ -254,7 +254,7 @@ def classify(repo: Repo, changed: list[str]) -> dict:
         "pytest": [],  # paths for `uv run pytest` (unit and integration), [] when none, ["ALL"] for the whole suite
         "vitest": [],  # files for `vitest run`, ["ALL"] for the whole suite, [] when none
         "e2e_lanes": [],  # cli, supervised, web-1, web-2
-        "jobs": [],  # CI jobs of ci.yml beyond the always-on ones
+        "jobs": [],  # CI jobs of the CI workflow beyond the always-on ones
         "reasons": reasons,
     }
     if not changed:
@@ -306,7 +306,7 @@ def classify(repo: Repo, changed: list[str]) -> dict:
             if any(NATIVE_PY.search(p) for p in py_src):
                 jobs.add("macos-smoke")
             if any(re.search(r"src/heinzel/modules/system/ui/|src/heinzel/heads/", p) for p in py_src):
-                jobs.add("consumers")  # the contracts rule of ci.yml
+                jobs.add("consumers")  # the contracts rule of the CI workflow
         for t in py_tests:
             if t.startswith("tests/e2e/"):
                 lane = repo.lane_of(t)
@@ -395,7 +395,7 @@ CASES = [
     ("web shared i18n", ["web/src/i18n.ts", "web/src/layout/SearchPalette.tsx"], {"full": False, "vitest": ["ALL"], "jobs_not": ["test-linux"]}),
     ("docs only", ["docs/guides/install.md", "README.md"], {"full": False, "jobs_has": ["site-tests"], "jobs_not": ["lint", "test-linux", "e2e-web-1"], "pytest_has": ["tests/unit/documentation_test.py"]}),
     ("kernel = full", ["src/heinzel/kernel/_session_store.py"], {"full": True, "pytest": ["ALL"]}),
-    ("workflow = full", [".github/workflows/ci.yml"], {"full": True}),
+    ("workflow = full", [".github/workflows/any.yml"], {"full": True}),
     ("lockfile = full", ["uv.lock"], {"full": True}),
     ("daemon module = full", ["src/heinzel/modules/system/daemon/_service.py"], {"full": True}),
     ("notify module", ["src/heinzel/modules/system/notify/_store.py", "tests/unit/modules/notify_recovery_test.py"], {"full": False, "jobs_has": ["test-linux", "coverage", "e2e-web-1", "macos-smoke"], "jobs_not": ["e2e-cli"], "pytest_has": ["tests/unit/modules/notify_recovery_test.py"]}),

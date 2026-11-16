@@ -13,7 +13,6 @@ from steuermaschine import USAGE
 from steuermaschine.app import Runtime
 from steuermaschine.config import Project
 from steuermaschine.github.testing import FakeGh
-from steuermaschine.native import NativeCommand
 from steuermaschine.plugins import stack_of
 from steuermaschine.testing import fake_providers, invoke
 from steuermaschine_heinzel.native.admission_lib import focused_slots as s
@@ -52,16 +51,13 @@ def snapshot(root):
     return {p: p.read_bytes() for p in sorted(root.rglob("*")) if p.is_file()}
 
 
-@pytest.mark.parametrize("approved", [False, True])
 @pytest.mark.parametrize("form", ["text", "json"])
-def test_head_apply_refuses_a_batch_directory_and_writes_nothing(tmp_path, monkeypatch, approved, form):
-    if approved:  # even with head-apply.md approved and no test override, the batch path stays closed
-        monkeypatch.setattr(NativeCommand, "review_state", lambda self: ("approved", "approved"))
+def test_head_apply_refuses_a_batch_directory_and_writes_nothing(tmp_path, form):
     gh = FakeGh()
     out = batch_dir(tmp_path)
     before = snapshot(tmp_path)
     argv = ["head", "apply", str(out), "--approved", SHA]
-    done = invoke(runtime(gh, allow_unreviewed=not approved), ["--format", "json", *argv] if form == "json" else argv)
+    done = invoke(runtime(gh), ["--format", "json", *argv] if form == "json" else argv)
     text = done.stdout + done.stderr
     assert done.exit_code == USAGE == 2
     assert "batch apply is not available yet" in text and "Nothing was written" in text

@@ -265,19 +265,6 @@ def test_preview_in_text_and_json(setup):
     assert len(calls) == 2 and all(call[2] == "get" for call in calls)  # two previews, two reads, no write
 
 
-def test_it_is_off_until_its_review_is_approved(setup, tmp_path, monkeypatch):
-    from steuermaschine.native import NativeCommand
-
-    # an unreviewed state, set explicitly: the test must not depend on what reviews/ci-*.md says today
-    monkeypatch.setattr(NativeCommand, "review_state", lambda self: ("open", f"the last line of reviews/{self.review_file} is not exactly the verdict line"))
-    close, calls, _ = setup()
-    gated = runtime(tmp_path, monkeypatch, Cli(close), reviewed=False)
-    for argv in (pr_args(), pr_args("--apply"), []):
-        off = invoke(gated, ["ci", "sonar-close", *argv])
-        assert off.exit_code == 70 and "independent review is open" in off.stderr and "reviews/ci-sonar-close.md" in off.stderr
-    assert calls == []
-
-
 def test_apply_makes_exactly_these_calls_in_this_order(setup):
     second = row(issue="second", file="src/api.py", transition="accept", reason="Accepted: test-only endpoint.")
     close, calls, responses = setup(rows=[row(), second], issues=[finding(), finding(key="second", component=PROJECT + ":src/api.py")])

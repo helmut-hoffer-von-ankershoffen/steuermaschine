@@ -15,7 +15,6 @@ SPECIAL: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"hz-train (tick|run)\b"), "sm daemon train"),
     (re.compile(r"hz-train\b"), "sm release train"),
     (re.compile(r"hz-chores overdue-triage\b"), "sm beads sweep"),
-    (re.compile(r"hz-chores pin-diagnose\b"), "sm release pins"),
     (re.compile(r"hz-chores post-publish\b"), "sm release after"),
     (re.compile(r"hz-ci-resume-after-tag\b"), "sm release train resume-ci"),
     (re.compile(r"hz-verify-mini\b"), "sm release verify --mini"),
@@ -27,7 +26,7 @@ SPECIAL: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"~/\.cache/hz-train/(v[0-9.]+\.(?:json|log))"), r"the train's \1"),
     (re.compile(r"~/\.cache/hz-train/"), "the train's state directory"),
     (re.compile(r"~/\.cache/hz-assets-health\.json"), "the probe cache"),
-    (re.compile(r"tools/release_candidate_policy\.py"), "release_lib/approved_sources/ (replace the reviewed file)"),
+    (re.compile(r"tools/release_candidate_policy\.py"), "Core's scripts/release_policy.json (regenerate it in Core)"),
 )
 BY_TOOL = sorted(((row.tool, row.path) for row in ROWS if row.path), key=lambda item: -len(item[0]))
 LEFT = re.compile(r"(?<![/.\w-])hz-([a-z][a-z-]*)")  # never inside a path: a file is named as it is on disk

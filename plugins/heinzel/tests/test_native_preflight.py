@@ -6,6 +6,7 @@ import hashlib
 import json
 from pathlib import Path
 
+import policy_kit as kit
 import pytest
 
 from steuermaschine.app import Runtime
@@ -37,7 +38,8 @@ class Machine:
                       "git merge-base": MAIN, "git ls-remote": f"{MAIN}\trefs/heads/main", "git diff --name-only": "web/src/a.ts",
                       "git log --format=%B": "fix(web): thing\n\nbody\n", "git log --format=%s": "fix(web): thing\nfeat(cli): other\n",
                       "git show origin/main:pyproject.toml": PYPROJECT, "git ls-files": "web/src/a.ts", "make lint": "lint ok\n", "ps -o": "1\n",
-                      "gh api": json.dumps({"check_suites": [{"head_branch": "feat/thing"}]}), **rules}
+                      "gh api": json.dumps({"check_suites": [{"head_branch": "feat/thing"}]}),
+                      f"git show {HEAD}:scripts/release_policy.json": kit.encode(kit.manifest()).decode(), **rules}
 
     def on(self, needle, answer):
         self.rules[needle] = answer

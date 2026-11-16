@@ -16,7 +16,7 @@ Reads `gh pr diff` and flags the changes that make a red check go away instead o
   sonar      Sonar exclusions and NOSONAR
   quarantine any change to core's quarantine lane (tests/quarantine.toml, scripts/quarantine.py, tests/_quarantine.py):
              an added or extended entry takes a test out of the required jobs, so it always needs an independent review;
-             also any +/- line mentioning quarantine in Makefile, .github/workflows/ci.yml or tests/conftest.py
+             also any +/- line mentioning quarantine in Makefile, the CI workflow or tests/conftest.py
 Markdown, rst and txt files are not scanned. Exit 1 on FLAG, 2 when the diff can't be read (a diff too large for gh is
 unreadable too). `hz-queue add` runs this and refuses a flagged PR unless given `--reviewed "reason"`."""
 
@@ -26,6 +26,7 @@ from pathlib import Path
 
 from . import edge  # moved: siblings are imported relatively, no sys.path entry
 from . import hzlib  # noqa: E402
+from . import core_facts  # noqa: E402
 
 DOC_FILES = (".md", ".mdx", ".rst", ".txt")
 HUNK = re.compile(r"^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@")
@@ -41,8 +42,8 @@ ADDED_RULES = [
     ("sonar", re.compile(r"NOSONAR|sonar\.[\w.]*(exclusions|ignore)", re.I)),
 ]
 QUARANTINE_FILES = ("tests/quarantine.toml", "scripts/quarantine.py", "tests/_quarantine.py")
-# The required expiry check runs `make quarantine-check` from ci.yml: a quarantine line there is lane wiring too.
-QUARANTINE_WIRING = ("Makefile", ".github/workflows/ci.yml", "tests/conftest.py")
+# The required expiry check runs `make quarantine-check` from the CI workflow: a quarantine line there is wiring too.
+QUARANTINE_WIRING = core_facts.Names(lambda: ("Makefile", core_facts.ci_path(), "tests/conftest.py"))
 TEST_DEF = re.compile(r"^\s*(?:async\s+)?def\s+(test_\w+)|^\s*(?:it|test)(?:\.each\([^)]*\))?\(\s*[\"'`]([^\"'`]+)[\"'`]|^\s*func\s+(Test\w+)\(")
 
 

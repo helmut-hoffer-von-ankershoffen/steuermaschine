@@ -18,6 +18,7 @@ from steuermaschine.github.client import Gh
 from steuermaschine.hashing import canonical_sha256
 
 from .. import updater_hold
+from ..queue_lib import core_facts
 from . import legacy
 from .decide import unknown
 
@@ -164,7 +165,7 @@ def queue_verdict(data: dict, frozen: bool, stalls: list[str]) -> str:
 
 
 def main_runs(w: World, limit: int = 5) -> list[dict]:
-    rows, _ = w.gh.try_json(["run", "list", "-R", w.repo, "--workflow", "ci.yml", "--branch", "main", "-L", str(limit),
+    rows, _ = w.gh.try_json(["run", "list", "-R", w.repo, "--workflow", core_facts.ci_file(), "--branch", "main", "-L", str(limit),
                              "--json", "status,conclusion,databaseId,headSha,attempt,createdAt"], timeout=12, retry=False)
     return rows if isinstance(rows, list) else []
 
@@ -593,11 +594,15 @@ def collect(w: World, live: bool = False, budget: float | None = None) -> dict[s
     return state
 
 
-def full_candidate_jobs() -> frozenset[str]:
-    """The success jobs of the reviewed full candidate workload (the pinned candidate reader names them)."""
-    from ..queue_lib import release_candidate
+def full_candidate_jobs(w: World, sha: str) -> frozenset[str] | None:
+    """The success jobs of the full candidate workload, from Core's reviewed release policy at `sha` (None: unknown)."""
+    from ..queue_lib import core_policy, release_candidate
 
-    return frozenset(name for name, conclusion in release_candidate.expected_jobs("workflow_dispatch").items() if conclusion == "success")
+    try:
+        policy = core_policy.at_commit_api(lambda path: w.gh_json(["api", f"repos/{w.repo}/{path}"], timeout=10), sha)
+    except release_candidate.CandidateError:
+        return None
+    return frozenset(name for name, conclusion in policy.expected_jobs("workflow_dispatch").items() if conclusion == "success")
 
 
 def probe_main_workload(w: World, state: dict) -> dict[str, Any]:
@@ -611,7 +616,10 @@ def probe_main_workload(w: World, state: dict) -> dict[str, Any]:
         return {"run": None, "workload": "unknown"}
     data = w.gh_json(["api", f"repos/{w.repo}/actions/runs/{ci['run']}/jobs?per_page=100"], timeout=10)
     jobs = data.get("jobs") if isinstance(data, dict) else None
-    return {"run": ci["run"], "workload": decide.workload(jobs, full_candidate_jobs())}
+    full = full_candidate_jobs(w, sha)
+    if full is None:
+        return {"run": ci["run"], "workload": "unknown"}
+    return {"run": ci["run"], "workload": decide.workload(jobs, full)}
 
 
 class _Deadline:

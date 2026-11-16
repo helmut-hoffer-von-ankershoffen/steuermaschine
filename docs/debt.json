@@ -1,10 +1,10 @@
 {
- "coverage core %": 94.0,
+ "coverage core %": 95.0,
  "coverage plugin moved libraries %": 95.0,
  "coverage plugin new code %": 98.0,
  "environment reads plugin": 13,
  "mypy strict findings core": 0,
- "mypy strict findings plugin": 2004,
+ "mypy strict findings plugin": 1989,
  "old names in plugin strings": 0,
- "ruff findings moved libraries and plugin tests": 142
+ "ruff findings moved libraries and plugin tests": 136
 }

@@ -15,7 +15,6 @@ from .handoff_lib.snapshot import HandoffSettings
 
 __all__ = ["HandoffSettings"]
 
-UNIT = ("handoff.py", "handoff_lib", "coord_lib")  # the review unit: the tracker directory and the child environment come from coord_lib
 
 PUBLISHES = ("writes the open-work snapshot file, commits ONLY that file (and paths named in handoff_files) on branch main of the tracker's repository, "
              "and PUSHES main to origin, fast-forward only.")
@@ -26,7 +25,7 @@ MORE = ("It never stashes, rebases, merges or stages anything else: uncommitted 
         "publish them all; --include-local-commits allows that. A git step that fails stops it with exit 1 and names the step.")
 
 
-@native("doc handoff", writes=True, replaces=("hz-handoff",), files=UNIT, help=H(
+@native("doc handoff", writes=True, replaces=("hz-handoff",), help=H(
     "Publish a fresh open-work snapshot to the remote of the tracker's repository, so another agent can take over from there.",
     "Use at a handoff, before a context reset, and after a checkpoint was written to the tracking document.",
     PUBLISHES,
@@ -42,7 +41,7 @@ def doc_handoff(dry_run: bool = typer.Option(False, "--dry-run", help="Print the
         raise Refuse(str(stop), "git -C <the tracker's repository> status") from None
 
 
-@native("doc hour", writes=True, replaces=("hz-hour",), files=UNIT, help=H(
+@native("doc hour", writes=True, replaces=("hz-hour",), help=H(
     "The facts of this hour and a draft of the owner update; then a handoff, unless --no-handoff.",
     "Use at every full hour between 07:00 and 23:00, and when something went live or a decision waits for the owner.",
     "without --no-handoff it " + PUBLISHES + " With --no-handoff: nothing.",

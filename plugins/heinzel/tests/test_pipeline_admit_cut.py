@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+from steuermaschine import verdicts
 from steuermaschine.app import Runtime
 from steuermaschine.config import Project
 from steuermaschine.github.testing import FakeGh
@@ -27,9 +28,9 @@ from steuermaschine_heinzel.native.preflight import HeadPreflight
 from steuermaschine_heinzel.native.queue import QueueChanged, QueueEntry, QueueList
 from steuermaschine_heinzel.native.release import ReleaseRun
 from steuermaschine_heinzel.native.release_admit_lib.release_ops import ReleasePrepareResult
-from steuermaschine_heinzel.native.release_read import NotesAudit, ReleasePins, ReleaseVerify, SurfaceCheck
+from steuermaschine_heinzel.native.release_read import NotesAudit, ReleaseVerify, SurfaceCheck
 from steuermaschine_heinzel.native.ship import HeadResult
-from steuermaschine_heinzel.pipelines import common
+from steuermaschine_heinzel.pipelines import common, release_cut
 from steuermaschine_heinzel.plugin import plugin
 
 HEAD = "e9c943810ea75cfad155a431a2f168b2a9559828"
@@ -42,8 +43,10 @@ BRANCH = "fix/update-all"
 @pytest.fixture(autouse=True)
 def clean_overrides():
     common.OVERRIDE.clear()
+    changes = release_cut.changes_since_release
     yield
     common.OVERRIDE.clear()
+    release_cut.changes_since_release = changes
 
 
 def runtime(tmp_path: Path, gh: FakeGh | None = None, vcs: FakeVcs | None = None, reviewed: bool = True, core: str | None = None) -> Runtime:
@@ -70,6 +73,9 @@ def report(out) -> dict:
 
 
 def verdict(rt: Runtime, digest: str) -> None:
+    need = (rt.providers.store.load(verdicts.KIND, digest) or {}).get("check")
+    if need:  # a packet digest binds its head: `sm check` was green on it, measured from the main the packet is built on
+        verdicts.record_check(rt.providers.store, need["head"], {"base": need["base"]})
     done = invoke(rt, ["review", "verdict", digest, "--approve", "--reviewer", "reviewer-fable", "--notes", "recomputed"])
     assert done.exit_code == 0, done
 
@@ -220,25 +226,6 @@ def test_a_new_head_in_the_worktree_supersedes_the_old_run(tmp_path):
     assert {r["key"]: r["status"] for r in rows}[HEAD] == "superseded"
 
 
-def test_the_pipeline_and_each_composed_write_are_under_the_review_gate(tmp_path, monkeypatch):
-    from steuermaschine.native import NativeCommand
-
-    monkeypatch.setattr(NativeCommand, "review_state", lambda self: ("open", f"reviews/{self.review_file} has no verdict (test)"))  # whatever the shipped review files say
-    rt, wt = runtime(tmp_path, reviewed=False), tmp_path / "wt"
-    wt.mkdir()
-    AdmitFakes(tmp_path)
-    off = invoke(rt, ["head", "admit", str(wt), *inputs(tmp_path)])
-    assert off.exit_code == 70 and "`sm head admit` writes and its independent review is open" in off.stderr
-    rows = {r["path"]: r for r in report(invoke(rt, ["--format", "json", "self", "reviews"]))}
-    assert rows["head admit"]["state"] == rows["release cut"]["state"] == "open"
-    assert "steuermaschine/engine.py" in rows["head admit"]["files"]  # the digest follows imports into core
-
-    from steuermaschine.native import NativeRuntime, using
-
-    with using(NativeRuntime(rt.providers, rt.settings, rt.project)), pytest.raises(Exception, match=r"head apply. writes and its independent review"):
-        common.run("head apply", packet=tmp_path / "p.json", approved="0" * 64)  # an override never opens a shut gate
-
-
 def test_a_red_preflight_refuses_with_its_failures_and_hosted_lanes_need_validation(tmp_path):
     rt, wt = runtime(tmp_path), tmp_path / "wt"
     wt.mkdir()
@@ -255,12 +242,13 @@ def test_a_red_preflight_refuses_with_its_failures_and_hosted_lanes_need_validat
 class CutFakes:
     def __init__(self, tmp_path: Path):
         self.tmp, self.calls, self.resumes = tmp_path, [], []
-        common.OVERRIDE.update({"release pins": self.pins, "release notes-audit": self.notes, "release admit prepare": self.prepare,
+        release_cut.changes_since_release = self.ci  # restored by clean_overrides
+        common.OVERRIDE.update({"release notes-audit": self.notes, "release admit prepare": self.prepare,
                                 "release admit apply": self.apply, "release resume": self.resume, "release verify": self.verify})
 
-    def pins(self, **kw):
-        self.calls.append("pins")
-        return ReleasePins(ref=kw["ref"], source="approved_sources", pins=[])
+    def ci(self, core, head):
+        self.calls.append("ci change")
+        return "7" * 40, ()  # no CI path changed since the last tag: no ci_change verdict needed
 
     def notes(self, **kw):
         self.calls.append("notes")
@@ -304,7 +292,7 @@ def test_the_0940_recut_stops_twice_survives_a_failed_compose_and_verifies(tmp_p
 
     first = cut(rt, *sets)
     assert first["status"] == "review" and first["review"]["step"] == "admission review" and first["review"]["file"].endswith("prepare.out")
-    assert fakes.calls == ["pins", "notes", "admit prepare"]
+    assert fakes.calls == ["ci change", "notes", "admit prepare"]
     verdict(rt, first["review"]["sha256"])
     applied = cut(rt, "--approved", first["review"]["sha256"], "--live")
     assert applied["status"] == "review", applied["phase"]

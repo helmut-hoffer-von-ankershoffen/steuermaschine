@@ -2,7 +2,7 @@
 the caps, the plan and the status lines. Building, publishing, shipping, rebasing and bisecting are not moved (they
 push, open and close PRs: write commands of their own, on top of `sm head ship` and `sm head pr` once those exist).
 
-Verbatim, except: the pinned files come from the reviewed approved sources of release_lib (the tool parsed the release
+Verbatim, except: the pinned files come from Core's reviewed release policy at Core's main (the tool parsed the release
 policy file next to it), and the Combiner class carries only its read methods. tests/views_verbatim.py prints every
 differing line. IO goes through the injected context (`gh`, `now`, `say`, `repo`, `plugins`) of sm head combine.
 """
@@ -14,15 +14,23 @@ import time
 from collections import Counter
 from dataclasses import dataclass, field
 
-from ..release_lib import approved
 
 
-def approved_sources() -> tuple[str, ...]:
-    """Pinned files (APPROVED_SOURCES keys): the reviewed approved sources of the release slice."""
+def approved_sources(gh, repo: str) -> tuple[str, ...] | None:
+    """Pinned files: the workflow and the recorder of Core's reviewed release policy at Core's main (None: unreadable)."""
+    from ..queue_lib import core_policy
+    from ..queue_lib.release_candidate import CandidateError
+
+    def get(path: str):
+        code, out = gh("api", f"repos/{repo}/{path}")
+        if code:
+            raise CandidateError(f"{path} unreadable")
+        return json.loads(out)
+
     try:
-        return tuple(approved.pins())
-    except (OSError, ValueError):
-        return (".github/workflows/ci.yml", "scripts/release_candidate.py")
+        return tuple(sorted(core_policy.at_commit_api(get, get("commits/main")["sha"]).pinned))
+    except (CandidateError, ValueError, KeyError, TypeError):
+        return None
 
 
 AREAS = ("web", "system", "plugin", "tools")
@@ -67,7 +75,7 @@ GENERATED = ("web/openapi.json", "web/src/api/schema.d.ts", "uv.lock", "web/pack
 SOLO_TOKENS = {"update", "updates", "updater", "install", "installed", "installation", "uninstall", "auth", "recovery"}
 
 
-PINNED = approved_sources() or (".github/workflows/ci.yml", "scripts/release_candidate.py")
+PINNED: tuple[str, ...] | None = None  # read by Combiner from Core's release policy; None refuses every member
 
 
 FAILING = {"FAILURE", "ERROR", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE"}
@@ -177,9 +185,11 @@ def refusal(m: Member, area: str, explicit: bool = False) -> str:
         return "conflicts with main: merge origin/main into it"
     if bad := sorted(set(m.checks) & FAILING):
         return f"draft checks failing ({', '.join(bad)})"
+    if PINNED is None:
+        return "pinned files unknown: Core's release policy (scripts/release_policy.json) at main is unreadable"
     pinned = [p for p in m.files if p in PINNED]
     if pinned and area != "tools":
-        return f"touches pinned {pinned[0]} (APPROVED_SOURCES): area tools, ships alone, re-pin after merge"
+        return f"touches pinned {pinned[0]} (Core's release policy): area tools, ships alone with its own review"
     if solo := [p for p in m.files if solo_file(p)]:
         return f"solo class (update/install/auth/recovery: {solo[0]}): ships alone with its own review"
     if area == "tools":
@@ -365,7 +375,9 @@ class Combiner:
 
 
     def __init__(self, ctx: Ctx):
+        global PINNED
         self.c = ctx
+        PINNED = approved_sources(ctx.gh, ctx.repo)
 
     def open_prs(self) -> list[dict]:
         rc, out = self.c.gh("pr", "list", "-R", self.c.repo, "--state", "open", "--limit", "100", "--json", PR_FIELDS)

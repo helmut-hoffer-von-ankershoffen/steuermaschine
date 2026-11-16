@@ -84,7 +84,7 @@ def test_gated_commands_get_capped_workers_and_overrides_only_lower_them(home):
 def test_no_gate_is_admitted_at_or_above_the_load_bar_even_with_priority(home):
     for level in ("0", "1", "2"):
         assert gate("run", "--priority", level, "--max-wait", "1", "--", "true", home=home, load="40").returncode == 75
-    assert gate("run", "--", "true", home=home, load="39.9").returncode == 0
+    assert gate("run", "--", "true", home=home, load="39.9", start_load=0).returncode == 0
     assert gate("run", "--max-wait", "1", "--", "true", home=home, load="60", max_load=100).returncode == 75  # a setting cannot raise the bar
 
 
@@ -95,19 +95,20 @@ def test_a_gate_inside_a_gate_runs_at_once_and_a_forged_holder_does_not(home):
     assert done.returncode == 0 and outer.split()[1] == inner_line.split()[1]
     first = holder(home)
     try:
-        forged = gate("run", "--max-wait", "1", "--", "true", home=home, load="20", extra={"HZ_GATE_HELD": str(first.pid)})
+        forged = gate("run", "--max-wait", "1", "--", "true", home=home, load="20", start_load=0, extra={"HZ_GATE_HELD": str(first.pid)})
         assert forged.returncode == 75
     finally:
         first.kill()
 
 
 def test_two_gates_run_together_below_load_20_and_share_the_workers(home):
-    first = holder(home, heavy_slots=2)
+    former = {"heavy_slots": 2, "start_load": 0, "reserved_slots": 0}  # the former lock: no start bar, no reserved slot
+    first = holder(home, **former)
     try:
-        done = gate("run", "--", "sh", "-c", "echo $VITEST_MAX_WORKERS", home=home, load="19", heavy_slots=2)
+        done = gate("run", "--", "sh", "-c", "echo $VITEST_MAX_WORKERS", home=home, load="19", **former)
         assert done.stdout.split()[-1] == "4"
-        assert gate("run", "--max-wait", "1", "--", "true", home=home, load="20", heavy_slots=2).returncode == 75
-        assert "heavy slots in use 1/2, workers per gate 9" in gate("status", home=home, heavy_slots=2).stdout
+        assert gate("run", "--max-wait", "1", "--", "true", home=home, load="20", **former).returncode == 75
+        assert "heavy slots in use 1/2, workers per gate 9" in gate("status", home=home, **former).stdout
     finally:
         first.kill()
 
@@ -136,6 +137,58 @@ def test_a_stale_slot_record_and_an_ancestor_pid_do_not_admit_a_gate(home):
     (home / ".cache/gate.lock").write_text(f"{os.getpid()} stale\n")
     done = gate("run", "--", "echo", "ran", home=home, extra={"HZ_GATE_HELD": str(os.getpid())})
     assert done.returncode == 0 and "acquired after" in done.stderr  # it took the slot itself; the record alone admitted nothing
+
+
+def test_no_heavy_command_starts_at_or_above_load_12_and_the_setting_cannot_pass_the_hard_bar(home):
+    done = gate("run", "--max-wait", "1", "--", "echo", "ran", home=home, load="12")
+    assert done.returncode == 75 and "ran" not in done.stdout and "load 12 is at or above 12: no heavy command starts above it" in done.stderr
+    # one command line each: a command with three short green runs is learned light, and the light lane has no load bar
+    assert gate("run", "--", "echo", "below", home=home, load="11.9").returncode == 0
+    assert gate("run", "--light", "--", "echo", "light", home=home, load="30").returncode == 0  # the light lane has no load bar
+    assert gate("run", "--", "echo", "own bar", home=home, load="15", start_load=16).returncode == 0  # the bar is the machine's setting
+    hard = gate("run", "--max-wait", "1", "--", "echo", "hard", home=home, load="45", start_load=100, max_load=100)
+    assert hard.returncode == 75 and "load 45 is at or above 40" in hard.stderr
+    text = gate("status", home=home, load="12").stdout
+    assert "start bar: no heavy start at or above load 12 (NO heavy command starts now)" in text and "1 of the 3 heavy slots reserved for a focus head" in text
+
+
+def test_the_last_slot_is_kept_for_the_focus_head(home):
+    first = holder(home, heavy_slots=2)  # two slots, one of them reserved (the default): one is open to everyone
+    try:
+        done = gate("run", "--max-wait", "1", "--", "echo", "ran", home=home, heavy_slots=2)
+        assert done.returncode == 75 and "ran" not in done.stdout and "1 more slot(s) are reserved for a focus head" in done.stderr
+        assert gate("run", "--", "true", home=home, heavy_slots=2, reserved_slots=0).returncode == 0
+        waiting = subprocess.Popen([*ENTRY, "run", "--", "true"], cwd=home, env=env_of(home, heavy_slots=2), stderr=subprocess.DEVNULL)
+        try:
+            runs = home / ".cache/gate.runs"
+            while not (runs / f"{waiting.pid}.json").exists():
+                pass
+            text = gate("status", home=home, heavy_slots=2).stdout
+            assert f"waiting: pid {waiting.pid} [heavy]" in text and "-- the heavy slot is held by" in text and "true" in text
+            assert f"held by {first.pid}" in text and "[heavy, " in text
+        finally:
+            waiting.kill()
+    finally:
+        first.kill()
+
+
+def test_a_push_takes_the_push_lane_unless_the_setting_turns_it_off(home):
+    (home / "bin").mkdir()  # a `git` that only says what it was asked: no push leaves this test
+    (home / "bin/git").write_text("#!/bin/sh\necho pushed \"$@\"\n")
+    (home / "bin/git").chmod(0o755)
+    path = {"PATH": f"{home / 'bin'}:/usr/bin:/bin"}
+    done = gate("run", "--", "git", "push", "origin", "HEAD:refs/heads/fix/x", home=home, extra=path)
+    assert done.returncode == 0 and "pushed push origin" in done.stdout and "exclusive: no other heavy run starts until this ends" in done.stderr
+    off = gate("run", "--", "git", "push", "origin", "HEAD:refs/heads/fix/x", home=home, extra=path, push_lane=False)
+    assert off.returncode == 0 and "exclusive" not in off.stderr
+    first = holder(home)
+    try:
+        waits = gate("run", "--max-wait", "1", "--", "git", "push", home=home, extra=path)
+        assert waits.returncode == 75 and "waits for the machine to be idle (1 heavy run(s) still going)" in waits.stderr and "pushed" not in waits.stdout
+    finally:
+        first.kill()
+    loud = gate("run", "--max-wait", "1", "--", "git", "push", home=home, extra=path, load="12")
+    assert loud.returncode == 75 and "load 12 is at or above 12" in loud.stderr
 
 
 def runtime(tmp_path):

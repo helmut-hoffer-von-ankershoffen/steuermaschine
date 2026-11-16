@@ -59,7 +59,8 @@ def test_match_job_exact_then_unique_substring():
 
 def test_capacity_rules():
     rel = [{"status": "in_progress", "headBranch": "release/v1"}]
-    assert "release/*" in c.capacity_refusal(rel, [], 5, False)  # candidate outranks the focused limit
+    assert "needs macOS" in c.capacity_refusal(rel, [], 5, True)  # beside a candidate: no macOS run, and that outranks the focused limit
+    assert "max 5" in c.capacity_refusal(rel, [], 5, False) and c.capacity_refusal(rel, [], 4, False) == ""  # a Linux run goes beside it
     assert c.capacity_refusal([], [], 4, False) == ""
     assert "max 5" in c.capacity_refusal([], [], 5, False)
     main_q = [{"status": "queued", "headBranch": "main"}]
@@ -71,6 +72,37 @@ def test_capacity_rules():
     assert c.capacity_refusal([], mac, 0, True) == "" and c.capacity_refusal(main_q, mac, 0, False) == ""
     assert "ceiling" in c.capacity_refusal(main_q, full[:19], 0, False, new_jobs=2)
     assert "macOS/ARM" in c.capacity_refusal(main_q, mac[:3], 0, True, new_arm_jobs=2)
+
+
+def test_beside_a_candidate_linux_runs_go_within_the_job_cap_and_macos_runs_never():
+    rel = [{"id": 7, "status": "in_progress", "headBranch": "release/v1"}]
+    linux = [job("x", status="in_progress", labels=("ubuntu-24.04",))]
+    assert c.capacity_refusal(rel, linux * 19, 0, False) == ""  # 19 active + 1 requested stay within the 20-job cap, main waiting or not
+    full = c.capacity_refusal(rel, linux * 20, 0, False)
+    assert "release/*" in full and "20 active + 1 requested jobs exceed the 20-job ceiling" in full and "candidate first" in full
+    assert "exceed the 20-job ceiling" in c.capacity_refusal(rel, linux * 17, 0, False, new_jobs=4)  # a whole lane set counts
+    assert c.capacity_refusal([], linux * 20, 0, False) == ""  # without a candidate (and main not waiting) the job queues as before
+    for wanted in ({"wants_arm": True}, {"wants_arm": False, "new_arm_jobs": 1}):  # either way of asking for a macOS runner
+        why = c.capacity_refusal(rel, [], 0, wanted.pop("wants_arm"), **wanted)
+        assert "release/*" in why and "needs macOS" in why
+    assert c.capacity_refusal(rel, [], 0, True, new_arm_jobs=0) == ""  # an ARM-labelled request with no macOS job is a Linux run
+    done = [{"id": 7, "status": "completed", "headBranch": "release/v1"}]
+    assert c.capacity_refusal(done, [], 0, True) == ""  # a finished candidate holds nothing
+
+
+def test_the_caps_are_the_accounts_and_come_from_settings_not_from_constants():
+    rel = [{"status": "queued", "headBranch": "release/v1"}]
+    main_q = [{"status": "queued", "headBranch": "main"}]
+    linux = [job("x", status="in_progress", labels=("ubuntu-24.04",))]
+    mac = [job("m", status="in_progress", labels=("macos-latest",))]
+    small, large = c.Caps(jobs=3, macos=1), c.Caps(jobs=60, macos=10)
+    assert "exceed the 3-job ceiling" in c.capacity_refusal(rel, linux * 3, 0, False, caps=small)
+    assert c.capacity_refusal(rel, linux * 40, 0, False, caps=large) == ""
+    assert "exceed the 3-job ceiling" in c.capacity_refusal(main_q, linux * 3, 0, False, caps=small)
+    assert "macOS/ARM jobs exceed 1" in c.capacity_refusal(main_q, mac, 0, True, caps=small)
+    assert c.capacity_refusal(main_q, mac * 5, 0, True, caps=large) == ""
+    assert "ceiling 3, ARM 1" in c.capacity_note(linux * 3, False, small) and c.capacity_note(linux * 3, False, large) == ""
+    assert (c.Caps().jobs, c.Caps().macos) == (c.JOB_CEILING, c.ARM_LIMIT)
 
 
 @pytest.fixture
@@ -132,13 +164,29 @@ def test_admission_counts_hosted_runs_and_local_attempts_once(cli, monkeypatch):
 
 
 @pytest.mark.parametrize("status", ["waiting", "in_progress"])
-def test_active_candidate_prevents_start_without_polling_jobs(cli, monkeypatch, status):
+def test_active_candidate_prevents_a_macos_start_without_polling_jobs(cli, monkeypatch, status):
+    """A run that needs macOS never starts beside a candidate, whatever the jobs are: it is refused before any job is read."""
     monkeypatch.setattr(cli, "inventory", lambda endpoint, _: [run(
         1, "release/v0.9.35", status, "ci.yml"
     )] if f"status={status}&" in endpoint else [])
     monkeypatch.setattr(cli, "jobs_of", lambda _: pytest.fail("polled jobs despite an active candidate"))
-    with pytest.raises(SystemExit, match="release/"):
-        cli.admit(lambda _: pytest.fail("started during candidate"), False, True)
+    with pytest.raises(SystemExit, match=r"release/.*needs macOS"):
+        cli.admit(lambda _: pytest.fail("started during candidate"), True, True)
+
+
+@pytest.mark.parametrize(("used", "starts"), [(19, True), (20, False)])
+def test_a_linux_run_beside_a_candidate_reads_the_jobs_and_starts_only_within_the_job_cap(cli, monkeypatch, used, starts):
+    """Intended since the owner rule of 2026-11-14: a Linux run may start beside a candidate, so the jobs are read
+    (the cap is counted in jobs); over the cap it is refused at once, also with --wait."""
+    monkeypatch.setattr(cli, "inventory", lambda endpoint, _: [run(1, "release/v0.9.35", "in_progress", "ci.yml")] if "status=in_progress&" in endpoint else [])
+    polled = []
+    monkeypatch.setattr(cli, "jobs_of", lambda rid: polled.append(rid) or [{"status": "in_progress", "labels": ["ubuntu-24.04"]}] * used)
+    if starts:
+        assert cli.admit(lambda _: "started", False, True) == "started"
+    else:
+        with pytest.raises(SystemExit, match=r"release/\* run is active and 20 active \+ 1 requested jobs exceed the 20-job ceiling"):
+            cli.admit(lambda _: pytest.fail("started over the job cap"), False, True)
+    assert polled == [1]
 
 
 @pytest.mark.parametrize(
