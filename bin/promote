@@ -59,6 +59,10 @@ else
     grep -E "^check: (FAIL|RED)" "$summary" >&2
     failed_tests "$summary" | sed 's/^/    /' >&2
     if grep -qE "^check: FAIL (tests|help lint|names|diagnostic log)" "$summary"; then die "tests, help lint, names or diagnostic logging failed; logs: $logdir"; fi
+    if ! grep -q '^check: PASS tests' "$summary" || ! grep -q '^check: START coverage core >= 90$' "$summary" \
+        || ! grep -q '^check: START coverage plugin >= 90$' "$summary" || ! grep -q '^check: START coverage debt ratchet (plugin)$' "$summary"; then
+      die "the full test and coverage gates did not run; logs: $logdir"
+    fi
     [ -n "$redok" ] || die "the quality gate is red; logs: $logdir"
     red="$(sed -n 's/^check: PROMOTE GATE RED: //p' "$summary" | tail -1)"
     say "    RED GATE ACCEPTED: $redok (red: ${red:-unknown})"

@@ -6,6 +6,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -89,14 +91,15 @@ def test_fast_keeps_static_and_tests_but_omits_debt_and_coverage(tmp_path):
     assert not any("debt.py" in call or "coverage report" in call for call in calls)
 
 
-def test_failed_promotion_keeps_private_head_bound_logs_without_receipt(tmp_path):
+@pytest.mark.parametrize("failed,options", [("tests", []), ("ruff", ["--red-gate-ok", "reviewed reason"])])
+def test_failed_promotion_keeps_private_head_bound_logs_without_receipt(tmp_path, failed, options):
     repo = tmp_path / "repo"
     (repo / "bin").mkdir(parents=True)
     for name in ("promote", "promote_lib.sh"):
         shutil.copy(ROOT / "bin" / name, repo / "bin" / name)
     check = repo / "bin/check"
     check.write_text('#!/bin/sh\necho "complete private detail" > "$CHECK_DETAIL_DIR/gate.test.log"\n'
-                     'echo "check: FAIL tests"\nexit 1\n')
+                     f'echo "check: FAIL {failed}"\nexit 1\n')
     check.chmod(0o755)
     fake = tmp_path / "fake"
     fake.mkdir()
@@ -105,11 +108,13 @@ def test_failed_promotion_keeps_private_head_bound_logs_without_receipt(tmp_path
     git.chmod(0o755)
     stable = tmp_path / "stable"
     env = os.environ | {"PATH": f"{fake}:/usr/bin:/bin", "HOME": str(tmp_path), "SM_STABLE": str(stable)}
-    result = subprocess.run(["bash", str(repo / "bin/promote"), "--check"], env=env, capture_output=True, text=True,
+    result = subprocess.run(["bash", str(repo / "bin/promote"), "--check", *options], env=env, capture_output=True, text=True,
                             check=False, timeout=30)
     logs = list((stable / "gate-logs").glob("*"))
     assert result.returncode == 1 and len(logs) == 1
     assert logs[0].name.startswith("0" * 39 + "1.") and logs[0].stat().st_mode & 0o077 == 0
     assert "complete private detail" in (logs[0] / "gate.test.log").read_text()
-    assert "check: FAIL tests" in (logs[0] / "summary.log").read_text()
+    assert f"check: FAIL {failed}" in (logs[0] / "summary.log").read_text()
+    if failed == "ruff":
+        assert "full test and coverage gates did not run" in result.stderr
     assert str(logs[0]) in result.stderr and not (stable / "gate-passed").exists()
