@@ -14,6 +14,7 @@ import pytest
 from ci_ops_kit import REPO, World, runtime
 
 from steuermaschine.native import NativeRuntime, using
+from steuermaschine.protocols import Result
 from steuermaschine.testing import invoke
 from steuermaschine_heinzel.native import ci_ops
 from steuermaschine_heinzel.native.ci_ops_lib import defer as defer_lib
@@ -275,9 +276,28 @@ def test_jobs_unknown_spares_the_run_and_a_failed_cancel_is_said_and_not_recorde
     world.fail = {"actions/runs/2/cancel"}
     world.jobs["8"] = {"no": "jobs"}
     done = invoke(rt, ["ci", "defer", "--cancel"])
-    assert done.exit_code == 0 and done.stdout.splitlines() == ["spared 9 feat/z CI (jobs unknown)", "FAILED cancel 2 feat/x CI (Server Error (HTTP 500))",
-                                                              "spared 8 feat/w CI (jobs unknown)"]
+    assert done.exit_code == 1 and done.stdout.splitlines() == ["spared 9 feat/z CI (jobs unknown)", "FAILED cancel 2 feat/x CI (Server Error (HTTP 500))",
+                                                              "spared 8 feat/w CI (jobs unknown)", "Cancelled 0. Failed 1 (0 GitHub reported as not queued)."]
     assert deferred.runs(rt.providers.store) == [] and "FAILED id=2" in audit(env) and "spared id=9 branch=feat/z workflow=CI reason=jobs-unknown" in audit(env)
+
+
+@pytest.mark.parametrize("mixed", [False, True])
+def test_not_queued_refusal_is_reported_and_only_successes_are_recorded(env, mixed):
+    world, rt = env
+    world.runs = {"queued": [_r(2, "feat/x"), _r(4, "release/v0.9.50"), _r(7, "bump/v0.9.50")]}
+    if mixed:
+        world.runs["queued"].append(_r(1, "feat/y"))
+    world.on("/2/cancel", Result(1, "", "gh: Cannot cancel a workflow run that has not been queued yet. (HTTP 409)"))
+    done = invoke(rt, ["--format", "json", "ci", "defer", "--cancel"])
+    result = ci_ops.Deferral.model_validate_json(done.stdout)
+    assert done.exit_code == 1
+    assert (result.state, result.cancelled, result.failed, result.not_queued) == (
+        "partial" if mixed else "failed", int(mixed), 1, 1,
+    )
+    assert result.runs[0].action == "not_queued" and "GitHub says" in result.runs[0].render()[0]
+    assert world.cancelled == (["1"] if mixed else [])
+    assert [row["id"] for row in deferred.runs(rt.providers.store)] == world.cancelled
+    assert not any(f"/{run}/cancel" in call for run in ("4", "7") for call in world.gh_lines())
 
 
 def test_a_second_deferral_waits_while_one_holds_the_list(env):

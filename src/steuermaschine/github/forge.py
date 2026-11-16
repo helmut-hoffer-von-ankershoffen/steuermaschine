@@ -46,6 +46,7 @@ from .models import (
 
 ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 STAMP = re.compile(r"^\ufeff?\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?Z ")
+NOT_QUEUED_CANCEL = "Cannot cancel a workflow run that has not been queued yet"
 SHA = re.compile(r"^[0-9a-f]{7,40}$")
 ACTIVE = ("in_progress", "queued", "waiting", "pending", "requested")  # every status of a run that is not finished
 PR_FIELDS = "number,title,state,isDraft,headRefName,headRefOid,baseRefName,mergeable,mergeStateStatus,reviewDecision,url,author,updatedAt,autoMergeRequest"
@@ -362,7 +363,9 @@ class GitHub:
             return CancelResult(run=str(run_id), state="dry_run", would_run=self.gh.shown(args), detail=detail)
         res = self.gh.run(args, retry=False)
         if res.rc:
-            return CancelResult(run=str(run_id), state=unknown(self.gh.why(res)), live=True, would_run=self.gh.shown(args), detail=detail)
+            error = res.err or ""
+            state = "not_queued" if "HTTP 409" in error and NOT_QUEUED_CANCEL in error else unknown(self.gh.why(res))
+            return CancelResult(run=str(run_id), state=state, live=True, would_run=self.gh.shown(args), detail=detail)
         return CancelResult(run=str(run_id), state="cancelled", live=True, would_run=self.gh.shown(args), detail=detail)
 
     # ------------------------------------------------------------------ repository variables

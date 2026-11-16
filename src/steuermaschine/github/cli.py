@@ -137,7 +137,7 @@ def register(rt: Runtime, app: typer.Typer) -> None:
 
     @ci.command("active", context_settings=CTX, short_help="Every run that is not finished: in progress, queued, waiting, pending.", help=H(
         "Every run that is not finished: in progress, queued, waiting, pending.",
-        "Use when CI seems slow or stuck, and before starting more work that needs runners.",
+        "Use when CI seems slow or stuck. Runner usage depends on the jobs assigned to each run.",
         "nothing (read-only).", f"{PROG} ci active", f"{PROG} ci failed RUN for one that ended red; {PROG} ci cancel RUN for one that should not run"))
     def active(limit: int = typer.Option(100, "--limit", metavar="N", help="At most N runs.")) -> None:
         show(ci_runs(rt).active(limit))

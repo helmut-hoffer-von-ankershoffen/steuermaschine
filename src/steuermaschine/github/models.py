@@ -303,20 +303,22 @@ class FailedReport(Model):
 
 class CancelResult(Model):
     run: str
-    state: str  # dry_run | cancelled | not_cancellable | unknown: <why>
+    state: str  # dry_run | cancelled | not_cancellable | not_queued | unknown: <why>
     live: bool = False
     would_run: str = ""
     detail: str = ""
 
     @property
     def exit_code(self) -> int:
-        return 1 if is_unknown(self.state) or self.state == "not_cancellable" else 0
+        return 1 if is_unknown(self.state) or self.state in {"not_cancellable", "not_queued"} else 0
 
     def render(self) -> list[str]:
         if self.state == "dry_run":
             return [f"dry run, nothing was cancelled: run {self.run} ({self.detail})", f"with --live this runs: {self.would_run}"]
         if self.state == "not_cancellable":
             return [f"run {self.run} is finished and cannot be cancelled ({self.detail})"]
+        if self.state == "not_queued":
+            return [f"run {self.run}: GitHub refused cancellation because the run has not been queued yet"]
         return [f"run {self.run}: {self.state}" + (f" ({self.detail})" if self.detail else "")]
 
 
