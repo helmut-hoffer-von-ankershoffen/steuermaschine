@@ -32,6 +32,18 @@ and `intro` are required. `release_review` defaults to `RELEASE-REVIEW.md`. `sna
 pinned to the tag's public snapshot). `candidate_gate=yes` is the train path: main may be red with known failures, and
 the candidate is the gate. `nonconsumers` is the reviewed stuck-queued receipts file, the same for prepare and apply.
 
+For a protected main that runs direct full CI, explicitly set `main_ci=full` before admission review.
+This route writes `full-ci-plan.json`, leaving legacy `prepare.out`, arguments and failed admission evidence intact.
+The reviewer confirms that the exact protected workflow uses full CI without a focused registry reservation.
+The plan binds the release packet, head, base, tree and clone. Apply rechecks that plan and writes no registry
+variable or admission receipt. The default `main_ci=focused` route and its registry reader contract are unchanged;
+a reader failure never selects full mode automatically, and an existing approved focused plan cannot change modes.
+Both modes require the complete first-attempt candidate and normal coverage, Sonar and merge checks.
+
+The prepared release branch is opened with `sm release pr VERSION --head SHA` after the publishing review,
+using `SM_HEINZEL__RELEASE_DIR=CLONE` for the reviewed clone. Use the same setting for subsequent cut/resume calls.
+The full route refuses a mismatched runner checkout. A successful local full-CI plan is not hosted candidate proof.
+
 Rules:
 
 - **First attempt only.** A failed candidate is never rerun to green. Check it with `sm release candidate VERSION`
