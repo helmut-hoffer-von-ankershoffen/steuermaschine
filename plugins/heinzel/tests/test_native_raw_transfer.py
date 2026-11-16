@@ -3,6 +3,7 @@
 import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -12,7 +13,7 @@ from steuermaschine.engine import Refuse
 from steuermaschine.native import NativeRuntime, using
 from steuermaschine.protocols import Result
 from steuermaschine.testing.fakes import FakeCommands, fake_providers
-from steuermaschine_heinzel.confidentiality import load_terms, patterns
+from steuermaschine_heinzel.confidentiality import load_terms, patterns, scan, text_bytes
 from steuermaschine_heinzel.native.raw_transfer import GitObjects, inspect, public_base, raw_transfer
 
 TERM = "fictionalmarker"
@@ -179,3 +180,132 @@ def test_push_message_scope_keeps_the_new_merge_and_branch_side(repo):
     assert found(checker(feature, f"{before}..{merge}")) == complete
     git(repo, "update-ref", "-d", "refs/remotes/origin/main")
     assert checker(feature).rc != 0
+
+class LocalGit(FakeCommands):
+    def run_bytes(self, argv: list[str], cwd: str, timeout: float, env: dict[str, str]) -> tuple[int, bytes]:
+        return Subprocess().run_bytes(argv, cwd, timeout, env)
+
+
+def test_native_transfer_binds_configured_terms_and_public_destination(repo, monkeypatch):
+    base = commit(repo, "public", "--allow-empty")
+    head = commit(repo, TERM, "--allow-empty")
+    policy = repo / "policy"
+    policy.write_text(TERM)
+    monkeypatch.delenv("CONFIDENTIAL_TERMS", raising=False)
+    monkeypatch.setenv("CONFIDENTIAL_TERMS_FILE", str(repo / "unused"))
+    commands = LocalGit()
+    prefix = ["gh", "api", "--hostname", "github.com"]
+    commands.on([*prefix, "repos/example/project"], Result(0, json.dumps({
+        "full_name": "example/project", "visibility": "public", "default_branch": "main",
+    })))
+    commands.on([*prefix, "repos/example/project/git/ref/heads/main"], Result(0, json.dumps({
+        "object": {"type": "commit", "sha": base},
+    })))
+    settings = {"repo": "example/project", "preflight_terms_file": str(policy)}
+    with using(NativeRuntime(fake_providers(commands=commands), settings, None)):
+        report = raw_transfer(repo, head, base, "refs/heads/new")
+    assert (report.head, report.base, report.term_count, report.exit_code) == (head, base, 1, 1)
+    assert [(f.kind, f.line, f.rule) for f in report.findings] == [("message", 1, 1)]
+    assert commands.calls == [[*prefix, "repos/example/project"], [*prefix, "repos/example/project/git/ref/heads/main"]]
+
+
+@pytest.mark.parametrize(("head", "ref", "error"), [
+    ("abc", "refs/heads/new", "full lowercase commit IDs"),
+    ("a" * 40, "refs/tags/new", "full branch ref"),
+])
+def test_native_refuses_unsafe_revision_operands(tmp_path, head, ref, error):
+    with pytest.raises(Refuse, match=error):
+        raw_transfer(tmp_path, head, "b" * 40, ref)
+
+
+def test_malformed_policy_refuses_without_echoing_it(tmp_path, monkeypatch):
+    policy = tmp_path / "policy"
+    policy.write_bytes(TERM.encode() + b"\xff")
+    monkeypatch.delenv("CONFIDENTIAL_TERMS", raising=False)
+    commands = FakeCommands()
+    with (
+        using(NativeRuntime(fake_providers(commands=commands), {"preflight_terms_file": str(policy)}, None)),
+        pytest.raises(Refuse, match="policy could not be read") as failure,
+    ):
+        raw_transfer(tmp_path, "a" * 40, "b" * 40, "refs/heads/new")
+    assert TERM not in failure.value.message and commands.calls == []
+
+
+def test_destination_requires_a_named_public_default_branch():
+    commands = FakeCommands()
+    commands.on(["gh", "api", "--hostname", "github.com", "repos/example/project"], Result(
+        0, json.dumps({"full_name": "example/project", "visibility": "public"}),
+    ))
+    with pytest.raises(Refuse, match="Configure the destination"):
+        public_base(commands, "", "a" * 40)
+    assert not commands.calls
+    with pytest.raises(Refuse, match="default branch"):
+        public_base(commands, "example/project", "a" * 40)
+    assert len(commands.calls) == 1
+
+
+@pytest.mark.parametrize(("response", "error"), [
+    (Result(1, "", TERM), "could not read"),
+    (Result(0, "partial"), "incomplete path"),
+    (Result(0, "missing header\0"), "invalid path"),
+    (Result(0, "100644 unknown " + "a" * 40 + "\tpath\0"), "unsupported tree entry"),
+])
+def test_unreadable_or_unexpected_tree_never_returns_a_partial_inventory(tmp_path, response, error):
+    commands = FakeCommands()
+    commands.on(["git", "--no-replace-objects", "ls-tree"], response)
+    with pytest.raises(Refuse, match=error) as failure:
+        GitObjects(commands, tmp_path).snapshot("a" * 40)
+    assert TERM not in failure.value.message
+
+
+def test_object_inventory_rejects_non_ids(tmp_path):
+    commands = FakeCommands()
+    commands.on(["git", "--no-replace-objects", "rev-list"], Result(0, TERM))
+    with pytest.raises(Refuse, match="invalid object inventory"):
+        GitObjects(commands, tmp_path).ids("a" * 40)
+
+
+def test_nested_directory_and_unavailable_commit_are_distinct(repo):
+    nested = repo / "nested"
+    nested.mkdir()
+    (nested / "file").write_text(TERM)
+    base = commit(repo, "public")
+    objects = GitObjects(Subprocess(), repo)
+    paths, blobs = objects.snapshot(base)
+    assert paths == {b"nested", b"nested/file"} and len(blobs) == 1
+    with pytest.raises(Refuse, match="must be commit objects"):
+        inspect(objects, next(iter(blobs)), base, "refs/heads/new", patterns([TERM]))
+
+
+def test_policy_normalizes_phrases_and_redacts_duplicate_hits():
+    rules = patterns(["short", "fictional marker"])
+    text = text_bytes(b"\xffshort short\xff fiction" + b"al_marker\x01 shorts")
+    assert [str(f) for f in scan("blob 1", text, rules)] == [
+        "blob 1:1: confidential term #1", "blob 1:2: confidential term #2",
+    ]
+
+def test_native_refuses_a_text_only_process_provider(tmp_path, monkeypatch):
+    monkeypatch.setenv("CONFIDENTIAL_TERMS", TERM)
+    fake = FakeCommands()
+    commands = SimpleNamespace(run=fake.run, passthrough=fake.passthrough)
+    with (
+        using(NativeRuntime(fake_providers(commands=commands), {}, None)),
+        pytest.raises(Refuse, match="cannot read literal Git bytes"),
+    ):
+        raw_transfer(tmp_path, "a" * 40, "b" * 40, "refs/heads/new")
+    assert fake.calls == []
+
+
+def test_commit_read_without_message_boundary_refuses(repo, monkeypatch):
+    base = commit(repo, "public", "--allow-empty")
+    head = commit(repo, "outgoing", "--allow-empty")
+    objects = GitObjects(Subprocess(), repo)
+    real_read = objects.read
+
+    def read(*args: str) -> bytes:
+        return TERM.encode() if args == ("cat-file", "commit", head) else real_read(*args)
+
+    monkeypatch.setattr(objects, "read", read)
+    with pytest.raises(Refuse, match="no message boundary") as failure:
+        inspect(objects, head, base, "refs/heads/new", patterns([TERM]))
+    assert TERM not in failure.value.message
