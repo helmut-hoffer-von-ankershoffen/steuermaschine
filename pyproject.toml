@@ -45,6 +45,7 @@ dev = [
     "steuermaschine-toy",
     "steuermaschine-layer",
     "vulture>=2.16",
+    "types-pyyaml>=6.0.12.20261113",
 ]
 
 [tool.uv]

@@ -29,7 +29,7 @@ from steuermaschine.engine import Ctx, Pipeline, Refuse, ReviewStop, Step, Subje
 from steuermaschine.hashing import canonical_sha256
 from steuermaschine.native import unit
 
-from .common import command, core_repo, need, ok, path_input, prepared_digest, receipt_heads
+from .common import command, core_repo, need, ok, path_input, prepared_digest, receipt_heads, setting
 
 VERB = "cut"
 VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
@@ -225,9 +225,10 @@ def judged(ctx: Ctx, head: str) -> str:
     judged again; the run's data keeps only the commit judged last."""
     if not SHA.fullmatch(head or ""):
         raise Refuse("no exact release commit to judge for CI changes")
+    core = str(path_input(ctx, "clone", "the hooked release clone"))
+    official_origin(core, str(ctx.settings.get("repo", "")))
     if ctx.data.get("ci_change_head") == head:
         return str(ctx.data.get("ci_change_detail") or "")
-    core = str(path_input(ctx, "clone", "the hooked release clone"))
     base, changes = changes_since_release(core, head)
     if changes:
         store = ctx.providers.store
@@ -243,6 +244,20 @@ def judged(ctx: Ctx, head: str) -> str:
         detail = f"no CI path changed since {base[:12]}: no ci_change verdict needed"
     ctx.data["ci_change_head"], ctx.data["ci_change_detail"] = head, detail
     return detail
+
+
+def official_origin(clone: str, repository: str) -> None:
+    """Check the effective URL (including Git rewrites) before trusting this clone's remote tags or main."""
+    from ..native.queue_lib import core_policy
+
+    try:
+        remote = core_policy.git_read(clone, "remote", "get-url", "origin").decode().strip().removesuffix(".git")
+    except (core_policy.CandidateError, OSError, ValueError) as exc:
+        raise Refuse(f"cannot verify the release clone's official origin: {exc}") from None
+    if not core_policy.REPOSITORY.fullmatch(repository) or remote not in (
+        f"https://github.com/{repository}", f"ssh://git@github.com/{repository}", f"git@github.com:{repository}",
+    ):
+        raise Refuse("release clone origin is not the official Core repository")
 
 
 def _clone_head(ctx: Ctx) -> str:
@@ -342,10 +357,12 @@ def main_ci(ctx: Ctx) -> str:
 def full_plan(ctx: Ctx) -> dict[str, Any]:
     """No admission receipt: bind the packet and protected base for independent full-CI review."""
     from ..native.queue_lib import core_policy
+    from . import full_ci
 
     head = _same_commit(ctx)
     clone = str(path_input(ctx, "clone", "the hooked release clone"))
     base = str(ctx.subject.facts["main"])
+    official_origin(clone, str(ctx.settings.get("repo", "")))
     if ctx.providers.vcs.remote_head(clone, "main") != base:
         raise Refuse("protected main moved before full-CI review; rebuild the release")
     try:
@@ -363,7 +380,9 @@ def full_plan(ctx: Ctx) -> dict[str, Any]:
         if parents != [head, base]:
             raise Refuse("full-CI release is not one commit on the protected base")
         for commit in (base, head):
-            core_policy.at_commit_git(clone, commit)
+            if core_policy.at_commit_git(clone, commit).repository != ctx.settings.get("repo"):
+                raise Refuse("full-CI policy repository differs from the official Core identity")
+        full_ci.verify(clone, base, head, ctx.subject.facts["version"])
         tree = core_policy.git_read(clone, "rev-parse", f"{head}^{{tree}}").decode().strip()
         if identity["tree"] != tree:
             raise Refuse("full-CI packet tree differs from the release commit")
@@ -528,8 +547,6 @@ def resume(ctx: Ctx) -> str:
     _same_commit(ctx)
     if main_ci(ctx) == "full":
         # The native runner owns its configured checkout; do not silently publish from a different clone.
-        from .common import setting
-
         clone = path_input(ctx, "clone", "the hooked release clone").resolve()
         configured = setting("release_dir")
         if not configured or Path(configured).expanduser().resolve() != clone:

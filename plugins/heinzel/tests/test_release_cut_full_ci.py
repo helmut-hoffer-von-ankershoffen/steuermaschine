@@ -4,13 +4,36 @@ import json
 
 import policy_kit as kit
 import pytest
+import yaml
 from test_pipeline_cov_release_cut import _git, context, native, runtime
 
 from steuermaschine.engine import Refuse
 from steuermaschine.hashing import canonical_sha256
 from steuermaschine_heinzel.native.admission_lib import focused_slots
 from steuermaschine_heinzel.native.queue_lib import core_policy
-from steuermaschine_heinzel.pipelines import common, release_cut
+from steuermaschine_heinzel.native.release_admit_lib import release_scope
+from steuermaschine_heinzel.pipelines import common, full_ci, release_cut
+
+
+def direct_workflow():
+    """Runnable selection graph; workload bodies are fixtures, never execution proof."""
+    jobs = {f"job-{index}": {"name": name, "runs-on": "ubuntu-latest", "steps": [{"run": "true"}]}
+            for index, (name, result) in enumerate(kit.expected_jobs("pull_request").items()) if result == "success"}
+    jobs = {key: job for key, job in jobs.items() if job["name"] not in ("Changed paths", "Main batch admission")}
+    jobs["admission"] = {"name": "Main batch admission", "runs-on": "ubuntu-latest",
+                         "outputs": {"full": "${{ steps.batch.outputs.full }}"},
+                         "steps": [{"id": "batch", "run": "uv run --no-build --script scripts/main_batch.py"}]}
+    jobs["changes"] = {
+        "name": "Changed paths", "runs-on": "ubuntu-latest", "needs": "admission",
+        "if": "github.event_name != 'push' || needs.admission.outputs.full != 'false'",
+        "outputs": {"full_ci": "${{ steps.full.outputs.selected }}", "focused_mode": "", "focused_base": "",
+                    "focused_matrix": '{"include":[]}'},
+        "steps": [{"id": "full", "if": "github.event_name != 'schedule'", "run": 'echo \'selected=true\' >> "$GITHUB_OUTPUT"'}],
+    }
+    jobs["workload"] = {"needs": "changes", "if": "needs.changes.outputs.full_ci == 'true'",
+                        "runs-on": "ubuntu-latest", "steps": [{"run": "true"}]}
+    return {"on": {"push": {"branches": ["main"]}, "pull_request": None},
+            "env": {name: f"${{{{ vars.{name} }}}}" for name in focused_slots.NAMES}, "jobs": jobs}
 
 
 @pytest.fixture
@@ -18,10 +41,29 @@ def full(tmp_path, monkeypatch):
     # Reproduce the direct-full shape: one reader in CI, one in its judge. The focused
     # contract still requires two CI readers; the full route must not weaken it.
     readers = "\n".join(f'{name}: ${{{{ vars.{name} }}}}' for name in focused_slots.NAMES).encode()
+    old, new = "0.9.40", "0.9.41"
+    metadata = {
+        "pyproject.toml": f'[project]\nname="heinzel"\nversion="{old}"\n[tool.bumpversion]\ncurrent_version="{old}"\n',
+        "uv.lock": f'[[package]]\nname="heinzel"\nversion="{old}"\n',
+        release_scope.PLUGIN: json.dumps({"version": old, "name": "heinzel"}),
+        "copier.yml": f'heinzel_version:\n  type: str\n  default: "{old}" # bumped by the release process\n  when: false\n',
+        release_scope.ACCEPTANCE: f'FOREGROUND_UI = {{\n    "{old}": ("ui", "serve"),\n}}\n',
+        "CHANGELOG.md": "# Changelog\n",
+    }
     clone, base = kit.git_repo(tmp_path / "release", {
-        kit.PATH: json.dumps(kit.manifest()).encode(), kit.WORKFLOW: readers, kit.JUDGE: readers,
-    })
-    _git(clone, "commit", "-q", "--allow-empty", "-m", "release")
+        kit.PATH: json.dumps(kit.manifest()).encode(), kit.WORKFLOW: yaml.safe_dump(direct_workflow()).encode(), kit.JUDGE: readers,
+        kit.RECORDER: kit.recorder_bytes(), "scripts/main_batch.py": (kit.FIXTURES / "main_batch_direct_full.py").read_bytes(),
+    }, {path: value.encode() for path, value in metadata.items()})
+    _git(clone, "remote", "add", "origin", f"https://github.com/{kit.REPOSITORY}.git")
+    for path, value in metadata.items():
+        if path == release_scope.ACCEPTANCE:
+            value = value.replace("}\n", f'    "{new}": ("ui", "serve"),\n}}\n')
+        elif path == "CHANGELOG.md":
+            value += f"\n## {new}\n"
+        else:
+            value = value.replace(old, new)
+        (clone / path).write_text(value)
+    _git(clone, "commit", "-qam", "release")
     head = _git(clone, "rev-parse", "HEAD")
     tree = _git(clone, "rev-parse", "HEAD^{tree}")
     path = tmp_path / "packet.json"
@@ -30,6 +72,7 @@ def full(tmp_path, monkeypatch):
                                "review": {"path": "RELEASE-REVIEW.md", "sha256": release_cut.sha(b"independent source review")},
                                "release": {"version": "0.9.41", "head": head, "base": base, "tree": tree}}))
     rt = runtime(tmp_path)
+    rt.settings["repo"] = kit.REPOSITORY
     rt.providers.vcs.remote["main"] = base
     monkeypatch.setattr(rt.providers.vcs, "head", lambda worktree: head)
     monkeypatch.setattr(release_cut, "changes_since_release", lambda core, head: (base, ()))
@@ -57,11 +100,27 @@ def test_ci_change_reads_release_clone_not_unfetched_default(tmp_path, monkeypat
         core_policy.git_read(default, "cat-file", "-e", head)
     rt = runtime(tmp_path)
     monkeypatch.setattr(rt.providers.vcs, "head", lambda worktree: head)
+    git_read = core_policy.git_read
+    monkeypatch.setattr(core_policy, "git_read", lambda repo, *args, **kw:
+                        b"https://github.com/o/core.git\n" if args == ("remote", "get-url", "origin") else git_read(repo, *args, **kw))
     ctx = context(rt, {"clone": str(clone)})
     ctx.subject.facts["core"] = str(default)
     with native(rt):
         assert "no CI path changed" in release_cut.ci_change(ctx)
     assert ctx.data["ci_change_head"] == head
+
+
+@pytest.mark.parametrize("cached", [False, True])
+def test_same_main_fork_origin_cannot_supply_a_different_tag_map(full, monkeypatch, cached):
+    rt, ctx, clone, _base, head = full
+    if cached:
+        with native(rt):
+            release_cut.ci_change(ctx)
+    _git(clone, "remote", "set-url", "origin", "https://github.com/fork/core.git")
+    _git(clone, "tag", "v99.0.0", head)
+    monkeypatch.setattr(release_cut, "changes_since_release", lambda *args: pytest.fail("read fork's remote tags"))
+    with native(rt), pytest.raises(Refuse, match="not the official Core"):
+        release_cut.ci_change(ctx)
 
 
 def test_full_route_keeps_reader_refusal_and_failed_prepare(full, monkeypatch):
@@ -180,3 +239,71 @@ def test_full_route_resumes_through_existing_native_gate(full):
         with pytest.raises(Refuse, match="full candidate refused"):
             release_cut.resume(ctx)
     assert calls == [{"version": "0.9.41", "intro": "Release changes.", "snapshot_acceptance": True, "candidate_gate": False}]
+
+
+@pytest.mark.parametrize("mutation", ["markers-only", "focused", "conditional", "disconnected", "push-condition",
+                                       "batch-condition", "batch-invocation", "missing-job", "inert-job"])
+def test_valid_policy_does_not_authorize_partial_or_focused_workflow(mutation):
+    doc = direct_workflow()
+    jobs = doc["jobs"]
+    if mutation == "markers-only":
+        doc = {"env": doc["env"]}
+    elif mutation == "focused":
+        jobs["changes"]["outputs"]["focused_mode"] = "${{ steps.scope.outputs.mode }}"
+    elif mutation == "conditional":
+        jobs["changes"]["steps"][0]["if"] = "github.event_name == 'pull_request'"
+    elif mutation == "disconnected":
+        jobs["changes"]["outputs"]["full_ci"] = "${{ steps.other.outputs.selected }}"
+    elif mutation == "push-condition":
+        jobs["changes"]["if"] += " && vars.ADMITTED == 'true'"
+    elif mutation == "batch-condition":
+        jobs["admission"]["steps"][0]["if"] = "vars.ADMITTED == 'true'"
+    elif mutation == "batch-invocation":
+        jobs["admission"]["steps"][0]["run"] = "echo 'full=false' >> $GITHUB_OUTPUT"
+    else:
+        target = next(key for key, job in jobs.items() if job.get("name") == "Coverage")
+        if mutation == "missing-job":
+            del jobs[target]
+        else:
+            jobs[target].pop("steps")
+    with pytest.raises(Refuse, match="protected direct-full contract"):
+        full_ci._workflow(yaml.safe_dump(doc).encode(), kit.policy())
+
+
+@pytest.mark.parametrize("suffix", ["jobs: {}\n", "extra: &x {a: b}\nalias: *x\n", "extra: !custom value\n"])
+def test_workflow_rejects_duplicate_keys_aliases_and_tags(suffix):
+    with pytest.raises(Refuse, match="protected direct-full contract"):
+        full_ci._workflow((yaml.safe_dump(direct_workflow()) + suffix).encode(), kit.policy())
+
+
+@pytest.mark.parametrize("before,after", [
+    ('return {"full": True, "base": "", "run": ""}', 'return {"full": False, "base": "", "run": ""}'),
+    ('if marker == "present":', 'if marker != "present":'),
+    ('if not status or not _attested(status):', 'if not status:'),
+    ('result = admit(os.environ["GITHUB_SHA"], get, seconds=180)', 'result = {"full": False, "base": "", "run": ""}'),
+])
+def test_batch_authority_and_output_cannot_be_weakened(before, after):
+    source = (kit.FIXTURES / "main_batch_direct_full.py").read_text()
+    assert before in source
+    with pytest.raises(Refuse, match="unknown batch selection or authentication"):
+        full_ci._batch(source.replace(before, after).encode(), kit.policy())
+
+
+@pytest.mark.parametrize("path", [kit.WORKFLOW, kit.RECORDER, kit.JUDGE, "scripts/main_batch.py"])
+def test_release_head_cannot_replace_protected_execution_sources(full, path):
+    _rt, _ctx, clone, base, _head = full
+    target = clone / path
+    target.write_bytes(target.read_bytes() + b"\n# changed execution source\n")
+    _git(clone, "add", path)
+    _git(clone, "commit", "-q", "--amend", "-m", "changed source")
+    with pytest.raises(Refuse, match="changes protected execution"):
+        full_ci.verify(str(clone), base, _git(clone, "rev-parse", "HEAD"), "0.9.41")
+
+
+def test_generated_release_validation_preserves_transitive_execution_inputs(full):
+    _rt, _ctx, clone, base, _head = full
+    (clone / "unexpected.py").write_text("print('changed execution input')\n")
+    _git(clone, "add", "unexpected.py")
+    _git(clone, "commit", "-q", "--amend", "-m", "unexpected source")
+    with pytest.raises(Refuse, match="release diff must modify existing regular files"):
+        full_ci.verify(str(clone), base, _git(clone, "rev-parse", "HEAD"), "0.9.41")
