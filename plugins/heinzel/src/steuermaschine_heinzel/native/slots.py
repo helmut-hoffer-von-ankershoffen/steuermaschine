@@ -191,9 +191,10 @@ def head_slots_collect(all_: bool = typer.Option(False, "--all", help="Also list
     "Apply one approved collection: rewrite the slots that lose entries, with a receipt.",
     "Use after an independent reviewer approved the digest of `sm head slots collect`.",
     "up to five repository variables (the focused plan slots that lose entries); writes a receipt.",
-    "SM_GITHUB__VARIABLE_WRITES=true sm head slots apply --approved DIGEST",
+    "sm head slots apply --approved DIGEST",
     "sm go",
-    "GitHub variable writes must be explicitly enabled. Rebuilds the change from fresh reads and refuses unless its digest is the approved one, the registry did not change while it\n"
+    "GitHub variable writes must be explicitly enabled via SM_GITHUB__VARIABLE_WRITES=true. "
+    "Rebuilds the change from fresh reads and refuses unless its digest is the approved one, the registry did not change while it\n"
     "wrote, and no Actions run is active (exit 75). The readback must equal what was written; nothing is restored automatically."))
 def head_slots_apply(approved: str = typer.Option(..., "--approved", help="The digest of the collect output the reviewer approved.")) -> SlotsApplied:
     rt = runtime()
