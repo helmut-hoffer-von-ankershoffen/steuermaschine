@@ -24,7 +24,8 @@ def test_long_gate_emits_heartbeat_and_keeps_full_output(tmp_path, capsys, monke
                 raise subprocess.TimeoutExpired("fixture", timeout)
             return 0
 
-    def start(command, stdout, stderr):
+    def start(command, stdout, stderr, start_new_session):
+        assert start_new_session is True
         stdout.write(b"complete detail\n")
         return Child()
 
@@ -118,3 +119,65 @@ def test_failed_promotion_keeps_private_head_bound_logs_without_receipt(tmp_path
     if failed == "ruff":
         assert "full test and coverage gates did not run" in result.stderr
     assert str(logs[0]) in result.stderr and not (stable / "gate-passed").exists()
+
+
+def test_interrupt_terminates_process_group_and_escalates(tmp_path, monkeypatch):
+    monkeypatch.syspath_prepend(str(ROOT / "bin"))
+    import check_progress
+
+    class Child:
+        pid = 12345
+        calls = 0
+
+        def wait(self, timeout=None):
+            self.calls += 1
+            if self.calls == 1:
+                raise KeyboardInterrupt
+            if self.calls == 2:
+                raise subprocess.TimeoutExpired("gate", timeout)
+            return -9
+
+    signals = []
+    monkeypatch.setattr(check_progress.subprocess, "Popen", lambda *args, **kwargs: Child())
+    monkeypatch.setattr(check_progress.os, "killpg", lambda pid, sig: signals.append((pid, sig)))
+    with pytest.raises(KeyboardInterrupt):
+        check_progress.run("fixture", tmp_path / "log", ["fixture"])
+    assert signals == [(12345, check_progress.signal.SIGTERM), (12345, check_progress.signal.SIGKILL)]
+
+
+def test_sigterm_cleans_up_real_child_that_ignores_termination(tmp_path):
+    import signal
+    import time
+
+    pidfile = tmp_path / "child.pid"
+    program = ("import os,signal,time,pathlib; "
+               "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+               f"pathlib.Path({str(pidfile)!r}).write_text(str(os.getpid())); "
+               "time.sleep(60)")
+    proc = subprocess.Popen([sys.executable, str(ROOT / "bin/check_progress.py"), "fixture", str(tmp_path / "log"),
+                             sys.executable, "-c", program], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    child_pid = None
+    try:
+        deadline = time.monotonic() + 10
+        while not pidfile.exists() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert pidfile.exists()
+        child_pid = int(pidfile.read_text())
+        proc.send_signal(signal.SIGTERM)
+        time.sleep(0.2)
+        proc.send_signal(signal.SIGTERM)
+        proc.send_signal(signal.SIGHUP)
+        proc.send_signal(signal.SIGINT)
+        proc.communicate(timeout=8)
+        assert proc.returncode == 128 + signal.SIGTERM
+        with pytest.raises(ProcessLookupError):
+            os.kill(child_pid, 0)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+        if child_pid:
+            try:
+                os.kill(child_pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
