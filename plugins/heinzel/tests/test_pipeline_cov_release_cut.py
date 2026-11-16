@@ -43,6 +43,7 @@ def judged_release(monkeypatch):
     """Every step that acts on the release commit judges it for CI changes; by default the packet names HEAD and no
     CI path changed. The gate's own tests below replace these."""
     monkeypatch.setattr(release_cut, "changes_since_release", lambda core, head: ("7" * 40, ()))
+    monkeypatch.setattr(release_cut, "official_origin", lambda clone, repository: None)
     monkeypatch.setattr(release_cut, "_same_commit", lambda ctx: HEAD)
 
 
@@ -68,7 +69,7 @@ def runtime(tmp_path: Path) -> Runtime:
 
 def context(rt: Runtime, inputs: dict[str, Any] | None = None, data: dict[str, Any] | None = None) -> Ctx:
     subject = Subject(key="0.9.41", label="v0.9.41", fingerprint={"main": MAIN}, facts={"version": "0.9.41", "main": MAIN, "core": "/core"})
-    return Ctx(providers=rt.providers, settings={}, subject=subject, inputs=dict(inputs or {}), data=dict(data or {}), live=True,
+    return Ctx(providers=rt.providers, settings=rt.settings, subject=subject, inputs=dict(inputs or {}), data=dict(data or {}), live=True,
                author="test", say=lambda _text: None)
 
 

@@ -29,7 +29,7 @@ from steuermaschine.engine import Ctx, Pipeline, Refuse, ReviewStop, Step, Subje
 from steuermaschine.hashing import canonical_sha256
 from steuermaschine.native import unit
 
-from .common import command, core_repo, need, ok, path_input, prepared_digest, receipt_heads
+from .common import command, core_repo, need, ok, path_input, prepared_digest, receipt_heads, setting
 
 VERB = "cut"
 VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
@@ -44,6 +44,7 @@ INPUTS = {
     "snapshot": "yes (default): acceptance pinned to the tag's public snapshot; no: the default path",
     "candidate_gate": "yes: the train path (main may be red by KNOWN failures; the candidate is the gate); default no",
     "nonconsumers": "the reviewed stuck-queued receipts file, the same for prepare and apply",
+    "main_ci": "focused (default): reserve a registry plan; full: request full candidate validation, subject to independent exact-source no-reservation review",
 }
 TRAPS = {
     "ci change": "A release whose CI paths changed since the last published tag needs a ci_change verdict on its exact commit: "
@@ -224,9 +225,10 @@ def judged(ctx: Ctx, head: str) -> str:
     judged again; the run's data keeps only the commit judged last."""
     if not SHA.fullmatch(head or ""):
         raise Refuse("no exact release commit to judge for CI changes")
+    core = str(path_input(ctx, "clone", "the hooked release clone"))
+    official_origin(core, str(ctx.settings.get("repo", "")))
     if ctx.data.get("ci_change_head") == head:
         return str(ctx.data.get("ci_change_detail") or "")
-    core = str(ctx.subject.facts["core"])
     base, changes = changes_since_release(core, head)
     if changes:
         store = ctx.providers.store
@@ -242,6 +244,20 @@ def judged(ctx: Ctx, head: str) -> str:
         detail = f"no CI path changed since {base[:12]}: no ci_change verdict needed"
     ctx.data["ci_change_head"], ctx.data["ci_change_detail"] = head, detail
     return detail
+
+
+def official_origin(clone: str, repository: str) -> None:
+    """Check the effective URL (including Git rewrites) before trusting this clone's remote tags or main."""
+    from ..native.queue_lib import core_policy
+
+    try:
+        remote = core_policy.git_read(clone, "remote", "get-url", "origin").decode().strip().removesuffix(".git")
+    except (core_policy.CandidateError, OSError, ValueError) as exc:
+        raise Refuse(f"cannot verify the release clone's official origin: {exc}") from None
+    if not core_policy.REPOSITORY.fullmatch(repository) or remote not in (
+        f"https://github.com/{repository}", f"ssh://git@github.com/{repository}", f"git@github.com:{repository}",
+    ):
+        raise Refuse("release clone origin is not the official Core repository")
 
 
 def _clone_head(ctx: Ctx) -> str:
@@ -265,6 +281,7 @@ def _same_commit(ctx: Ctx) -> str:
 def ci_change(ctx: Ctx) -> str:
     """The release commit's CI paths against the newest published release, by the not-CI paths of that release's policy.
     A change needs an independent `ci_change` verdict on the exact release commit; none, or another kind, refuses."""
+    main_ci(ctx)
     return judged(ctx, _clone_head(ctx))
 
 
@@ -319,10 +336,65 @@ def packet(ctx: Ctx) -> str:
 
 
 def prepared(ctx: Ctx) -> Path:
-    return path_input(ctx, "packet", "the reviewed release packet").parent / "prepare.out"
+    name = "full-ci-plan.json" if main_ci(ctx) == "full" else "prepare.out"
+    return path_input(ctx, "packet", "the reviewed release packet").parent / name
+
+
+def main_ci(ctx: Ctx) -> str:
+    """An explicit route, never inferred from a failed registry admission or reader count."""
+    mode = str(ctx.inputs.get("main_ci") or "focused")
+    if mode not in ("focused", "full"):
+        raise Refuse("main_ci must be focused or full", code=USAGE)
+    prior = ctx.data.get("main_ci")
+    if prior is None and mode == "full" and (ctx.data.get("admission_sha256") or ctx.data.get("receipt")):
+        raise Refuse("an existing focused review or receipt cannot be converted to full CI")
+    if prior is not None and prior != mode:
+        raise Refuse("the cut's main_ci route changed; preserve this cut and start a separately reviewed cut")
+    ctx.data["main_ci"] = mode
+    return mode
+
+
+def full_plan(ctx: Ctx) -> dict[str, Any]:
+    """No admission receipt: bind the packet and protected base for independent full-CI review."""
+    from ..native.queue_lib import core_policy
+    from . import full_ci
+
+    head = _same_commit(ctx)
+    clone = str(path_input(ctx, "clone", "the hooked release clone"))
+    base = str(ctx.subject.facts["main"])
+    official_origin(clone, str(ctx.settings.get("repo", "")))
+    if ctx.providers.vcs.remote_head(clone, "main") != base:
+        raise Refuse("protected main moved before full-CI review; rebuild the release")
+    try:
+        raw = reservation(ctx).read_bytes()
+        doc = json.loads(raw)
+        identity = doc["release"]
+        if (doc.get("schema") != 1 or doc.get("mode") != MODE or identity["version"] != ctx.subject.facts["version"]
+                or identity["head"] != head or identity["base"] != base):
+            raise Refuse("full-CI packet does not bind the release head and protected base")
+        review = doc["review"]
+        root = path_input(ctx, "review_root", "the review root")
+        if sha(read_inside(root, review["path"], "independent release review")) != review["sha256"]:
+            raise Refuse("full-CI release review changed since the packet was built")
+        parents = core_policy.git_read(clone, "rev-list", "--parents", "-n", "1", head).decode().split()
+        if parents != [head, base]:
+            raise Refuse("full-CI release is not one commit on the protected base")
+        for commit in (base, head):
+            if core_policy.at_commit_git(clone, commit).repository != ctx.settings.get("repo"):
+                raise Refuse("full-CI policy repository differs from the official Core identity")
+        request = full_ci.source_request(clone, base, head, ctx.subject.facts["version"])
+        tree = core_policy.git_read(clone, "rev-parse", f"{head}^{{tree}}").decode().strip()
+        if identity["tree"] != tree:
+            raise Refuse("full-CI packet tree differs from the release commit")
+    except (OSError, ValueError, KeyError, TypeError, core_policy.CandidateError) as exc:
+        raise Refuse(f"cannot bind full-CI release evidence: {exc}") from None
+    return {"mode": "full-candidate-request/v1", "main": base, "head": head, "tree": tree, "clone": clone,
+            "packet_sha256": sha(raw), "registry_write": False, "source_review": request}
 
 
 def prepare_probe(ctx: Ctx) -> str | None:
+    if main_ci(ctx) == "full":
+        return None  # recompute local evidence; never adopt a legacy registry prepare
     args = prepared(ctx).with_name("prepare.args.json")
     try:
         stored = json.loads(args.read_text())
@@ -341,6 +413,10 @@ def prepare_probe(ctx: Ctx) -> str | None:
 
 def admit_prepare(ctx: Ctx) -> str:
     _same_commit(ctx)
+    if main_ci(ctx) == "full":
+        plan = full_plan(ctx)
+        prepared(ctx).write_text(json.dumps(plan, sort_keys=True, indent=2) + "\n")
+        return "full candidate validation requested; no execution proof or focused registry reservation"
     nonconsumers = ctx.inputs.get("nonconsumers")
     done = ok("release admit prepare", packet=reservation(ctx), core_repo=path_input(ctx, "clone", "the release clone"),
               review_root=path_input(ctx, "review_root", "the review root"), nonconsumers=Path(str(nonconsumers)).expanduser() if nonconsumers else None, wait_=True)
@@ -351,6 +427,12 @@ def admission_review(ctx: Ctx) -> tuple[str, str, str]:
     path = prepared(ctx)
     sha = prepared_digest(path)
     ctx.data["admission_sha256"] = sha
+    if main_ci(ctx) == "full":
+        return sha, (f"Review the full-candidate request {path} and its bound release packet. "
+                     "Read the exact protected workflow and actual batch producer at the bound commits and recompute their digests. "
+                     "Verify every required branch condition and matrix and confirm no focused reservation is needed. "
+                     "Selection is not execution proof or a green main. No registry admission is claimed. "
+                     "The release still requires the complete original candidate, source artifact, coverage and normal merge checks."), str(path)
     brief = (f"Review the release-main admission of v{ctx.subject.facts['version']}: {path}.\n"
              f"Recompute the digest yourself: sm head hash {path}\n"
              "Check: the head is the release commit of this version on this main, the plan admits exactly the reviewed release packet, "
@@ -359,6 +441,8 @@ def admission_review(ctx: Ctx) -> tuple[str, str, str]:
 
 
 def apply_probe(ctx: Ctx) -> str | None:
+    if main_ci(ctx) == "full":
+        return None  # a legacy admission receipt cannot stand in for this route's review
     head = _packet_head(ctx)
     return "a receipt for the release head exists" if head and head in receipt_heads() else None
 
@@ -374,6 +458,12 @@ def _packet_head(ctx: Ctx) -> str:
 
 def admit_apply(ctx: Ctx) -> str:
     _same_commit(ctx)
+    if main_ci(ctx) == "full":
+        digest = canonical_sha256(json.dumps(full_plan(ctx)))
+        if digest != ctx.data.get("admission_sha256") or not _approved(ctx, digest):
+            raise Refuse("full-CI plan changed or lacks approval; review the current plan")
+        ctx.data["receipt"] = ""
+        return "full-CI plan verified; no focused admission applied or receipt created"
     done = ok("release admit apply", packet=reservation(ctx), approved=ctx.data["admission_sha256"], wait_=True)
     ctx.data["receipt"] = done.receipt_path
     return f"admitted; receipt {done.receipt_path}"
@@ -394,6 +484,8 @@ def publish_review(ctx: Ctx) -> tuple[str, str, str]:
             "snapshot_acceptance": _yes(ctx, "snapshot", True), "candidate_gate": _yes(ctx, "candidate_gate", False),
             "admission_sha256": ctx.data.get("admission_sha256", ""), "receipt": ctx.data.get("receipt", ""),
             "command": _resume_command(ctx)}
+    if main_ci(ctx) == "full":
+        plan["full_ci"] = full_plan(ctx)
     prior, prior_sha = ctx.data.get("publish_plan"), str(ctx.data.get("publish_sha256") or "")
     if isinstance(prior, dict) and prior != plan and _approved(ctx, prior_sha):
         changed = sorted(k for k in set(prior) | set(plan) if prior.get(k) != plan.get(k))
@@ -455,6 +547,19 @@ def resume_probe(ctx: Ctx) -> str | None:
 
 def resume(ctx: Ctx) -> str:
     _same_commit(ctx)
+    if main_ci(ctx) == "full":
+        # The native runner owns its configured checkout; do not silently publish from a different clone.
+        clone = path_input(ctx, "clone", "the hooked release clone").resolve()
+        configured = setting("release_dir")
+        if not configured or Path(configured).expanduser().resolve() != clone:
+            raise Refuse("full-CI resume requires release_dir to match the reviewed clone",
+                         "set SM_HEINZEL__RELEASE_DIR to the reviewed clone, then resume this cut")
+        import sys
+
+        release = sys.modules[command("release resume").fn.__module__]
+        if release.runner().pending_waiver(ctx.subject.facts["version"]) is not None:
+            raise Refuse("full-candidate request refuses a pending same-version candidate waiver")
+        admit_apply(ctx)  # recheck the exact independently approved source request before execution
     result = ok_or_stopped(ctx)
     return f"ACCEPTED (acceptance run {result.acceptance_run})" if result.acceptance_run else "ACCEPTED"
 

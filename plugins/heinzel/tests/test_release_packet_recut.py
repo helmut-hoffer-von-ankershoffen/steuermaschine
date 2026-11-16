@@ -189,6 +189,7 @@ def test_the_packet_step_builds_the_reservation_next_to_the_pair_packet(tmp_path
     from steuermaschine_heinzel.pipelines import release_cut
 
     monkeypatch.setattr(release_cut, "changes_since_release", lambda core, head: (RELEASE["base"], ()))  # no CI change
+    monkeypatch.setattr(release_cut, "official_origin", lambda clone, repository: None)
 
     rt = runtime(tmp_path)
     root = tmp_path / "review"
