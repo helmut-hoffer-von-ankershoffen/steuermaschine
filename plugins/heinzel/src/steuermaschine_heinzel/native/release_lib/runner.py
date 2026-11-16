@@ -2092,7 +2092,16 @@ def drop_candidate(version: str, reason: str, close_pr: bool) -> int:
 
 
 def release_snapshot_freeze() -> None:
-    """Delete only this unique hold name; never check or unlink the shared incident sentinel."""
+    """Remove this release's hold; a verified tagged adoption may never have owned one."""
+    data = state()
+    if "freeze_token" not in data:
+        version = data.get("version")
+        if data.get("hold_events", []) != []:
+            raise Stop("release hold history is invalid without an owned hold")
+        if not isinstance(version, str) or EXACT_VERSION.fullmatch(version) is None or not has_tag(CORE, f"v{version}"):
+            raise Stop("release hold identity is missing or invalid")
+        hzlib.say("ok   tagged adoption has no release-owned hold; other holds remain untouched")
+        return
     snapshot_hold_path().unlink(missing_ok=True)
 
 

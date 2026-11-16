@@ -40,7 +40,6 @@ jobs:
           fi
           uv run --no-build --script scripts/check_confidentiality.py --require
           case "$BEFORE" in ""|0000000000000000000000000000000000000000) BEFORE=$(git merge-base origin/main HEAD) ;; esac
-          exclude=()
           if [ "$GITHUB_REF" = refs/heads/main ]; then
             range=HEAD
           elif [ "$GITHUB_EVENT_NAME" = pull_request ]; then
@@ -50,13 +49,8 @@ jobs:
             range="$BEFORE..$PR_HEAD"
           else
             range="$BEFORE..HEAD"
-            if [[ "$GITHUB_REF" = refs/heads/* ]]; then
-              # A branch update can merge public main. Keep scanning its own newly pushed commits, including the merge.
-              public_main=$(git rev-parse --verify 'refs/remotes/origin/main^{commit}')
-              exclude=(--messages-exclude "$public_main")
-            fi
           fi
-          uv run --no-build --script scripts/check_confidentiality.py --require --messages "$range" "${exclude[@]}"
+          uv run --no-build --script scripts/check_confidentiality.py --require --messages "$range"
       - name: Conventional Commits (the commits this push or PR adds)
         env:
           BEFORE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
