@@ -102,6 +102,10 @@ def open_pr(worktree: Path, bead: str, title: str, body_file: Path | None, reaso
             origin = slug(need(git("remote", "get-url", "origin"), "the worktree has no remote origin", 2))
             if origin != repo.lower():
                 raise Stop(2, f"the worktree's origin is not {repo}, the repository the PR would be opened on; nothing was pushed (setting repo, or the right worktree)")
+            try:
+                repos.pr_key(repo, 1)  # refuse before publishing if the ship step cannot name this repository
+            except ValueError as error:
+                raise Stop(2, f"{error}; nothing was pushed or opened") from None
             if body_file is None:
                 body = f"Bead {bead}.\n"
             else:
