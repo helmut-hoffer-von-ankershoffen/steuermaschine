@@ -110,7 +110,9 @@ def verified_segment(request, fp, fg):
 
 def verified_full_pr(request, fp, fg):
     """Consume protected Core's complete ordinary-PR proof, never a synthetic focused manifest."""
-    if not callable(getattr(fg, "full_pr_jobs", None)):
+    capacity = request.get("mode") == "full-pr-capacity"
+    operation = "verify_full_pr_capacity" if capacity else "full_pr_jobs"
+    if not callable(getattr(fg, operation, None)):
         raise ValueError("protected Core does not yet support full PR evidence")
     head, base, tree = request["head"], request["reader_head"], request["tree"]
     fp.require(all(fp.valid_sha(value) for value in (head, base, tree)), "invalid full PR identity")
@@ -124,11 +126,20 @@ def verified_full_pr(request, fp, fg):
             return api(path)
 
     gate = EvidenceGate(REPOSITORY, str(request["pr"]), head)
-    verdict = fg.verify(gate, request["run"], "{}", read)
-    fp.require(verdict == "Whole-project coverage measured by full PR CI", "not ordinary full PR evidence")
+    expected = {"type": "full-pr-capacity/v1" if capacity else "full-pr/v1", "head": head, "base": base,
+                "tree": tree, "run": request["run"], "attempt": 2 if capacity else 1,
+                **({"original_attempt": 1} if capacity else {})}
+    if capacity:
+        proof = fg.verify_full_pr_capacity(gate, request["run"], read)
+        fp.require(isinstance(proof, dict) and proof == expected
+                   and all(type(proof[key]) is int for key in ("run", "attempt", "original_attempt")),
+                   "not authenticated full PR capacity evidence")
+    else:
+        verdict = fg.verify(gate, request["run"], "{}", read)
+        fp.require(verdict == "Whole-project coverage measured by full PR CI", "not ordinary full PR evidence")
     _pr, merge, current = fg.pull_identity(gate, head)
     fp.require(current == base and fp.object_id(f"{merge}^{{tree}}") == tree, "full PR merge tree or main moved")
-    return {"type": "full-pr/v1", "head": head, "base": base, "tree": tree, "run": request["run"], "attempt": 1}
+    return expected
 
 
 def main():
@@ -205,7 +216,7 @@ def main():
                 )
                 result = json.loads(legacy or "{}", object_pairs_hook=fp.unique_object)
                 fp.require(isinstance(result, dict), "invalid focused registry")
-        elif request.get("mode") == "full-pr":
+        elif request.get("mode") in ("full-pr", "full-pr-capacity"):
             result = verified_full_pr(request, fp, fg)
         else:
             result = verified_segment(request, fp, fg)
