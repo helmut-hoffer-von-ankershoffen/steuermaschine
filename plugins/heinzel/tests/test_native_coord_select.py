@@ -177,3 +177,33 @@ def test_selection_remains_conservative_without_a_local_core_checkout(tmp_path):
     assert 'supervised' in e2e['e2e_lanes'] and 'e2e-supervised' in e2e['jobs']
     desktop = select.classify(repo, ["desktop/main.js", "plugins/weather/plugin.py"])
     assert {'electron', 'local-plugins', 'core-wheel'} <= set(desktop['jobs'])
+
+
+def test_web_selection_follows_imports_and_e2e_owners_offline(tmp_path):
+    core = tmp_path / "core"
+    files = {
+        "Makefile": "E2E_SUPERVISED := tests/e2e/supervised_test.py\n",
+        "src/heinzel/__init__.py": "",
+        "web/src/feature/panel.ts": "export const value = 1;",
+        "web/src/feature/helper.ts": 'export { value } from "./panel";',
+        "web/src/feature/panel.test.ts": 'import { value } from "@/feature/helper";',
+        "tests/e2e/web_ui_test.py": 'run("browser.mjs")',
+        "tests/e2e/other_test.py": 'run("other.mjs")',
+        "tests/e2e/cli_test.py": "pass",
+        "tests/e2e/supervised_test.py": "pass",
+    }
+    for rel, text in files.items():
+        path = core / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+    repo = select.Repo(core)
+    chosen = select.classify(repo, ["web/src/feature/panel.ts"])
+    assert chosen['vitest'] == ["web/src/feature/panel.test.ts"]
+    assert {'web-1', 'web-2'} == set(chosen['e2e_lanes'])
+    assert select.classify(repo, ["web/src/api/client.ts"])['vitest'] == ['ALL']
+    assert repo.lane_of("tests/e2e/web_ui_test.py") == 'web-1'
+    assert repo.lane_of("tests/e2e/other_test.py") == 'web-2'
+    assert repo.lane_of("tests/e2e/cli_test.py") == 'cli'
+    assert select.classify(repo, ["web/e2e/browser.mjs"])['e2e_lanes'] == ['web-1']
+    assert select.classify(repo, ["web/e2e/unknown.mjs"])['e2e_lanes'] == ['supervised', 'web-1', 'web-2']
+    assert select.classify(repo, ["web/e2e/example.test.mjs"])['vitest'] == ['web/e2e/example.test.mjs']
