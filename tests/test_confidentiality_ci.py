@@ -1,4 +1,4 @@
-"""Only attested GitHub owner squash author-email metadata receives the optional CI exception."""
+"""Only attested GitHub owner merge author-email metadata receives the optional CI exception."""
 
 import importlib.util
 import json
@@ -221,4 +221,86 @@ def test_tree_commit_message_and_hostname_checks_remain_strict(checker, tmp_path
 def test_missing_associated_merge_is_not_proof(checker):
     module, answers, _, _ = checker
     answers[f"repos/sample/project/commits/{SHA}/pulls?per_page=100"] = []
+    assert scan_ci(module) == 1
+
+
+@pytest.fixture
+def merge_checker(checker, monkeypatch):
+    module, answers, _, _ = checker
+    head = "c" * 40
+    answers[f"repos/sample/project/commits/{SHA}"]["parents"] = [{"sha": PARENT}, {"sha": head}]
+    pull = answers["repos/sample/project/pulls/1"]
+    pull["base"]["sha"] = PARENT
+    pull["head"] = {"sha": head}
+    original_git = module._git
+
+    def git(*args):
+        if args == ("show", "-s", "--format=%P", SHA):
+            return f"{PARENT} {head}"
+        return original_git(*args)
+
+    monkeypatch.setattr(module, "_git", git)
+    return checker
+
+
+def test_verified_two_parent_merge_with_exact_pr_topology_is_exempt(merge_checker):
+    module, _, _, calls = merge_checker
+    assert scan_ci(module) == 0
+    assert len(calls) == 7
+
+
+@pytest.mark.parametrize("failure", ["base", "head", "missing-head", "reversed", "root", "octopus", "local-mismatch"])
+def test_merge_requires_exact_ordered_local_and_pr_parents(merge_checker, failure):
+    module, answers, _, _ = merge_checker
+    pull = answers["repos/sample/project/pulls/1"]
+    commit = answers[f"repos/sample/project/commits/{SHA}"]
+    if failure == "base":
+        pull["base"]["sha"] = "d" * 40
+    elif failure == "head":
+        pull["head"]["sha"] = "d" * 40
+    elif failure == "missing-head":
+        del pull["head"]
+    elif failure == "reversed":
+        pull["base"]["sha"], pull["head"]["sha"] = pull["head"]["sha"], pull["base"]["sha"]
+    elif failure == "root":
+        commit["parents"] = []
+    elif failure == "octopus":
+        commit["parents"].append({"sha": "d" * 40})
+    else:
+        commit["parents"].reverse()
+    assert scan_ci(module) == 1
+
+
+@pytest.mark.parametrize("field", [0, 2, 3, 4])
+def test_eligible_merge_still_scans_other_fields(merge_checker, field, capsys):
+    module, _, fields, _ = merge_checker
+    fields[field] += "\nPrivate-Trailer: fictional-marker"
+    assert scan_ci(module) == 1
+    assert "fictional-marker" not in capsys.readouterr().err
+
+
+def test_verified_merge_still_requires_unchanged_baseline_email(merge_checker):
+    module, answers, fields, _ = merge_checker
+    fields[1] = "other-fictional-marker@example.invalid"
+    answers[f"repos/sample/project/commits/{SHA}"]["commit"]["author"]["email"] = fields[1]
+    assert module.OwnerSquashProof()._eligible(SHA, fields[1])
+    assert scan_ci(module) == 1
+
+
+def test_baseline_remains_single_parent_squash_only(checker, monkeypatch):
+    module, answers, _, _ = checker
+    baseline = module.APPROVED_EMAIL_BASELINE
+    head = "c" * 40
+    answers[f"repos/sample/project/commits/{baseline}"]["parents"] = [{"sha": PARENT}, {"sha": head}]
+    pull = answers["repos/sample/project/pulls/2"]
+    pull["base"]["sha"] = PARENT
+    pull["head"] = {"sha": head}
+    original_git = module._git
+
+    def git(*args):
+        if args == ("show", "-s", "--format=%P", baseline):
+            return f"{PARENT} {head}"
+        return original_git(*args)
+
+    monkeypatch.setattr(module, "_git", git)
     assert scan_ci(module) == 1
