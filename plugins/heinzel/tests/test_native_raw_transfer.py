@@ -147,22 +147,35 @@ def test_push_message_scope_keeps_the_new_merge_and_branch_side(repo):
     git(repo, "merge", "--no-ff", "-m", TERM + " merge", "main")
     merge = git(repo, "rev-parse", "HEAD")
 
-    def checker(*args: str) -> Result:
+    git(repo, "update-ref", "refs/remotes/origin/main", inherited)
+    feature = {
+        "GITHUB_ACTIONS": "true",
+        "GITHUB_EVENT_NAME": "push",
+        "GITHUB_REF": "refs/heads/feature",
+        "GITHUB_SHA": merge,
+        "BEFORE": before,
+    }
+
+    def checker(context: dict[str, str], revisions: str = f"{before}..HEAD") -> Result:
         return Subprocess().run(
-            [sys.executable, str(script), "--require", "--messages", f"{before}..HEAD", *args],
+            [sys.executable, str(script), "--require", "--messages", revisions],
             cwd=str(repo),
             timeout=10,
-            env=child_environment(CONFIDENTIAL_TERMS=TERM),
+            env=child_environment(drop=("BEFORE",), drop_prefixes=("GITHUB_",), CONFIDENTIAL_TERMS=TERM, **context),
         )
 
-    old = checker()
-    assert old.rc == 1 and f"commit {inherited[:12]}:" in old.err
-    scoped = checker("--messages-exclude", inherited)
-    assert scoped.rc == 1
-    assert {line.split(":")[0] for line in scoped.err.splitlines() if line.startswith("commit ")} == {
-        f"commit {outgoing[:12]}",
-        f"commit {merge[:12]}",
-    }
-    assert TERM not in scoped.err
-    invalid = checker("--messages-exclude=--all")
-    assert invalid.rc == 2 and "requires --messages and a full public commit ID" in invalid.err
+    def found(result: Result) -> set[str]:
+        assert result.rc == 1
+        assert TERM not in result.err
+        return {line.split(":")[0] for line in result.err.splitlines() if line.startswith("commit ")}
+
+    outgoing_commits = {f"commit {outgoing[:12]}", f"commit {merge[:12]}"}
+    complete = outgoing_commits | {f"commit {inherited[:12]}"}
+    assert found(checker(feature)) == outgoing_commits
+    assert found(checker({})) == complete
+    assert found(checker(feature | {"GITHUB_EVENT_NAME": "pull_request"})) == complete
+    assert found(checker(feature | {"GITHUB_REF": "refs/heads/main"})) == complete
+    assert found(checker(feature | {"GITHUB_SHA": outgoing})) == complete
+    assert found(checker(feature, f"{before}..{merge}")) == complete
+    git(repo, "update-ref", "-d", "refs/remotes/origin/main")
+    assert checker(feature).rc != 0

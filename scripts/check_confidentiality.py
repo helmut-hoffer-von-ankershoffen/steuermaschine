@@ -23,7 +23,6 @@ Usage: uv run --script scripts/check_confidentiality.py [OPTION] [FILE ...]
     [FILE ...]          files, or every tracked file
     --commit-msg FILE   a commit message (commit-msg hook)
     --messages A..B     the messages of a range of commits
-    --messages-exclude SHA  exclude commits reachable from a known public commit
     --text TEXT         a string, such as a pull request title or branch
     --identity          the author and committer git will record, and that their emails are not machine hostnames
     --branch            the current branch's name (pre-push hook)
@@ -78,6 +77,24 @@ def identity_problems() -> list[str]:
     return problems
 
 
+def _message_exclusion(revisions: str) -> list[str]:
+    """Exclude the public main ancestry from the workflow's incremental feature-push range."""
+    before = os.environ.get("BEFORE", "")
+    ref = os.environ.get("GITHUB_REF", "")
+    if (
+        os.environ.get("GITHUB_ACTIONS") != "true"
+        or os.environ.get("GITHUB_EVENT_NAME") != "push"
+        or not ref.startswith("refs/heads/")
+        or ref == "refs/heads/main"
+        or not re.fullmatch(r"[0-9a-f]{40}", before)
+        or revisions != f"{before}..HEAD"
+        or os.environ.get("GITHUB_SHA") != _git("rev-parse", "--verify", "HEAD").strip()
+    ):
+        return []
+    public_main = _git("rev-parse", "--verify", "refs/remotes/origin/main^{commit}").strip()
+    return [f"^{public_main}"]
+
+
 def sources(args: argparse.Namespace) -> Iterator[tuple[str, str]]:
     """Collect what the command line selects.
 
@@ -87,7 +104,7 @@ def sources(args: argparse.Namespace) -> Iterator[tuple[str, str]]:
     if args.commit_msg:
         yield "commit message", Path(args.commit_msg).read_text(encoding="utf-8")
     elif args.messages:
-        exclude = [f"^{args.messages_exclude}"] if args.messages_exclude else []
+        exclude = _message_exclusion(args.messages)
         for sha in _git("rev-list", args.messages, *exclude, "--").split():
             yield f"commit {sha[:12]}", _git("log", "-1", "--format=%an <%ae>%n%cn <%ce>%n%B", sha)
     elif args.branch:
@@ -112,14 +129,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("files", nargs="*")
     parser.add_argument("--commit-msg")
     parser.add_argument("--messages")
-    parser.add_argument("--messages-exclude")
     parser.add_argument("--text")
     parser.add_argument("--identity", action="store_true")
     parser.add_argument("--branch", action="store_true")
     parser.add_argument("--require", action="store_true")
     args = parser.parse_args(argv)
-    if args.messages_exclude is not None and (not args.messages or not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", args.messages_exclude)):
-        parser.error("--messages-exclude requires --messages and a full public commit ID")
 
     # Independent of the term list, which plugin developers usually don't have.
     problems = identity_problems() if args.identity else []
