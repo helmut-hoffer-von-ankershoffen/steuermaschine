@@ -52,6 +52,16 @@ def make(tmp_path, monkeypatch, gh, reviewed=True):
     return Runtime(Project(name="t", plugin="heinzel", root=Path("."), plugins=["heinzel"], allow_unreviewed=reviewed), stack, settings, _providers=fake_providers(commands=gh))
 
 
+def test_compose_replacement_rejects_invalid_version_before_access(tmp_path, monkeypatch):
+    gh = FakeGh()
+    rt = make(tmp_path, monkeypatch, gh)
+    out = invoke(rt, ["release", "replace-compose", "../escape", "--failed-run", "123", "--failed-attempt", "1",
+                      "--reviewed-head", "a" * 40, "--core-source", "b" * 40, "--receipt-sha256", "c" * 64,
+                      "--reason", "review: fixture"])
+    assert out.exit_code == 1 and "exact release version" in out.stderr
+    assert gh.calls == []
+
+
 def pypi(monkeypatch, rules: dict):
     class Reply:
         status = 200
