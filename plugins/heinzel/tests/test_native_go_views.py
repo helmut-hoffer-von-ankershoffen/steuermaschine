@@ -152,7 +152,7 @@ def test_next_shows_a_claimed_item_as_watching_and_says_nothing_to_do(tmp_path):
     red = run_row(9, conclusion="failure", sha="f" * 40)
     out = view(tmp_path, scripted(main_runs=[red]), "next")
     lines = out.stdout.splitlines()
-    assert lines[1].endswith(": 1 to do, 1 watching") and "1. [main-red-ffffffff]" not in out.stdout
+    assert lines[1].endswith(": 0 to do, 1 watching") and "1. [main-red-ffffffff]" not in out.stdout
     assert any(line.startswith("watching [main-red-ffffffff] fixer until ") for line in lines)
     claimed = view(tmp_path, scripted(main_runs=[red], prs=[{**pr_row(5, branch="fix/main-red"), "title": "fix main red"}]), "next").stdout
     assert "main red at ffffffff, run 9; claimed by PR #5" in claimed

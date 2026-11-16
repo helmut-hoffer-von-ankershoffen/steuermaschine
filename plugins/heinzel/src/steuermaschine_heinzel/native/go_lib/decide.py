@@ -57,14 +57,18 @@ def classify_pr(pr: dict) -> dict:
             "checks": checks, "failing": failing[:4], "pending": len(pending)}
 
 
-def main_ci(runs: list[dict], sha: str) -> dict:
+def main_ci(runs: list[dict], sha: str, *, exact: bool = False) -> dict:
     """The CI workflow's push or schedule run for exactly this main SHA."""
-    mine = [r for r in runs if r.get("workflowName", "CI") == "CI" and r.get("event", "push") in ("push", "schedule")
-            and r.get("headBranch", "main") == "main" and sha and str(r.get("headSha", "")).startswith(sha[:8])]
+    mine = [r for r in runs if r.get("workflowName", "" if exact else "CI") == "CI"
+            and r.get("event", "" if exact else "push") in ("push", "schedule")
+            and r.get("headBranch", "" if exact else "main") == "main" and sha
+            and (r.get("headSha") == sha if exact else str(r.get("headSha", "")).startswith(sha[:8]))]
     if not mine:
         return {"state": "none"}
     best = max(mine, key=lambda r: r.get("databaseId", 0))
     status = best.get("status")
+    if status not in ACTIVE and (status != "completed" or not best.get("conclusion")):
+        return {"state": "unknown"}
     state = "pending" if status in ACTIVE else "green" if best.get("conclusion") == "success" else "red"
     return {"state": state, "run": best.get("databaseId"), "conclusion": best.get("conclusion") or status}
 
@@ -218,7 +222,11 @@ def decide(s: dict, now: float, w: Words | None = None, stall_minutes: int = 15)
                               None, "first_attempt", f"candidate CI run {cand['run']} (about 85 min); watch with {w.release_status()}"))
 
     # 2. main
-    ci = main_ci(runs or queue.get("main_runs", []), main_sha) if main_sha else {"state": "unknown"}
+    main_result = s.get("main_ci")
+    if "main_ci" not in s:  # historical snapshots predate the authoritative probe
+        ci = main_ci(runs or queue.get("main_runs", []), main_sha) if main_sha else {"state": "unknown"}
+    else:
+        ci = main_result if known(main_result) and isinstance(main_result, dict) and main_result.get("sha") == main_sha else {"state": "unknown"}
     if ci["state"] == "red":
         items.append(item("main-red", f"main {main_sha[:8]} is RED (CI run {ci['run']}: {ci['conclusion']})", w.main_evidence(), "red"))
     elif ci["state"] == "pending":
