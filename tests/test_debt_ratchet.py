@@ -10,6 +10,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "bin"))
 
 import debt
@@ -46,6 +48,37 @@ def test_summary_and_clean_lines_are_read():
 
 def test_a_key_missing_from_the_record_fails():
     assert debt.problems({"environment reads plugin": 77}, BEFORE) == ["environment reads plugin: not recorded in docs/debt.json (record it: bin/debt.py --record)"]
+
+
+def test_source_only_never_reads_coverage_and_still_refuses_worse_debt(tmp_path, monkeypatch, capsys):
+    ratchet = tmp_path / "debt.json"
+    ratchet.write_text('{"environment reads plugin": 1}')
+    monkeypatch.setattr(debt, "RATCHET", ratchet)
+    monkeypatch.setattr(debt, "coverage_metrics", lambda: pytest.fail("coverage must not run early"))
+    monkeypatch.setattr(debt, "source_metrics", lambda: {"environment reads plugin": 2})
+    monkeypatch.setattr(sys, "argv", ["debt.py", "--gate", "--source-only"])
+    with pytest.raises(SystemExit) as exc:
+        debt.main()
+    assert exc.value.code == 1 and "WORSE" in capsys.readouterr().out
+
+
+def test_partial_debt_cannot_overwrite_full_baseline(monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["debt.py", "--record", "--source-only"])
+    with pytest.raises(SystemExit) as exc:
+        debt.main()
+    assert exc.value.code == 2
+
+
+def test_coverage_only_still_refuses_worse_coverage(tmp_path, monkeypatch, capsys):
+    ratchet = tmp_path / "debt.json"
+    ratchet.write_text('{"coverage core %": 98}')
+    monkeypatch.setattr(debt, "RATCHET", ratchet)
+    monkeypatch.setattr(debt, "source_metrics", lambda: pytest.fail("source metrics must not be repeated"))
+    monkeypatch.setattr(debt, "coverage_metrics", lambda: {"coverage core %": 97})
+    monkeypatch.setattr(sys, "argv", ["debt.py", "--gate", "--coverage-only"])
+    with pytest.raises(SystemExit) as exc:
+        debt.main()
+    assert exc.value.code == 1 and "WORSE" in capsys.readouterr().out
 
 
 def test_the_recorded_file_names_every_number_the_ratchet_measures():

@@ -100,17 +100,31 @@ def old_names() -> int:
     return count
 
 
-def main() -> None:
-    now: dict[str, float | int | None] = {
+def coverage_metrics() -> dict[str, float | int | None]:
+    return {
         "coverage core %": coverage(GROUPS["core"]),
         "coverage plugin new code %": coverage(GROUPS["plugin new code"], GROUPS["plugin moved libraries"]),
         "coverage plugin moved libraries %": coverage(GROUPS["plugin moved libraries"]),
+    }
+
+
+def source_metrics() -> dict[str, float | int | None]:
+    return {
         "mypy strict findings core": count(MYPY[0], run("uv", "run", "--quiet", "mypy", "-p", "steuermaschine"), MYPY[1]),
         "mypy strict findings plugin": count(MYPY[0], run("uv", "run", "--quiet", "mypy", "-p", "steuermaschine_heinzel"), MYPY[1]),
         "ruff findings moved libraries and plugin tests": count(RUFF[0], run("uv", "run", "--quiet", "ruff", "check", "plugins"), RUFF[1]),
         "environment reads plugin": env_reads(),
         "old names in plugin strings": old_names(),
     }
+
+
+def main() -> None:
+    source_only = "--source-only" in sys.argv
+    coverage_only = "--coverage-only" in sys.argv
+    if (source_only and coverage_only) or ("--record" in sys.argv and (source_only or coverage_only)):
+        print("partial debt measurements cannot be combined or recorded", file=sys.stderr)
+        sys.exit(2)
+    now = ({} if source_only else coverage_metrics()) | ({} if coverage_only else source_metrics())
     before = json.loads(RATCHET.read_text()) if RATCHET.exists() else {}
     print("check: DEBT of the plugin (the ratchet docs/debt.json; the bar for 'clean' is 90% coverage, 0 findings)")
     for key, value in now.items():

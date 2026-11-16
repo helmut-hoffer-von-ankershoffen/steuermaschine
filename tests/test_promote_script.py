@@ -92,7 +92,7 @@ def test_a_refused_gate_names_the_failing_tests(tmp_path):
                    "    ERROR examples/layer/tests/test_layer.py::test_two\ncheck: PASS typos\n")
     assert bash(f'failed_tests "{out}"', tmp_path).stdout.splitlines() == [
         "FAILED plugins/heinzel/tests/test_a.py::test_one", "ERROR examples/layer/tests/test_layer.py::test_two"]
-    assert 'failed_tests "/tmp/sm-promote-check.$$"' in PROMOTE.read_text()
+    assert 'failed_tests "$summary"' in PROMOTE.read_text()
 
 
 def test_the_switch_pending_file_names_this_promote_and_only_it_removes_it(tmp_path):

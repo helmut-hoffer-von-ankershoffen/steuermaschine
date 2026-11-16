@@ -1,6 +1,6 @@
 #!/bin/bash
 # check: the quality gate of this repository, one command. bin/promote runs it first.
-#   bin/check            the whole gate: tests with coverage, then every static gate and the debt ratchet
+#   bin/check            the whole gate: source checks first, then tests with coverage and the coverage ratchet
 #   bin/check --fast     without coverage and the ratchet (what bin/merge-slice runs)
 # Gates (each must be green to merge a slice or to promote):
 #   tests          every test passes (promote-verdict regressions, tests/test_gate_structure.py, isolation, the json,
@@ -20,18 +20,23 @@ here="$(cd "$(dirname "$0")/.." && pwd)"; cd "$here" || exit 2
 fast=0; [ "${1:-}" = "--fast" ] && fast=1
 case "${1:-}" in -h|--help) sed -n '2,10p' "$0"; exit 0 ;; esac
 failed=()
+umask 077
+gate_tmp=""
+cleanup() { [ -z "$gate_tmp" ] || rm -rf "$gate_tmp"; }
+trap cleanup EXIT
 gate() { # gate NAME command...
   local name="$1"; shift
-  local out; out="$("$@" 2>&1)"; local rc=$?
-  if [ $rc = 0 ]; then echo "check: PASS $name   $(tail -1 <<<"$out" | cut -c1-110)"; else echo "check: FAIL $name"; echo "$out" | tail -${CHECK_TAIL:-15} | sed 's/^/    /'; failed+=("$name"); fi
+  local out="$gate_tmp/output"
+  if [ -n "${CHECK_DETAIL_DIR:-}" ]; then
+    [ -d "$CHECK_DETAIL_DIR" ] && [ ! -L "$CHECK_DETAIL_DIR" ] || { echo "check: FAIL diagnostic log"; failed+=("diagnostic log"); return; }
+    out="$(mktemp "$CHECK_DETAIL_DIR/gate.log.XXXXXXXX")" || { echo "check: FAIL diagnostic log"; failed+=("diagnostic log"); return; }
+    echo "check: LOG $name $out"
+  fi
+  "$here/.venv/bin/python" "$here/bin/check_progress.py" "$name" "$out" "$@"; local rc=$?
+  if [ $rc = 0 ]; then echo "check: PASS $name   $(tail -1 "$out" | cut -c1-110)"; else echo "check: FAIL $name"; tail -${CHECK_TAIL:-15} "$out" | sed 's/^/    /'; failed+=("$name"); fi
 }
 uv sync --quiet || { echo "check: uv sync failed"; exit 2; }
-cov=(); [ $fast = 0 ] && cov=(--cov --cov-report= --cov-fail-under=0)
-gate "tests" env -u GITHUB_ACTIONS -u FORCE_COLOR -u PY_COLORS uv run --quiet pytest -q -p no:cacheprovider ${cov[@]+"${cov[@]}"}
-if [ $fast = 0 ]; then
-  gate "coverage core >= 90" uv run --quiet coverage report --include='src/steuermaschine/*' --fail-under=90 --format=total
-  gate "coverage plugin >= 90" uv run --quiet coverage report --include='plugins/heinzel/src/steuermaschine_heinzel/*' --fail-under=90 --format=total
-fi
+gate_tmp="$(mktemp -d "$here/.venv/check.XXXXXXXX")" || { echo "check: cannot create private gate output"; exit 2; }
 for project in tests/projects/*/; do
   gate "help lint ($(basename "$project"))" env STEUERMASCHINE_PROJECT="$here/$project" XDG_CONFIG_HOME=/nonexistent "$here/.venv/bin/steuermaschine" self lint
 done
@@ -41,6 +46,14 @@ gate "ruff (core, examples, core tests)" uv run --quiet ruff check src examples 
 gate "mypy strict (core)" uv run --quiet mypy -p steuermaschine
 gate "pyright (core)" uv run --quiet pyright
 gate "dead code (vulture)" uv run --quiet vulture src plugins/heinzel/src examples/toy/src examples/layer/src tests/vulture_whitelist.py --min-confidence 80
-[ $fast = 0 ] && gate "debt ratchet (plugin)" uv run --quiet python bin/debt.py --gate
+[ $fast = 0 ] && gate "source debt ratchet (plugin)" uv run --quiet python bin/debt.py --gate --source-only
+if [ ${#failed[@]} != 0 ]; then echo "check: PROMOTE GATE RED: ${failed[*]}"; exit 1; fi
+cov=(); [ $fast = 0 ] && cov=(--cov --cov-report= --cov-fail-under=0)
+gate "tests" env -u GITHUB_ACTIONS -u FORCE_COLOR -u PY_COLORS uv run --quiet pytest -q -p no:cacheprovider ${cov[@]+"${cov[@]}"}
+if [ $fast = 0 ]; then
+  gate "coverage core >= 90" uv run --quiet coverage report --include='src/steuermaschine/*' --fail-under=90 --format=total
+  gate "coverage plugin >= 90" uv run --quiet coverage report --include='plugins/heinzel/src/steuermaschine_heinzel/*' --fail-under=90 --format=total
+  gate "coverage debt ratchet (plugin)" uv run --quiet python bin/debt.py --gate --coverage-only
+fi
 if [ ${#failed[@]} = 0 ]; then echo "check: PROMOTE GATE GREEN"; else echo "check: PROMOTE GATE RED: ${failed[*]}"; fi
 [ ${#failed[@]} = 0 ]
