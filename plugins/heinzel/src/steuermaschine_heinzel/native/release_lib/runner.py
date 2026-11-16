@@ -80,6 +80,7 @@ from ..queue_lib import (
     hzlib,  # noqa: E402
     release_flow,
 )
+from . import acceptance_capacity as release_acceptance_capacity
 from . import candidate_capacity as release_candidate_capacity
 from . import candidate_policy as release_candidate_policy
 from . import edge  # moved: siblings are imported relatively, no sys.path entry
@@ -522,6 +523,13 @@ def runs(repo: str, workflow: str, **extra) -> list[dict]:
     return hzlib.ghj(*args, default=[]) or []
 
 
+def check_capacity_replacement(data: dict[str, Any], run: dict[str, Any], run_id: int) -> None:
+    try:
+        release_acceptance_capacity.validate_replacement(data, run, CORE, run_id)
+    except release_candidate_capacity.InvalidCapacity as exc:
+        raise Stop(str(exc)) from None
+
+
 def ours(repo: str, workflow: str, key: str) -> dict | None:
     """Once a marked run is found, resume by its persisted ID rather than a moving newest-runs window."""
     data = state()
@@ -539,6 +547,8 @@ def ours(repo: str, workflow: str, key: str) -> dict | None:
         if key == "acceptance" and data.get("acceptance_identity"):
             if type(data.get("acceptance_run_attempt")) is not int or run.get("run_attempt") != data["acceptance_run_attempt"]:
                 raise Stop("acceptance run attempt changed; retain original rejection")
+        if key == "acceptance":
+            check_capacity_replacement(data, run, run_id)
         return {"databaseId": run["id"], "status": run["status"], "conclusion": run.get("conclusion"),
                 "headSha": run["head_sha"], "createdAt": run["created_at"], "displayTitle": run["display_title"], "attempt": run.get("run_attempt")}
     asked = data.get(f"{key}_dispatch") if not marker else None
@@ -557,6 +567,14 @@ def ours(repo: str, workflow: str, key: str) -> dict | None:
     if marker and selected:
         if key == "acceptance" and data.get("acceptance_identity") and selected.get("attempt") != 1:
             raise Stop("acceptance discovery requires the original run attempt")
+        if key == "acceptance" and data.get("acceptance_capacity") is not None:
+            selected_id = selected.get("databaseId")
+            if type(selected_id) is not int or selected_id <= 0:
+                raise Stop("capacity replacement run ID is invalid")
+            run = hzlib.ghj("api", f"repos/{repo}/actions/runs/{selected_id}", default=None)
+            if not isinstance(run, dict):
+                raise Stop("capacity replacement run identity cannot be verified")
+            check_capacity_replacement(data, run, selected_id)
         remember(**{f"{key}_run_id": selected["databaseId"], f"{key}_run_attempt": selected.get("attempt")})
     return selected
 
@@ -1542,6 +1560,19 @@ def acceptance_step(version: str, timeout: float, snapshot: dict | None = None,
     return ours(CORE, "acceptance.yml", "acceptance")["databaseId"]
 
 
+def acceptance_receipt_matches(result: dict[str, Any], run_id: int, attempt: int | None, identity: dict[str, Any], os_name: str) -> bool:
+    """Require an accepted public result bound to the specific release, platform and workflow attempt."""
+    ci, published = result["ci"], result["published"]
+    return (result["verdict"] in ACCEPTED and result.get("public_path_proof") is True
+            and ci.get("repository") == CORE and ci.get("sha") == identity["commit"]
+            and ci.get("run_id") == str(run_id) and ci.get("runner_os") == os_name
+            and ci.get("run_attempt") == str(attempt) and ci.get("event") == "workflow_dispatch"
+            and published.get("expect_version") == identity["version"]
+            and published.get("expect_app_version") == identity["app_version"]
+            and published.get("core_wheel_sha256") == identity["snapshot"]["wheel_sha256"]
+            and published.get("profile_sha256") == identity["snapshot"]["profile_sha256"])
+
+
 def acceptance_receipts(run_id: int, identity: dict) -> bool:
     """Read both uploaded receipts from this run, never a local or different run's result."""
     with tempfile.TemporaryDirectory(prefix="sm-acceptance-receipts-") as directory:
@@ -1555,17 +1586,8 @@ def acceptance_receipts(run_id: int, identity: dict) -> bool:
         for path in files:
             try:
                 result = json.loads(path.read_text())
-                ci, published = result["ci"], result["published"]
                 os_name = "Linux" if path.parent.name.endswith("Linux") else "macOS"
-                if (result["verdict"] not in ACCEPTED or result.get("public_path_proof") is not True
-                        or ci.get("repository") != CORE or ci.get("sha") != identity["commit"]
-                        or ci.get("run_id") != str(run_id) or ci.get("runner_os") != os_name
-                        or ci.get("run_attempt") != str(state().get("acceptance_run_attempt"))
-                        or ci.get("event") != "workflow_dispatch"
-                        or published.get("expect_version") != identity["version"]
-                        or published.get("expect_app_version") != identity["app_version"]
-                        or published.get("core_wheel_sha256") != identity["snapshot"]["wheel_sha256"]
-                        or published.get("profile_sha256") != identity["snapshot"]["profile_sha256"]):
+                if not acceptance_receipt_matches(result, run_id, state().get("acceptance_run_attempt"), identity, os_name):
                     return False
             except (OSError, ValueError, KeyError, TypeError):
                 return False
