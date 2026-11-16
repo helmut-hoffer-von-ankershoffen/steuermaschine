@@ -27,14 +27,17 @@ Usage: uv run --script scripts/check_confidentiality.py [OPTION] [FILE ...]
     --identity          the author and committer git will record, and that their emails are not machine hostnames
     --branch            the current branch's name (pre-push hook)
     --require           fail instead of skipping when no terms are set
+    --github-owner-squash  with --messages only: CI main may exempt author email after GitHub provenance checks
 """
 
 import argparse
 import contextlib
+import json
 import os
 import re
 import subprocess
 import sys
+import tomllib
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -52,6 +55,82 @@ from steuermaschine_heinzel.confidentiality import (
 
 def _git(*args: str) -> str:
     return subprocess.run(["git", *args], check=True, capture_output=True, text=True, timeout=60).stdout
+
+
+def _github_api(path: str):
+    """Read only the official API; never print response bodies or authentication errors."""
+    result = subprocess.run(
+        ["gh", "api", "--hostname", "github.com", path],
+        check=True, capture_output=True, text=True, timeout=30,
+    )
+    return json.loads(result.stdout)
+
+
+class OwnerSquashProof:
+    """CI-only provenance for author email, never a message or another identity field.
+
+    No email allow-list: GitHub must attest the exact single-parent commit, verified signature,
+    owner account, web-flow committer, and merged PR on this project's default branch.
+    Missing or inconsistent evidence means scan the email normally.
+    """
+
+    def __init__(self):
+        self.repo = None
+
+    def eligible(self, sha: str, author_email: str) -> bool:
+        """Fail closed on failed lookups or malformed proof without leaking API data."""
+        try:
+            return self._eligible(sha, author_email)
+        except (OSError, ValueError, KeyError, TypeError, AttributeError, subprocess.SubprocessError):
+            return False
+
+    def _eligible(self, sha: str, author_email: str) -> bool:
+        if (os.environ.get("GITHUB_ACTIONS") != "true" or os.environ.get("GITHUB_EVENT_NAME") != "push"
+                or os.environ.get("GITHUB_REF") != "refs/heads/main"
+                or hostname_email(f"<{author_email}>") is not None):
+            return False
+        source = tomllib.loads(Path("pyproject.toml").read_text())["project"]["urls"]["Source"]
+        match = re.fullmatch(r"https://github\.com/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)", source)
+        if not match or os.environ.get("GITHUB_REPOSITORY") != match[1]:
+            return False
+        name = match[1]
+        if self.repo is None:
+            self.repo = _github_api(f"repos/{name}")
+        repo = self.repo
+        owner = repo["owner"]
+        if (repo["full_name"] != name or repo["fork"] is not False or repo["default_branch"] != "main"
+                or owner["type"] != "User" or owner["login"] != name.split("/")[0]
+                or str(repo["id"]) != os.environ.get("GITHUB_REPOSITORY_ID")
+                or str(owner["id"]) != os.environ.get("GITHUB_REPOSITORY_OWNER_ID")):
+            return False
+        commit = _github_api(f"repos/{name}/commits/{sha}")
+        verification = commit["commit"]["verification"]
+        if (commit["sha"] != sha or commit["author"]["id"] != owner["id"]
+                or commit["author"]["login"] != owner["login"]
+                or commit["committer"]["login"] != "web-flow"
+                or commit["commit"]["author"]["email"] != author_email
+                or commit["commit"]["committer"]["name"] != "GitHub"
+                or commit["commit"]["committer"]["email"] != "noreply@github.com"
+                or verification["verified"] is not True or verification["reason"] != "valid"
+                or not verification["signature"] or not verification["payload"]
+                or len(commit["parents"]) != 1
+                or commit["parents"][0]["sha"] != _git("show", "-s", "--format=%P", sha).strip()):
+            return False
+        # Associated PRs alone are not proof: bind the merged PR's exact result and repository.
+        pulls = _github_api(f"repos/{name}/commits/{sha}/pulls?per_page=100")
+        for candidate in pulls:
+            number = candidate["number"]
+            if type(number) is not int or number < 1 or candidate["merge_commit_sha"] != sha:
+                continue
+            pull = _github_api(f"repos/{name}/pulls/{number}")
+            if (pull["number"] == number and pull["merged"] is True and pull["state"] == "closed"
+                    and pull["merged_at"] and pull["merge_commit_sha"] == sha
+                    and pull["base"]["repo"]["id"] == repo["id"]
+                    and pull["base"]["repo"]["full_name"] == name and pull["base"]["ref"] == "main"
+                    and pull["merged_by"]["id"] == owner["id"]
+                    and pull["merged_by"]["login"] == owner["login"]):
+                return True
+        return False
 
 
 def _read(path: Path) -> str | None:
@@ -95,7 +174,7 @@ def _message_exclusion(revisions: str) -> list[str]:
     return [f"^{public_main}"]
 
 
-def sources(args: argparse.Namespace) -> Iterator[tuple[str, str]]:
+def sources(args: argparse.Namespace, compiled: list[re.Pattern[str]] | None = None) -> Iterator[tuple[str, str]]:
     """Collect what the command line selects.
 
     Yields:
@@ -105,8 +184,18 @@ def sources(args: argparse.Namespace) -> Iterator[tuple[str, str]]:
         yield "commit message", Path(args.commit_msg).read_text(encoding="utf-8")
     elif args.messages:
         exclude = _message_exclusion(args.messages)
+        proof = OwnerSquashProof() if getattr(args, "github_owner_squash", False) else None
         for sha in _git("rev-list", args.messages, *exclude, "--").split():
-            yield f"commit {sha[:12]}", _git("log", "-1", "--format=%an <%ae>%n%cn <%ce>%n%B", sha)
+            if proof is None:
+                yield f"commit {sha[:12]}", _git("log", "-1", "--format=%an <%ae>%n%cn <%ce>%n%B", sha)
+                continue
+            author, email, committer, committer_email, message = _git(
+                "log", "-1", "--format=%an%x00%ae%x00%cn%x00%ce%x00%B", sha,
+            ).split("\0", 4)
+            # Only a matching author email needs proof; preserve names, committer and complete body/trailers.
+            if any(scan("email", email, compiled or [])) and proof.eligible(sha, email):
+                email = ""
+            yield f"commit {sha[:12]}", f"{author} <{email}>\n{committer} <{committer_email}>\n{message}"
     elif args.branch:
         yield "branch", _git("rev-parse", "--abbrev-ref", "HEAD")
     elif args.identity:
@@ -133,7 +222,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--identity", action="store_true")
     parser.add_argument("--branch", action="store_true")
     parser.add_argument("--require", action="store_true")
+    parser.add_argument("--github-owner-squash", action="store_true",
+                        help="CI main only: verify GitHub owner squash provenance before exempting its author email")
     args = parser.parse_args(argv)
+    if args.github_owner_squash and not args.messages:
+        parser.error("--github-owner-squash requires --messages")
 
     # Independent of the term list, which plugin developers usually don't have.
     problems = identity_problems() if args.identity else []
@@ -148,7 +241,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1 if problems else 0
     compiled = patterns(terms)
     findings: list[Finding] = []
-    for where, text in sources(args):
+    for where, text in sources(args, compiled):
         findings += scan(where, text, compiled)
     for finding in findings:
         print(finding, file=sys.stderr)

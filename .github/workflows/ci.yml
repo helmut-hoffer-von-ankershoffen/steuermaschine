@@ -6,6 +6,9 @@ permissions:
   contents: read
 jobs:
   check:
+    permissions:
+      contents: read
+      pull-requests: read
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -33,6 +36,7 @@ jobs:
           CONFIDENTIAL_TERMS: ${{ secrets.PRIVATE_TERMS }}
           BEFORE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
           PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           if [ -z "$CONFIDENTIAL_TERMS" ]; then
             if [ "$GITHUB_REF" = refs/heads/main ]; then echo "::error::PRIVATE_TERMS secret missing"; exit 1; fi
@@ -50,7 +54,13 @@ jobs:
           else
             range="$BEFORE..HEAD"
           fi
-          uv run --no-build --script scripts/check_confidentiality.py --require --messages "$range"
+          # Only verified GitHub-generated owner squash author-email metadata can be exempted on main.
+          # Local hooks and PR scans stay strict; messages, names and committer fields are always scanned.
+          if [ "$GITHUB_REF" = refs/heads/main ]; then
+            uv run --no-build --script scripts/check_confidentiality.py --require --messages "$range" --github-owner-squash
+          else
+            uv run --no-build --script scripts/check_confidentiality.py --require --messages "$range"
+          fi
       - name: Conventional Commits (the commits this push or PR adds)
         env:
           BEFORE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
