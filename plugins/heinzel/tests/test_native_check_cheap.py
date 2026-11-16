@@ -73,7 +73,7 @@ def test_the_probe_answers_with_an_error_for_a_hook_it_cannot_ask(tmp_path, monk
 
     monkeypatch.setattr(Path, "write_text", same_timestamp)
     assert probe(tmp_path, monkeypatch, ["a.md"], [], hook="X = 1\n")["error"].startswith("AttributeError")
-    assert "SyntaxError" in probe(tmp_path, monkeypatch, ["a.md"], [], hook="def (\n\n")["error"]
+    assert "SyntaxError" in probe(tmp_path, monkeypatch, ["a.md"], [], hook="def (\n")["error"]
 
 
 def test_steps_of_reads_the_hooks_step_lines():
