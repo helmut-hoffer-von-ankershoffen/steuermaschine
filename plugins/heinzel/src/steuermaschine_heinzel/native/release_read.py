@@ -202,6 +202,49 @@ def release_candidate(target: str = typer.Argument(..., metavar="VERSION|RUN", h
                             omitted=[j.name for j, _ in bad[jobs:]], url=run.url)
 
 
+class CandidateProof(Model):
+    """Authenticated full candidate evidence bound to independently reviewed identities."""
+    pr: int
+    head: str
+    base: str
+    tree: str
+    run_id: int
+    run_attempt: int
+    job_count: int
+
+    def render(self) -> list[str]:
+        return [f"verified original full candidate run {self.run_id} for PR #{self.pr}",
+                f"head {self.head} base {self.base} tree {self.tree}; {self.job_count} jobs"]
+
+
+@native("release candidate-proof", writes=False, help=H(
+    "Verify the original full release candidate against reviewed source identities.",
+    "Use before an independently reviewed, head-pinned release merge.",
+    "nothing (read-only); creates no receipt or approval.",
+    "sm release candidate-proof 123 --head SHA --base SHA --tree SHA",
+    "review the evidence and merge only the exact approved head.",
+    "Checks the complete original candidate job inventory and source artifact using the same verifier as release merge.\n"
+    "All three expected Git identities are required; a moved PR, base or tree refuses."))
+def release_candidate_proof(
+    pr: int = typer.Argument(..., help="The open release pull request number."),
+    head: str = typer.Option(..., "--head", help="The independently reviewed release head."),
+    base: str = typer.Option(..., "--base", help="The independently reviewed protected base."),
+    tree: str = typer.Option(..., "--tree", help="The independently reviewed release tree."),
+) -> CandidateProof:
+    from .release_lib import candidate_policy
+
+    if pr <= 0 or any(re.fullmatch(r"[0-9a-f]{40}", value) is None for value in (head, base, tree)):
+        raise Refuse("candidate proof requires a positive PR and three exact Git identities")
+    try:
+        evidence = candidate_policy.verify_pr(pr)
+    except Exception as error:  # fail closed; do not turn malformed or unavailable evidence into a pass
+        raise Refuse(f"candidate proof refused: {type(error).__name__}: {error}") from error
+    if (evidence.get("head"), evidence.get("base"), evidence.get("tree")) != (head, base, tree):
+        raise Refuse("candidate evidence differs from the independently reviewed head, base or tree")
+    return CandidateProof(pr=pr, head=head, base=base, tree=tree, run_id=evidence["run_id"],
+                          run_attempt=evidence["run_attempt"], job_count=evidence["job_count"])
+
+
 # ----------------------------------------------------------------------------- release verify
 class SurfaceCheck(Model):
     passed: bool
