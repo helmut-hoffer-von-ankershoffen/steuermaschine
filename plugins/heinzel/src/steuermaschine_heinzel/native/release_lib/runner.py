@@ -523,7 +523,7 @@ def runs(repo: str, workflow: str, **extra) -> list[dict]:
     return hzlib.ghj(*args, default=[]) or []
 
 
-def check_capacity_replacement(data: dict, run: dict, run_id: int) -> None:
+def check_capacity_replacement(data: dict[str, Any], run: dict[str, Any], run_id: int) -> None:
     try:
         release_acceptance_capacity.validate_replacement(data, run, CORE, run_id)
     except release_candidate_capacity.InvalidCapacity as exc:
@@ -1560,7 +1560,7 @@ def acceptance_step(version: str, timeout: float, snapshot: dict | None = None,
     return ours(CORE, "acceptance.yml", "acceptance")["databaseId"]
 
 
-def acceptance_receipt_matches(result: dict, run_id: int, attempt: int | None, identity: dict, os_name: str) -> bool:
+def acceptance_receipt_matches(result: dict[str, Any], run_id: int, attempt: int | None, identity: dict[str, Any], os_name: str) -> bool:
     """Require an accepted public result bound to the specific release, platform and workflow attempt."""
     ci, published = result["ci"], result["published"]
     return (result["verdict"] in ACCEPTED and result.get("public_path_proof") is True

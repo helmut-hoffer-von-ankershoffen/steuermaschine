@@ -18,6 +18,7 @@ import sys
 import types
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import typer
 from pydantic import Field
@@ -81,7 +82,7 @@ class Progress(io.TextIOBase):
         return self.lines
 
 
-def runner():
+def runner() -> Any:
     """A fresh copy of the moved step runner. Its waits sleep on the clock provider; everything else is unchanged."""
     module = moved("release_lib.runner")
     bound = types.ModuleType(hzlib.__name__)

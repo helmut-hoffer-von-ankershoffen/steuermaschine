@@ -24,7 +24,7 @@ RUN_FIELDS = ("id", "run_attempt", "head_sha", "head_branch", "event", "path", "
               "status", "conclusion", "workflow_id", "check_suite_id", "created_at")
 
 
-def exact_run(run: dict, core: str, identity: dict, marker: str, run_id: int, attempt: int) -> None:
+def exact_run(run: dict[str, Any], core: str, identity: dict[str, Any], marker: str, run_id: int, attempt: int) -> None:
     repo, head_repo = run.get("repository"), run.get("head_repository")
     remote.require(
         type(run.get("id")) is int and run["id"] == run_id
@@ -39,7 +39,7 @@ def exact_run(run: dict, core: str, identity: dict, marker: str, run_id: int, at
     )
 
 
-def validate_replacement(data: dict, run: dict, core: str, run_id: int) -> None:
+def validate_replacement(data: dict[str, Any], run: dict[str, Any], core: str, run_id: int) -> None:
     """Independently bind a discovered or persisted fresh capacity dispatch before normal verdict."""
     intent = data.get("acceptance_capacity")
     if intent is None:
@@ -59,7 +59,7 @@ def validate_replacement(data: dict, run: dict, core: str, run_id: int) -> None:
     exact_run(run, core, intent["identity"], intent["marker"], run_id, 1)
 
 
-def _original_linux_receipt(rel: Any, run: dict, identity: dict) -> dict:
+def _original_linux_receipt(rel: Any, run: dict[str, Any], identity: dict[str, Any]) -> dict[str, Any]:
     run_id = run["id"]
     rows = remote.paged(f"actions/runs/{run_id}/artifacts", "artifacts")
     remote.require(len(rows) == 1, "expected only the original Linux receipt artifact")
@@ -89,7 +89,7 @@ def _original_linux_receipt(rel: Any, run: dict, identity: dict) -> dict:
     return {"id": artifact["id"], "sha256": digest, "verdict": result["verdict"]}
 
 
-def _evidence(rel: Any, identity: dict, run_id: int, marker: str) -> dict:
+def _evidence(rel: Any, identity: dict[str, Any], run_id: int, marker: str) -> dict[str, Any]:
     path = f"actions/runs/{run_id}"
     run = remote.get(f"{path}/attempts/1")
     exact_run(run, rel.CORE, identity, marker, run_id, 1)
@@ -125,7 +125,7 @@ def _evidence(rel: Any, identity: dict, run_id: int, marker: str) -> dict:
             "mac_annotations": annotations, "linux_receipt": linux_receipt}
 
 
-def _receipt(rel: Any, version: str, run_id: int, attempt: int, expected: str) -> tuple[bytes, dict, dict]:
+def _receipt(rel: Any, version: str, run_id: int, attempt: int, expected: str) -> tuple[bytes, dict[str, Any], dict[str, Any]]:
     path = rel.paths()[1]
     remote.require(path == rel.tail_receipt(version), "the exact release tail is required")
     raw = rel.release_rejection.private_read(path)
@@ -153,7 +153,7 @@ def _receipt(rel: Any, version: str, run_id: int, attempt: int, expected: str) -
     return raw, data, identity
 
 
-def recover(rel: Any, version: str, run_id: int, attempt: int, receipt_sha: str, audit_sha: str | None) -> dict:
+def recover(rel: Any, version: str, run_id: int, attempt: int, receipt_sha: str, audit_sha: str | None) -> dict[str, Any]:
     """Audit in prepare mode. Request with a reviewed digest under the exact tail lock."""
     remote.require(type(run_id) is int and run_id > 0 and type(attempt) is int and attempt == 1
                    and DIGEST.fullmatch(receipt_sha), "exact original run, attempt 1 and receipt digest required")

@@ -7,7 +7,9 @@ import json
 import re
 import subprocess
 import zipfile
+from collections.abc import Callable
 from datetime import datetime
+from typing import Any
 
 from ..queue_lib import core_facts, core_policy, hzlib
 from ..queue_lib import release_candidate as strict
@@ -33,36 +35,37 @@ class InvalidCapacity(ValueError):
     pass
 
 
-def require(ok, message):
+def require(ok: object, message: str) -> None:
     if not ok:
         raise InvalidCapacity(message)
 
 
-def encoded(value):
+def encoded(value: object) -> bytes:
     raw = json.dumps(value, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()
     require(len(raw) <= LIMIT, 'capacity evidence exceeds bound')
     return raw
 
 
-def digest(value):
+def digest(value: object) -> str:
     return hashlib.sha256(encoded(value)).hexdigest()
 
 
-def get(path):
+def get(path: str) -> Any:
     value = hzlib.ghj('api', f'repos/{hzlib.CORE}/{path}', default=None)
     require(value is not None, 'capacity API evidence unavailable')
     encoded(value)
     return value
 
 
-def download(artifact_id):
-    done = edge.run(['gh', 'api', f'repos/{hzlib.CORE}/actions/artifacts/{artifact_id}/zip'],
-                          capture_output=True, check=False, timeout=30)
+def download(artifact_id: int) -> bytes:
+    run: Callable[..., subprocess.CompletedProcess[bytes]] = edge.run
+    done = run(['gh', 'api', f'repos/{hzlib.CORE}/actions/artifacts/{artifact_id}/zip'],
+               capture_output=True, check=False, timeout=30)
     require(done.returncode == 0 and len(done.stdout) <= 1024 * 1024, 'source artifact unavailable or oversized')
     return done.stdout
 
 
-def paged(path, key):
+def paged(path: str, key: str) -> list[dict[str, Any]]:
     rows, total = [], None
     for page in range(1, 11):
         separator = '&' if '?' in path else '?'
@@ -83,7 +86,7 @@ def paged(path, key):
     raise InvalidCapacity('capacity inventory pagination exceeded bound')
 
 
-def annotations(job):
+def annotations(job: dict[str, Any]) -> list[dict[str, Any]]:
     require(job.get('check_run_url') == f'https://api.github.com/repos/{hzlib.CORE}/check-runs/{job["id"]}',
             'annotations are not bound to the official same job')
     rows = []
@@ -163,13 +166,13 @@ def identity(data, version, run_id, attempt):
     return proof
 
 
-def job_shape(job, run_id, head):
+def job_shape(job: dict[str, Any], run_id: int, head: str) -> None:
     require(type(job.get('id')) is int and job['id'] > 0 and job.get('run_id') == run_id
             and job.get('head_sha') == head and job.get('status') == 'completed', 'malformed or incomplete candidate job')
     require(type(job.get('run_attempt')) is int and job['run_attempt'] in (1, 2), 'unexpected candidate job attempt')
 
 
-def executed(job):
+def executed(job: dict[str, Any]) -> None:
     require(type(job.get('runner_id')) is int and job['runner_id'] > 0
             and isinstance(job.get('runner_name'), str) and bool(job['runner_name'])
             and isinstance(job.get('steps'), list) and bool(job['steps'])
@@ -200,7 +203,7 @@ def replacement_steps(job):
             'replacement lacks an actual required test/setup/payload step')
 
 
-def never_acquired(job, rows, head):
+def never_acquired(job: dict[str, Any], rows: list[dict[str, Any]], head: str) -> None:
     require(job.get('conclusion') == 'cancelled' and type(job.get('runner_id')) is int and job['runner_id'] == 0
             and job.get('runner_name') == '' and job.get('steps') == [] and job.get('labels') == ['macos-latest'],
             'workload was not a never-acquired hosted Mac ARM cell')
@@ -353,7 +356,7 @@ def execution_tuple(job):
     return {key: job.get(key) for key in EXECUTION}
 
 
-def clock(value):
+def clock(value: str) -> datetime:
     require(isinstance(value, str), 'missing execution timestamp')
     result = datetime.fromisoformat(value)
     require(result.tzinfo is not None, 'execution timestamp must include timezone')
