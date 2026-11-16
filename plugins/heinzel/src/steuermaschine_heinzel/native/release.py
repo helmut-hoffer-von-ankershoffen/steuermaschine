@@ -238,6 +238,51 @@ def release_resume(
     return outcome(module, action, version, code, lines, errors)
 
 
+class ComposeReplacement(Model):
+    version: str
+    failed_run: int
+    reviewed_head: str
+
+    def render(self) -> list[str]:
+        return [f"compose replacement requested for {self.version}; preserved failed run {self.failed_run}"]
+
+
+@native("release replace-compose", writes=True, help=H(
+    "Request one fresh compose after an exact failed run and independently reviewed test-only fix.",
+    "Use when a completed compose failed because of a reviewed acceptance-test defect.",
+    "records the failed compose and dispatches one fresh compose; does not accept a release.",
+    "sm release replace-compose 0.9.40 --failed-run 123 --failed-attempt 1 --reviewed-head SHA --core-source SHA --receipt-sha256 DIGEST --reason 'review: test fixture fix'",
+    "sm release resume VERSION --snapshot-acceptance",
+    "Requires an exact unfinished tail, unchanged receipt, Core source and current reviewed Plugins main.\n"
+    "Only acceptance-test changes are permitted; the old run and full receipt are retained."))
+def release_replace_compose(
+    version: str = typer.Argument(..., metavar="VERSION", help="Exact Core release version X.Y.Z."),
+    failed_run: int = typer.Option(..., "--failed-run", min=1, help="Exact failed compose run ID."),
+    failed_attempt: int = typer.Option(..., "--failed-attempt", min=1, help="Exact failed compose attempt."),
+    reviewed_head: str = typer.Option(..., "--reviewed-head", help="Independently reviewed Plugins main SHA."),
+    core_source: str = typer.Option(..., "--core-source", help="Exact Core release tag commit SHA."),
+    receipt_sha256: str = typer.Option(..., "--receipt-sha256", help="SHA-256 of the unchanged tail receipt."),
+    reason: str = typer.Option(..., "--reason", help="Written reason identifying the independent review."),
+) -> ComposeReplacement:
+    from .release_lib import compose_harness
+
+    module = runner()
+    try:
+        if not EXACT.fullmatch(version):
+            raise module.Stop("an exact release version is required")
+        if not module.tail_receipt(version).is_file():
+            raise module.Stop("the exact release tail receipt is absent")
+        module.route_to_tail(version)
+        module.rejection_guard(version)
+        compose_harness.replace(module, version, failed_run, failed_attempt, reviewed_head, core_source, receipt_sha256, reason)
+    except (module.Stop, module.release_rejection.InvalidRejection, OSError, ValueError, TypeError, KeyError) as exc:
+        raise Refuse(f"compose replacement refused: {exc}", "sm release replace-compose --help") from exc
+    finally:
+        module.free_tail_lock()
+        module.RECEIPT_OVERRIDE = None
+    return ComposeReplacement(version=version, failed_run=failed_run, reviewed_head=reviewed_head)
+
+
 @native("release plugin", writes=True, replaces=("hz-release",), help=H(
     "Release a plugin whose version on the plugins repository's main is not on PyPI yet, and verify PyPI.",
     "Use after a plugin PR with a version bump merged.",

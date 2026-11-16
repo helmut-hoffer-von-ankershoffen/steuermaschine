@@ -1281,7 +1281,21 @@ def compose_step(version: str, timeout: float) -> None:
     an explicit version would compose nothing for a held core. A final core keeps the explicit dispatch.
     """
     app = f"app-v{version}"
-    released = lambda: bool((r := published_release(PLUGINS, app)) and r.get("prerelease") is False)  # noqa: E731
+    def released() -> bool:
+        guard = state().get("compose_replacement_guard")
+        if guard:
+            run = ours(PLUGINS, "compose.yml", "compose")
+            if (not run or run.get("headSha") != guard.get("reviewed_head") or type(run.get("databaseId")) is not int
+                    or run["databaseId"] <= 0 or run["databaseId"] == guard.get("failed_run") or run.get("attempt") != 1
+                    or (guard.get("replacement_run") is not None and run["databaseId"] != guard["replacement_run"])):
+                raise Stop("reviewed compose replacement is pending or its identity changed; reconcile before continuing")
+            if guard.get("replacement_run") is None or (state().get("compose_adopted") or {}).get("run") != run["databaseId"]:
+                remember(compose_replacement_guard=guard | {"replacement_run": run["databaseId"]},
+                         compose_adopted={"run": run["databaseId"], "sha": run["headSha"],
+                                          "created": run.get("createdAt"), "at": now_iso()})
+            if run.get("status") != "completed" or run.get("conclusion") != "success":
+                return False
+        return bool((r := published_release(PLUGINS, app)) and r.get("prerelease") is False)
 
     def held() -> bool:
         core = published_release(CORE, f"v{version}")
@@ -1300,6 +1314,8 @@ def compose_step(version: str, timeout: float) -> None:
         dispatch(PLUGINS, "compose.yml", "main", "compose", version=version, core_wheel=wheel)
 
     def act() -> None:
+        if state().get("compose_replacement_guard"):
+            return  # released() verified or refused the one bound replacement; never dispatch it again.
         if ours(PLUGINS, "compose.yml", "compose"):
             return
         wait("compose queue", lambda: not compose_busy(), timeout)
@@ -1309,6 +1325,8 @@ def compose_step(version: str, timeout: float) -> None:
         for key in ("compose", "compose_finalize"):
             run = ours(PLUGINS, "compose.yml", key) if state().get(key) else None
             if run and run["status"] == "completed" and run["conclusion"] != "success" and not released():
+                if key == "compose" and state().get("compose_replacement_guard"):
+                    raise Stop(f"reviewed compose replacement {run['databaseId']} ended {run['conclusion']}; no further dispatch")
                 if key == "compose" and (fix := compose_fix_landed(run)):
                     if compose_busy():
                         return  # the fresh compose waits for the queue, like the first one

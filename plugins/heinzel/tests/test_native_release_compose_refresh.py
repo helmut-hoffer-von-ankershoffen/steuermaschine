@@ -122,3 +122,31 @@ def test_a_busy_compose_queue_defers_the_fresh_dispatch(rel, monkeypatch):
     with pytest.raises(rel.Stop, match="timed out"):
         rel.compose_step("0.9.40", 60)
     assert len(rel.dispatched) == 1 and len(rel.state()["compose_replaced"]) == 1
+
+
+@pytest.mark.parametrize("defect", ["missing", "old_id", "wrong_head", "rerun", "changed_id"])
+def test_guard_refuses_ambiguous_replacement_even_if_app_exists(rel, monkeypatch, defect):
+    rel.remember(compose_replacement_guard={"failed_run": FAILED, "reviewed_head": NEW})
+    run = {"databaseId": 999, "headSha": NEW, "attempt": 1, "status": "completed", "conclusion": "success"}
+    if defect == "old_id":
+        run["databaseId"] = FAILED
+    if defect == "wrong_head":
+        run["headSha"] = OLD
+    if defect == "rerun":
+        run["attempt"] = 2
+    if defect == "changed_id":
+        rel.remember(compose_replacement_guard={"failed_run": FAILED, "reviewed_head": NEW, "replacement_run": 1000})
+    monkeypatch.setattr(rel, "ours", lambda *args: None if defect == "missing" else run)
+    monkeypatch.setattr(rel, "published_release", lambda *args: {"prerelease": False})
+    with pytest.raises(rel.Stop, match="replacement is pending or its identity changed"):
+        rel.compose_step("0.9.40", 60)
+    assert rel.dispatched == []
+
+
+def test_failed_guarded_replacement_cannot_automatically_dispatch_again(rel, monkeypatch):
+    rel.remember(compose_replacement_guard={"failed_run": FAILED, "reviewed_head": NEW})
+    run = {"databaseId": 999, "headSha": NEW, "attempt": 1, "status": "completed", "conclusion": "failure"}
+    monkeypatch.setattr(rel, "ours", lambda *args: run)
+    with pytest.raises(rel.Stop, match="no further dispatch"):
+        rel.compose_step("0.9.40", 60)
+    assert rel.dispatched == []
