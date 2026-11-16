@@ -77,7 +77,7 @@ def next_command(pr: str, main: str) -> str:
 
 
 def full_pr(core: Path, pr: str, main: str, head: str, tree: str) -> bool:
-    """Use existing original hosted evidence through the authenticated protected Core reader."""
+    """Use original or narrowly recovered PR evidence through the authenticated protected Core reader."""
     from . import core_policy
 
     def api(path: str) -> dict[str, Any]:
@@ -91,15 +91,20 @@ def full_pr(core: Path, pr: str, main: str, head: str, tree: str) -> bool:
     if not isinstance(runs, list) or len(runs) != 1:
         raise ValueError("no unique latest full PR run")
     run = runs[0]
-    if (run.get("head_sha") != head or run.get("run_attempt") != 1
+    attempt = run.get("run_attempt")
+    if (run.get("head_sha") != head or type(attempt) is not int or attempt not in (1, 2)
+            or type(run.get("id")) is not int or run["id"] <= 0
             or run.get("status") != "completed" or run.get("conclusion") != "success"):
-        raise ValueError("latest full PR run is not successful on its original attempt")
+        raise ValueError("latest full PR run is not successful on an eligible attempt")
+    capacity = attempt == 2
     proof = main_checkpoint.isolated_reader({
-        "mode": "full-pr", "core_repo": str(core), "reader_head": main,
+        "mode": "full-pr-capacity" if capacity else "full-pr", "core_repo": str(core), "reader_head": main,
         "pr": pr, "head": head, "tree": tree, "run": run["id"],
     })
-    return isinstance(proof, dict) and proof == {"type": "full-pr/v1", "head": head, "base": main, "tree": tree,
-                     "run": run["id"], "attempt": 1}
+    expected = {"type": "full-pr-capacity/v1" if capacity else "full-pr/v1", "head": head, "base": main, "tree": tree,
+                "run": run["id"], "attempt": attempt, **({"original_attempt": 1} if capacity else {})}
+    return (isinstance(proof, dict) and proof == expected
+            and all(type(proof[key]) is int for key in ("run", "attempt", *(("original_attempt",) if capacity else ()))))
 
 
 def gap(pr: str, head: str = "") -> str:
