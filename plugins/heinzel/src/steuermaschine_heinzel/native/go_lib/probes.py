@@ -588,6 +588,10 @@ def collect(w: World, live: bool = False, budget: float | None = None) -> dict[s
     except Exception as exc:
         state["since_tag"] = unknown(exc)
     try:
+        state["main_ci"] = probe_exact_main_ci(w, state)
+    except Exception as exc:
+        state["main_ci"] = unknown(exc)
+    try:
         state["main_workload"] = probe_main_workload(w, state)
     except Exception as exc:
         state["main_workload"] = unknown(exc)
@@ -605,13 +609,32 @@ def full_candidate_jobs(w: World, sha: str) -> frozenset[str] | None:
     return frozenset(name for name, conclusion in policy.expected_jobs("workflow_dispatch").items() if conclusion == "success")
 
 
+def probe_exact_main_ci(w: World, state: dict) -> dict[str, Any]:
+    """Read the CI workflow for the exact main SHA; incomplete inventories are unknown."""
+    from . import decide
+
+    sha = state.get("main", {}).get("sha", "")
+    if not re.fullmatch(r"[0-9a-f]{40}", sha):
+        raise RuntimeError("main SHA unavailable")
+    rows = w.gh_json(["run", "list", "-R", w.repo, "--workflow", core_facts.ci_file(), "--branch", "main", "--commit", sha,
+                      "-L", "100", "--json", "databaseId,headBranch,headSha,status,conclusion,workflowName,event,createdAt"], timeout=12)
+    if not isinstance(rows, list) or len(rows) >= 100:
+        raise RuntimeError("main CI inventory unavailable or incomplete")
+    fields = ("databaseId", "headBranch", "headSha", "status", "conclusion", "workflowName", "event")
+    if any(not isinstance(row, dict) or any(field not in row for field in fields) or type(row["databaseId"]) is not int for row in rows):
+        raise RuntimeError("main CI inventory malformed")
+    result = decide.main_ci(rows, sha, exact=True)
+    return {**result, "sha": sha}
+
+
 def probe_main_workload(w: World, state: dict) -> dict[str, Any]:
     """What main's CI run actually ran (focused, full or unknown), from its job list: one read of that run's jobs."""
     from . import decide
 
     sha = state["main"].get("sha", "") if isinstance(state.get("main"), dict) else ""
-    runs = state.get("runs") if isinstance(state.get("runs"), list) else []
-    ci = decide.main_ci(runs, sha) if sha else {}
+    ci = state.get("main_ci") if isinstance(state.get("main_ci"), dict) else {}
+    if ci.get("sha") != sha:
+        return {"run": None, "workload": "unknown"}
     if not ci.get("run"):
         return {"run": None, "workload": "unknown"}
     data = w.gh_json(["api", f"repos/{w.repo}/actions/runs/{ci['run']}/jobs?per_page=100"], timeout=10)

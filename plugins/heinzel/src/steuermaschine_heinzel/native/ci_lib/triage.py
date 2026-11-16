@@ -86,14 +86,17 @@ query($owner: String!, $name: String!) {
 
 def triage_pr(number, roll, known):
     """-> one line: `PR N STATE detail -> action`."""
-    state, real = classify_pr(roll)
+    real = sorted({c["name"] for c in roll or [] if not is_focused(c.get("name"))
+                   and c.get("conclusion") in REAL_BAD and c["name"] not in DEADLINE_AGGREGATES})
+    state, real = ("failing", real) if real else classify_pr(roll)
     if state == "ready":
         return f"PR {number} READY -> sm head ship {number} (queue merges when main is green)"
     if state == "pending":
         return f"PR {number} PENDING -> wait; no push (sm head push)"
     if state == "deferred":
         return f"PR {number} DEFERRED placeholder, not a code failure -> sm ci rerun when main CI is not starved"
-    bead = known_failures.known_bead(real, known)
+    beads = [known_failures.known_bead([name], known) for name in real]
+    bead = beads[0] if beads and all(b == beads[0] and b for b in beads) else None
     if bead:
         return f"PR {number} KNOWN({bead}) {','.join(real)[:60]} -> sm ci one rerun {number} --job NAME --wait (once), no code change"
     return f"PR {number} FAIL {','.join(real)[:60]} -> sm ci why {number}; open a flaky bead and add it to known-failures.toml, or fix"

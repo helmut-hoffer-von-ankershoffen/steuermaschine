@@ -48,9 +48,43 @@ def test_main_workload_is_unknown_without_a_policy_at_main(monkeypatch):
     jobs = {"actions/runs/7/jobs?per_page=100": {"jobs": [{"name": n, "conclusion": "success"}
                                                           for n in kit.expected_jobs("workflow_dispatch", "new")]}}
     world = _World(jobs)
-    assert probes.probe_main_workload(world, {"main": {"sha": sha}, "runs": runs}) == {"run": 7, "workload": "unknown"}
+    main_ci = {**decide.main_ci(runs, sha), "sha": sha}
+    assert probes.probe_main_workload(world, {"main": {"sha": sha}, "main_ci": main_ci}) == {"run": 7, "workload": "unknown"}
     world.answers.update(kit.contents_routes(sha, kit.files("new")))
-    assert probes.probe_main_workload(world, {"main": {"sha": sha}, "runs": runs})["run"] == 7
+    assert probes.probe_main_workload(world, {"main": {"sha": sha}, "main_ci": main_ci})["run"] == 7
+
+
+def test_exact_main_ci_is_independent_of_general_run_inventory_and_rejects_stale_results():
+    sha = "a" * 40
+    good = {"databaseId": 7, "workflowName": "CI", "event": "push", "headBranch": "main", "headSha": sha,
+            "status": "completed", "conclusion": "success"}
+
+    class MainWorld:
+        repo = "o/heinzel"
+
+        def __init__(self, rows):
+            self.rows = rows
+
+        def gh_json(self, args, timeout=12):
+            assert "--commit" in args and args[args.index("--commit") + 1] == sha
+            return self.rows
+
+    state = {"main": {"sha": sha}, "runs": [{"databaseId": 99, "headSha": "b" * 40}],
+             **{name: {"unknown": "not probed"} for name in ("releases", "release", "queue", "train", "holds", "rehearse", "slots", "mini", "focus")}}
+    assert probes.probe_exact_main_ci(MainWorld([good]), state) == {"sha": sha, "state": "green", "run": 7, "conclusion": "success"}
+    newer = {**good, "databaseId": 8, "status": "in_progress", "conclusion": None}
+    assert probes.probe_exact_main_ci(MainWorld([good, newer]), state)["state"] == "pending"
+    assert probes.probe_exact_main_ci(MainWorld([good, {**newer, "status": "completed", "conclusion": "failure"}]), state)["state"] == "red"
+    assert probes.probe_exact_main_ci(MainWorld([{**good, "headSha": "a" * 8 + "b" * 32}]), state)["state"] == "none"
+    assert probes.probe_exact_main_ci(MainWorld([{**good, "event": "workflow_dispatch"}]), state)["state"] == "none"
+    authoritative = probes.probe_exact_main_ci(MainWorld([good]), state)
+    assert "CI green (run 7)" in decide.decide(state | {"main_ci": authoritative}, 0)["facts"][0]
+    assert "CI unknown" in decide.decide(state | {"main_ci": {"unknown": "lookup failed"}}, 0)["facts"][0]
+    with pytest.raises(RuntimeError):
+        probes.probe_exact_main_ci(MainWorld(None), state)
+    with pytest.raises(RuntimeError):
+        probes.probe_exact_main_ci(MainWorld([good] * 100), state)
+    assert probes.probe_main_workload(MainWorld([]), state | {"main_ci": {"sha": "b" * 40, "state": "green", "run": 7}}) == {"run": None, "workload": "unknown"}
 
 
 def state(workload, run=7):
