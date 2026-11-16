@@ -61,7 +61,7 @@ def test_preserves_old_binding_and_records_pending_before_one_dispatch(world):
     call()
     assert len(state['dispatched']) == 1
     assert state['data']['compose_replaced'][0]['failed_run'] == RUN
-    assert state['data']['compose_replacement_guard'] == {'failed_run': RUN, 'reviewed_head': NEW}
+    assert state['data']['compose_replacement_guard'] == {'failed_run': RUN, 'reviewed_head': NEW, 'replacement_run': 456}
     assert state['data']['compose_replaced'][0]['receipt_base64']
     assert state['data']['compose_run_id'] == 456 and state['data']['compose_run_attempt'] == 1
 

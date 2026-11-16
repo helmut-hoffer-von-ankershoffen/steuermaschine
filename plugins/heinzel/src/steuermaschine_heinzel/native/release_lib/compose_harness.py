@@ -106,5 +106,7 @@ def replace(rel: Any, version: str, run_id: int, attempt: int, reviewed_head: st
     except (ValueError, AttributeError):
         replacement_id = None
     if type(replacement_id) is int and replacement_id > 0 and replacement_id != run_id:
-        rel.remember(compose_run_id=replacement_id, compose_run_attempt=1)
+        rel.remember(compose_run_id=replacement_id, compose_run_attempt=1,
+                     compose_replacement_guard={"failed_run": run_id, "reviewed_head": reviewed_head,
+                                                "replacement_run": replacement_id})
     rel.hzlib.say(f"fresh compose requested for {version}; preserved failed run {run_id}")

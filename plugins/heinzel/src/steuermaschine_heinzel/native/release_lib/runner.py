@@ -1285,9 +1285,14 @@ def compose_step(version: str, timeout: float) -> None:
         guard = state().get("compose_replacement_guard")
         if guard:
             run = ours(PLUGINS, "compose.yml", "compose")
-            if (not run or run.get("headSha") != guard.get("reviewed_head")
-                    or run.get("databaseId") == guard.get("failed_run") or run.get("attempt") != 1):
+            if (not run or run.get("headSha") != guard.get("reviewed_head") or type(run.get("databaseId")) is not int
+                    or run["databaseId"] <= 0 or run["databaseId"] == guard.get("failed_run") or run.get("attempt") != 1
+                    or (guard.get("replacement_run") is not None and run["databaseId"] != guard["replacement_run"])):
                 raise Stop("reviewed compose replacement is pending or its identity changed; reconcile before continuing")
+            if guard.get("replacement_run") is None or (state().get("compose_adopted") or {}).get("run") != run["databaseId"]:
+                remember(compose_replacement_guard=guard | {"replacement_run": run["databaseId"]},
+                         compose_adopted={"run": run["databaseId"], "sha": run["headSha"],
+                                          "created": run.get("createdAt"), "at": now_iso()})
             if run.get("status") != "completed" or run.get("conclusion") != "success":
                 return False
         return bool((r := published_release(PLUGINS, app)) and r.get("prerelease") is False)
