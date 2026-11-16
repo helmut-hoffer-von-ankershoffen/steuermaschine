@@ -18,6 +18,7 @@ import sys
 import types
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import typer
 from pydantic import Field
@@ -81,7 +82,7 @@ class Progress(io.TextIOBase):
         return self.lines
 
 
-def runner():
+def runner() -> Any:
     """A fresh copy of the moved step runner. Its waits sleep on the clock provider; everything else is unchanged."""
     module = moved("release_lib.runner")
     bound = types.ModuleType(hzlib.__name__)
@@ -236,6 +237,63 @@ def release_resume(
     module = runner()
     code, lines, errors = run(module, argv)
     return outcome(module, action, version, code, lines, errors)
+
+
+class AcceptanceCapacity(Model):
+    version: str
+    failed_run: int
+    audit_sha256: str
+    replacement_marker: str | None
+    head: str
+    mac_job: int
+    linux_artifact: int
+
+    def render(self) -> list[str]:
+        if self.replacement_marker is None:
+            return [f"Prepared capacity audit {self.audit_sha256} for {self.version} run {self.failed_run}",
+                    f"Tagged head {self.head}. Unacquired Mac job {self.mac_job}. Linux receipt {self.linux_artifact}."]
+        return [f"Requested fresh acceptance for {self.version} with marker {self.replacement_marker}",
+                f"Original rejection {self.failed_run} preserved. Audit {self.audit_sha256}."]
+
+
+@native("release acceptance-capacity", writes=True, help=H(
+    "Audit or request one fresh tagged public acceptance run after an unacquired Mac runner.",
+    "Use when the exact published release was rejected and its Mac job never received a runner.",
+    "prepare reads evidence. request archives the rejection and dispatches one fresh run on the same tagged snapshot.",
+    "sm release acceptance-capacity 0.9.40 --mode prepare --failed-run 123 --failed-attempt 1 --receipt-sha256 SHA",
+    "Review the audit digest, then use --mode request --audit-sha256 SHA with the same receipt. Resume normally for both OS verdicts.",
+))
+def release_acceptance_capacity(
+    version: str = typer.Argument(..., metavar="VERSION", help="Exact Core release version X.Y.Z."),
+    mode: str = typer.Option(..., "--mode", metavar="prepare|request", help="Audit only or request after review."),
+    failed_run: int = typer.Option(..., "--failed-run", min=1, help="Original rejected acceptance run ID."),
+    failed_attempt: int = typer.Option(..., "--failed-attempt", min=1, help="The bound original attempt. Must be 1."),
+    receipt_sha256: str = typer.Option(..., "--receipt-sha256", help="SHA-256 of the unchanged release tail receipt."),
+    audit_sha256: str | None = typer.Option(None, "--audit-sha256", help="Reviewed audit digest. Required for request."),
+) -> AcceptanceCapacity:
+    from .release_lib import acceptance_capacity
+    from .release_lib.candidate_capacity import InvalidCapacity
+
+    module = runner()
+    if not EXACT.fullmatch(version) or mode not in ("prepare", "request") or (
+        (mode == "request") != bool(audit_sha256)
+    ) or (audit_sha256 is not None and not acceptance_capacity.DIGEST.fullmatch(audit_sha256)):
+        raise Refuse("Use an exact release version and request only with the reviewed audit digest.",
+                     "sm release acceptance-capacity --help")
+    try:
+        if not module.tail_receipt(version).is_file():
+            raise module.Stop("the exact release tail receipt is absent")
+        module.route_to_tail(version)
+        module.rejection_guard(version)
+        result = acceptance_capacity.recover(module, version, failed_run, failed_attempt, receipt_sha256, audit_sha256)
+    except (module.Stop, InvalidCapacity) as exc:
+        raise Refuse(f"acceptance capacity refused: {exc}", "sm release acceptance-capacity --help") from None
+    except (OSError, ValueError, TypeError, KeyError, AttributeError, RuntimeError) as exc:
+        raise Refuse("Acceptance capacity evidence could not be authenticated.", "sm release acceptance-capacity --help") from exc
+    finally:
+        module.free_tail_lock()
+        module.RECEIPT_OVERRIDE = None
+    return AcceptanceCapacity(version=version, failed_run=failed_run, **result)
 
 
 class ComposeReplacement(Model):
