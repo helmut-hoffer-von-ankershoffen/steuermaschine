@@ -56,6 +56,15 @@ class BlockersResult(_Model):
         return [f"{r.id} {r.status} {r.event} {r.head_branch} {r.path} {str(r.head_sha)[:8]}" for r in self.blocking]
 
 
+class NonconsumerResult(_Model):
+    receipts: list[dict[str, Any]]
+    excluded: list[dict[str, Any]]
+
+    def render(self) -> list[str]:
+        return [json.dumps(self.model_dump(), indent=1, sort_keys=True),
+                "Independent review required; prepare and apply revalidate these receipts."]
+
+
 class PrepareResult(_Model):
     sha256: str
     head: str
@@ -128,6 +137,12 @@ def blockers(core_repo: Path, nonconsumers: Path | None = None, *, runtime: Any 
     rt = runtime or s.Runtime(core_repo)
     report = s.report_blockers(rt, {receipt["run"] for receipt in _receipts(nonconsumers)})
     return BlockersResult(blocking=[BlockingRun(**row) for row in report["blocking"]])
+
+
+def nonconsumer_receipts(core_repo: Path, *, runtime: Any = None) -> NonconsumerResult:
+    rt = runtime or s.Runtime(core_repo)
+    output, excluded = s.stuck_queued_receipts(rt, set())
+    return NonconsumerResult(receipts=output["receipts"], excluded=excluded)
 
 
 def _checks(pr: int | None, protected: bool, expected_remote_head: str | None, resulting_main_only: bool,

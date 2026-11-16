@@ -825,11 +825,14 @@ def stuck_queued_receipts(rt, claimed):
     """
     registries = (registry_text(rt.registry()),)
     receipts, excluded = [], []
-    for row in blocking_runs(active_runs(rt), claimed):
+    active = active_runs(rt)
+    for row in blocking_runs(active, claimed):
         run = rt.api(f'repos/{rt.repo}/actions/runs/{row["id"]}')
         pin = {k: run.get(k) for k in sorted(STUCK_IDENTITY)}
         receipt = dict(kind=STUCK_KIND, run=row['id'], repository=rt.repo, assertion=STUCK_ASSERTION, identity=pin)
         try:
+            require(run.get('id') == row['id'] and all(run.get(k) == v for k, v in active[row['id']].items()),
+                    'active run changed during exact authentication')
             read_stuck_queued(rt, receipt)
             reason = stuck_queued_failure(rt, run, pin, registries, probe=False)
         except a.AdmissionError as error:

@@ -83,6 +83,27 @@ def test_collect_lists_merged_and_closed_entries_whose_tree_nothing_wants(world)
     assert forge.calls == [] and not gh.writes()  # a dry run: no variable written
 
 
+def test_collect_without_forge_reads_github_and_apply_refuses(world):
+    rt, forge, gh = world
+    expected = collected(rt, "--all")
+    for name in collect.NAMES:
+        gh.on(f"actions/variables/{name}", {"value": forge.variables[name]} if name in forge.variables else 404)
+    rt.providers.forge = None
+    assert collected(rt, "--all") == expected
+    out = invoke(rt, ["head", "slots", "apply", "--approved", expected["digest"]])
+    assert out.exit_code == 1 and "no forge provider" in out.stderr + out.stdout
+    assert not gh.writes() and forge.calls == []
+
+
+def test_collect_without_forge_refuses_unreadable_registry(world):
+    rt, _, gh = world
+    rt.providers.forge = None
+    gh.on("actions/variables/", 403)
+    out = invoke(rt, ["head", "slots", "collect"])
+    assert out.exit_code == 1 and "cannot collect" in out.stderr + out.stdout
+    assert not gh.writes()
+
+
 def test_collect_all_says_why_each_entry_stays(world):
     rt, _, _ = world
     rows = {e["key"]: e for e in collected(rt, "--all")["entries"]}

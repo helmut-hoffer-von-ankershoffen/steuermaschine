@@ -14,8 +14,10 @@ from steuermaschine.app import Runtime
 from steuermaschine.config import Project
 from steuermaschine.defaults import Subprocess, SystemClock
 from steuermaschine.plugins import stack_of
+from steuermaschine.runlock import RunLock
 from steuermaschine.testing import fake_providers, invoke
 from steuermaschine_heinzel import native
+from steuermaschine_heinzel.native import packet
 from steuermaschine_heinzel.native.packet_lib import wave_ops
 from steuermaschine_heinzel.plugin import plugin
 from steuermaschine_heinzel.toolmap import ROWS
@@ -40,6 +42,28 @@ def rt(wave, monkeypatch):  # noqa: F811
     return runtime_for(wave, wave["tmp"] / "shared-core")
 
 
+@pytest.fixture
+def gated_requests(monkeypatch):
+    requests = []
+    lock_of = packet.lock_of
+
+    class RecordingLock:
+        def run(self, request):
+            requests.append(request)
+            return lock_of().run(request)
+
+    monkeypatch.setattr(packet, "lock_of", RecordingLock)
+    return requests
+
+
+def assert_collections_recorded(history, requests):
+    assert len(history) == len(requests) == 2
+    for entry, request in zip(history, requests, strict=True):
+        assert Path(request.argv[2]).name == "collect_cases.py" and request.argv[3] == "collect"
+        assert entry["key"] == RunLock.history_key(request.argv, request.cwd, request.environ)
+        assert entry["cmd"] == " ".join(request.argv)[:200] and entry["exit"] == 0
+
+
 def inputs(d, name, out):
     return [name, "--core-repo", str(d["repo"]), "--worktree", str(d[f"wt-{name}"]), "--out", str(d["root"] / out), "--review-root", str(d["root"]),
             "--selection", str(d[f"sel-{name}"]), "--junit", f"python={d[f'junit-{name}']}", "--members", f"member {name}"]
@@ -51,8 +75,7 @@ def preopen(rt, d, name="a", out=None, fmt=()):
     return done
 
 
-@pytest.mark.skipif("os.environ.get('CI')", reason="the gate history keeps 200 characters of the command; the CI checkout path pushes 'collect' past them")
-def test_preopen_in_text_names_the_prepare_and_collects_under_the_run_lock(rt, wave):  # noqa: F811
+def test_preopen_in_text_names_the_prepare_and_collects_under_the_run_lock(rt, wave, gated_requests):  # noqa: F811
     done = preopen(rt, wave)
     out = wave["root"] / "a-pre"
     lines = done.stdout.splitlines()
@@ -69,7 +92,7 @@ def test_preopen_in_text_names_the_prepare_and_collects_under_the_run_lock(rt, w
     record = json.loads((out / "wave.json").read_text())
     assert record["collector"].endswith("packet_lib/collect_cases.py") and record["kind"] == "preopen"
     history = [json.loads(line) for line in (wave["tmp"] / "home/history.jsonl").read_text().splitlines()]
-    assert len(history) == 2 and all("collect_cases.py collect" in entry["cmd"] and entry["exit"] == 0 for entry in history)  # both trees, under the lock
+    assert_collections_recorded(history, gated_requests)  # both trees, under the lock
     verified = invoke(rt, ["head", "manifest", "--verify", str(out / "packet.json"), "--core-repo", str(wave["repo"]), "--review-root", str(wave["root"])])
     assert verified.exit_code == 0 and verified.stdout.splitlines()[-1].startswith("BYTE-EQUAL")
 

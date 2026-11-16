@@ -60,6 +60,18 @@ def test_the_probe_runs_every_vitest_file_for_all_none_for_an_empty_selection_an
 
 
 def test_the_probe_answers_with_an_error_for_a_hook_it_cannot_ask(tmp_path, monkeypatch):
+    import os
+    from pathlib import Path
+
+    write_text = Path.write_text
+
+    def same_timestamp(path, text, *args, **kwargs):
+        result = write_text(path, text, *args, **kwargs)
+        if path.name == "scoped_checks.py":
+            os.utime(path, (1_700_000_000, 1_700_000_000))
+        return result
+
+    monkeypatch.setattr(Path, "write_text", same_timestamp)
     assert probe(tmp_path, monkeypatch, ["a.md"], [], hook="X = 1\n")["error"].startswith("AttributeError")
     assert "SyntaxError" in probe(tmp_path, monkeypatch, ["a.md"], [], hook="def (\n\n")["error"]
 

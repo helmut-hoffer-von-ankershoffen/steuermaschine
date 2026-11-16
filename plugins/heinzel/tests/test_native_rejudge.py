@@ -110,6 +110,14 @@ def test_rejudge_reruns_the_gate_run_the_details_url_names_and_prints_new_verdic
     assert not [c for c in gh.lines() if "claude" in c.lower()]
 
 
+def test_explicit_gate_dry_run_preserves_the_verified_run_in_next_command(tmp_path):
+    gh = github(gate_answers=[gate_run() | {"head_sha": "f" * 40, "event": "workflow_run"}])
+    gh.on(f"run view {GATE}", workflow_input_log())
+    out = invoke(runtime_for(tmp_path, gh), ["ci", "merge-gate", "rejudge", "803", "--gate-run", str(GATE), "--dry-run"])
+    assert out.exit_code == 0 and not gh.writes()
+    assert out.stdout.splitlines()[-1] == f"NEXT     sm ci merge-gate rejudge 803 --gate-run {GATE}"
+
+
 def test_rejudge_dry_run_changes_nothing_and_a_red_verdict_exits_1(tmp_path):
     gh = github()
     dry = invoke(runtime_for(tmp_path, gh), ["--format", "json", "ci", "merge-gate", "rejudge", "803", "--dry-run"])
@@ -117,6 +125,55 @@ def test_rejudge_dry_run_changes_nothing_and_a_red_verdict_exits_1(tmp_path):
     assert dry.exit_code == 0 and result.state == "would_rerun" and result.gate_run == str(GATE) and not gh.writes()
     red = github(gate_answers=[gate_run(), gate_run("completed", "failure", 2)], check_answers=[checks(), checks("failure")])
     assert invoke(runtime_for(tmp_path, red), ["ci", "merge-gate", "rejudge", "803"]).exit_code == 1
+
+
+def test_dynamic_ci_title_is_identified_by_workflow_path_not_a_spoofed_name(tmp_path):
+    gh = github()
+    gh.on("actions/runs?head_sha=", {"workflow_runs": [
+        {"id": CI, "name": "CI merge-tree", "path": ".github/workflows/ci.yml", "head_sha": HEAD,
+         "status": "completed", "conclusion": "success"},
+        {"id": CI + 1, "name": "CI", "path": ".github/workflows/other.yml", "head_sha": HEAD,
+         "status": "in_progress"},
+    ]})
+    out = invoke(runtime_for(tmp_path, gh), ["ci", "merge-gate", "rejudge", "803", "--dry-run"])
+    assert out.exit_code == 0 and f"after CI run {CI}" in out.stdout and not gh.writes()
+
+
+def workflow_input_log(head=HEAD, ci=str(CI), pr="803"):
+    prefix = "Merge gates\tVerify the original workload and applicable coverage evidence\t2026-11-15T21:32:59.788Z "
+    lines = ["##[group]Run uv run --no-build --frozen --script scripts/focused_gate.py", "env:"]
+    lines += [f"  {key}: {value}" for key, value in (("PR_HEAD_SHA", head), ("CI_RUN_ID", ci), ("PR_NUMBER", pr))]
+    return "\n".join(prefix + line for line in [*lines, "##[endgroup]"]).replace("\t2026-", "\t\ufeff2026-", 1)
+
+
+def test_explicit_workflow_gate_binds_trigger_inputs_instead_of_default_branch_sha(tmp_path):
+    gh = github(gate_answers=[gate_run() | {"head_sha": "f" * 40, "event": "workflow_run"}])
+    gh.on(f"run view {GATE}", workflow_input_log())
+    out = invoke(runtime_for(tmp_path, gh), ["ci", "merge-gate", "rejudge", "803", "--gate-run", str(GATE), "--wait", "0"])
+    assert out.exit_code == 0, out
+    assert gh.writes() == [f"api -X POST repos/{REPO}/actions/runs/{GATE}/rerun"]
+
+
+@pytest.mark.parametrize("log", [workflow_input_log(head="f" * 40), workflow_input_log(ci="1"),
+                                  workflow_input_log(pr="804"), "",
+                                  workflow_input_log().replace("  PR_NUMBER: 803", "  PR_NUMBER: 803\nMerge gates\t"
+                                                              "Verify the original workload and applicable coverage evidence\t"
+                                                              "2026-11-15T21:32:59.788Z   PR_NUMBER: 804"),
+                                  workflow_input_log().replace("Verify the original workload and applicable coverage evidence", "unrelated"),
+                                  workflow_input_log().replace("Merge gates\tVerify the original workload and applicable coverage evidence", "Unrelated job\tUntrusted output"),
+                                  workflow_input_log().replace("env:", "##[endgroup]\nenv:")])
+def test_explicit_workflow_gate_refuses_missing_wrong_or_ambiguous_inputs(tmp_path, log):
+    gh = github(gate_answers=[gate_run() | {"head_sha": "f" * 40, "event": "workflow_run"}])
+    gh.on(f"run view {GATE}", log)
+    out = invoke(runtime_for(tmp_path, gh), ["ci", "merge-gate", "rejudge", "803", "--gate-run", str(GATE)])
+    assert out.exit_code == 1 and "does not bind exactly" in out.stderr and not gh.writes(), out
+
+
+@pytest.mark.parametrize("change", [{"event": "pull_request"}, {"path": ".github/workflows/other.yml"}])
+def test_explicit_workflow_gate_refuses_another_workflow_or_event(tmp_path, change):
+    gh = github(gate_answers=[gate_run() | {"event": "workflow_run"} | change])
+    out = invoke(runtime_for(tmp_path, gh), ["ci", "merge-gate", "rejudge", "803", "--gate-run", str(GATE)])
+    assert out.exit_code == 1 and "not the trusted" in out.stderr and not gh.writes(), out
 
 
 def test_rejudge_falls_back_to_the_newest_gate_run_of_the_head(tmp_path):

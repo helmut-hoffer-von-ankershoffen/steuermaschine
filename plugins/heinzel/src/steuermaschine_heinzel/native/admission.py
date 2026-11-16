@@ -125,6 +125,21 @@ def head_blockers(
         _refuse(error)
 
 
+@native("head nonconsumers", writes=False, help=H(
+    "Generate candidate stuck-queued receipts for the current active run inventory.",
+    "Use when active runs block admission; independently review the JSON before using it.",
+    "nothing (read-only); no cancel probe is sent.",
+    "sm head nonconsumers --core-repo WORKTREE --format json",
+    "Review the receipts, then pass the JSON file to sm head prepare --nonconsumers FILE; apply revalidates them."))
+def head_nonconsumers(
+    core_repo: Path = typer.Option(..., "--core-repo", help="The owned Core checkout."),
+) -> ops.NonconsumerResult:
+    try:
+        return ops.nonconsumer_receipts(core_repo)
+    except ERRORS as error:
+        _refuse(error)
+
+
 @native("head prepare", writes=True, replaces=("hz-focused-admit",), help=H(
     "Prepare the exact registry transaction for one reviewed packet, or for a batch; stores it and its arguments.",
     "Use after the packet is built and reviewed, on current main.",
