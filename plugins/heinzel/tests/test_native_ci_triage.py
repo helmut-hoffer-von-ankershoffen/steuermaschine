@@ -85,6 +85,23 @@ def test_triage_prs_and_review_through_the_command_tree(tmp_path):
     assert out.exit_code == 1 and "ci_known_failures_file" in out.stderr
 
 
+def test_pr_triage_surfaces_failures_while_other_checks_run(tmp_path):
+    active = {"name": "macOS", "status": "IN_PROGRESS", "conclusion": None}
+    prs = [
+        {"number": 855, "isDraft": False, "statusCheckRollup": [chk("Supervised macOS", "FAILURE"), active]},
+        {"number": 856, "isDraft": False, "statusCheckRollup": [chk("Linux unit", "FAILURE"), active]},
+        {"number": 857, "isDraft": False, "statusCheckRollup": [chk("Known flaky", "FAILURE"), active]},
+        {"number": 858, "isDraft": False, "statusCheckRollup": [chk("CI OK", "FAILURE"), chk("Build", "CANCELLED"), active]},
+        {"number": 859, "isDraft": False, "statusCheckRollup": [chk("Focused Linux", "FAILURE"), active]},
+        {"number": 860, "isDraft": False, "statusCheckRollup": [chk("Known flaky", "FAILURE"), chk("Linux unit", "FAILURE"), active]},
+    ]
+    fake = FakeGh().on("pr list", prs)
+    report = ci_triage.TriagePrs.model_validate_json(invoke(runtime_for(tmp_path, fake), ["--format", "json", "ci", "triage", "prs"]).stdout)
+    assert [(r.number, r.state) for r in report.rows] == [(855, "FAIL"), (856, "FAIL"), (857, "KNOWN"), (858, "PENDING"), (859, "PENDING"), (860, "FAIL")]
+    assert "Supervised macOS" in report.rows[0].line and "Linux unit" in report.rows[1].line
+    assert not fake.writes()
+
+
 # ------------------------------------------------------------------ triage deadline
 def pr(number, *checks, draft=False):
     contexts = {"totalCount": len(checks), "nodes": list(checks)}
@@ -163,7 +180,7 @@ def test_deadline_reports_completed_failure_alongside_active_check(source):
         f"PR #7 {HEAD} GENUINE 'Lint'",
         f"PR #9 {HEAD} GENUINE 'CI OK'",
     ]
-    assert " PENDING " in t.triage_pr(7, [failure, active], KNOWN)
+    assert " FAIL Lint " in t.triage_pr(7, [failure, active], KNOWN)
 
 
 @pytest.mark.parametrize(("status", "conclusion", "state"), [
