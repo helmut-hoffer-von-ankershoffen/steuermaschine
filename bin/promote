@@ -19,13 +19,20 @@ set -u
 here="$(cd "$(dirname "$0")/.." && pwd)"
 stable="${SM_STABLE:-$HOME/Code/steuermaschine-stable}"
 accept=0; check=0; force=0; recheck=0; redok=""; want_reason=0; want_wait=0; wait_min=30
+hosted_run=""; hosted_repo=""; want_hosted_run=0; want_hosted_repo=0
 for a in "$@"; do
+  if [ "$want_hosted_run" = 1 ]; then hosted_run="$a"; want_hosted_run=0; continue; fi
+  if [ "$want_hosted_repo" = 1 ]; then hosted_repo="$a"; want_hosted_repo=0; continue; fi
   if [ "$want_reason" = 1 ]; then redok="$a"; want_reason=0; continue; fi
   if [ "$want_wait" = 1 ]; then case "$a" in ''|*[!0-9]*) echo "promote: --wait-idle takes minutes" >&2; exit 2 ;; esac; wait_min="$a"; want_wait=0; continue; fi
-  case "$a" in --red-gate-ok) want_reason=1 ;; --wait-idle) want_wait=1 ;; --recheck) recheck=1 ;; --accept-diff) accept=1 ;; --check) check=1 ;; --force-during-run) force=1 ;; -h|--help) sed -n '2,17p' "$0"; exit 0 ;; *) echo "promote: unknown argument $a" >&2; exit 2 ;; esac
+  case "$a" in --hosted-run) want_hosted_run=1 ;; --hosted-repo) want_hosted_repo=1 ;; --red-gate-ok) want_reason=1 ;; --wait-idle) want_wait=1 ;; --recheck) recheck=1 ;; --accept-diff) accept=1 ;; --check) check=1 ;; --force-during-run) force=1 ;; -h|--help) sed -n '2,17p' "$0"; exit 0 ;; *) echo "promote: unknown argument $a" >&2; exit 2 ;; esac
 done
 [ "$want_wait" = 0 ] || { echo "promote: --wait-idle takes minutes" >&2; exit 2; }
 [ "$want_reason" = 0 ] || { echo "promote: --red-gate-ok takes a reason" >&2; exit 2; }
+[ "$want_hosted_run" = 0 ] && [ "$want_hosted_repo" = 0 ] || { echo "promote: hosted options need values" >&2; exit 2; }
+if [ -n "$hosted_run$hosted_repo" ]; then
+  [ -n "$hosted_run" ] && [ -n "$hosted_repo" ] && [ -z "$redok" ] || { echo "promote: hosted evidence requires both options and cannot accept a red gate" >&2; exit 2; }
+fi
 # shellcheck source=bin/promote_lib.sh
 . "$here/bin/promote_lib.sh"
 say() { echo "promote: $*" >&2; }
@@ -39,7 +46,10 @@ say "candidate $id"
 
 sha="$full"; fresh_gate=0
 say "1/5 quality gate (bin/check)"
-if [ "$recheck" = 0 ] && gate_passed "$stable" "$sha"; then
+if [ -n "$hosted_run" ]; then
+  uv run python bin/hosted_promotion.py --repo "$hosted_repo" --run "$hosted_run" --sha "$sha" --installed "$stable/current/src" || die "hosted evidence failed"
+  bin/check --hosted-static || die "local static and debt gate failed"
+elif [ "$recheck" = 0 ] && gate_passed "$stable" "$sha"; then
   say "    passed for this commit at $(cat "$(gate_receipt "$stable" "$sha")"); not repeated (--recheck runs it again)"
 elif ! bin/check >"/tmp/sm-promote-check.$$" 2>&1; then
   grep -E "^check: (FAIL|RED)" "/tmp/sm-promote-check.$$" >&2
@@ -144,7 +154,7 @@ if [ "$force" = 0 ] && ! busy="$(wait_idle $((wait_min * 60)) 15)"; then
   die "not switching under a running step. Run bin/promote again (the gate is not repeated for this commit), or: bin/promote --force-during-run"
 fi
 
-[ "$(git rev-parse HEAD)" = "$full" ] || die "the checkout moved during the promote (HEAD is now $(git rev-parse --short=12 HEAD)); nothing switched"
+[ "$(git rev-parse HEAD)" = "$full" ] && [ -z "$(git status --porcelain)" ] || die "the checkout moved during the promote (HEAD is now $(git rev-parse --short=12 HEAD)); nothing switched"
 
 say "   state: move the state files to the names of this release (self migrate-state; each rename is logged)"
 live_rel=""; [ -x "$stable/current/venv/bin/steuermaschine" ] && live_rel="$(cd "$stable/current" && pwd -P)"

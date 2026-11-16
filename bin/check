@@ -17,7 +17,9 @@
 #                  worked off step by step.
 set -u
 here="$(cd "$(dirname "$0")/.." && pwd)"; cd "$here" || exit 2
-fast=0; [ "${1:-}" = "--fast" ] && fast=1
+fast=0; hosted_static=0
+[ "${1:-}" = "--fast" ] && fast=1
+[ "${1:-}" = "--hosted-static" ] && hosted_static=1
 case "${1:-}" in -h|--help) sed -n '2,10p' "$0"; exit 0 ;; esac
 failed=()
 gate() { # gate NAME command...
@@ -27,8 +29,8 @@ gate() { # gate NAME command...
 }
 uv sync --quiet || { echo "check: uv sync failed"; exit 2; }
 cov=(); [ $fast = 0 ] && cov=(--cov --cov-report= --cov-fail-under=0)
-gate "tests" env -u GITHUB_ACTIONS -u FORCE_COLOR -u PY_COLORS uv run --quiet pytest -q -p no:cacheprovider ${cov[@]+"${cov[@]}"}
-if [ $fast = 0 ]; then
+[ $hosted_static = 1 ] || gate "tests" env -u GITHUB_ACTIONS -u FORCE_COLOR -u PY_COLORS uv run --quiet pytest -q -p no:cacheprovider ${cov[@]+"${cov[@]}"}
+if [ $fast = 0 ] && [ $hosted_static = 0 ]; then
   gate "coverage core >= 90" uv run --quiet coverage report --include='src/steuermaschine/*' --fail-under=90 --format=total
   gate "coverage plugin >= 90" uv run --quiet coverage report --include='plugins/heinzel/src/steuermaschine_heinzel/*' --fail-under=90 --format=total
 fi
@@ -41,6 +43,9 @@ gate "ruff (core, examples, core tests)" uv run --quiet ruff check src examples 
 gate "mypy strict (core)" uv run --quiet mypy -p steuermaschine
 gate "pyright (core)" uv run --quiet pyright
 gate "dead code (vulture)" uv run --quiet vulture src plugins/heinzel/src examples/toy/src examples/layer/src tests/vulture_whitelist.py --min-confidence 80
-[ $fast = 0 ] && gate "debt ratchet (plugin)" uv run --quiet python bin/debt.py --gate
-if [ ${#failed[@]} = 0 ]; then echo "check: PROMOTE GATE GREEN"; else echo "check: PROMOTE GATE RED: ${failed[*]}"; fi
+[ $fast = 0 ] && { if [ $hosted_static = 1 ]; then gate "source debt ratchet (plugin)" uv run --quiet python bin/debt.py --gate --source-only; else gate "debt ratchet (plugin)" uv run --quiet python bin/debt.py --gate; fi; }
+[ $hosted_static = 1 ] && echo "check: hosted-static only; full test and coverage evidence required separately"
+if [ ${#failed[@]} = 0 ]; then
+  if [ $hosted_static = 1 ]; then echo "check: STATIC GATE GREEN"; else echo "check: PROMOTE GATE GREEN"; fi
+else echo "check: PROMOTE GATE RED: ${failed[*]}"; fi
 [ ${#failed[@]} = 0 ]

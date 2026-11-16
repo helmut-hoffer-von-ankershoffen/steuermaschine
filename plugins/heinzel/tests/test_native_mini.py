@@ -177,3 +177,13 @@ def test_go_live_carries_the_proof_into_the_decision(tmp_path):
     m.codes[REMOTE] = "000"
     bad = invoke(m.rt, ["go", "--live"]).stdout.splitlines()
     assert bad[0] == "PHASE    v0.9.39 published, live proof missing: NOT-LIVE: HTTP reachability or doctor health is unverified" and bad[1] == "NEXT     sm mini verify --minimum 0.9.39"
+
+
+def test_unreadable_status_and_invalid_tick_are_not_evidence():
+    import pytest
+
+    for raw in ("{", "[]", "null"):
+        with pytest.raises(mini.Unverified):
+            mini.object_data(raw, "status")
+    for value, interval in ((None, 5), ("not-a-date", 5), ("2027-01-15T07:58:00", 5), (TICK, 0)):
+        assert not mini.fresh_tick(value, interval, NOW)
