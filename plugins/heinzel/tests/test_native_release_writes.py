@@ -13,6 +13,7 @@ import shutil
 import urllib.error
 import urllib.request
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -59,6 +60,36 @@ def test_compose_replacement_rejects_invalid_version_before_access(tmp_path, mon
                       "--reviewed-head", "a" * 40, "--core-source", "b" * 40, "--receipt-sha256", "c" * 64,
                       "--reason", "review: fixture"])
     assert out.exit_code == 1 and "exact release version" in out.stderr
+    assert gh.calls == []
+
+
+@pytest.mark.parametrize("exists", [False, True])
+def test_compose_replacement_command_routes_and_releases_tail_lock(tmp_path, monkeypatch, exists):
+    from steuermaschine_heinzel.native.release_lib import compose_harness
+
+    gh = FakeGh()
+    rt = make(tmp_path, monkeypatch, gh)
+    path = tmp_path / "tail.json"
+    if exists:
+        path.write_text("{}")
+    calls = []
+    class Stop(Exception):
+        pass
+    module = SimpleNamespace(Stop=Stop, release_rejection=SimpleNamespace(InvalidRejection=ValueError),
+                             tail_receipt=lambda version: path, route_to_tail=lambda version: calls.append("lock"),
+                             rejection_guard=lambda version: calls.append("guard"),
+                             free_tail_lock=lambda: calls.append("unlock"), RECEIPT_OVERRIDE=None)
+    monkeypatch.setattr(area, "runner", lambda: module)
+    monkeypatch.setattr(compose_harness, "replace", lambda *args: calls.append("replace"))
+    out = invoke(rt, ["release", "replace-compose", "0.9.48", "--failed-run", "123", "--failed-attempt", "1",
+                      "--reviewed-head", "a" * 40, "--core-source", "b" * 40, "--receipt-sha256", "c" * 64,
+                      "--reason", "review: fixture"])
+    if exists:
+        assert out.exit_code == 0 and "replacement requested" in out.stdout
+        assert calls == ["lock", "guard", "replace", "unlock"]
+    else:
+        assert out.exit_code == 1 and "tail receipt is absent" in out.stderr
+        assert calls == ["unlock"]
     assert gh.calls == []
 
 

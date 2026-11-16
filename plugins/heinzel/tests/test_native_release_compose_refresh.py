@@ -128,10 +128,14 @@ def test_a_busy_compose_queue_defers_the_fresh_dispatch(rel, monkeypatch):
 def test_guard_refuses_ambiguous_replacement_even_if_app_exists(rel, monkeypatch, defect):
     rel.remember(compose_replacement_guard={"failed_run": FAILED, "reviewed_head": NEW})
     run = {"databaseId": 999, "headSha": NEW, "attempt": 1, "status": "completed", "conclusion": "success"}
-    if defect == "old_id": run["databaseId"] = FAILED
-    if defect == "wrong_head": run["headSha"] = OLD
-    if defect == "rerun": run["attempt"] = 2
-    if defect == "changed_id": rel.remember(compose_replacement_guard={"failed_run": FAILED, "reviewed_head": NEW, "replacement_run": 1000})
+    if defect == "old_id":
+        run["databaseId"] = FAILED
+    if defect == "wrong_head":
+        run["headSha"] = OLD
+    if defect == "rerun":
+        run["attempt"] = 2
+    if defect == "changed_id":
+        rel.remember(compose_replacement_guard={"failed_run": FAILED, "reviewed_head": NEW, "replacement_run": 1000})
     monkeypatch.setattr(rel, "ours", lambda *args: None if defect == "missing" else run)
     monkeypatch.setattr(rel, "published_release", lambda *args: {"prerelease": False})
     with pytest.raises(rel.Stop, match="replacement is pending or its identity changed"):
