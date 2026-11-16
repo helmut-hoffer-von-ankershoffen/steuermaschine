@@ -18,9 +18,11 @@ import typer
 from steuermaschine.engine import Refuse, Wait
 from steuermaschine.github import Gh, GhError, GitHub
 from steuermaschine.github.base import ProviderError
+from steuermaschine.github.cli import table
 from steuermaschine.helpdoc import H
 from steuermaschine.models import Model
 from steuermaschine.native import Group, native, runtime
+from steuermaschine.protocols import Forge
 
 from .. import state as statedir
 from .slots_lib import collect, legacy, registry_lock
@@ -132,10 +134,17 @@ def _unreleased_trees(gh: Gh) -> set[str]:
     return {tree for version, tree in found if not version or version not in published}
 
 
-def _read() -> tuple[str, dict[str, str], list[dict[str, Any]], int, dict[str, str]]:
+def _forge(repo: str) -> Forge | GitHub:
     rt = runtime()
-    gh, repo = _gh()
-    forge = rt.providers.forge or GitHub(rt.providers.commands, repo=repo, clock=rt.providers.clock)
+    if rt.providers.forge is not None:
+        return rt.providers.forge
+    # Use the same repository for the PR facts, reviewed transaction and variable writes.
+    settings = table(rt, "github") | {"repo": repo}
+    return GitHub.from_settings(rt.providers.commands, settings, rt.providers.clock)
+
+
+def _read(gh: Gh, forge: Forge | GitHub) -> tuple[dict[str, str], list[dict[str, Any]], int, dict[str, str]]:
+    rt = runtime()
     try:
         values = {name: forge.get_variable(name) for name in collect.NAMES}
         if all(value is None for value in values.values()):
@@ -147,7 +156,7 @@ def _read() -> tuple[str, dict[str, str], list[dict[str, Any]], int, dict[str, s
         main = _main(gh)
     except (collect.Unreadable, GhError, ProviderError) as error:
         raise Refuse(f"cannot collect: {error}", "sm status", code=1) from error
-    return repo, texts, collect.classify(slots, prs, reserved, main["tree"], rt.providers.clock.now()), len(reserved), main
+    return texts, collect.classify(slots, prs, reserved, main["tree"], rt.providers.clock.now()), len(reserved), main
 
 
 def _model(repo: str, texts: dict[str, str], rows: list[dict[str, Any]], reserved: int, main: dict[str, str], show_all: bool) -> SlotsCollect:
@@ -173,7 +182,8 @@ def _model(repo: str, texts: dict[str, str], rows: list[dict[str, Any]], reserve
     "An entry goes only when every pull request with that head is merged or closed and no open (or unmatched) pull request plan and no\n"
     "unreleased release reservation names its tree; a push-tree entry goes with its pull request entries. Everything else stays."))
 def head_slots_collect(all_: bool = typer.Option(False, "--all", help="Also list the entries that stay, with the reason.")) -> SlotsCollect:
-    repo, texts, rows, reserved, main = _read()
+    gh, repo = _gh()
+    texts, rows, reserved, main = _read(gh, _forge(repo))
     return _model(repo, texts, rows, reserved, main, all_)
 
 
@@ -183,25 +193,30 @@ def head_slots_collect(all_: bool = typer.Option(False, "--all", help="Also list
     "up to five repository variables (the focused plan slots that lose entries); writes a receipt.",
     "sm head slots apply --approved DIGEST",
     "sm go",
+    "GitHub variable writes must be explicitly enabled via SM_GITHUB__VARIABLE_WRITES=true. "
     "Rebuilds the change from fresh reads and refuses unless its digest is the approved one, the registry did not change while it\n"
     "wrote, and no Actions run is active (exit 75). The readback must equal what was written; nothing is restored automatically."))
 def head_slots_apply(approved: str = typer.Option(..., "--approved", help="The digest of the collect output the reviewer approved.")) -> SlotsApplied:
     rt = runtime()
-    if rt.providers.forge is None:
-        raise Refuse("no forge provider is configured; nothing was written.", "sm self config", code=1)
-    repo, texts, rows, reserved, main = _read()
+    gh, repo = _gh()
+    forge = _forge(repo)
+    if isinstance(forge, GitHub) and not forge.variable_writes:
+        raise Refuse("GitHub variable writes are off; nothing was written.",
+                     "enable SM_GITHUB__VARIABLE_WRITES=true for the reviewed command", code=1)
+    texts, rows, reserved, main = _read(gh, forge)
     result = _model(repo, texts, rows, reserved, main, False)
     if approved != result.digest:
         raise Refuse(f"the approved digest is not the digest of the change that reads now ({result.digest}): the registry or a pull request "
                      "changed; nothing was written.", "sm head slots collect", code=1)
     if not result.collect_count:
         raise Refuse("nothing to collect; nothing was written.", "sm head slots collect", code=1)
-    forge: Any = rt.providers.forge
-    active = forge.active_runs()
+    try:
+        active = forge.active_runs()
+    except ProviderError as error:
+        raise Refuse("could not verify that Actions is idle; nothing was written.", "sm ci active", code=1) from error
     if active:
         raise Wait(f"{len(active)} Actions run(s) are active and may read the registry; nothing was written.", "no active Actions run")
     tx = result.transaction
-    gh, _ = _gh()
     writes = collect.new_values(texts, tx)
     expected, written = dict(texts), list[str]()
 
@@ -212,8 +227,11 @@ def head_slots_apply(approved: str = typer.Option(..., "--approved", help="The d
         rt.providers.store.put_receipt("heinzel.slots.collect", key, json.loads(json.dumps(receipt)))
         return f"heinzel.slots.collect/{key}"
 
-    def stop(why: str) -> NoReturn:
-        done = f" Written before this: {', '.join(written)}; receipt {record(True)}." if written else " Nothing was written."
+    def stop(why: str, *, uncertain: bool = False) -> NoReturn:
+        if uncertain:
+            done = f" Inspect the registry before retrying; partial receipt {record(True)}."
+        else:
+            done = f" Written before this: {', '.join(written)}; receipt {record(True)}." if written else " Nothing was written."
         raise Refuse(why + done, "sm head slots collect", code=1)
 
     try:
@@ -233,6 +251,8 @@ def head_slots_apply(approved: str = typer.Option(..., "--approved", help="The d
         raise Refuse(f"the registry writer lock is busy ({error}); nothing was written.", "sm head slots apply --approved DIGEST", code=1) from error
     except GhError as error:
         stop(f"cannot read main: {error}.")
+    except ProviderError:
+        stop("GitHub did not confirm the registry operation.", uncertain=True)
     removed = sum(len(keys) for keys in tx["remove"].values())
     receipt_ref = record(False)
     return SlotsApplied(digest=result.digest, written=sorted(writes), removed=removed, receipt=receipt_ref)
