@@ -32,13 +32,13 @@ and `intro` are required. `release_review` defaults to `RELEASE-REVIEW.md`. `sna
 pinned to the tag's public snapshot). `candidate_gate=yes` is the train path: main may be red with known failures, and
 the candidate is the gate. `nonconsumers` is the reviewed stuck-queued receipts file, the same for prepare and apply.
 
-For a protected main that runs direct full CI, explicitly set `main_ci=full` before admission review.
+To request full candidate validation without a focused reservation, explicitly set `main_ci=full` before admission review.
 This route writes `full-ci-plan.json`, leaving legacy `prepare.out`, arguments and failed admission evidence intact.
-The reviewer confirms that the exact protected workflow uses full CI without a focused registry reservation.
-Before that review, the tool checks the workflow's direct selector, disabled focused outputs, main admission
-binding and runnable policy inventory against immutable objects. The batch producer must match the existing
-reviewed first-attempt batch protocol; unknown selection or authentication shapes refuse. Protected execution
-sources must be unchanged, and the entire release diff must pass the generated-release semantic validator.
+This is a request, not an automatic full-main classification or proof that tests ran. The review artifact binds
+the official repository, exact base/head/tree, workflow and actual batch producer with immutable source digests.
+The independent reviewer reads every required job condition and matrix and confirms no focused reservation is
+needed. Missing or rejected approval refuses apply. Protected execution sources must be unchanged, and the
+entire release diff must pass the existing generated-release semantic validator. No YAML parser is needed.
 The plan binds the release packet, head, base, tree and clone. Apply rechecks that plan and writes no registry
 variable or admission receipt. The default `main_ci=focused` route and its registry reader contract are unchanged;
 a reader failure never selects full mode automatically, and an existing approved focused plan cannot change modes.
@@ -46,7 +46,8 @@ Both modes require the complete first-attempt candidate and normal coverage, Son
 
 The prepared release branch is opened with `sm release pr VERSION --head SHA` after the publishing review,
 using `SM_HEINZEL__RELEASE_DIR=CLONE` for the reviewed clone. Use the same setting for subsequent cut/resume calls.
-The full route refuses a mismatched runner checkout. A successful local full-CI plan is not hosted candidate proof.
+The full route refuses a mismatched runner checkout and a pending same-version candidate waiver before resume.
+A reviewed request is not hosted candidate proof; the existing native final candidate verifier remains mandatory.
 The supplied clone's effective origin URL must name the configured official Core repository before its tags
 or main are consulted. Matching a main commit alone does not authorize a fork's release-tag history.
 

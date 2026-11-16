@@ -44,7 +44,7 @@ INPUTS = {
     "snapshot": "yes (default): acceptance pinned to the tag's public snapshot; no: the default path",
     "candidate_gate": "yes: the train path (main may be red by KNOWN failures; the candidate is the gate); default no",
     "nonconsumers": "the reviewed stuck-queued receipts file, the same for prepare and apply",
-    "main_ci": "focused (default): reserve a registry plan; full: review a full-CI release without writing the focused registry",
+    "main_ci": "focused (default): reserve a registry plan; full: request full candidate validation, subject to independent exact-source no-reservation review",
 }
 TRAPS = {
     "ci change": "A release whose CI paths changed since the last published tag needs a ci_change verdict on its exact commit: "
@@ -382,14 +382,14 @@ def full_plan(ctx: Ctx) -> dict[str, Any]:
         for commit in (base, head):
             if core_policy.at_commit_git(clone, commit).repository != ctx.settings.get("repo"):
                 raise Refuse("full-CI policy repository differs from the official Core identity")
-        full_ci.verify(clone, base, head, ctx.subject.facts["version"])
+        request = full_ci.source_request(clone, base, head, ctx.subject.facts["version"])
         tree = core_policy.git_read(clone, "rev-parse", f"{head}^{{tree}}").decode().strip()
         if identity["tree"] != tree:
             raise Refuse("full-CI packet tree differs from the release commit")
     except (OSError, ValueError, KeyError, TypeError, core_policy.CandidateError) as exc:
         raise Refuse(f"cannot bind full-CI release evidence: {exc}") from None
-    return {"mode": "full-ci/v1", "main": base, "head": head, "tree": tree, "clone": clone,
-            "packet_sha256": sha(raw), "registry_write": False, "candidate": "full-first-attempt"}
+    return {"mode": "full-candidate-request/v1", "main": base, "head": head, "tree": tree, "clone": clone,
+            "packet_sha256": sha(raw), "registry_write": False, "source_review": request}
 
 
 def prepare_probe(ctx: Ctx) -> str | None:
@@ -416,7 +416,7 @@ def admit_prepare(ctx: Ctx) -> str:
     if main_ci(ctx) == "full":
         plan = full_plan(ctx)
         prepared(ctx).write_text(json.dumps(plan, sort_keys=True, indent=2) + "\n")
-        return "full-CI plan prepared; no focused registry reservation"
+        return "full candidate validation requested; no execution proof or focused registry reservation"
     nonconsumers = ctx.inputs.get("nonconsumers")
     done = ok("release admit prepare", packet=reservation(ctx), core_repo=path_input(ctx, "clone", "the release clone"),
               review_root=path_input(ctx, "review_root", "the review root"), nonconsumers=Path(str(nonconsumers)).expanduser() if nonconsumers else None, wait_=True)
@@ -428,8 +428,10 @@ def admission_review(ctx: Ctx) -> tuple[str, str, str]:
     sha = prepared_digest(path)
     ctx.data["admission_sha256"] = sha
     if main_ci(ctx) == "full":
-        return sha, (f"Review the full-CI plan {path} and its bound release packet. "
-                     "Confirm protected main uses full CI without a focused reservation. No registry admission is claimed. "
+        return sha, (f"Review the full-candidate request {path} and its bound release packet. "
+                     "Read the exact protected workflow and actual batch producer at the bound commits and recompute their digests. "
+                     "Verify every required branch condition and matrix and confirm no focused reservation is needed. "
+                     "Selection is not execution proof or a green main. No registry admission is claimed. "
                      "The release still requires the complete original candidate, source artifact, coverage and normal merge checks."), str(path)
     brief = (f"Review the release-main admission of v{ctx.subject.facts['version']}: {path}.\n"
              f"Recompute the digest yourself: sm head hash {path}\n"
@@ -552,6 +554,12 @@ def resume(ctx: Ctx) -> str:
         if not configured or Path(configured).expanduser().resolve() != clone:
             raise Refuse("full-CI resume requires release_dir to match the reviewed clone",
                          "set SM_HEINZEL__RELEASE_DIR to the reviewed clone, then resume this cut")
+        import sys
+
+        release = sys.modules[command("release resume").fn.__module__]
+        if release.runner().pending_waiver(ctx.subject.facts["version"]) is not None:
+            raise Refuse("full-candidate request refuses a pending same-version candidate waiver")
+        admit_apply(ctx)  # recheck the exact independently approved source request before execution
     result = ok_or_stopped(ctx)
     return f"ACCEPTED (acceptance run {result.acceptance_run})" if result.acceptance_run else "ACCEPTED"
 

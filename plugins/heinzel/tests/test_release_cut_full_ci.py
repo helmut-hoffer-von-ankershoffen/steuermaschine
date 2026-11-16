@@ -4,7 +4,6 @@ import json
 
 import policy_kit as kit
 import pytest
-import yaml
 from test_pipeline_cov_release_cut import _git, context, native, runtime
 
 from steuermaschine.engine import Refuse
@@ -37,7 +36,7 @@ def direct_workflow():
 
 
 @pytest.fixture
-def full(tmp_path, monkeypatch):
+def full(tmp_path, monkeypatch, request):
     # Reproduce the direct-full shape: one reader in CI, one in its judge. The focused
     # contract still requires two CI readers; the full route must not weaken it.
     readers = "\n".join(f'{name}: ${{{{ vars.{name} }}}}' for name in focused_slots.NAMES).encode()
@@ -50,8 +49,14 @@ def full(tmp_path, monkeypatch):
         release_scope.ACCEPTANCE: f'FOREGROUND_UI = {{\n    "{old}": ("ui", "serve"),\n}}\n',
         "CHANGELOG.md": "# Changelog\n",
     }
+    workflow = direct_workflow()
+    target = next(job for job in workflow["jobs"].values() if job.get("name") == "Coverage")
+    if getattr(request, "param", None) == "disabled":
+        target["if"] = "false"
+    elif getattr(request, "param", None) == "empty-matrix":
+        target["strategy"] = {"matrix": {"include": []}}
     clone, base = kit.git_repo(tmp_path / "release", {
-        kit.PATH: json.dumps(kit.manifest()).encode(), kit.WORKFLOW: yaml.safe_dump(direct_workflow()).encode(), kit.JUDGE: readers,
+        kit.PATH: json.dumps(kit.manifest()).encode(), kit.WORKFLOW: json.dumps(workflow).encode(), kit.JUDGE: readers,
         kit.RECORDER: kit.recorder_bytes(), "scripts/main_batch.py": (kit.FIXTURES / "main_batch_direct_full.py").read_bytes(),
     }, {path: value.encode() for path, value in metadata.items()})
     _git(clone, "remote", "add", "origin", f"https://github.com/{kit.REPOSITORY}.git")
@@ -133,7 +138,7 @@ def test_full_route_keeps_reader_refusal_and_failed_prepare(full, monkeypatch):
     common.OVERRIDE["release admit prepare"] = lambda **kw: pytest.fail("full mode wrote focused admission")
     common.OVERRIDE["release admit apply"] = lambda **kw: pytest.fail("full mode applied focused admission")
     with native(rt):
-        assert "no focused registry" in release_cut.admit_prepare(ctx)
+        assert "validation requested" in release_cut.admit_prepare(ctx)
         digest, brief, path = release_cut.admission_review(ctx)
         plan = json.loads(release_cut.prepared(ctx).read_text())
         assert plan["head"] == head and plan["registry_write"] is False
@@ -197,7 +202,7 @@ def test_full_publish_plan_binds_route_and_resume_refuses_wrong_clone(full):
         release_cut.admit_prepare(ctx)
         digest, _, _ = release_cut.publish_review(ctx)
         assert canonical_sha256(json.dumps(ctx.data["publish_plan"])) == digest
-        assert ctx.data["publish_plan"]["full_ci"]["candidate"] == "full-first-attempt"
+        assert ctx.data["publish_plan"]["full_ci"]["source_review"]["validation_requested"] == "full-first-attempt"
         with pytest.raises(Refuse, match="release_dir to match"):
             release_cut.resume(ctx)
 
@@ -217,11 +222,15 @@ def test_full_route_rejects_unreadable_exact_source_policy(full, monkeypatch):
         release_cut.admit_prepare(ctx)
 
 
-def test_full_route_resumes_through_existing_native_gate(full):
+def test_full_route_resumes_through_existing_native_gate(full, monkeypatch):
+    from types import SimpleNamespace
+
+    from steuermaschine_heinzel.native import release
     from steuermaschine_heinzel.native.release import ReleaseRun
 
     rt, ctx, clone, *_ = full
     rt.settings["release_dir"] = clone
+    monkeypatch.setattr(release, "runner", lambda: SimpleNamespace(pending_waiver=lambda version: None))
     calls = []
 
     def resume(**kwargs):
@@ -241,52 +250,6 @@ def test_full_route_resumes_through_existing_native_gate(full):
     assert calls == [{"version": "0.9.41", "intro": "Release changes.", "snapshot_acceptance": True, "candidate_gate": False}]
 
 
-@pytest.mark.parametrize("mutation", ["markers-only", "focused", "conditional", "disconnected", "push-condition",
-                                       "batch-condition", "batch-invocation", "missing-job", "inert-job"])
-def test_valid_policy_does_not_authorize_partial_or_focused_workflow(mutation):
-    doc = direct_workflow()
-    jobs = doc["jobs"]
-    if mutation == "markers-only":
-        doc = {"env": doc["env"]}
-    elif mutation == "focused":
-        jobs["changes"]["outputs"]["focused_mode"] = "${{ steps.scope.outputs.mode }}"
-    elif mutation == "conditional":
-        jobs["changes"]["steps"][0]["if"] = "github.event_name == 'pull_request'"
-    elif mutation == "disconnected":
-        jobs["changes"]["outputs"]["full_ci"] = "${{ steps.other.outputs.selected }}"
-    elif mutation == "push-condition":
-        jobs["changes"]["if"] += " && vars.ADMITTED == 'true'"
-    elif mutation == "batch-condition":
-        jobs["admission"]["steps"][0]["if"] = "vars.ADMITTED == 'true'"
-    elif mutation == "batch-invocation":
-        jobs["admission"]["steps"][0]["run"] = "echo 'full=false' >> $GITHUB_OUTPUT"
-    else:
-        target = next(key for key, job in jobs.items() if job.get("name") == "Coverage")
-        if mutation == "missing-job":
-            del jobs[target]
-        else:
-            jobs[target].pop("steps")
-    with pytest.raises(Refuse, match="protected direct-full contract"):
-        full_ci._workflow(yaml.safe_dump(doc).encode(), kit.policy())
-
-
-@pytest.mark.parametrize("suffix", ["jobs: {}\n", "extra: &x {a: b}\nalias: *x\n", "extra: !custom value\n"])
-def test_workflow_rejects_duplicate_keys_aliases_and_tags(suffix):
-    with pytest.raises(Refuse, match="protected direct-full contract"):
-        full_ci._workflow((yaml.safe_dump(direct_workflow()) + suffix).encode(), kit.policy())
-
-
-@pytest.mark.parametrize("before,after", [
-    ('return {"full": True, "base": "", "run": ""}', 'return {"full": False, "base": "", "run": ""}'),
-    ('if marker == "present":', 'if marker != "present":'),
-    ('if not status or not _attested(status):', 'if not status:'),
-    ('result = admit(os.environ["GITHUB_SHA"], get, seconds=180)', 'result = {"full": False, "base": "", "run": ""}'),
-])
-def test_batch_authority_and_output_cannot_be_weakened(before, after):
-    source = (kit.FIXTURES / "main_batch_direct_full.py").read_text()
-    assert before in source
-    with pytest.raises(Refuse, match="unknown batch selection or authentication"):
-        full_ci._batch(source.replace(before, after).encode(), kit.policy())
 
 
 @pytest.mark.parametrize("path", [kit.WORKFLOW, kit.RECORDER, kit.JUDGE, "scripts/main_batch.py"])
@@ -296,8 +259,8 @@ def test_release_head_cannot_replace_protected_execution_sources(full, path):
     target.write_bytes(target.read_bytes() + b"\n# changed execution source\n")
     _git(clone, "add", path)
     _git(clone, "commit", "-q", "--amend", "-m", "changed source")
-    with pytest.raises(Refuse, match="changes protected execution"):
-        full_ci.verify(str(clone), base, _git(clone, "rev-parse", "HEAD"), "0.9.41")
+    with pytest.raises(Refuse, match="changes protected workflow"):
+        full_ci.source_request(str(clone), base, _git(clone, "rev-parse", "HEAD"), "0.9.41")
 
 
 def test_generated_release_validation_preserves_transitive_execution_inputs(full):
@@ -306,4 +269,36 @@ def test_generated_release_validation_preserves_transitive_execution_inputs(full
     _git(clone, "add", "unexpected.py")
     _git(clone, "commit", "-q", "--amend", "-m", "unexpected source")
     with pytest.raises(Refuse, match="release diff must modify existing regular files"):
-        full_ci.verify(str(clone), base, _git(clone, "rev-parse", "HEAD"), "0.9.41")
+        full_ci.source_request(str(clone), base, _git(clone, "rev-parse", "HEAD"), "0.9.41")
+
+
+@pytest.mark.parametrize("full", ["disabled", "empty-matrix"], indirect=True)
+def test_unreviewed_partial_workflow_is_only_a_request_and_cannot_apply(full):
+    rt, ctx, clone, base, head = full
+    with native(rt):
+        release_cut.admit_prepare(ctx)
+        digest, brief, _ = release_cut.admission_review(ctx)
+        plan = json.loads(release_cut.prepared(ctx).read_text())
+        source = plan["source_review"]
+        assert plan["mode"] == "full-candidate-request/v1" and source["execution_evidence"] is None
+        assert source["base"] == base and source["head"] == head
+        assert source["source_sha256"][kit.WORKFLOW] == release_cut.sha(core_policy.git_read(clone, "show", f"{base}:{kit.WORKFLOW}"))
+        assert "every required branch condition and matrix" in brief
+        with pytest.raises(Refuse, match="lacks approval"):
+            release_cut.admit_apply(ctx)
+        rt.providers.store.put_receipt("verdicts", digest, {"verdict": "reject", "reviewer": "independent"})
+        with pytest.raises(Refuse, match="lacks approval"):
+            release_cut.admit_apply(ctx)
+
+
+def test_full_request_refuses_pending_same_version_waiver(full, monkeypatch):
+    from types import SimpleNamespace
+
+    from steuermaschine_heinzel.native import release
+
+    rt, ctx, clone, *_ = full
+    rt.settings["release_dir"] = clone
+    monkeypatch.setattr(release, "runner", lambda: SimpleNamespace(pending_waiver=lambda version: {"job": "any"}))
+    common.OVERRIDE["release resume"] = lambda **kw: pytest.fail("started with pending waiver")
+    with native(rt), pytest.raises(Refuse, match="pending same-version candidate waiver"):
+        release_cut.resume(ctx)
