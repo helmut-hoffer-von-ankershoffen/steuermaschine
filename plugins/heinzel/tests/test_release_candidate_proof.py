@@ -14,7 +14,10 @@ def test_candidate_proof_reuses_full_verifier_and_requires_exact_review(monkeypa
         calls.append(number)
         return {'head': HEAD, 'base': BASE, 'tree': TREE, 'run_id': 7, 'run_attempt': 1, 'job_count': 61}
     monkeypatch.setattr(candidate_policy, 'verify_pr', verify)
-    assert release_read.release_candidate_proof(123, HEAD, BASE, TREE).run_id == 7
+    proof = release_read.release_candidate_proof(123, HEAD, BASE, TREE)
+    assert proof.run_id == 7
+    assert proof.render() == ["verified original full candidate run 7 for PR #123",
+                              f"head {HEAD} base {BASE} tree {TREE}; 61 jobs"]
     assert calls == [123]
     for head, base, tree in ((BASE, BASE, TREE), (HEAD, TREE, TREE), (HEAD, BASE, BASE)):
         with pytest.raises(Refuse, match='differs'):
