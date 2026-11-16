@@ -5,7 +5,9 @@ admission prepares that plan for the tree of `merge-tree(main at admission, head
 the PR's squash onto the NEW main is another tree without a plan, and its merge turns main red (the batch plan trap,
 2026-11-12 and again 2026-11-13 via a re-queue: #804 merged, then #803 on its old plan). This module computes the
 tree the merge would produce on CURRENT main and looks it up in the registry with Core's own codec, read from current
-main. The queue refuses the merge, and `queue add` refuses the PR, when it is missing.
+main. A missing plan may instead be satisfied by protected Core verification of an original full hosted PR run
+against the exact current merge tree, including its complete job inventory and whole-project coverage. The queue
+refuses when neither independent route proves the current source.
 
 Fail closed: no Core checkout configured, an unreadable registry, a conflict or any error is a refusal with its reason.
 """
@@ -74,8 +76,34 @@ def next_command(pr: str, main: str) -> str:
             f"(PACKET built at {main[:8]}: sm head packet preopen, or sm head packet bind --main {main})")
 
 
+def full_pr(core: Path, pr: str, main: str, head: str, tree: str) -> bool:
+    """Use existing original hosted evidence through the authenticated protected Core reader."""
+    from . import core_policy
+
+    def api(path: str) -> dict[str, Any]:
+        value = hzlib.ghj("api", f"repos/{hzlib.CORE}/{path}", default=None)
+        if not isinstance(value, dict):
+            raise TypeError("full PR evidence unavailable")
+        return value
+
+    policy = core_policy.at_commit_api(api, main)
+    runs = api(f"{policy.workflow_runs}?head_sha={head}&event=pull_request&per_page=1").get("workflow_runs")
+    if not isinstance(runs, list) or len(runs) != 1:
+        raise ValueError("no unique latest full PR run")
+    run = runs[0]
+    if (run.get("head_sha") != head or run.get("run_attempt") != 1
+            or run.get("status") != "completed" or run.get("conclusion") != "success"):
+        raise ValueError("latest full PR run is not successful on its original attempt")
+    proof = main_checkpoint.isolated_reader({
+        "mode": "full-pr", "core_repo": str(core), "reader_head": main,
+        "pr": pr, "head": head, "tree": tree, "run": run["id"],
+    })
+    return isinstance(proof, dict) and proof == {"type": "full-pr/v1", "head": head, "base": main, "tree": tree,
+                     "run": run["id"], "attempt": 1}
+
+
 def gap(pr: str, head: str = "") -> str:
-    """'' when the registry holds push-tree:<merge-tree(current main, head)> based on current main; else the refusal."""
+    """Accept an exact current-main plan or independently verified complete hosted evidence; otherwise refuse."""
     core = core_repo()
     if core is None:
         return f"{PREFIX}: cannot check #{pr}: the setting {SETTING} (a Core checkout) is not set; sm self config"
@@ -88,10 +116,19 @@ def gap(pr: str, head: str = "") -> str:
         if len(head) != 40 or len(main) != 40:
             return f"{PREFIX}: cannot check #{pr}: its head or main is unreadable"
         tree = merge_tree(core, pr, main, head)
-        plan = registry(core, main).get(f"push-tree:{tree}")
     except Exception as error:  # noqa: BLE001 - fail closed: every error is a named refusal
         return f"{PREFIX}: cannot check #{pr}: {error}"
+    try:
+        plan = registry(core, main).get(f"push-tree:{tree}")
+    except Exception:  # noqa: BLE001 - independent full proof may still authenticate admission
+        plan = None
     if isinstance(plan, dict) and plan.get("base") == main:
         return ""
+    full_refusal = "no exact full hosted proof"
+    try:
+        if full_pr(core, pr, main, head, tree):
+            return ""
+    except Exception as error:  # noqa: BLE001 - fail closed with the independent proof refusal
+        full_refusal = str(error)
     return (f"{PREFIX}: no focused plan for tree {tree[:8]} of #{pr} ({head[:8]}) on main {main[:8]}; "
-            f"merging it would turn main red. Next: {next_command(pr, main)}")
+            f"Full hosted proof refused: {full_refusal}. Next: {next_command(pr, main)}")
