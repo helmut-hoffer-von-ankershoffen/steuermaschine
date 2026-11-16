@@ -219,6 +219,19 @@ def test_cancel_refuses_a_finished_run_and_reports_a_failed_or_unreadable_one():
     assert GitHub(fake, R).cancel_run("9", live=True).state.startswith("unknown: ") and fake.writes() == []
 
 
+@pytest.mark.parametrize(("reply", "expected"), [
+    ("Cannot cancel a workflow run that has not been queued yet. (HTTP 409)", "not_queued"),
+    ("Conflict (HTTP 409)", "unknown: Conflict (HTTP 409)"),
+])
+def test_cancel_distinguishes_github_not_queued_conflict(reply, expected):
+    fake = FakeGh().on("actions/runs/7", RUN).on("actions/runs/7/cancel", Result(1, "", f"gh: {reply}"))
+    result = GitHub(fake, R).cancel_run("7", live=True)
+    assert result.state == expected and result.exit_code == 1
+    assert len(fake.writes()) == 1
+    if expected == "not_queued":
+        assert "GitHub refused cancellation" in result.render()[0]
+
+
 def test_variables_read_and_write_only_behind_the_flag():
     fake = FakeGh().on("actions/variables/A", {"name": "A", "value": "1", "updated_at": "u"}).on("actions/variables/B", 404).on("actions/variables/C", 500)
     fake.on("actions/variables?", {"total_count": 1, "variables": [{"name": "A", "value": "1"}]}).on("variable set", "")

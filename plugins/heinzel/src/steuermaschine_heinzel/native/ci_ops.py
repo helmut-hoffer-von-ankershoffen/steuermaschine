@@ -125,7 +125,7 @@ class DeferDecision(Model):
     branch: str
     workflow: str
     event: str = ""
-    action: str  # cancelled | would_cancel | kept | spared | failed
+    action: str  # cancelled | would_cancel | kept | spared | failed | not_queued
     reason: str = ""
     would_run: str = ""  # the cancel call, as it was or would be run
 
@@ -136,7 +136,7 @@ class DeferDecision(Model):
 class Deferral(Model):
     """What `sm ci defer` cancelled, or would cancel, and what it left alone."""
 
-    state: str  # cancelled | dry_run | not_starved
+    state: str  # cancelled | partial | failed | no_changes | dry_run | not_starved
     live: bool
     force_release: bool = False
     keep: list[str] = []  # the head branches of the PRs to keep
@@ -144,14 +144,37 @@ class Deferral(Model):
     starved_minutes: int | None = None  # with --if-main-starved: the threshold
     cancelled: int = 0
     would_cancel: int = 0
-    failed: int = 0
+    failed: int = 0  # all unsuccessful attempts, including not_queued
+    not_queued: int = 0
     runs: list[DeferDecision] = []
     notes: list[str] = []
+
+    @classmethod
+    def from_decisions(cls, rows: list[dict[str, Any]], live: bool, notes: list[str], **details: Any) -> Deferral:
+        runs = [DeferDecision(**row) for row in rows]
+        cancelled = sum(row.action == "cancelled" for row in runs)
+        would_cancel = sum(row.action == "would_cancel" for row in runs)
+        not_queued = sum(row.action == "not_queued" for row in runs)
+        failed = sum(row.action == "failed" for row in runs) + not_queued
+        if not live:
+            state = "dry_run"
+        elif failed:
+            state = "partial" if cancelled else "failed"
+        else:
+            state = "cancelled" if cancelled else "no_changes"
+        return cls(state=state, live=live, cancelled=cancelled, would_cancel=would_cancel, failed=failed, not_queued=not_queued,
+                   runs=runs, notes=notes, **details)
+
+    @property
+    def exit_code(self) -> int:
+        return int(self.failed > 0)
 
     def render(self) -> list[str]:
         lines = self.notes + [line for row in self.runs for line in row.render()]
         if self.state == "dry_run":
             lines.append(f"dry run: nothing was cancelled or recorded; `sm ci defer --cancel` cancels the {self.would_cancel} run(s) marked `would cancel`")
+        if self.failed:
+            lines.append(f"Cancelled {self.cancelled}. Failed {self.failed} ({self.not_queued} GitHub reported as not queued).")
         return lines
 
 
@@ -193,11 +216,10 @@ def defer(cancel: bool = False, if_main_starved: bool = False, minutes: int | No
         nonlocal waited
         if supersede_main:
             rows = defer_lib.supersede_main(edge, cancel)
-            count = {action: sum(1 for row in rows if row["action"] == action) for action in ("cancelled", "would_cancel", "failed")}
-            if not count["cancelled"] + count["would_cancel"] + count["failed"]:
-                notes.append(f"at most {defer_lib.MAIN_KEEP} main CI runs are queued: nothing is superseded")
-            return Deferral(state="cancelled" if cancel else "dry_run", live=cancel, cancelled=count["cancelled"], would_cancel=count["would_cancel"],
-                            failed=count["failed"], runs=[DeferDecision(**row) for row in rows], notes=notes)
+            result = Deferral.from_decisions(rows, cancel, notes)
+            if not result.cancelled + result.would_cancel + result.failed:
+                result.notes.append(f"nothing is superseded. The newest {defer_lib.MAIN_KEEP} queued main runs are kept")
+            return result
         kept = defer_lib.keep_branches(edge, keep) if keep else []
         for number in from_file:
             if number in typed:
@@ -213,10 +235,8 @@ def defer(cancel: bool = False, if_main_starved: bool = False, minutes: int | No
                 return Deferral(state="not_starved", live=cancel, keep=kept, main_queued_minutes=waited, starved_minutes=threshold, notes=notes)
             notes.append(f"main CI queued {waited} min >= {threshold}: {'cancelling' if cancel else 'would cancel'} PR CI (never main, release/* or bump/*)")
         rows = defer_lib.cancel(edge, kept, force_release, cancel, "--if-main-starved" if if_main_starved else "--cancel")
-        count = {action: sum(1 for row in rows if row["action"] == action) for action in ("cancelled", "would_cancel", "failed")}
-        return Deferral(state="cancelled" if cancel else "dry_run", live=cancel, force_release=force_release, keep=kept, main_queued_minutes=waited,
-                        starved_minutes=threshold, cancelled=count["cancelled"], would_cancel=count["would_cancel"], failed=count["failed"],
-                        runs=[DeferDecision(**row) for row in rows], notes=notes)
+        return Deferral.from_decisions(rows, cancel, notes, force_release=force_release, keep=kept, main_queued_minutes=waited,
+                                       starved_minutes=threshold)
 
     try:
         if not cancel:
@@ -256,7 +276,8 @@ def deferred_ids() -> set[str]:
     "--if-main-starved does nothing unless a queued main CI run has waited --minutes (default 15).\n"
     "--force-release is for the release train only: it also cancels runs with started macOS jobs. Every attempt is logged.\n"
     "--supersede-main: when more than two push runs of main CI are queued, cancel the older never-started ones and keep the newest\n"
-    "two (main's tip is what gates); never a run in progress, never release/*; not recorded for a re-run; logged."))
+    "two (main's tip is what gates); never a run in progress, never release/*; not recorded for a re-run; logged.\n"
+    "Exit 1 when any attempt fails, including when GitHub reports that a run has not been queued yet."))
 def ci_defer(cancel: bool = typer.Option(False, "--cancel", help="Cancel for real. Without it nothing is cancelled: the command shows what it would do."),
              if_main_starved: bool = typer.Option(False, "--if-main-starved", help="Act only when a queued main CI run has waited --minutes or longer."),
              minutes: int | None = typer.Option(None, "--minutes", metavar="MIN", min=0, help="The wait that counts as starved (default 15); needs --if-main-starved."),

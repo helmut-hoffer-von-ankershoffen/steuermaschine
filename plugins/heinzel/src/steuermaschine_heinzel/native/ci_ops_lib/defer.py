@@ -128,7 +128,7 @@ def candidates(edge: Edge) -> tuple[list[dict[str, Any]], list[str]]:
 def cancel(edge: Edge, kept: list[str], force: bool, live: bool, mode: str) -> list[dict[str, Any]]:
     """Decide every allowlisted active run and, when `live`, cancel the ones left. One row per run:
     {"run", "branch", "workflow", "event", "action", "reason", "would_run"}; action is cancelled | would_cancel |
-    kept | spared | failed."""
+    kept | spared | failed | not_queued."""
     runs, open_branches = candidates(edge)
     rows = []
 
@@ -174,13 +174,16 @@ def cancel(edge: Edge, kept: list[str], force: bool, live: bool, mode: str) -> l
             row(run, "would_cancel", would_run=done.would_run)
         else:
             note(f"FAILED id={rid}")
-            row(run, "failed", done.state.removeprefix("unknown: ").replace("_", " "), done.would_run)
+            action = "not_queued" if done.state == "not_queued" else "failed"
+            row(run, action, done.state.removeprefix("unknown: ").replace("_", " "), done.would_run)
     return rows
 
 
 def line(row: dict[str, Any]) -> str:
     """One row as the line a person reads."""
     what = f"{row['run']} {row['branch']} {row['workflow']}"
+    if row["action"] == "not_queued":
+        return f"FAILED cancel {what} (GitHub says the run has not been queued yet)"
     if row["action"] == "failed":
         return f"FAILED cancel {what}" + (f" ({row['reason']})" if row["reason"] else "")
     word = {"would_cancel": "would cancel"}.get(row["action"], row["action"])
@@ -231,5 +234,6 @@ def supersede_main(edge: Edge, live: bool) -> list[dict[str, Any]]:
             row(run, "would_cancel", "superseded by a newer queued main run", done.would_run)
         else:
             note(f"FAILED id={rid}")
-            row(run, "failed", done.state.removeprefix("unknown: ").replace("_", " "), done.would_run)
+            action = "not_queued" if done.state == "not_queued" else "failed"
+            row(run, action, done.state.removeprefix("unknown: ").replace("_", " "), done.would_run)
     return rows
