@@ -29,7 +29,8 @@ REAL = Path(__file__).parent / "fixtures" / "queue" / "state-2026-11-12.json"
 CORE = "helmut-hoffer-von-ankershoffen/heinzel"
 HEAD = "e9c943810ea75cfad155a431a2f168b2a9559828"
 DIFF = "diff --git a/src/x.py b/src/x.py\n--- a/src/x.py\n+++ b/src/x.py\n@@ -1,1 +1,2 @@\n x = 1\n+y = 2\n"
-WEAKER = "diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml\n--- a/.github/workflows/ci.yml\n+++ b/.github/workflows/ci.yml\n@@ -10,1 +10,2 @@\n   steps:\n+    continue-on-error: true\n"
+WEAKER = ("diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml\n--- a/.github/workflows/ci.yml\n"
+          "+++ b/.github/workflows/ci.yml\n@@ -10,1 +10,2 @@\n   steps:\n+    continue-on-error: true\n")
 GREEN = [{"name": n, "status": "COMPLETED", "conclusion": "SUCCESS"} for n in ("CI OK", "merge-gate", "coverage-floor")]
 
 
@@ -473,13 +474,24 @@ REAL_COMMIT_META = deps.commit_meta
 
 
 @pytest.fixture
-def checked(tmp_path, worktree, monkeypatch):
+def checked(tmp_path, worktree, monkeypatch, gh):
     """A worktree that has the head's confidentiality checker; the preflight area's real `texts_check` runs, the
     checker itself answers from the scripted runner."""
     head = tmp_path / "wt"
     (head / "scripts").mkdir(parents=True)
     (head / "scripts" / "check_confidentiality.py").write_text("# stand-in: the runner is scripted\n")
     monkeypatch.setattr(preflight_area, "texts_check", REAL_TEXTS_CHECK)
+    monkeypatch.setenv("CONFIDENTIAL_TERMS", TERM)
+
+    def run_bytes(argv, cwd, timeout, env):
+        result = gh.run(argv, cwd=cwd, timeout=timeout, env=env)
+        return result.rc, result.out.encode()
+
+    monkeypatch.setattr(gh, "run_bytes", run_bytes, raising=False)
+    gh.on("rev-parse --is-shallow-repository", "false\n")
+    gh.on("rev-parse --verify --end-of-options", HEAD + "\n")
+    gh.on("rev-list " + HEAD, HEAD + "\n")
+    gh.on("cat-file commit " + HEAD, "author Public <test@example.invalid> 1 +0000\ncommitter Public <test@example.invalid> 1 +0000\n\nfix: clean\n")
     return head
 
 
