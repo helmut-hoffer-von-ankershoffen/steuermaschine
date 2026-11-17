@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from steuermaschine.github.client import Gh
+from steuermaschine.github.forge import GitHub
 from steuermaschine.hashing import canonical_sha256
 
 from .. import updater_hold
@@ -108,6 +109,15 @@ def probe_remote_heads(w: World) -> dict[str, Any]:
 
 def probe_runs(w: World) -> list[Any]:
     return w.gh_json(["run", "list", "-R", w.repo, "-L", "60", "--json", "databaseId,headBranch,headSha,status,conclusion,workflowName,event,createdAt"])
+
+
+def probe_active_runs(w: World) -> dict[str, Any]:
+    """Separate bounded active inventory; incomplete reads never establish idle."""
+    result = GitHub(w.commands, repo=w.repo, timeout=12, clock=w.clock).active(limit=300)
+    return {"complete": result.state == "ok" and not result.truncated,
+            "reason": result.state if result.state != "ok" else "truncated" if result.truncated else "",
+            "runs": [{"databaseId": run.id, "headBranch": run.branch, "status": run.status,
+                      "workflowName": run.workflow} for run in result.runs]}
 
 
 def probe_prs(w: World) -> list[Any]:
@@ -557,7 +567,7 @@ def probe_focus(w: World) -> list[Any]:
 def collect(w: World, live: bool = False, budget: float | None = None) -> dict[str, Any]:
     """Run every probe in parallel under one deadline; a late or failing probe becomes {'unknown': why}."""
     budget = float(budget or setting(w, "go_budget_seconds", 18))
-    probes = {"main": probe_main, "remote_heads": probe_remote_heads, "runs": probe_runs, "prs": probe_prs, "releases": probe_releases,
+    probes = {"main": probe_main, "remote_heads": probe_remote_heads, "runs": probe_runs, "active_runs": probe_active_runs, "prs": probe_prs, "releases": probe_releases,
               "queue": probe_queue, "train": probe_train, "release": probe_release, "holds": probe_holds, "procs": probe_procs,
               "receipts": probe_receipts, "slots": probe_slots, "mini": lambda world: probe_mini(world, live),
               "tools": probe_tools, "alarms": probe_alarms, "rehearse": probe_rehearse, "focus": probe_focus,
