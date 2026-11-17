@@ -161,11 +161,11 @@ class Subprocess:
             return Result(124, "", f"timed out after {timeout}s: {argv[0]}")
         return Result(p.returncode, p.stdout, p.stderr)
 
-    def run_bytes(self, argv: list[str], cwd: str, timeout: float, env: dict[str, str]) -> tuple[int, bytes]:
+    def run_bytes(self, argv: list[str], cwd: str, timeout: float, env: dict[str, str], *, input: bytes | None = None) -> tuple[int, bytes]:
         """Capture literal output for callers that must not decode or rewrite it."""
         self._refuse_in_tests(argv)
         try:
-            p = subprocess.run(argv, cwd=cwd, timeout=timeout, env=env, capture_output=True, check=False)
+            p = subprocess.run(argv, cwd=cwd, timeout=timeout, env=env, input=input, capture_output=True, check=False)
         except FileNotFoundError:
             return 127, b""
         except subprocess.TimeoutExpired:

@@ -28,6 +28,7 @@ from . import (
     docs,
     flakes,
     go,
+    full_pr,
     guards,
     handoff,
     junit,
@@ -69,7 +70,7 @@ from . import (
 
 MODULES: list[Any] = [
     admission, affected, agents, alarm, alarm_asks, asks, branches, briefs, check, ci_classify, ci_evidence, ci_ops, ci_read, ci_triage, combine,
-    coord, dispatch, docs, flakes, go, guards, handoff, junit, leakwatch, loadguard, loops, lock, merge_ledger, merge_ready, merges, mini, packet,
+    coord, dispatch, docs, flakes, go, full_pr, guards, handoff, junit, leakwatch, loadguard, loops, lock, merge_ledger, merge_ready, merges, mini, packet,
     plugin_gallery, preflight, queue, queue_hold, queue_main, raw_transfer, refill, rehearse, rejudge, release, release_admit, release_read, ship, ship_driver, skills, slots, status, sweep,
     tasks, tick, train, velocity, why, window, work,
 ]
