@@ -44,6 +44,15 @@ variable or admission receipt. The default `main_ci=focused` route and its regis
 a reader failure never selects full mode automatically, and an existing approved focused plan cannot change modes.
 Both modes require the complete first-attempt candidate and normal coverage, Sonar and merge checks.
 
+If a focused cut stopped before admission review or any external release work, `--lane` does not start a new run:
+the run is keyed by version. Use `sm release replan VERSION --head SHA --packet NEW_PAIR_PACKET --main-ci full
+--reason "WHY"` to inspect the exact head/base and original-state digest. The new pair packet must be identical
+to the current input in a separate directory without cut artifacts. Repeat with `--live` to archive the original
+local run and replace it with a fresh full-route generation. Then `sm release cut VERSION` rebuilds its packet and
+stops for fresh independent reviews. Original files and receipts are preserved. Replan refuses any admission
+review, attempted admission, publication, PR, branch or candidate run, including completed failures, and refuses
+unknown evidence. It is not recovery for a failed candidate; that still uses the normal drop/fix route.
+
 The prepared release branch is opened with `sm release pr VERSION --head SHA` after the publishing review,
 using `SM_HEINZEL__RELEASE_DIR=CLONE` for the reviewed clone. Use the same setting for subsequent cut/resume calls.
 The full route refuses a mismatched runner checkout and a pending same-version candidate waiver before resume.

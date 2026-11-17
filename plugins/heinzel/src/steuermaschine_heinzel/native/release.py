@@ -401,6 +401,47 @@ def release_repair_receipt(apply: bool = typer.Option(False, "--apply/--dry-run"
 CUT_KIND, CUT_ARCHIVE_KIND = "runs.release.cut", "runs.release.cut.dropped"
 
 
+class ReleaseReplan(Model):
+    """Read-only proof, or archived local cut replaced with a fresh full-route generation."""
+
+    proof: dict[str, Any]
+
+    def render(self) -> list[str]:
+        action = "REPLANNED" if self.proof["live"] else "READY to replan"
+        return [f"{action} {self.proof['version']}: {self.proof['head']} on {self.proof['base']}; main_ci=full",
+                f"state {self.proof['state_sha256']}; archive {self.proof['archive'] or '(dry run)'}",
+                "Next: sm release cut VERSION; fresh source, admission and publish reviews are required."]
+
+
+@native("release replan", writes=True, help=H(
+    "Replan a stopped local focused cut to full CI before any external release work.",
+    "Use after a pre-external input/evidence refusal, never after a candidate or admission attempt.",
+    "with --live: archives the exact local cut state and replaces it with a fresh full-route generation; no remote writes, artifact or receipt edits.",
+    "sm release replan 0.9.51 --head SHA --packet /new/packet.json --main-ci full --reason 'full candidate requested'",
+    "Repeat with --live after inspecting the proof; then sm release cut VERSION for fresh reviews.",
+    "Requires an identical pair packet in a separate artifact-free output directory. Proves no admission receipt/journal, release receipt, tag, publication, PR, branch or candidate run exists for this release. Unknown refuses. --lane never creates a fresh run for an existing version."))
+def release_replan(version: str = typer.Argument(..., metavar="VERSION", help="Exact version of the stopped pre-external cut."),
+                   head: str = typer.Option(..., "--head", help="Exact reviewed release commit."),
+                   packet: Path = typer.Option(..., "--packet", help="Identical pair packet in a separate fresh output directory."),
+                   main_ci: str = typer.Option(..., "--main-ci", help="Only full is supported."),
+                   reason: str = typer.Option(..., "--reason", help="Why the pre-external cut must be replanned."),
+                   live: bool = typer.Option(False, "--live/--dry-run", help="Archive and replace local cut state (default: prove only).")) -> ReleaseReplan:
+    from .release_lib import replan
+    from .admission_lib.focused_admit import AdmissionError
+
+    if not EXACT.fullmatch(version) or main_ci != "full":
+        raise Refuse("replan needs an exact release version and --main-ci full")
+    module = runner()
+    try:
+        with runtime().providers.store.lock(f"release.cut.{version}"):
+            proof = replan.execute(runtime(), module, version, head, packet, reason, live)
+        return ReleaseReplan(proof=proof)
+    except Busy:
+        raise Refuse("release cut is advancing; replan changed nothing", code=WAITING) from None
+    except (module.Stop, AdmissionError, OSError, ValueError, KeyError, TypeError) as exc:
+        raise Refuse(f"release replan refused: {exc}") from None
+
+
 def reset_cut_state(version: str) -> str:
     """After a drop: the saved state of `sm release cut VERSION` (steps done, the adopted prepare, the inputs) belongs to
     the dropped candidate. Copy it to the archive kind first, then delete it, so a later cut starts fresh and the old
