@@ -99,7 +99,10 @@ class OldWords(Words):
 
 
 def renamed(doc):
-    """The one key the native state spells differently: which commands exist (the old tool looked for script files)."""
+    """Adapt legacy fixtures to explicit inventory scope and current command names."""
+    # Legacy fixtures model complete inventories; make that premise explicit.
+    recent = doc["state"].get("runs")
+    doc["state"]["active_runs"] = {"complete": isinstance(recent, list), "runs": [r for r in recent if r.get("status") in rules.ACTIVE] if isinstance(recent, list) else []}
     tools = doc["state"].get("tools")
     if isinstance(tools, dict) and "unknown" not in tools:
         doc["state"]["tools"] = {"rehearse": tools.get("hz-rehearse"), "drop_candidate": tools.get("drop_candidate")}
@@ -129,6 +132,10 @@ def test_all_62_decisions_of_the_old_tools_own_test_file_are_reproduced_byte_for
     assert len(matrix) == 62 and len({doc["decision"]["kind"] for doc in matrix}) >= 20
     for n, doc in enumerate(matrix):
         mine = rules.decide(doc["state"], doc["now"], OldWords())
+        if not doc["state"]["active_runs"]["complete"]:
+            expected = "active runs: unknown/incomplete inventory; idle not established"
+            assert expected in mine["facts"]
+            mine["facts"].remove(expected)  # The intentional new unknown-inventory disclosure.
         assert old_shape(mine) == doc["decision"], (n, doc["decision"]["kind"])
         assert "\n".join(rules.render(mine)) == doc["text"], n
 
@@ -173,7 +180,10 @@ def state(**over):
             "queue": {"queued": [], "freeze": False, "verdict": "nothing queued", "main_runs": [], "added": {}}, "train": {"trains": [], "tails": []},
             "release": {"active": None, "dropped": []}, "holds": {"files": [], "prs": {}}, "procs": [], "receipts": [], "packets": [],
             "slots": {}, "mini": {"cli": "0.9.39", "live": None, "live_ok": None}, "tools": {}, "since_tag": {"count": 0}}
-    return {**base, **over}
+    result = {**base, **over}
+    recent = result["runs"]
+    result.setdefault("active_runs", {"complete": isinstance(recent, list), "runs": [r for r in recent if r.get("status") in rules.ACTIVE] if isinstance(recent, list) else []})
+    return result
 
 
 def focus(**over):
@@ -473,3 +483,45 @@ def test_an_unreadable_rehearsal_document_is_an_unknown_probe_not_a_green_light(
     report = decided(rt)
     assert any("rehearse:" in u and "the rehearsal state in the store is not an object" in u for u in report.unknown), report.unknown
     assert report.next == "sm release rehearse start --consumers"  # no cut is offered on a verdict that could not be read
+
+
+def test_global_idle_uses_complete_active_inventory_not_recent_history():
+    recent = [run_row(i) for i in range(60)]
+    old = run_row(900, branch="old/backlog", status="queued")
+    snapshot = state(runs=recent, active_runs={"complete": True, "runs": [old]})
+    decision = rules.decide(snapshot, NOW)
+    assert any("900" in fact for fact in decision["facts"])
+    assert not any("idle window open" in fact for fact in decision["facts"])
+
+
+@pytest.mark.parametrize("inventory", [None, {"unknown": "page failure"}, {"complete": False, "reason": "truncated", "runs": []}])
+def test_unknown_or_truncated_active_inventory_never_claims_idle(inventory):
+    decision = rules.decide(state(active_runs=inventory), NOW)
+    assert "active runs: unknown/incomplete inventory; idle not established" in decision["facts"]
+    assert not any("idle window open" in fact for fact in decision["facts"])
+
+
+def test_active_probe_preserves_failure_and_truncation(tmp_path, monkeypatch):
+    from steuermaschine.github.models import RunList
+
+    for result in (RunList(state="unknown: page failed"), RunList(truncated=True), RunList()):
+        monkeypatch.setattr(probes.GitHub, "active", lambda self, limit, result=result: result)
+        actual = probes.probe_active_runs(make_world(tmp_path))
+        assert actual["complete"] is (result.state == "ok" and not result.truncated)
+
+
+@pytest.mark.parametrize("failure", [True, False])
+def test_active_probe_actual_paginated_provider_refuses_incomplete(tmp_path, failure):
+    from steuermaschine.github.testing import FakeGh
+
+    fake = FakeGh().on("actions/runs", {"workflow_runs": []})
+    if failure:
+        fake.on("status=queued", 403)
+    else:
+        rows = [{"id": i, "status": "queued"} for i in range(100)]
+        fake.on("status=queued", {"total_count": 350, "workflow_runs": rows})
+    inventory = probes.probe_active_runs(make_world(tmp_path, commands=fake))
+    assert not inventory["complete"]
+    assert inventory["reason"].startswith("unknown:") if failure else inventory["reason"] == "truncated"
+    decision = rules.decide(state(active_runs=inventory), NOW)
+    assert not any("idle window open" in fact for fact in decision["facts"])
