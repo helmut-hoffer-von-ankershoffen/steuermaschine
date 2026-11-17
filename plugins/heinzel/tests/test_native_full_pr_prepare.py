@@ -294,3 +294,31 @@ def test_apply_sends_only_one_full_cancel_probe(world, monkeypatch):
     f.apply(out, approved, rt=rt)
     assert checks.count((True, True, True)) == 1
     assert checks == [(False, False, False), (True, False, False), (True, True, True), (True, False, False)]
+
+
+def test_verifier_runner_preserves_isolation_authority_and_deadlines(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    calls = []
+
+    class Runner:
+        def run_bytes(self, argv, **kwargs):
+            calls.append((argv, kwargs))
+            return 124, b""
+
+    monkeypatch.setattr(f, "Subprocess", Runner)
+    monkeypatch.setattr(f.a, "_run", lambda *args, **kwargs: b"a" * 40)
+    with pytest.raises(f.a.AdmissionError, match="deployed protected"):
+        f.trusted_entry(tmp_path, tmp_path, "a" * 40, "b" * 40)
+    values = dict.fromkeys(f.slots.NAMES, "")
+    with pytest.raises(f.a.AdmissionError, match="protected registry"):
+        f.validate_registry(tmp_path, values, {"head": "a" * 40}, present=False)
+    assert [kwargs["timeout"] for _, kwargs in calls] == [90, 30]
+    for argv, kwargs in calls:
+        assert argv[1:3] == ["-I", "-c"]
+        assert argv[4] == str(tmp_path)
+        assert Path(kwargs["cwd"]) == tmp_path
+        assert kwargs["env"] == {"PATH": f.os.defpath, "HOME": str(tmp_path)}
+    request = json.loads(calls[1][1]["input"])
+    assert request["key"] == "pull_request:" + "a" * 40
+    assert request["slots"] == [""] * (len(f.slots.NAMES) - 1)

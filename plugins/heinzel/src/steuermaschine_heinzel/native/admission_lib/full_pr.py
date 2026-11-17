@@ -15,6 +15,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
+from steuermaschine.defaults import Subprocess
+
 from ..release_admit_lib import focused_release as _focused_release
 from ..release_admit_lib import release_ops
 from ..release_admit_lib.release_slots import Runtime as _Runtime
@@ -101,11 +103,9 @@ entry = dict(schema=1, kind=fg.FULL_PR_KIND, repository=fg.REPOSITORY, head=head
 fg.full_pr_inputs(types.SimpleNamespace(commit=commit, source=types.SimpleNamespace(head=head)), base, entry)
 print(json.dumps(entry, sort_keys=True))
 """
-    import subprocess
-
-    result = subprocess.run([sys.executable, "-I", "-c", code, str(source), head, base, commit, tree], cwd=snapshot, env={"PATH": os.defpath, "HOME": str(source)}, capture_output=True, timeout=90)
-    slots.require(result.returncode == 0, "deployed protected full PR verifier refused; no authorization prepared")
-    return a._json_bytes(result.stdout, "protected full PR entry")
+    rc, output = Subprocess().run_bytes([sys.executable, "-I", "-c", code, str(source), head, base, commit, tree], cwd=str(snapshot), env={"PATH": os.defpath, "HOME": str(source)}, timeout=90)
+    slots.require(rc == 0, "deployed protected full PR verifier refused; no authorization prepared")
+    return a._json_bytes(output, "protected full PR entry")
 
 
 @contextmanager
@@ -138,8 +138,6 @@ def registry(rt: Any) -> tuple[dict[str, str], list[str]]:
 
 def validate_registry(source: Path, values: dict[str, str], entry: dict[str, Any], *, present: bool) -> None:
     """Use deployed duplicate and bounded transport policy before/after the append."""
-    import subprocess
-
     code = r"""
 import json, os, sys, types
 sys.path.insert(0, sys.argv[1])
@@ -153,8 +151,8 @@ if selected != ({request["key"]:request["entry"]} if request["present"] else {})
     raise ValueError("registry entry differs from exact append")
 """
     request = dict(legacy=values[slots.NAMES[0]], slots=[values[name] for name in slots.NAMES[1:]], key="pull_request:" + entry["head"], entry=entry, present=present)
-    result = subprocess.run([sys.executable, "-I", "-c", code, str(source)], input=a.canonical(request), env={"PATH": os.defpath, "HOME": str(source)}, capture_output=True, timeout=30)
-    slots.require(result.returncode == 0, "protected registry policy refused exact unique entry")
+    rc, _ = Subprocess().run_bytes([sys.executable, "-I", "-c", code, str(source)], cwd=str(source), input=a.canonical(request), env={"PATH": os.defpath, "HOME": str(source)}, timeout=30)
+    slots.require(rc == 0, "protected registry policy refused exact unique entry")
 
 
 def proposal(rt: Any, packet: dict[str, Any], source: Path, nonconsumers: list[Any], review_root: Path) -> dict[str, Any]:
