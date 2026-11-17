@@ -168,7 +168,7 @@ def test_active_asks_every_unfinished_status_once_and_dedupes():
     fake.on("status=in_progress", {"workflow_runs": [RUN]}).on("status=pending", {"workflow_runs": [RUN]})
     g = GitHub(fake, R)
     got = g.active()
-    assert [r.id for r in got.runs] == ["8", "7"] and len(fake.calls) == 5 and [r.id for r in g.active_runs()] == ["8", "7"]
+    assert [r.id for r in got.runs] == ["7", "8"] and len(fake.calls) == 5 and [r.id for r in g.active_runs()] == ["7", "8"]
     fake.on("status=waiting", 500)
     assert g.active().state.startswith("unknown: ")
     with pytest.raises(ProviderError):
@@ -313,3 +313,14 @@ def test_from_settings_and_every_model_has_a_schema():
     assert GitHub.from_settings(FakeGh(), {"repo": "a/b"}).merge_method == "squash"
     for name, model in PROVIDER_MODELS.items():
         assert model.model_json_schema()["title"] == name
+
+
+def test_active_inventory_keeps_current_activity_before_old_backlog():
+    old = [{**RUN, "id": i, "status": "queued", "created_at": "2025"} for i in range(55)]
+    fake = FakeGh().on("actions/runs", {"workflow_runs": []})
+    fake.on("status=queued", {"total_count": 55, "workflow_runs": old})
+    fake.on("status=in_progress", {"workflow_runs": [{**RUN, "id": 999, "created_at": "2026"}]})
+    result = GitHub(fake, R).active(limit=20)
+    assert result.runs[0].id == "999" and result.truncated
+    complete = GitHub(fake, R).active(limit=300)
+    assert complete.runs[0].id == "999" and len(complete.runs) == 56 and not complete.truncated

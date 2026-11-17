@@ -203,8 +203,9 @@ def decide(s: dict, now: float, w: Words | None = None, stall_minutes: int = 15)
     runs, raw_prs = get("runs", []), get("prs", [])
     prs = [classify_pr(p) for p in raw_prs]
     queue, rel, holds = get("queue", {}), get("release", {}), get("holds", {})
-    active_runs = [r for r in runs if r.get("status") in ACTIVE]
-    runs_known = known(s.get("runs"))
+    inventory = get("active_runs", {})
+    active_runs = inventory.get("runs", [])
+    runs_known = inventory.get("complete") is True
     procs = [p for p in get("procs", []) if isinstance(p, dict)]
 
     # 1. candidate
@@ -525,13 +526,18 @@ def facts(s: dict, ci: dict, cand: dict | None, active_runs: list[dict]) -> list
     train = s.get("train")
     if known(train) and (train.get("trains") or train.get("tails")):
         out.append("train: " + "; ".join((train.get("trains") or train.get("tails"))[:2])[:150])
-    if known(s.get("runs")):
+    inventory = s.get("active_runs") or {}
+    if known(inventory) and inventory.get("complete") is True:
         out.append("active runs: " + (", ".join(f"{r['databaseId']} {r.get('workflowName', '')} {r.get('headBranch', '')}"
                                                for r in active_runs[:4]) or "none (idle window open)"))
         window = [r for r in active_runs if str(r.get("headBranch", "")).startswith("validation/")]
         if window:
             out.append(f"hosted window in flight ({len(window)} validation runs): "
                        + ", ".join(f"{r['databaseId']} {r['headBranch']}" for r in window[:8]) + (" ..." if len(window) > 8 else ""))
+    else:
+        out.append("active runs: unknown/incomplete inventory; idle not established")
+        if active_runs:
+            out.append("observed active runs: " + ", ".join(str(r["databaseId"]) for r in active_runs[:4]))
     rehearse = s.get("rehearse") if known(s.get("rehearse")) else {}
     if isinstance(rehearse, dict) and (rehearse.get("last") or rehearse.get("current")):
         last, current = rehearse.get("last") or {}, rehearse.get("current")

@@ -321,7 +321,7 @@ class GitHub:
                 return RunList(state=part.state, runs=list(found.values()))
             truncated = truncated or part.truncated
             found.update({r.id: r for r in part.runs})
-        runs = sorted(found.values(), key=lambda r: r.created)
+        runs = sorted(found.values(), key=lambda r: r.created, reverse=True)
         return RunList(truncated=truncated or len(runs) > limit, runs=runs[:limit])
 
     def jobs(self, run_id: str) -> RunJobs:
