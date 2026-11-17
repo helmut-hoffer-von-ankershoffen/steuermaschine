@@ -80,7 +80,12 @@ def commit_meta(worktree, pr: str | None = None, ref: str = "") -> tuple[list[st
 
     number = int(pr) if pr is not None and str(pr).isdigit() else None
     found = preflight.meta_of(runtime(), Path(worktree), ref, pr=number, quote=False)
-    return [str(p) for p in found.problems or []], int(found.commits or 0)
+    problems = [str(p) for p in found.problems or []]
+    if problems:
+        return problems, int(found.commits or 0)
+    from .public_identity import check
+
+    return check(runtime(), Path(worktree), ref or str(found.branch))
 
 
 def ci_meta(worktree, pr: str | None = None, ref: str = "") -> list[str]:
