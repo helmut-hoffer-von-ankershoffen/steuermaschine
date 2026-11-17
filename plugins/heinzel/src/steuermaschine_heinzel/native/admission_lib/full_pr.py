@@ -168,7 +168,7 @@ def proposal(rt: Any, packet: dict[str, Any], source: Path, nonconsumers: list[A
     desired = {**expected, slot: candidate}
     validate_registry(source, desired, entry, present=True)
     exceptions = slots.read_nonconsumers(rt, nonconsumers, review_root)
-    slots.global_guard(rt, desired, exceptions, paused=False, full=False)
+    slots.global_guard(rt, desired, exceptions, paused=False, full=False, probe=False)
     slots.require(registry(rt) == (expected, presence), "registry changed while preparing")
     return dict(
         schema=1,
@@ -210,6 +210,22 @@ def prepare(core: Path, out: Path, source_approved: str | None = None, nonconsum
         return dict(stage="apply-review", sha256=slots.digest(a.canonical(prepared)), path=str(out / "prepare.out"))
 
 
+def journal_path(rt: Any, packet: dict[str, Any], suffix: str) -> Path:
+    # Bind the authorized source, not caller-selected packet paths, receipts or
+    # transport snapshots. A different transaction cannot replay this head.
+    identity = dict(repository=rt.repo, repository_id=packet["repository_id"], head=packet["entry"]["head"])
+    return Path(rt.cache) / "full-pr-admission-attempts" / (str(slots.digest(a.canonical(identity))) + "." + suffix + ".json")
+
+
+def require_no_attempt(rt: Any, packet: dict[str, Any]) -> None:
+    marker = journal_path(rt, packet, "attempt")
+    for directory in (rt.cache, marker.parent):
+        if directory.exists() or directory.is_symlink():
+            info = directory.lstat()
+            slots.require(stat.S_ISDIR(info.st_mode) and info.st_uid == os.getuid() and not info.st_mode & 0o022, "unsafe full PR journal directory")
+    slots.require(not marker.exists() and not marker.is_symlink(), "source admission attempt already exists; inspect canonical journal, do not replay")
+
+
 def apply(out: Path, approved: str, *, rt: Any = None) -> dict[str, Any]:
     out = private_directory(Path(out))
     prepared = read(out / "prepare.out")
@@ -219,22 +235,23 @@ def apply(out: Path, approved: str, *, rt: Any = None) -> dict[str, Any]:
     rt = rt or Runtime(packet["core_repo"], github_host="github.com")
     slots.require(str(rt.core) == packet["core_repo"], "core checkout differs")
     slots.require(not (out / "attempt.json").exists() and not (out / "attempt.json").is_symlink(), "write attempt already exists; inspect readback, do not replay")
+    require_no_attempt(rt, packet)
     with source_packet(rt) as (current, source):
         slots.require(current == packet, "reviewed source changed")
         recomputed = proposal(rt, packet, source, prepared["nonconsumers"], Path(prepared["review_root"]))
         slots.require(recomputed == prepared, "prepared transaction changed; new review required")
         exceptions = slots.read_nonconsumers(rt, prepared["nonconsumers"], Path(prepared["review_root"]))
-        after_write = False
 
-        def fresh() -> None:
+        def fresh(*, probe: bool = False) -> None:
             head, base, branch, repository_id = local_identity(rt)
             slots.require(
                 (head, base, branch, repository_id) == (packet["entry"]["head"], packet["entry"]["base"], packet["branch"], packet["repository_id"]) and producer_identity() == packet["producer"],
                 "source or producer changed",
             )
-            slots.global_guard(rt, prepared["desired"], exceptions, paused=True, full=not after_write)
+            slots.global_guard(rt, prepared["desired"], exceptions, paused=True, full=probe, probe=probe)
 
         with rt.exclusions(), a._lock(rt.cache / "focused-pr-registry.lock"):
+            require_no_attempt(rt, packet)
             fresh()
             slots.require(registry(rt) == (prepared["expected"], prepared["presence"]), "registry snapshot changed")
             validate_registry(source, prepared["expected"], packet["entry"], present=False)
@@ -243,13 +260,17 @@ def apply(out: Path, approved: str, *, rt: Any = None) -> dict[str, Any]:
                 source, prepared["expected"][slots.NAMES[0]], tuple(prepared["expected"][n] for n in slots.NAMES[1:]), {"pull_request:" + packet["entry"]["head"]: packet["entry"]}
             )
             slots.require(candidate["result"] == [slots.NAMES.index(prepared["slot"]) - 1, prepared["desired"][prepared["slot"]]], "approved append bytes changed")
-            fresh()
+            fresh(probe=True)
             slots.require(registry(rt) == (prepared["expected"], prepared["presence"]), "registry changed before write")
-            immutable(out / "attempt.json", dict(transaction_sha256=approved, source_sha256=prepared["source_sha256"], slot=prepared["slot"], candidate_sha256=prepared["candidate_sha256"]))
+            attempt = dict(transaction_sha256=approved, source_sha256=prepared["source_sha256"], slot=prepared["slot"], candidate_sha256=prepared["candidate_sha256"])
+            require_no_attempt(rt, packet)
+            focused_release.write_once(journal_path(rt, packet, "attempt"), attempt)
+            immutable(out / "attempt.json", attempt)
             rt.set_variable(prepared["slot"], prepared["desired"][prepared["slot"]])
-            after_write = True
             observed, presence = registry(rt)
-            immutable(out / "observed.json", dict(hashes={name: slots.digest(value.encode()) for name, value in observed.items()}, presence=presence))
+            observation = dict(transaction_sha256=approved, hashes={name: slots.digest(value.encode()) for name, value in observed.items()}, presence=presence)
+            focused_release.write_once(journal_path(rt, packet, "observed"), observation)
+            immutable(out / "observed.json", observation)
             slots.require(observed == prepared["desired"] and presence == sorted(set(prepared["presence"]) | {prepared["slot"]}), "registry readback mismatch; never auto-restore")
             validate_registry(source, observed, packet["entry"], present=True)
             fresh()
@@ -268,5 +289,6 @@ def apply(out: Path, approved: str, *, rt: Any = None) -> dict[str, Any]:
             readback={name: slots.digest(value.encode()) for name, value in observed.items()},
             queue_restored=True,
         )
+        focused_release.write_once(journal_path(rt, packet, "receipt"), receipt)
         immutable(out / "receipt.json", receipt)
         return receipt

@@ -253,3 +253,44 @@ def test_repository_replacement_before_write_refused(world, monkeypatch):
     with pytest.raises(f.a.AdmissionError, match="source or producer changed"):
         f.apply(out, approved, rt=rt)
     assert rt.writes == []
+
+
+@pytest.mark.parametrize("different_review_root", [False, True])
+def test_ambiguous_write_cannot_replay_from_second_output_directory(world, monkeypatch, different_review_root):
+    rt, packet, out = world
+    second = out.with_name("second-review")
+    common_root = out.parent
+    source = f.prepare(rt.core, out, rt=rt)
+    approved = f.prepare(rt.core, out, source["sha256"], review_root=common_root, rt=rt)["sha256"]
+    second_source = f.prepare(rt.core, second, rt=rt)
+    second_approved = f.prepare(rt.core, second, second_source["sha256"], review_root=second if different_review_root else common_root, rt=rt)["sha256"]
+    assert (approved != second_approved) == different_review_root
+
+    def ambiguous(name, value):
+        # A remote write may have happened even though subsequent transport reads
+        # still show the old snapshot. Never interpret that as safe to retry.
+        rt.writes.append((name, value))
+
+    monkeypatch.setattr(rt, "set_variable", ambiguous)
+    with pytest.raises(f.a.AdmissionError, match="readback mismatch"):
+        f.apply(out, approved, rt=rt)
+    assert f.journal_path(rt, packet, "attempt").exists()
+    assert f.journal_path(rt, packet, "observed").exists()
+    assert not f.journal_path(rt, packet, "receipt").exists()
+    with pytest.raises(f.a.AdmissionError, match="source admission attempt already"):
+        f.apply(second, second_approved, rt=rt)
+    assert len(rt.writes) == 1 and not rt.paused
+
+
+def test_apply_sends_only_one_full_cancel_probe(world, monkeypatch):
+    rt, _, out = world
+    approved = prepared(world)
+    checks = []
+
+    def guard(runtime, desired, exceptions, paused, **kwargs):
+        checks.append((paused, kwargs.get("full", False), kwargs.get("probe", True)))
+
+    monkeypatch.setattr(f.slots, "global_guard", guard)
+    f.apply(out, approved, rt=rt)
+    assert checks.count((True, True, True)) == 1
+    assert checks == [(False, False, False), (True, False, False), (True, True, True), (True, False, False)]
