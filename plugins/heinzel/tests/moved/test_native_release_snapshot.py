@@ -503,3 +503,33 @@ def test_tagged_adoption_rejects_orphan_hold_history(tool, home, monkeypatch):
     monkeypatch.setattr(rel, "has_tag", lambda *_: True)
     with pytest.raises(rel.Stop, match="hold history"):
         rel.release_snapshot_freeze()
+
+
+@pytest.mark.parametrize("argument", [
+    b'--expect-version "$EXPECTED_VERSION"',
+    b'--expect-app-version "$EXPECTED_APP_VERSION"',
+    b'--accept-wheel-sha256 "$EXPECTED_WHEEL_SHA256"',
+    b'--accept-profile-sha256 "$EXPECTED_PROFILE_SHA256"',
+    b'--bridge-quota-wait-seconds 3900',
+])
+def test_reviewed_snapshot_workflow_rejects_removed_input_or_quota_wiring(monkeypatch, argument):
+    import base64
+
+    reviewed = (Path(__file__).parent / "fixtures/acceptance-snapshot.yml").read_bytes()
+    assert reviewed.count(argument) == 1
+    changed = reviewed.replace(b"          " + argument + b"\n", b"")
+    if argument == b"--bridge-quota-wait-seconds 3900":
+        assert hashlib.sha256(changed).hexdigest() == "006799afd5c960ba396e59ea6f6987b093514f0f074dcdbc19066187391bfdc6"
+    monkeypatch.setattr(snapshot.hzlib, "gh", lambda *args: (0, base64.b64encode(changed).decode()))
+    assert not snapshot.workflow_supports_snapshot("c" * 40)
+
+
+@pytest.mark.parametrize("wait", [b"120", b"0", b"3901"])
+def test_unreviewed_quota_budget_still_requires_workflow_review(monkeypatch, wait):
+    import base64
+
+    reviewed = (Path(__file__).parent / "fixtures/acceptance-snapshot.yml").read_bytes()
+    changed = reviewed.replace(b"--bridge-quota-wait-seconds 3900", b"--bridge-quota-wait-seconds " + wait)
+    assert changed != reviewed
+    monkeypatch.setattr(snapshot.hzlib, "gh", lambda *args: (0, base64.b64encode(changed).decode()))
+    assert not snapshot.workflow_supports_snapshot("c" * 40)
