@@ -112,6 +112,23 @@ class GitObjects:
         return paths, blobs
 
 
+def commit_findings(git: GitObjects, commits: list[str], terms: list[re.Pattern[str]]) -> list[Match]:
+    """Scan literal committed identities and complete messages, never returning their contents."""
+    findings: list[Match] = []
+    for index, sha in enumerate(commits, 1):
+        header, separator, message = git.read("cat-file", "commit", sha).partition(b"\n\n")
+        if not separator:
+            raise Refuse("A raw commit has no message boundary.")
+        sections: tuple[tuple[Kind, bytes], ...] = (("metadata", header), ("message", message))
+        for kind, data in sections:
+            for finding in scan("", data.decode("utf-8", errors="surrogateescape"), terms):
+                findings.append(Match(scope="outgoing", kind=kind, index=index, line=finding.line, rule=finding.term))
+        for number, line in enumerate(header.split(b"\n"), 1):
+            if line.startswith((b"author ", b"committer ")) and hostname_email(line.decode("utf-8", errors="replace")):
+                findings.append(Match(scope="outgoing", kind="metadata", index=index, line=number, rule="machine-email"))
+    return findings
+
+
 def inspect(git: GitObjects, head: str, base: str, ref: str, terms: list[re.Pattern[str]]) -> Transfer:
     if git.read("rev-parse", "--is-shallow-repository").strip() != b"false":
         raise Refuse("A full local repository is required.")
@@ -138,15 +155,7 @@ def inspect(git: GitObjects, head: str, base: str, ref: str, terms: list[re.Patt
             findings.append(Match(scope=scope, kind=kind, index=index, line=finding.line, rule=finding.term))
 
     match("outgoing", "ref", 1, ref.encode())
-    for index, sha in enumerate(commits, 1):
-        header, separator, message = git.read("cat-file", "commit", sha).partition(b"\n\n")
-        if not separator:
-            raise Refuse("A raw commit has no message boundary.")
-        match("outgoing", "metadata", index, header)
-        match("outgoing", "message", index, message)
-        for number, line in enumerate(header.split(b"\n"), 1):
-            if line.startswith((b"author ", b"committer ")) and hostname_email(line.decode("utf-8", errors="replace")):
-                findings.append(Match(scope="outgoing", kind="metadata", index=index, line=number, rule="machine-email"))
+    findings.extend(commit_findings(git, commits, terms))
 
     inventories: tuple[tuple[Scope, set[bytes], set[str]], ...] = (
         ("outgoing", outgoing_paths, outgoing_blobs),
