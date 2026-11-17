@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from steuermaschine.engine import Refuse, stamp
+from steuermaschine.hashing import canonical_sha256
 
 from ... import state as statedir
 from ..admission_lib import focused_admit, focused_slots
@@ -31,7 +32,7 @@ def require(ok: bool, message: str) -> None:
 
 
 def digest(value: Any) -> str:
-    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    return canonical_sha256(json.dumps(value))
 
 
 def document(path: Path) -> dict[str, Any]:
@@ -173,6 +174,7 @@ def execute(rt: Any, module: Any, version: str, head: str, packet: Path, reason:
                 # One atomic store replacement under the pipeline lock; all artifacts and receipts stay untouched.
                 store.save(KIND, version, fresh)
                 proof["archive"] = f"{ARCHIVE}/{key}"
-            return proof
+            return {name: proof[name] for name in
+                    ("version", "head", "base", "tree", "main_ci", "state_sha256", "packet_sha256", "live", "archive")}
     finally:
         module.free_global_lock()

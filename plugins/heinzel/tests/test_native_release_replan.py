@@ -73,6 +73,8 @@ def test_dry_run_and_live_archive_exact_conflicting_inputs_without_artifact_chan
     proof = json.loads(out.stdout)["proof"]
     assert proof["head"] == HEAD and proof["base"] == BASE and proof["main_ci"] == "full"
     assert proof["state_sha256"] == replan.digest(env.state)
+    assert "clone" not in proof and "packet" not in proof and "reason" not in proof
+    assert str(env.new.parent) not in out.stdout
     assert env.rt.providers.store.load(replan.KIND, VERSION) == env.state
     assert env.rt.providers.store.keys(replan.ARCHIVE) == []
     env.old.parent.joinpath("release-hook-summary.log").write_text("preserved")
@@ -81,6 +83,9 @@ def test_dry_run_and_live_archive_exact_conflicting_inputs_without_artifact_chan
     assert out.exit_code == 0, out.stderr
     archive = env.rt.providers.store.load(replan.ARCHIVE, env.rt.providers.store.keys(replan.ARCHIVE)[0])
     assert archive["original"] == env.state
+    assert archive["proof"]["clone"] == env.state["inputs"]["clone"]
+    assert archive["proof"]["packet"] == str(env.new)
+    assert str(env.new.parent) not in out.stdout
     fresh = env.rt.providers.store.load(replan.KIND, VERSION)
     assert fresh["steps"] == fresh["data"] == fresh["review"] == {}
     assert fresh["inputs"]["main_ci"] == "full" and fresh["inputs"]["packet"] == str(env.new)
