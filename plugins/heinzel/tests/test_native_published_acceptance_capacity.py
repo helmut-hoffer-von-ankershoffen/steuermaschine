@@ -254,7 +254,7 @@ def shard(proof, monkeypatch, *, starved=("update",), mac_verdict="failure"):
              for i, name in enumerate(capacity.LINUX_SHARDS)]
     jobs.append(linux_job(201, capacity.LINUX, ("Reduce the four shard receipts of this OS", "Upload the receipt")))
     starved_jobs = []
-    for i, (name, part) in enumerate(zip(capacity.MAC_SHARDS, capacity.SHARDS)):
+    for i, (name, part) in enumerate(zip(capacity.MAC_SHARDS, capacity.SHARDS, strict=True)):
         if part in starved:
             job = proof.mac | {"id": 230 + i, "name": name}
             starved_jobs.append(job)
