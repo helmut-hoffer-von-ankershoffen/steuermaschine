@@ -211,17 +211,18 @@ def test_refusals_and_the_lock(tmp_path):
     assert ios.publish(m.rt.providers, "bad", tmp_path, tmp_path).reason == "VERSION must be X.Y.Z"
 
 
-def test_without_a_core_repository_it_refuses_and_the_hook_says_not_clean(tmp_path):
+def test_without_a_core_repository_it_is_not_clean_with_a_receipt(tmp_path):
     from steuermaschine.native import NativeRuntime, using
     from steuermaschine_heinzel.native.go import world
     m = Mini(tmp_path)
     stack = stack_of(plugin)
     settings, _ = stack.validate({"heinzel": {"legacy_state_dir": str(m.state)}}, Path("."))
     rt = Runtime(Project(name="t", plugin="heinzel", root=Path("."), plugins=["heinzel"]), stack, settings, _providers=fake_providers(commands=m.commands))
-    assert invoke(rt, ["release", "ios", "0.9.53"]).exit_code == 2
+    out = invoke(rt, ["release", "ios", "0.9.53"])
+    assert out.exit_code == 1 and "set ios_core_repo (or queue_core_repo)" in out.stdout
     with using(NativeRuntime(rt.providers, rt.settings, rt.project)):
         lines = release_ios.after_accepted(world(), "0.9.53")
-    assert lines[-1].startswith("IOS NOT-CLEAN 0.9.53: Refuse: `sm release ios` checks out the release tag")
+    assert lines[-1].startswith("IOS NOT-CLEAN 0.9.53: `sm release ios` checks out the release tag")
     assert rules.ios_alarm(ios.latest_receipt(m.state), 0)["key"] == "ios:0.9.53"
 
 

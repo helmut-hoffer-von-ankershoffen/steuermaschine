@@ -53,8 +53,10 @@ class ReleaseIos(Model):
 def run(w: probes.World, version: str) -> ReleaseIos:
     s = w.settings or {}
     repo = s.get("ios_core_repo") or s.get("queue_core_repo") or w.core
-    if not repo:
-        raise Refuse("`sm release ios` checks out the release tag: set ios_core_repo (or queue_core_repo) in [heinzel]", "sm self config", code=2)
+    if not repo:  # NOT-CLEAN with a receipt, not a refusal: the release driver and the follower call this and must go on
+        done = ios.IosResult(version=version, reason="`sm release ios` checks out the release tag: set ios_core_repo (or queue_core_repo) in [heinzel]")
+        ios.write_receipt(w.state_dir, done, w.now())
+        return ReleaseIos(version=version, clean=False, reason=done.reason, lines=done.lines())
     done = ios.publish(w, version, Path(str(repo)).expanduser(), ios.receipt_dir(w.state_dir) / "work", int(s.get("ios_wait_minutes") or 30) * 60)
     return ReleaseIos(version=done.version, clean=done.clean, build=done.build, revision=done.revision, uploaded=done.uploaded, state=done.state,
                       in_group=done.in_group, reason=done.reason, lines=done.lines())
