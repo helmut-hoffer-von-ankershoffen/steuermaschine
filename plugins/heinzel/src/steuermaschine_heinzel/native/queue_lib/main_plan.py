@@ -70,8 +70,7 @@ def registry(core: Path, main: str) -> dict[str, Any]:
 
 
 def next_command(pr: str, main: str) -> str:
-    return (f"re-prepare #{pr} at main {main[:8]}: sm head prepare PACKET --pr {pr} --core-repo WORKTREE --review-root ROOT "
-            f"(PACKET built at {main[:8]}: sm head packet preopen, or sm head packet bind --main {main})")
+    return f"#{pr} needs a new head on main {main[:8]}: sm ship WORKTREE --live"
 
 
 def gap(pr: str, head: str = "") -> str:

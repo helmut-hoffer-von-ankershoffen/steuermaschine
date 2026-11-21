@@ -114,7 +114,7 @@ def test_preflight_ready_in_text_reaches_every_edge_the_native_way(core, rt, tmp
     assert "  [PASS] meta: commit meta PASS (2 commits)" in lines and "  [PASS] lint: make lint green (includes typos)" in lines
     assert lines[-3] == "READY (opt-in not run: consumers, hosted)"
     summary = tmp_path / "default-out" / "preflight-head-aaaaaaaa.json"  # no --sel, no --out: the setting
-    assert lines[-2] == f"summary: {summary}" and lines[-1] == f"next: sm head validate {core} --lanes web-1,web-2"
+    assert lines[-2] == f"summary: {summary}" and lines[-1] == f"next: hosted PR CI runs the lanes web-1,web-2; sm head admit {core}"
     assert "... tree" in done.stderr and "... validation" in done.stderr  # progress is not part of the result
     # the heavy command went through the run lock: in the worktree, with the capped workers, recorded in the history
     (lint, where, env), = machine.ran("make lint")

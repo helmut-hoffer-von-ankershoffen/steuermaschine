@@ -1,16 +1,12 @@
 """`sm ship WORKTREE`: the one verb that takes a head from its worktree to a merged PR, as a driver over `sm head admit`.
 
-It adds no step of its own. It derives the inputs `head admit` asks for (the selection, the review root, the Core
-repository), hands them to the `head admit` pipeline unchanged and, after the queue step, can wait for the PR to merge.
-An input given with `--set` (now or earlier: the pipeline remembers them) is never replaced by a derived one. The stops
-are those of `head admit`.
+It adds no step of its own: it hands the head to the `head admit` pipeline (local check, push, PR, queue) and, after the
+queue step, can wait for the PR to merge. Core's CI merges it on green; a PR the diff guard flags waits for its review.
 """
 
 from __future__ import annotations
 
-import json
 import re
-from pathlib import Path
 from typing import Any
 
 import typer
@@ -22,13 +18,10 @@ from steuermaschine.helpdoc import H
 from steuermaschine.models import Model
 from steuermaschine.native import native, runtime, switch_pending
 
-from .. import state as statedir
-from ..pipelines.common import core_repo, run
+from ..pipelines.common import run
 from ..pipelines.head_admit import identify, pipeline
 
 POLL_SECONDS = 60  # between two reads of the PR and the queue while waiting for the merge
-BASE = "origin/main"  # what the selection is taken against
-LANES = {"python": "pytest", "web": "vitest"}  # selection lane -> the field of `head select` that holds its ids
 
 
 class ShipResult(Model):
@@ -68,40 +61,6 @@ def _given(store: Any, pl: Any, key: str, set_: list[str] | None) -> dict[str, A
             raise Refuse(f"--set {pair}: expected NAME=VALUE with NAME one of: {', '.join(names)}", code=2)
         kept[name] = value
     return kept
-
-
-def selection(worktree: Path, branch: str, head: str) -> Path:
-    """The packet selection of this head, from `sm head select` against main, stored per branch and head in the state directory."""
-    found = run("head select", repo=worktree, base=BASE)
-    if getattr(found, "exit_code", 0):
-        raise Refuse(f"sm head select failed: {'; '.join(found.render())[:300]}", "sm head select --help")
-    if found.full:
-        raise Refuse("sm head select says this change needs the full suite: no narrow selection can be derived. "
-                     "Write one by hand and give it with --set sel=FILE", "sm head select --help")
-    if found.e2e_lanes:
-        raise Refuse(f"sm head select names browser journeys ({', '.join(found.e2e_lanes)}) and their test ids cannot be derived: "
-                     "write the selection by hand and give it with --set sel=FILE", "sm head select --help")
-    chosen = {lane: list(getattr(found, field)) for lane, field in LANES.items() if getattr(found, field)}
-    if not chosen:
-        raise Refuse("sm head select names no test for this change: give a selection with --set sel=FILE", "sm head select --help")
-    target = statedir.path(f"ship/sel/{_slug(branch)}-{head[:12]}.json")
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(json.dumps(chosen, indent=2, sort_keys=True) + "\n")
-    return target
-
-
-def derive(worktree: str, branch: str, head: str, kept: dict[str, Any]) -> dict[str, Any]:
-    """The inputs `head admit` needs and nobody gave: core_repo (the setting, or a refusal naming it), review_root
-    (the state directory), sel (`head select`). Each is only derived when it is not already in KEPT."""
-    out: dict[str, Any] = {}
-    if not kept.get("core_repo"):
-        out["core_repo"] = str(core_repo(runtime().settings.get("core_repo_dir"), "set core_repo_dir (sm self config) or give --set core_repo=DIR"))
-    if not kept.get("review_root"):
-        out["review_root"] = str(statedir.path("ship/reviews"))
-    sel = kept.get("sel")
-    if not sel or not Path(str(sel)).expanduser().is_file():
-        out["sel"] = str(selection(Path(worktree), branch, head))
-    return out
 
 
 def engine() -> Engine:
@@ -166,47 +125,33 @@ def _summary(worktree: str, report: Report, derived: list[str], pr: int | None, 
 
 
 @native("ship", writes=True, help=H(
-    "Take one head from its worktree to a merged PR: `head admit` with its inputs derived, then wait for the merge.",
+    "Take one head from its worktree to a merged PR: `head admit` (local check, push, PR, queue), then wait for the merge.",
     "Use when a head is committed in its own worktree and should go out; type it again after every stop.",
-    "what `head admit` writes: state on this machine, the selection and the packets under the plugin state directory; with --live also the plan slot, "
-    "one push, the PR and one queue entry. Waiting only reads.",
+    "what `head admit` writes: state on this machine; with --live also one push, the PR and one queue entry. Waiting only reads.",
     "sm ship ~/Code/heinzel-fix --live --wait 45 --set bead=abc --set title=\"fix(web): short title\"",
-    "the NEXT line it prints (a review stop names the file, its digest and the reviewer brief); exit 75: the same command again",
-    "Derived unless given with --set (or remembered from an earlier run): sel (`head select` against origin/main, python and web lanes; browser journeys are not derived and refuse), review_root\n"
-    "(the plugin state directory), core_repo (the setting core_repo_dir; it refuses naming it when unset). The PR is found by itself.\n"
-    "The stops are those of `head admit`: both review stops stay, a verdict comes from a different agent (--approved SHA256).\n"
+    "the NEXT line it prints; exit 75: the same command again",
+    "No packet, no reviewer stop, no plan slot: Core's CI runs the full matrix on every PR. The one review left is the diff guard's:\n"
+    "a PR that changes .github/, release or publish scripts or security paths is flagged and queued only with --set reviewed=\"review: FILE\"\n"
+    "(an asynchronous review recorded with `sm review verdict`).\n"
     "--wait MINUTES, after the queue step: exit 0 when the PR merged, exit 1 with the reason when it was closed or the queue dropped it,\n"
-    "exit 75 when the ceiling is reached (run it again to keep waiting).\n"
-    "--plan, at the start of a head or bundle: only print the route (`sm head plan`): tier, size, limits, route, review stops; exit 1 when no route is open."))
+    "exit 75 when the ceiling is reached (run it again to keep waiting)."))
 def ship(worktree: str = typer.Argument(..., metavar="WORKTREE", help="The clean worktree of the head, on its own work branch."),
-         live: bool = typer.Option(False, "--live", help="Also run the steps that write outside this machine (apply, push and PR, queue)."),
-         approved: str = typer.Option("", "--approved", metavar="SHA256", help="The digest a different agent approved at the review stop."),
-         author: str = typer.Option("", "--as", metavar="NAME", help="Who drives this run; the reviewer must be someone else."),
-         set_: list[str] | None = typer.Option(None, "--set", metavar="NAME=VALUE", help="An input of `head admit` (remembered); it replaces a derived one."),
-         wait: int | None = typer.Option(None, "--wait", min=1, metavar="MINUTES", help="After the queue step, wait up to MINUTES for the PR to merge."),
-         plan: bool = typer.Option(False, "--plan", help="Only print the route this head will take (sm head plan); run and write nothing.")) -> ShipResult:
-    if plan is True:  # a direct call that leaves the option out passes typer's default object, which is not True
-        if live or approved or wait is not None or set_:
-            raise Refuse("--plan only reads: give it without --live, --approved, --wait and --set", "sm ship --help", code=2)
-        route = run("head plan", worktree=Path(worktree))
-        return ShipResult(worktree=worktree, status="plan", phase=f"route: {route.route or 'none'}", exit=route.exit_code, lines=route.render())
+         live: bool = typer.Option(False, "--live", help="Also run the steps that write outside this machine (push and PR, queue)."),
+         set_: list[str] | None = typer.Option(None, "--set", metavar="NAME=VALUE", help="An input of `head admit` (remembered)."),
+         wait: int | None = typer.Option(None, "--wait", min=1, metavar="MINUTES", help="After the queue step, wait up to MINUTES for the PR to merge.")) -> ShipResult:
     rt = runtime()
     pl = pipeline()
     subject = identify(rt.providers, rt.settings, worktree)
     store = rt.providers.store
-    kept = _given(store, pl, subject.key, set_)
-    derived = derive(subject.facts["worktree"], subject.facts["branch"], subject.key, kept)
-    # only what the caller gave now goes to the pipeline as given; a remembered input is already in its state
+    _given(store, pl, subject.key, set_)  # refuses a --set of a name the pipeline does not take
     now = {pair.partition("=")[0]: pair.partition("=")[2] for pair in set_ or []}
-    report = engine().advance(pl, worktree, Options(live=live, approved=approved, author=author or config.environment().steuermaschine_agent or "coordinator",
-                                                    inputs={**derived, **now}))
+    report = engine().advance(pl, worktree, Options(live=live, approved="", author=config.environment().steuermaschine_agent or "coordinator", inputs=now))
     number = _pr(store, pl, subject.key)
     if wait is None or report.status != "finished" or report.exit_code:
-        return _summary(worktree, report, sorted(derived), number, False)
+        return _summary(worktree, report, [], number, False)
     if number is None:
         raise Refuse("the run finished but no PR is recorded for this head: nothing to wait for", "sm queue list")
     for line in report.lines():
         rt.say(line)
     wait_for_merge(number, wait)
-    return _summary(worktree, report, sorted(derived), number, True)
-
+    return _summary(worktree, report, [], number, True)

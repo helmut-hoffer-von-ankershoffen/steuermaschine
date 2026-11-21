@@ -182,18 +182,9 @@ def test_probe_queue_train_release_holds(tmp_path, monkeypatch):
     monkeypatch.setattr(L, "alarm_state", lambda d: {"alarms": 1})
     monkeypatch.setattr(L, "admission_receipt_heads", lambda d: ["r"])
     assert probes.probe_alarms(w) == {"alarms": 1} and probes.probe_receipts(w) == ["r"]
-    assert probes.probe_tools(w) == {"rehearse": True, "drop_candidate": True}
+    assert probes.probe_tools(w) == {"rehearse": False, "drop_candidate": True}
 
 
-def test_rehearsal(tmp_path, monkeypatch):
-    w = world(tmp_path)
-    monkeypatch.setattr(probes.legacy, "rehearsal_state", lambda d: None)
-    assert probes.probe_rehearse(w) == {}
-    w.rehearsal = {"current": 1, "last": 2, "last_green": 3}
-    assert probes.probe_rehearse(w) == {"current": 1, "last": 2, "last_green": 3}
-    w.rehearsal = []
-    with pytest.raises(ValueError):
-        probes.rehearsal_state(w)
 
 
 def test_probe_mini(tmp_path):
@@ -297,21 +288,6 @@ def test_prepare_arguments_variants(tmp_path):
     assert probes._receipts(big) is None
 
 
-def test_probe_packets(tmp_path):
-    d = write_packet(tmp_path, prepared={"pr": 1})
-    stale = write_packet(tmp_path, name="m-2")
-    old = 1_000_000.0 - 100 * 3600
-    os.utime(stale / "wave.json", (old, old))
-    os.utime(d / "wave.json", (999_000.0, 999_000.0))
-    broken = write_packet(tmp_path, name="m-3")
-    (broken / "wave.json").write_text("{bad")
-    os.utime(broken / "wave.json", (999_500.0, 999_500.0))
-    w = world(tmp_path, settings={"go_packet_globs": [str(tmp_path / "admit-*/*/m-*/wave.json")]})
-    got = probes.probe_packets(w)
-    assert len(got) == 2 and got[0]["branch"].startswith("unreadable") and got[1]["branch"] == "fix/x"
-    named = probes.probe_packets(w, [str(stale / "packet.json"), "rel/x", None])
-    assert len(named) == 3
-    assert probes.packet_globs(world(tmp_path)) == []  # no default: a machine's packet directories are its setting
 
 
 def test_focus(tmp_path, monkeypatch):

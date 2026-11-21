@@ -444,7 +444,7 @@ def test_ready_names_the_hosted_lanes_for_head_validate_and_pushes_nothing(core,
     _, rc = go(core, fake, sel={"python": ["tests/unit/x_test.py"]})
     data = result(capsys)
     assert rc == 0 and data["verdict"] == "READY (opt-in not run: consumers, hosted)"
-    assert data["hosted_lanes"] == ["web-1", "web-2", "cli", "supervised"] and data["next"] == f"sm head validate {core} --lanes web-1,web-2,cli,supervised"
+    assert data["hosted_lanes"] == ["web-1", "web-2", "cli", "supervised"] and data["next"] == f"hosted PR CI runs the lanes web-1,web-2,cli,supervised; sm head admit {core}"
     assert not fake.ran("git commit-tree") and not [c for c in fake.calls if "push" in c]
     assert not any("--force" in c or "--no-verify" in c for c in fake.calls) and len([c for c in fake.calls if c[0] == "gh"]) <= 6
 
@@ -457,12 +457,12 @@ def test_a_head_without_web_or_e2e_changes_goes_on_to_admission_and_a_failing_he
     done = call(core, Fake(core, **{"gate make lint": (1, "boom")}), [str(core), "--out", str(core.parent / "out")], fmt="text")
     assert done.exit_code == 1 and done.stdout.splitlines()[-1].startswith("summary: ") and "next:" not in done.stdout
     web = call(core, Fake(core), [str(core), "--out", str(core.parent / "out")], fmt="text")
-    assert web.stdout.splitlines()[-1] == f"next: sm head validate {core} --lanes web-1,web-2"
+    assert web.stdout.splitlines()[-1] == f"next: hosted PR CI runs the lanes web-1,web-2; sm head admit {core}"
 
 
 def test_help_and_usage_errors(core, tmp_path):
     r = call(core, Fake(core), ["--help"], fmt="text")  # was: the old script with --help, and --hosted / the admission note in it
-    assert r.exit_code == 0 and "READY" in r.stdout and "sm head validate" in r.stdout and "--skip" in r.stdout
+    assert r.exit_code == 0 and "READY" in r.stdout and "sm head admit" in r.stdout and "--skip" in r.stdout
     assert go(tmp_path / "nowhere", Fake(tmp_path))[1] == 2  # was: m.main([...], sh=Fake(...)) == 2
     bad = tmp_path / "bad.json"
     bad.write_text("{")

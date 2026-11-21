@@ -170,7 +170,7 @@ def admission_alarms(runs: list[dict], covered_heads: set[str], now: float, limi
     head = "ADMISSION blocked by" if waiting else "ADMISSION idle; a prepare/apply now would wait for"
     return [alarm("WARN" if waiting else "INFO", "admission-blocked", f"{head} {len(rows)} active uncovered run(s) > {limit} min: "
                   + "; ".join(text for _, text in rows[:4]) + (f"; +{len(rows) - 4} more" if len(rows) > 4 else "")
-                  + ("; sm release rehearse cancel frees the rehearsal/* runs" if waiting and any(" on rehearsal/" in text for _, text in rows) else ""))]
+                  + ("; cancel the rehearsal/* runs of the retired rehearsal" if waiting and any(" on rehearsal/" in text for _, text in rows) else ""))]
 
 
 def slot_free(sizes: dict) -> int:
@@ -230,7 +230,7 @@ def rehearsal_alarms(state: dict | None, now: float, open_limit: int = REHEARSAL
     current = state.get("current") if isinstance(state.get("current"), dict) else None
     if current and minutes(current.get("started"), now) > open_limit:
         out.append(alarm("WARN", "rehearsal:open", f"REHEARSAL of main {str(current.get('main'))[:10]} open for "
-                         f"{minutes(current.get('started'), now)} min: sm release rehearse step, or sm release rehearse cancel"))
+                         f"{minutes(current.get('started'), now)} min: a retired rehearsal (no command ends it any more)"))
     last = state.get("last") if isinstance(state.get("last"), dict) else None
     if not last:
         return out
@@ -240,7 +240,7 @@ def rehearsal_alarms(state: dict | None, now: float, open_limit: int = REHEARSAL
         suspects = [str(s) for s in last.get("suspects") or []]
         merges = (f" | merges since last green ({len(suspects)}): " + "; ".join(suspects[-SUSPECT_CAP:])) if suspects else " | no earlier green rehearsal to compare with"
         out.append(alarm("ALERT", f"rehearsal:{main}", f"REHEARSAL RED main {main}: {named(failures, 8) if failures else 'failures unreadable'}"
-                         f"{merges}; sm release rehearse status --json"))
+                         f"{merges}; a retired rehearsal's verdict (its state file)"))
     elif last.get("verdict") == "incomplete":
         detail = last.get("yielded") or (last.get("consumers") or {}).get("detail") or "not every lane ran"
         out.append(alarm("INFO" if last.get("preempted") is True else "WARN", f"rehearsal:{main}",

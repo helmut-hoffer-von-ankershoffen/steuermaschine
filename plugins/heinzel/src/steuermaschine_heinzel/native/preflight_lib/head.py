@@ -729,7 +729,7 @@ def step_e2e(c: Ctx) -> Step:
         lines = "\n".join(f"       | {j}: {'; '.join(owners[j])}" for j in missing)
         s.fail(f"{len(missing)} owning journey(s) are not SEL browser ids\n{lines}",
                'add each to SEL "browser" (hosted evidence), or list it under "local_only": {"<journey>": "<reason>"} and run it on the Mini; '
-               "over 10 browser ids: run the full lanes with `sm head validate`")
+               "over 10 browser ids: hosted PR CI runs the full lanes")
     if unowned:
         s.warn("no journey under tests/e2e names: " + ", ".join(unowned))
     return s
@@ -754,7 +754,7 @@ def step_validation(c: Ctx) -> Step:
         names = ", ".join(sorted({h["branch"] for h in hits}))
         return s.fail(f"head {c.sha[:9]} already has check suites from {names}: its PR checks would attach there and the PR sits BLOCKED (#790)",
                       "make a new head (an empty commit `git commit --allow-empty` changes the SHA), rerun this preflight, and validate only "
-                      "throwaway commits (`sm head validate`), never the head itself")
+                      "hosted PR CI, never by hand on the head")
     s.detail = f"no validation/* check suite on {c.sha[:9]} ({s.data['suites']} suite(s) in total)"
     return s
 
@@ -988,7 +988,7 @@ def step_related(c: Ctx) -> Step:
         s.warn(f"Core has no {RELATED_SCRIPT}: the selection is this tool's own import scan, which may differ from the hook's")
     else:
         if touches_web(changed):  # the hook then runs the whole fast gate (every unit test and Vitest): too heavy here, so say so
-            s.warn("the push hook runs the whole web gate; run `sm head validate --lanes web-1,web-2`")
+            s.warn("the push hook runs the whole web gate; hosted PR CI runs the web lanes")
         picked, why = hook_selection(c, [p for p in changed if not p.startswith(WEB_INPUTS)]) if any(not p.startswith(WEB_INPUTS) for p in changed) else ([], "")
         if why:
             return s.fail(why, "run it by hand in the worktree and fix the cause; the selection must come from the hook's own script")

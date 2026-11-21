@@ -25,7 +25,7 @@ from . import focused_slots as s
 from . import focused_update as update
 
 FIRST_MERGE_ONLY = ("RULE: these plans bind main as it is now and are valid for the FIRST merge only. After one member merged, every other "
-                    "member needs `sm head packet bind` and its own admission at the new main; a second merge on these plans turns main red.")
+                    "member needs a new head (`sm ship`) and its own admission at the new main; a second merge on these plans turns main red.")
 ARGS_FILE = "prepare.args.json"
 PREPARED_FILE = "prepare.out"
 
@@ -68,7 +68,7 @@ class PrepareResult(_Model):
 
     def render(self) -> list[str]:
         return [f"prepared {self.prepared_path}", f"sha256 {self.sha256}", f"head {self.head[:8]} main {self.main[:8]} slot {self.slot}",
-                "a reviewer who is not the author approves exactly this sha256; then: sm head apply PACKET --approved SHA256"]
+                "a reviewer who is not the author approves exactly this sha256; then: the retired apply step"]
 
 
 class BatchMember(_Model):
@@ -90,7 +90,7 @@ class BatchPrepareResult(_Model):
         return [f"prepared {self.prepared_path}", f"sha256 {self.sha256}",
                 f"batch of {len(self.members)} pairs on main {self.main[:8]} slot {self.slot}: " + ", ".join(m.head[:8] for m in self.members),
                 FIRST_MERGE_ONLY,
-                "a reviewer who is not the author approves exactly this sha256; then: sm head apply BATCH_DIR --approved SHA256"]
+                "a reviewer who is not the author approves exactly this sha256; then: the retired apply step"]
 
 
 class ApplyResult(_Model):
@@ -218,7 +218,7 @@ def _atomic(path: Path, text: str) -> None:
 
 def stored_args(packet: Path) -> dict[str, Any]:
     path = Path(packet).parent / ARGS_FILE
-    s.require(path.is_file(), f"no {ARGS_FILE} next to the packet: run `sm head prepare` for this packet first")
+    s.require(path.is_file(), f"no {ARGS_FILE} next to the packet: the packet was never prepared (the prepare command is retired)")
     args = a._json_bytes(a._stable_file(path, 1024 * 1024), "stored prepare arguments")
     s.require(args.get("schema") == 1 and args.get("packet") == str(Path(packet).resolve()), "stored prepare arguments belong to another packet")
     return args
@@ -358,7 +358,7 @@ def apply_batch(out_dir: Path, approved: str, *, runtime: Any = None) -> ApplyRe
     """The one registry write of a batch: recompute, require equality with the reviewed transaction, one slot write."""
     out_dir = Path(out_dir)
     s.require(isinstance(approved, str) and a.HEX.fullmatch(approved) is not None, "apply needs --approved with the sha256 the reviewer approved")
-    s.require((out_dir / ARGS_FILE).is_file(), f"no {ARGS_FILE} in {out_dir}: run `sm head prepare --packets ... --out {out_dir}` first")
+    s.require((out_dir / ARGS_FILE).is_file(), f"no {ARGS_FILE} in {out_dir}: the batch was never prepared (the prepare command is retired)")
     args = a._json_bytes(a._stable_file(out_dir / ARGS_FILE, 1024 * 1024), "stored prepare arguments")
     approved_doc = a._json_bytes(a._stable_file(out_dir / PREPARED_FILE, 1024 * 1024), "prepared transaction")
     s.require(canonical_sha256(approved_doc) == approved,
@@ -389,4 +389,4 @@ def first_merge_only(prepared: dict[str, Any], current_main: str) -> None:
     s.require(prepared.get("mode") == s.BATCH_MODE, "not a batch transaction")
     s.require(current_main == prepared.get("main"),
               f"main moved ({str(current_main)[:8]}) since this batch was prepared on {str(prepared.get('main'))[:8]}: its remaining plans are void. "
-              "Do not merge another member on them; bind each remaining head to the new main (`sm head packet bind`) and admit it on its own")
+              "Do not merge another member on them; bind each remaining head to the new main (a new head (`sm ship`)) and admit it on its own")

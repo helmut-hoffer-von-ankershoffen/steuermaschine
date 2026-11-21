@@ -231,7 +231,7 @@ plugins = ["toy", "layer"]      # base first; LATER ENTRIES ARE OUTER LAYERS
 
 Only the listed plugins load; every other installed plugin is blocked. The core's own implementations
 (`sm_api_version`, `sm_step_run`) and the core's own native commands (`steuermaschine/commands/`: `gate run`,
-`gate status`, `lim`, `doc section`, `ci window status`) are the innermost layer. Per kind of hook, "outer" means:
+`gate status`, `lim`, `doc section`) are the innermost layer. Per kind of hook, "outer" means:
 
 | Kind | Hooks | Rule |
 |---|---|---|
@@ -383,14 +383,14 @@ Everything Heinzelmännchen-specific. The core has no word of it (`tests/test_co
 ### The two pipelines
 
 ```
-head admit:   preflight -> packet -> packet review (STOP) -> prepare -> apply review (STOP) -> apply* -> pr* -> queue*
-release cut:  ci change -> notes -> admit prepare -> admission review (STOP) -> admit apply* -> publish review (STOP)
-              -> resume* -> verify
+head admit:   check -> protected review (STOP, only for protected paths) -> pr* -> queue*
+release cut:  ci change -> notes -> publish review (STOP) -> resume* -> verify
 ```
 
-Both are resumable and dry by default (section 3). A step is one native command (`head preflight`, `head packet preopen`,
-`head prepare`, `head apply`, `head pr`, `queue add`; `release notes-audit`, `release admit prepare`,
-`release admit apply`, `release resume`, `release verify`), looked up by name in the registry, never imported: a
+There is no admission: Core's CI runs the full matrix on every PR, so no packet, no plan slot, no hosted validation of a head.
+The one blocking STOP of `head admit` is for changes to `.github/`, the release, publish, PyPI and acceptance scripts, `quarantine.toml`,
+the coverage config and `conftest.py`; a different agent approves the digest of exactly those paths. Both are resumable and dry by default (section 3). A step is one native command (`check`, `head pr`, `queue add`;
+`release notes-audit`, `release resume`, `release verify`), looked up by name in the registry, never imported: a
 change to that command voids that command's verdict, not the pipeline's. Tests replace a step through
 `pipelines.common.OVERRIDE`; an override never opens a shut gate. Inputs and their meaning: `sm head admit --help`,
 `sm release cut --help`; the release runbook is `docs/RUNBOOK-release-cut.md`.
@@ -590,7 +590,6 @@ plugin nowhere except `test_core_names.py`, which checks the core for Heinzel wo
 | run lock (slots, load and start bar, a reserved slot for the focus head, push lane, holds, worker caps, background runs) and its commands `gate run`, `gate wait`, `gate status` | core `runlock.py`, `background.py`, `commands/gate.py` | yes: default policy below the state directory; the plugin hands in its policy (`gate.POLICY`, `native/lock.py`) | `tests/test_core_runlock.py`, `tests/test_core_background.py`, `tests/test_core_commands.py` |
 | output limiter `lim` | core `commands/lim.py` | yes: logs below the state directory; the plugin hands in `guards_lim_dir` | `tests/test_core_commands.py` |
 | Markdown by section, `doc section FILE` | core `docsection.py`, `commands/doc.py` | yes, FILE required; the plugin hands in its tracking document as the default | `tests/test_core_commands.py` |
-| validation window (line, lease, throwaway branch) and `ci window status` | core `window.py`, `commands/window.py` | yes: the core's `Rules()`; the plugin hands in its window (cap, lease, namespace). Starting runs (`head validate`, `ci window run`) and ending a turn with branch clean-up (`ci window release`) dispatch the project's workflows and stay in the plugin | `tests/test_core_window.py`, `tests/test_core_commands.py` |
 | CI log reading: the failing part of a failed-step log, the runs behind failing checks, failing test names | core `github/logs.py` | yes; which checks a rerun names (`faillog.rerun_job`), the failure classes (`ci_lib/cause.py`) and the commands `ci why` / `ci faillog` (their next step is the project's `ci one rerun`) stay in the plugin | `tests/test_core_github_logs.py` |
 | process shapes of sm itself (which `ps` lines are sm, what they run) | core `smprocs.py` | yes; the load guard and the governor that use them carry the project's paths and stay in the plugin | `tests/test_core_smprocs.py`, the plugin's live `test_native_guards_smprocs.py` |
 | preflight framework (`Preflight`, `PreflightReport`) | core `preflight.py` | yes; the checks are project rules and stay in the plugin | `tests/test_core_preflight.py` |
@@ -604,7 +603,6 @@ What is left in the plugin that looks generic, and why it stays:
 
 | Generic part | In the plugin | Blocker | Plan |
 |---|---|---|---|
-| `ci window release`: ending a turn | `native/window.py` | the turn itself is `Window.release` (core); the command also removes the project's `validation/*` branches only when none of its focused runs is active, and checks the project's dispatch bounds | stays; a core `release` without clean-up would need its own review unit and gain nothing |
 | `ci why`, `ci faillog`, `ci watch` | `native/ci_read.py`, `ci_lib/cause.py` | the log cutting is core now; the failure classes, the known-failure registry and the next command (`ci one rerun`) are project rules | stays |
 | `guard heavy`, `guard git`, `guard uv`, load guard, governor | `native/guards.py`, `guards_lib/` | project paths (builder worktrees, the management checkout, live tool names) and rules; the hook protocol (`guardhook.py`) and the sm process shapes (`smprocs.py`) are core | stays |
 

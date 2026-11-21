@@ -8,7 +8,6 @@ from typing import Any
 from steuermaschine.native import collect
 
 from . import (
-    admission,
     affected,
     agents,
     alarm,
@@ -39,17 +38,14 @@ from . import (
     merge_ready,
     merges,
     mini,
-    packet,
     plugin_gallery,
     preflight,
     queue,
     queue_hold,
     queue_main,
     refill,
-    rehearse,
     rejudge,
     release,
-    release_admit,
     release_read,
     ship,
     ship_driver,
@@ -62,15 +58,14 @@ from . import (
     train,
     velocity,
     why,
-    window,
     work,
 )
 
 MODULES: list[Any] = [
-    admission, affected, agents, alarm, alarm_asks, asks, branches, briefs, check, ci_classify, ci_evidence, ci_ops, ci_read, ci_triage, combine,
-    coord, dispatch, docs, flakes, go, guards, handoff, junit, leakwatch, loadguard, loops, lock, merge_ledger, merge_ready, merges, mini, packet,
-    plugin_gallery, preflight, queue, queue_hold, queue_main, refill, rehearse, rejudge, release, release_admit, release_read, ship, ship_driver, skills, slots, status, sweep,
-    tasks, tick, train, velocity, why, window, work,
+    affected, agents, alarm, alarm_asks, asks, branches, briefs, check, ci_classify, ci_evidence, ci_ops, ci_read, ci_triage, combine,
+    coord, dispatch, docs, flakes, go, guards, handoff, junit, leakwatch, loadguard, loops, lock, merge_ledger, merge_ready, merges, mini,
+    plugin_gallery, preflight, queue, queue_hold, queue_main, refill, rejudge, release, release_read, ship, ship_driver, skills, slots, status, sweep,
+    tasks, tick, train, velocity, why, work,
 ]
 
 
