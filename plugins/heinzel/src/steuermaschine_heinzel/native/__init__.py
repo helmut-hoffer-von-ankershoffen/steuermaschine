@@ -9,8 +9,6 @@ from steuermaschine.native import collect
 
 from . import (
     admission,
-    packet,
-    release_admit,
     affected,
     agents,
     alarm,
@@ -41,6 +39,7 @@ from . import (
     merge_ready,
     merges,
     mini,
+    packet,
     plugin_gallery,
     preflight,
     queue,
@@ -50,6 +49,8 @@ from . import (
     refill,
     rejudge,
     release,
+    release_admit,
+    release_ci,
     release_drive,
     release_ios,
     release_read,
@@ -71,8 +72,8 @@ from . import (
 MODULES: list[Any] = [
     admission, packet, release_admit, affected, agents, alarm, alarm_asks, asks, branches, briefs, check, ci_classify, ci_evidence, ci_ops, ci_read, ci_triage, combine,
     coord, dispatch, docs, flakes, go, guards, handoff, junit, leakwatch, loadguard, loops, lock, merge_ledger, merge_ready, merges, mini,
-    plugin_gallery, preflight, queue, queue_hold, queue_main, raw_transfer, refill, rejudge, release, release_drive, release_ios, release_read, ship, ship_driver, skills, status,
-    surface, sweep, tasks, tick, train, velocity, why, why_subject, work,
+    plugin_gallery, preflight, queue, queue_hold, queue_main, raw_transfer, refill, rejudge, release, release_ci, release_drive, release_ios, release_read, ship, ship_driver, skills,
+    status, surface, sweep, tasks, tick, train, velocity, why, why_subject, work,
 ]
 
 

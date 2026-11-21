@@ -20,13 +20,17 @@ def release(*, draft=False, prerelease=True, wheel="a" * 64, tag="v1.2.4"):
         {"name": WHEEL, "digest": f"sha256:{wheel}"}, {"name": "artifact-manifest.json", "digest": "sha256:" + "e" * 64}]}
 
 
-def fake_gh(rel, monkeypatch, states, *, edit_code=0, finals="v1.2.3\n", receipt=None):
-    """`states`: the release objects GitHub gives, in order; `finals`: the published final tags it lists."""
+def fake_gh(rel, monkeypatch, states, *, edit_code=0, finals="v1.2.3\n", receipt=None, latest=("v1.2.4",)):
+    """`states`: the release objects GitHub gives, in order; `finals`: the published final tags it lists; `latest`: the
+    tags releases/latest names, in order (the last one repeats)."""
+    named = list(latest)
     rel.write_state(receipt if receipt is not None else {"version": "1.2.4", "snapshot": SNAPSHOT})
     calls = []
     answers = iter(states)
 
     def gh(*args):
+        if args[0] == "api" and args[1].endswith("/releases/latest"):
+            return 0, (named.pop(0) if len(named) > 1 else named[0]) + "\n"
         if args[0] == "api":
             assert "releases?per_page=30" in args[1] and "prerelease | not" in args[3]
             return (0, finals) if finals is not None else (1, "")
@@ -71,6 +75,25 @@ def test_promotion_is_idempotent(rel, monkeypatch):
     rel.real_promote_release("1.2.4")
     rel.real_promote_release("1.2.4")
     assert calls == edits(rel)
+
+
+def test_a_final_release_that_is_not_latest_becomes_latest(rel, monkeypatch):
+    # Core's Publish creates the release final but not Latest: promotion marks it Latest after its verdict.
+    calls = fake_gh(rel, monkeypatch, [FINAL], latest=("v1.2.3", "v1.2.4"))
+    rel.real_promote_release("1.2.4")
+    assert calls == [("release", "edit", "v1.2.4", "--latest", "-R", rel.CORE)] and rel.state()["promoted_at"]
+
+
+def test_a_final_release_never_moves_latest_backwards(rel, monkeypatch):
+    calls = fake_gh(rel, monkeypatch, [FINAL], latest=("v1.2.5",))
+    rel.real_promote_release("1.2.4")
+    assert calls == []
+
+
+def test_a_final_release_that_does_not_become_latest_stops(rel, monkeypatch):
+    fake_gh(rel, monkeypatch, [FINAL], latest=("v1.2.3",))
+    with pytest.raises(rel.Stop, match="not Latest"):
+        rel.real_promote_release("1.2.4")
 
 
 @pytest.mark.parametrize(("states", "code"), [([HELD, HELD], 0), ([HELD, FINAL], 1), ([HELD, None], 0),

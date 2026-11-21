@@ -4,6 +4,7 @@ the running product (72 samples): the same seven lines. No test here starts a pr
 import json
 from pathlib import Path
 
+import pytest
 import test_native_leakwatch_moved as moved
 
 from steuermaschine.app import Runtime
@@ -14,6 +15,13 @@ from steuermaschine.testing import FakeCommands, fake_providers, invoke
 from steuermaschine_heinzel.native import leakwatch
 from steuermaschine_heinzel.native.leakwatch_lib import watch
 from steuermaschine_heinzel.plugin import plugin
+
+
+@pytest.fixture(autouse=True)
+def fixed_load(monkeypatch):
+    """A unit test never reads the real machine load (bead urj63: "Mini load 42 above 40" failed a check on a busy Mini)."""
+    real = watch.take_sample
+    monkeypatch.setattr(watch, "take_sample", lambda *a, **kw: real(*a, **{**kw, "loadavg": lambda: (1.0, 1.0, 1.0)}))
 
 
 def runtime_for(tmp_path, commands=None, reviewed=True, **settings):

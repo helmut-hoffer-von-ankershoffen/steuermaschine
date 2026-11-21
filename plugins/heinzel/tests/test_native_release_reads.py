@@ -61,9 +61,11 @@ def doc(rt, model, *args):
 
 # ----------------------------------------------------------------------------- status
 def test_status_without_a_release_in_flight_reads_the_real_train_files(rt, gh):
+    gh.on("run list", [])
     out = invoke(rt, ["release", "status"])
-    assert out.exit_code == 0 and out.stdout.strip() == "no release in flight"  # 0.9.35 is done, 0.9.36 is cleared
-    assert gh.calls == []
+    assert out.exit_code == 0 and out.stdout.splitlines()[0] == "no release in flight"  # 0.9.35 is done, 0.9.36 is cleared
+    assert out.stdout.splitlines()[1] == "CI release chain: no run yet (sm release VERSION dispatches one)"
+    assert all("release-chain.yml" in " ".join(call) for call in gh.calls)  # the CI chain only; the local train is files
     out, status = doc(rt, area.ReleaseStatus, "release", "status", "--line")
     assert status.active is False and status.lines == []
 
@@ -98,6 +100,22 @@ def test_status_line_is_one_line(rt, gh):
     out = invoke(rt, ["release", "status", "--line"])
     assert out.stdout.splitlines() == ["RELEASE v0.9.36 PR #705 30m: CI success, acceptance success #1, freeze off; "
                                        "train merges when checks are green; verify tag, publish, sm release verify --mini"]
+
+
+def test_status_after_the_tag_shows_the_tail_stages_not_pr_none(rt, gh, monkeypatch):
+    in_flight(rt, gh)
+    gh.on("pr list", [])  # the release PR is merged and gone
+    tails = rt.home / "release"
+    tails.mkdir()
+    (tails / "v0.9.36.json").write_text(json.dumps({"pypi": "2026-11-12T18:00:00Z", "pypi_run_id": 11}))
+    real = area.statedir.path
+    monkeypatch.setattr(area.statedir, "path", lambda *names: tails if names == ("release",) else real(*names))
+    text = invoke(rt, ["release", "status"]).stdout
+    assert "PR #None" not in text and "ok ?" not in text and "tail stages:" in text and "PyPI" in text and "run 11" in text
+    line = invoke(rt, ["release", "status", "--line"]).stdout
+    assert line.startswith("RELEASE v0.9.36 tagged 30m: tail publish not started, PyPI run 11") and "PR #" not in line
+    doc_out, status = doc(rt, area.ReleaseStatus, "release", "status")
+    assert status.active and status.pull_request is None and any("PyPI" in ln for ln in status.lines)
 
 
 # ----------------------------------------------------------------------------- candidate

@@ -1038,7 +1038,11 @@ def publish_release_pr(work: str, tag: str, checked_head: str) -> None:
     # Changelog screenshots: pin images to the checked release commit (the tag does not exist yet) once core's
     # release_notes.py accepts --ref; an older script is called as before.
     script = Path(work) / "scripts" / "release_notes.py"
-    ref = ["--ref", checked_head] if re.fullmatch(r"[0-9a-f]{40}", checked_head) and "--ref" in script.read_text(encoding="utf-8", errors="replace") else []
+    try:
+        takes_ref = "--ref" in script.read_text(encoding="utf-8", errors="replace")
+    except OSError:  # no readable script here: call it as before; its run below reports a real absence
+        takes_ref = False
+    ref = ["--ref", checked_head] if re.fullmatch(r"[0-9a-f]{40}", checked_head) and takes_ref else []
     notes = edge.run(["uv", "run", "--frozen", "--no-sync", "--no-build", "python",
                             "scripts/release_notes.py", tag, *ref], cwd=work, env=env,
                            capture_output=True, text=True, check=False)
@@ -2572,7 +2576,24 @@ def promote_release(version: str) -> None:
     if not isinstance(before, dict) or before.get("tag_name") != tag or before.get("draft") is not False:
         raise Stop(f"promote: {tag} is no published release; the stable channel keeps it held")
     if before.get("prerelease") is False:
-        hzlib.say(f"ok   promote {tag}: already final")
+        # Core's Publish creates a final release that is not Latest (the updater offers releases/latest): the
+        # accepted release becomes Latest here, never behind a newer one.
+        def latest_tag() -> str:
+            got, out = hzlib.gh("api", f"repos/{CORE}/releases/latest", "--jq", ".tag_name")
+            return out.strip() if got == 0 else ""
+
+        latest = latest_tag()
+        if latest == tag:
+            hzlib.say(f"ok   promote {tag}: already final and Latest")
+            return
+        if latest.startswith("v") and EXACT_VERSION.fullmatch(latest[1:]) and vkey(latest[1:]) > vkey(version):
+            hzlib.say(f"ok   promote {tag}: final; {latest} is newer and stays Latest")
+            return
+        code, _ = hzlib.gh("release", "edit", tag, "--latest", "-R", CORE)
+        if code != 0 or latest_tag() != tag:
+            raise Stop(f"promote: {tag} is final but not Latest (gh exit {code}); rerun sm release resume {version} to retry")
+        remember(promoted_at=now_iso())
+        hzlib.say(f"ok   promote {tag}: final and Latest; the stable channel offers it now")
         return
     pinned = (data.get("acceptance_identity") or {}).get("snapshot") or data.get("snapshot")
     if not isinstance(pinned, dict) or pinned.get("tag") != tag or pinned.get("version") != version:

@@ -63,6 +63,7 @@ class ReleaseStatus(Model):
     blockers: list[str] = []
     next: str = ""
     ios: str = Field("", description="The newest release's TestFlight step: build and group, or NOT-CLEAN with its reason (sm release ios).")
+    ci_chain: list[str] = Field([], description="The newest runs of Core's workflow \"Release\": the running one with its open jobs, else the last one.")
     lines: list[str] = []
 
     def render(self) -> list[str]:
@@ -70,7 +71,7 @@ class ReleaseStatus(Model):
 
 
 @native("release status", replaces=("hz-release-status",), help=H(
-    "One screen: the release in flight, its PR and candidate CI, acceptance, the freeze, blockers, the next step.",
+    "One screen: the CI release chain's run and its open jobs, the local train's release, its PR and candidate CI, the freeze.",
     "Use when a release is running and you need its state in one call.",
     "nothing (read-only).",
     "sm release status", "sm release candidate VERSION"))
@@ -100,9 +101,15 @@ def release_status(line: bool = typer.Option(False, "--line", help="One line for
         tail = status.read_tail(summary["version"], str(statedir.path("release")))
         if tail is not None:
             summary |= {"tail": status.tail_stages(tail, now)}
+    from .release_ci import chain_status
+
+    chain = chain_status(github().gh)
+    running = any(" in_progress" in text or " queued" in text or " waiting" in text for text in chain[:1])
     tests = ios.summary(ios.latest_receipt(statedir.dashboard_dir(conf())))
     if not summary.get("active"):
-        return ReleaseStatus(active=False, ios=tests, lines=[] if line else [status.render(summary), *filter(None, [tests])])
+        if line:
+            return ReleaseStatus(active=running, ci_chain=chain, ios=tests, lines=chain[:1] if running else [])
+        return ReleaseStatus(active=running, ci_chain=chain, ios=tests, lines=[status.render(summary), *chain, *filter(None, [tests])])
     text = translate(summary["next"])
     if line and summary.get("tail") is not None:
         lines = [f"RELEASE v{summary['version']} tagged {summary['age_min']}m: tail " + ", ".join(t.split(None, 1)[0] + " " + t.split(None, 1)[1].split(",")[0] for t in summary["tail"]) + f"; {text}"]
@@ -114,7 +121,8 @@ def release_status(line: bool = typer.Option(False, "--line", help="One line for
     return ReleaseStatus(active=True, ios=tests, version=str(summary["version"]), pull_request=summary["pr"], phase=str(summary["phase"] or ""),
                          age_minutes=summary["age_min"], candidate_ci=str(summary["ci"] or ""), acceptance=str(summary["acc"] or ""),
                          acceptance_attempt=summary["acc_attempt"], checks=CheckCounts(**summary["checks"]) if summary["checks"] else None,
-                         frozen=bool(summary["frozen"]), blockers=translated(summary["blockers"]), next=text, lines=lines)
+                         frozen=bool(summary["frozen"]), blockers=translated(summary["blockers"]), next=text, ci_chain=chain,
+                         lines=lines if line else [*lines, *chain])
 
 
 # ----------------------------------------------------------------------------- release candidate
