@@ -33,7 +33,7 @@ def main(argv: list[str]) -> int:
     if not command or opts["priority"] not in (0, 1, 2):
         return 2
     request = Request(argv=command, environ=dict(os.environ), timeout_seconds=opts["timeout"], priority=opts["priority"], max_wait_seconds=opts["max_wait"],
-                      light="--light" in flags, hold_exempt="--hold-exempt" in flags, cwd=os.getcwd())
+                      light="--light" in flags, hold_exempt="--hold-exempt" in flags, cwd=os.getcwd(), full="--full" in flags)
     return gate.execute(rl, request, say).exit_code
 
 

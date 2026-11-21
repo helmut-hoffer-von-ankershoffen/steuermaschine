@@ -54,8 +54,9 @@ def sm() -> list[str]:
 
 
 def gate() -> list[str]:
-    """The run lock in front of a heavy local command or a push: `sm gate run -- COMMAND...`."""
-    return [*sm(), "gate", "run", "--"]
+    """The run lock in front of a release's heavy local command or push: a full run, exclusive, under the load bars
+    (`sm gate run --full --exclusive -- COMMAND...`); it never takes the fast lane."""
+    return [*sm(), "gate", "run", "--full", "--exclusive", "--"]
 
 
 def ship(pr: int | str) -> list[str]:

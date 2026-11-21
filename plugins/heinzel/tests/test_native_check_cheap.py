@@ -143,11 +143,16 @@ def test_the_tests_check_fails_on_a_selection_error_and_runs_the_unit_suite_for_
     assert [m for m, _ in s.failures] == ["scripts/related_tests.py failed (exit 3)"] and not [line for line in calls if "pytest" in line]
     c, calls = context(tmp_path, {}, [])
     c.plan = cheap.Plan(pytest=None, narrowed="both select everything: the whole unit suite runs")
+    s = cheap.step_tests(c)  # a fast check never runs the whole suite: PR CI does
+    assert not s.failures and s.data["unit_suite"] is False and not [line for line in calls if "unit and not perf" in line]
+    assert "left to PR CI" in s.detail and any("runs on PR CI, not here" in w for w in s.data["warnings"])
+    c, calls = context(tmp_path, {}, [])
+    c.full, c.plan = True, cheap.Plan(pytest=None, narrowed="both select everything: the whole unit suite runs")
     s = cheap.step_tests(c)
     assert not s.failures and s.data["unit_suite"] is True and calls[-1] == " ".join(head.UNIT_SUITE) and "the whole unit suite, " in s.detail
     for rc, outcome in ((75, "got no slot (exit 75 = WAIT)"), (2, "was refused or failed (exit 2)"), (1, "was refused or failed (exit 1)")):
         c, _ = context(tmp_path, {"unit and not perf": (rc, "out")}, [])
-        c.plan = cheap.Plan(pytest=None, narrowed="everything")
+        c.full, c.plan = True, cheap.Plan(pytest=None, narrowed="everything")
         assert cheap.step_tests(c).failures[0][0].startswith(f"everything; it {outcome}"), rc
 
 
