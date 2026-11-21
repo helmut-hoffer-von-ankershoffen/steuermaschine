@@ -139,7 +139,7 @@ def record(home: Path | None, commands: Commands | None, root: Any, args: list[s
         with path.open("a", encoding="utf-8") as out:
             out.write(json.dumps(line, sort_keys=True) + "\n")
         if is_leaf(root, args):
-            count_call(home, line["command"], code, started)
+            count_call(home, str(line["command"]), code, started)
     except Exception:
         pass
     finally:

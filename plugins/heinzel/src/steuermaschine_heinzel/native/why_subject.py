@@ -84,12 +84,12 @@ def pull_request(number: int) -> PullRequestWhy:
     if red:
         try:
             more += ["CI"] + [f"  {line}" for line in ci_read.explain_ci(w, number).render()]
-        except Exception as error:  # noqa: BLE001 - one read failing leaves the rest of the screen
+        except Exception as error:
             more.append(f"CI       unknown: {type(error).__name__}: {error}")
     if MERGE_GATE in red:
         try:
             more += ["SONAR"] + [f"  {line}" for line in rejudge.sonar_head(number).render()]
-        except Exception as error:  # noqa: BLE001
+        except Exception as error:
             more.append(f"SONAR    unknown: {type(error).__name__}: {error}")
     found.more = more
     return found
@@ -140,7 +140,7 @@ def why(subject: str | None = typer.Argument(None, metavar="[SUBJECT]", help="A 
     if what == "bead":
         try:
             return beads.Tracker(runtime()).show(str(subject))
-        except Exception as error:  # noqa: BLE001 - not a bead: perhaps a branch without a slash
+        except Exception as error:
             try:
                 return branch(str(subject))
             except Refuse:

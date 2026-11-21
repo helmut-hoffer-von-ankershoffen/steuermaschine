@@ -372,15 +372,15 @@ def commands_in(text: str, prog: str = "sm") -> list[list[str]]:
 def dry_run(root: Any, words: list[str], prog: str = "sm") -> str:
     """Parse one command line against the tree without running it: "" when it is a visible command whose arguments
     parse, else what is wrong (a hidden or unknown command, a usage error). `--help` lines are not parsed."""
-    if "-h" in words or "--help" in words:
-        words = [w for w in words if w not in ("-h", "--help")]
-    node, ctx, rest, path = root, None, list(words), []
+    helped = "-h" in words or "--help" in words  # help runs nothing: only the path must be visible, the arguments need not parse
+    words = [w for w in words if w not in ("-h", "--help")]
+    node, ctx, rest, path = root, None, list(words), list[str]()
     try:
         while True:
             if hasattr(node, "commands") and not rest:
-                return "" if not path or getattr(node, "invoke_without_command", False) or not getattr(node, "no_args_is_help", True) \
+                return "" if helped or not path or getattr(node, "invoke_without_command", False) or not getattr(node, "no_args_is_help", True) \
                     else f"{prog} {' '.join(path)}: needs a command"
-            ctx = node.make_context(path[-1] if path else prog, rest, parent=ctx, resilient_parsing=False)
+            ctx = node.make_context(path[-1] if path else prog, rest, parent=ctx, resilient_parsing=helped)
             if not hasattr(node, "commands"):
                 return ""
             args = [*ctx._protected_args, *ctx.args]

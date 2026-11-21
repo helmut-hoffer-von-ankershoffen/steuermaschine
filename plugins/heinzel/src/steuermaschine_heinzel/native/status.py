@@ -15,9 +15,9 @@ from typing import Any
 import typer
 from pydantic import BaseModel, Field
 
-from steuermaschine.github.sonar import Sonar, urllib_fetch
 from steuermaschine import journal as core_journal
 from steuermaschine.engine import Refuse
+from steuermaschine.github.sonar import Sonar, urllib_fetch
 from steuermaschine.helpdoc import H
 from steuermaschine.models import Model
 from steuermaschine.native import native, runtime

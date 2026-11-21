@@ -185,7 +185,7 @@ def test_trusted_call_counts(tmp_path):
     now = datetime(2026, 11, 21, 12, tzinfo=UTC)
     rows = [("2026-11-20", "box list"), ("2026-11-21", "box list"), ("2026-10-01", "stuff put")]
     found = statsreport.calls(rows, {"box list": True, "stuff put": False, "box plumbing": True}, 30, now)
-    assert found.trusted and found.calls == 2 and [c.model_dump() for c in found.commands][0] == {"command": "box list", "calls": 2, "last": "2026-11-21", "hidden": True}
+    assert found.trusted and found.calls == 2 and next(c.model_dump() for c in found.commands) == {"command": "box list", "calls": 2, "last": "2026-11-21", "hidden": True}
     assert {c.command: c.calls for c in found.commands} == {"box list": 2, "stuff put": 0, "box plumbing": 0}
     assert "TRUSTED" in found.render()[0]
     young = statsreport.calls(rows[:2], {"box list": True}, 30, now)

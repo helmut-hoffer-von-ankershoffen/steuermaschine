@@ -78,6 +78,9 @@ code first, then the write paths the diff since the live release reaches.
 - **Narrow interfaces.** Processes through `providers.commands`, GitHub through `providers.forge` and `.ci` or `steuermaschine.github.Gh`, time through `providers.clock`, state through `providers.store`, digests through `steuermaschine.hashing.canonical_sha256`. No `subprocess`, `time.sleep`, `os.environ` or `fcntl` in native code.
 - **Typed settings only.** A plugin field with a `description`, or `config.Environment` for a process variable. No default points at a real path of a machine: a per-machine value defaults to `None`, and the command that needs it refuses and names the key. Secrets are `SecretStr`.
 - **Help and output.** Help in contract form through `H(...)`; every argument and option has its own `help=`. Every command returns a typed model and prints exactly one JSON document with `--format json`. Errors are `Refuse` or `Wait`, never `sys.exit`. `sm self lint` must stay clean.
+- **Visible means declared.** The Heinzel plugin's `native/surface.py` lists the visible commands (twelve verbs); a new
+  command is hidden unless it is listed there. A visible name that moves gets a `Renamed` stub; a name that a job, hook
+  or child process still runs keeps working (`stub=False`). NEXT names visible commands only (`test_native_surface.py`).
 - **Write means write.** A command that changes anything outside the machine, or local state another process acts on, is `writes=True`, and its help says what it changes.
 - **Tests are sandboxed.** HOME, XDG and state directories are temporary; no network, no real `gh`, no sleep. Use `fake_providers()`, `FakeCommands` and `invoke(...)`.
 - **The core stays clean.** ruff, mypy strict, pyright, 90 % line and branch coverage, no dead code. The plugin's debt in `docs/debt.json` may only fall.

@@ -121,7 +121,7 @@ def owner_asks() -> list[str]:
         shown = asks.audit(None, None)
     except (FileNotFoundError, Refuse):  # no transcript or tracking document configured: no asks to show
         return []
-    except Exception as error:  # noqa: BLE001 - an unreadable one: the alarms still print
+    except Exception as error:
         return [f"unknown: {type(error).__name__}: {error}"[:200]]
     return [line for line in shown.render() if line.strip()] if (shown.messages or shown.open) else []
 
@@ -131,6 +131,6 @@ def deadlines() -> list[str]:
 
     try:
         lines = tick(raw=False).render()
-    except Exception as error:  # noqa: BLE001 - one watch failing leaves the alarms
+    except Exception as error:
         return [f"unknown: {type(error).__name__}: {error}"[:200]]
     return [line for line in lines if line.strip() and not line.startswith("OK")]

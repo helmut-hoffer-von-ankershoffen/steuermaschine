@@ -6,6 +6,7 @@ A `World` carries the providers (the runtime of a native call does not cross int
 
 from __future__ import annotations
 
+import contextlib
 import os
 import re
 import threading
@@ -412,10 +413,8 @@ def read_packet(w: World, wave: Path) -> dict[str, Any]:
                 p["apply_refused"] = None if event.get("result") == "success" else str(event.get("reason") or event.get("result"))
     p.update(prepare_arguments(d, p))
     if p["worktree"]:
-        try:
+        with contextlib.suppress(RuntimeError):
             p["subject"] = w.sh(["git", "-C", p["worktree"], "log", "-1", "--format=%s", p["head"]], timeout=5).strip()[:72] or None
-        except RuntimeError:
-            pass
     return p
 
 
@@ -477,10 +476,8 @@ def prepare_arguments(d: Path, p: dict) -> dict[str, Any]:
     else:
         argv = []
     prepared = None
-    try:
+    with contextlib.suppress(OSError, ValueError):
         prepared = json.loads((d / "prepare.out").read_text())
-    except (OSError, ValueError):
-        pass
     if isinstance(prepared, dict) and "members" in prepared:
         out["unknown_args"].append("--packets/--core-repos/--prs: prepare.out is a batch transaction, which cannot be rebuilt from one packet")
         return out
@@ -495,8 +492,7 @@ def prepare_arguments(d: Path, p: dict) -> dict[str, Any]:
             else:
                 out["unknown_args"].append("--expected-remote-head: prepare.out has a pr_update without its old SHA")
     named = [Path(str(recorded.get("cwd") or d)) / argv[i + 1] for i, a in enumerate(argv[:-1]) if a == "--nonconsumers"]
-    texts = _loop_scripts(d, p.get("review_root") or "") + [d / "prepare.err"] + sorted(
-        list(d.glob("*.md")) + list(d.glob("*.log")) + list(d.glob("*.sh")) + list(d.glob("*.cmd")))
+    texts = [*_loop_scripts(d, p.get("review_root") or ""), d / "prepare.err", *sorted(list(d.glob("*.md")) + list(d.glob("*.log")) + list(d.glob("*.sh")) + list(d.glob("*.cmd")))]
     for extra in texts:
         try:
             named += _named_nonconsumers(extra.read_text(errors="replace"), d)

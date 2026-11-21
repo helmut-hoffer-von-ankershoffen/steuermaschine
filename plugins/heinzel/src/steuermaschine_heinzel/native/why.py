@@ -15,11 +15,9 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from steuermaschine.helpdoc import H
 from steuermaschine.models import Model
 
 from . import merge_tier
-from .go import world
 from .go_lib import legacy, probes
 from .queue_lib import core_facts
 

@@ -11,7 +11,6 @@ from steuermaschine.native import Group, native, runtime
 
 from .tasks_lib import beads
 
-
 TASKS = Group("beads tasks", H(
     "beads tasks: create, note, claim, schedule, close and list beads with this project's conventions.",
     "Use for every owner message that is an ask (add --ask), and whenever a bead's state, owner or pull request changes.",
