@@ -61,7 +61,7 @@ WORK_NOTE = Verb("work note", "beads tasks note")
 WORK_DONE = Verb("work done", "beads tasks done")
 REVIEW_NEXT = Verb("review next", "review list")
 
-RELEASE = Default("release", "resume", empty="train status", metavar="[VERSION] | plugin NAME")  # `sm release 0.9.55` is the release driver; bare: where the releases stand
+RELEASE = Default("release", "drive", empty="train status", metavar="[VERSION] | plugin NAME")  # `sm release 0.9.55` is the release driver; bare: where the releases stand
 
 # Old visible names with a new verb. Read-only ones run the new command; writing ones exit 2 and name it.
 RENAMES = [

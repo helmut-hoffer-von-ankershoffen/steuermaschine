@@ -1,9 +1,10 @@
-"""One rule for list options: `--issue A,B` and `--issue A --issue B` mean the same, for every command of every layer.
+"""One rule for lists of keys: `--issue A,B` and `--issue A --issue B` mean the same, for every command of every layer.
 
-`install(root)` gives every option that takes several values (`multiple`) the one shared parser `split`, before its
-values are converted (so `--pr 1,2` works for a list of numbers too). An option whose values may contain a comma
-(`--set NAME=VALUE`) is left alone: its metavar names a `=`. `findings(root)` is the lint: an option that takes one
-value but says it is comma-separated must become a list option instead, so no command splits on its own.
+Opt-in: an option that takes several keys (PR numbers, issue keys, bead ids, labels) says so in its metavar, `KEY[,KEY...]`
+(any metavar that ends in `...]`). `install(root)` gives exactly those options the one shared parser `split`, before
+their values are converted (so `--after 1,2` works for a list of numbers too). Every other option is left alone: a test
+id (`test_x[a,b]`), a text to look for or a path may contain a comma. `findings(root)` is the lint: an option that
+takes one value but says it is comma-separated must become a key list instead, so no command splits on its own.
 """
 
 from __future__ import annotations
@@ -27,8 +28,8 @@ def split(values: Iterable[Any]) -> list[Any]:
 
 
 def splits(param: Any) -> bool:
-    """Whether the shared parser applies: a list option whose values are not NAME=VALUE pairs."""
-    return bool(getattr(param, "multiple", False)) and "=" not in str(getattr(param, "metavar", "") or "")
+    """Whether the shared parser applies: a list option that declared itself a list of keys (metavar `KEY[,KEY...]`)."""
+    return bool(getattr(param, "multiple", False)) and str(getattr(param, "metavar", "") or "").endswith("...]")
 
 
 def _commands(root: Any) -> Iterable[Any]:

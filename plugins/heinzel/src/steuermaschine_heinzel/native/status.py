@@ -38,7 +38,6 @@ class StatusSettings(BaseModel):
     status_gate_notes: dict[str, str] = Field(default={}, description="Repositories without a readable gate: name -> the one line shown for it.")
     status_doc_cap_bytes: int = Field(16 * 1024, description="`sm status --write`: the size the tracking document may not grow past; older checkpoints and log lines move out.")
     status_keep_checkpoints: int = Field(3, description="`sm status --write`: the newest checkpoints that stay in the tracking document.")
-    status_log_dir: Path | None = Field(None, description="Where moved text goes, one file per day (YYYY-MM-DD.md); none: research/log in the tracker's repository.")
 
 
 class StatusGate(Model):
@@ -193,14 +192,51 @@ def status(md: bool = typer.Option(False, "--md", help="Markdown tables, for the
         raise Refuse("--live goes with --write", "sm status --write --live", code=2)
     found = collect(world(), "stale" if stale else "markdown" if md else "table", check)
     if write:
-        found.written = write_document(live)
+        found.written = write_document(live, found)
         found.read_only = False
     return found
 
 
-def write_document(live: bool) -> list[str]:
-    """Cap the tracking document, then the hourly facts; with `live` the handoff commit and push."""
-    from .coord_lib.base import document, journal_lock, tracker_dir
+BEGIN = "<!-- sm status --write: begin (generated; do not edit) -->"
+END = "<!-- sm status --write: end -->"
+
+
+def state_block(found: Status, now: float) -> str:
+    """The state section of the tracking document: release in flight, open pull requests with their action, alarms
+    and what waits for the owner, from the same reads as `sm status`, `sm why` and `sm alarm list`."""
+    from . import alarm
+    from .release_read import release_status
+
+    def lines(read: Any) -> list[str]:
+        try:
+            return [line for line in read() if line.strip()]
+        except Exception as error:  # noqa: BLE001 - one read failing leaves the rest of the section
+            return [f"unknown: {type(error).__name__}: {error}"[:200]]
+
+    shown = found.model_copy(update={"view": "markdown", "check": False, "written": []})
+    stamp = datetime.fromtimestamp(now, UTC).strftime("%Y-%m-%d %H:%M UTC")
+    out = [BEGIN, f"## State now (written by `sm status --write` at {stamp})", "", "**Release**", ""]
+    out += [f"- {line}" for line in lines(lambda: release_status(line=False).render())] or ["- no release in flight"]
+    out += ["", *shown.render(), "", "**Alarms**", ""]
+    out += [f"- {line}" for line in lines(lambda: alarm.alarm_list(check=False).render())]
+    asks = lines(alarm.owner_asks)
+    out += ["", "**For the owner**", "", *([f"- {line}" for line in asks] or ["- nothing open"]), END]
+    return "\n".join(out)
+
+
+def place(text: str, block: str) -> str:
+    """The document with the state section replaced, or inserted before the work instructions (`## 6.`), else at the end."""
+    if BEGIN in text and END in text:
+        head, rest = text.split(BEGIN, 1)
+        return head + block + rest.split(END, 1)[1]
+    lines = text.split("\n")
+    at = next((i for i, line in enumerate(lines) if line.startswith("## 6.")), len(lines))
+    return "\n".join([*lines[:at], block, "", *lines[at:]])
+
+
+def write_document(live: bool, found: Status | None = None) -> list[str]:
+    """Render the state section, cap the tracking document, then the hourly facts; with `live` the handoff commit and push."""
+    from .coord_lib.base import document, journal_lock, log_file
     from .handoff_lib import hour, snapshot
     from .status_lib import cap
 
@@ -208,19 +244,26 @@ def write_document(live: bool) -> list[str]:
     s = rt.settings
     path = document(s)
     limits = cap.Cap(limit=int(s.get("status_doc_cap_bytes") or 16 * 1024), keep=int(s.get("status_keep_checkpoints") or 3))
+    now = rt.providers.clock.now()
+    archive = log_file(s, now)
+    block = state_block(found or Status(), now)
     out: list[str] = []
-    day = datetime.fromtimestamp(rt.providers.clock.now(), UTC).strftime("%Y-%m-%d")
-    folder = Path(os.path.expanduser(str(s.get("status_log_dir")))) if s.get("status_log_dir") else tracker_dir(s) / "research" / "log"
-    archive = folder / f"{day}.md"
+
+    def change(text: str) -> tuple[str, str]:
+        placed = place(text, block)
+        capped, moved = cap.apply(placed, limits)
+        return capped, moved or ("\n" if placed != text else "")  # a new state section is a change even when nothing moves
 
     def keep(moved: str) -> None:  # the moved text is safe before the document shrinks
-        folder.mkdir(parents=True, exist_ok=True)
+        if not moved.strip():
+            return
+        archive.parent.mkdir(parents=True, exist_ok=True)
         with archive.open("a", encoding="utf-8") as handle:
             handle.write(f"\n## Moved from {path.name} by sm status --write\n\n{moved}\n")
 
-    text, capped = core_journal.rewrite(path, lambda t: cap.apply(t, limits), keep, [journal_lock(s)])
-    if capped != text:
-        out.append(f"{path.name}: {len(text.encode())} -> {len(capped.encode())} bytes; the rest moved to {archive}")
+    text, capped = core_journal.rewrite(path, change, keep, [journal_lock(s)])
+    out.append(f"{path.name}: state section written; {len(text.encode())} -> {len(capped.encode())} bytes" +
+               (f"; older checkpoints and log lines moved to {archive}" if len(capped) < len(place(text, block)) else ""))
     if (size := len(capped.encode())) > limits.limit:
         out.append(f"{path.name} is {size} bytes, over the cap of {limits.limit}: the rest is not checkpoints or log; shorten it by hand")
     try:
@@ -228,4 +271,3 @@ def write_document(live: bool) -> list[str]:
     except snapshot.StepFailed as stop:
         raise Refuse(str(stop), "sm status --write") from None
     return out + [line for line in done.render()[:3]]
-

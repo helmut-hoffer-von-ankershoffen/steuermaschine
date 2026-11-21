@@ -20,7 +20,7 @@ from typing import Any, NoReturn
 import typer
 from pydantic import BaseModel, RootModel
 
-from . import ALARM, API_VERSION, INTERNAL, OK, PROG, REFUSED, USAGE, WAITING, dispatch, helpdoc, listopts, models, plugins, reviewgraph, statemove, statsreport, surface, toolmap, usagelog, verdicts
+from . import ALARM, API_VERSION, INTERNAL, OK, PROG, REFUSED, USAGE, WAITING, dispatch, helpdoc, listopts, models, plugins, reviewgraph, statemove, statsreport, subjects, surface, toolmap, usagelog, verdicts
 from . import config as config_mod
 from . import go as go_mod
 from . import native as native_mod
@@ -452,28 +452,17 @@ def _self(rt: Runtime, app: typer.Typer) -> None:
     @self_.command("migrate-state", context_settings=CTX, short_help="Move state files to the names of this release, or back.", help=H(
         "Move the state files an earlier release used to the names of this release, in one pass, or back with --back.",
         "Use when a command refuses because state is not migrated; bin/promote runs it before the switch and bin/rollback runs --back.",
-        "state files: each old path moves to its new name and becomes a link to it (--back: the reverse). --check and --list change nothing.",
+        "state files: each old path moves to its new name and becomes a link to it, and pipeline run states move into their subject journals"
+        " (--back: the reverse). --check and --list change nothing.",
         f"{PROG} self migrate-state --check", f"{PROG} go"))
     def migrate_state(back: bool = typer.Option(False, "--back", help="Move every new path back to its old name (for an older release)."),
                       check: bool = typer.Option(False, "--check", help="Only say which paths still hold state at the old name; exit 3 if any."),
                       listing: bool = typer.Option(False, "--list", help="Only list every move with its state."),
                       keep: Path | None = typer.Option(None, "--keep", metavar="FILE", help="With --back: a JSON list (from --list --format json of the target release) of moves that stay."),
                       wait: int = typer.Option(600, "--wait", metavar="SECONDS", help="How long to wait for running write commands to finish before refusing."),
-                      journal: bool = typer.Option(False, "--journal", help="Also move finished runs, and runs not updated for --older-than days, into their journals."),
-                      older_than: float = typer.Option(2.0, "--older-than", metavar="DAYS", help="With --journal: a run not updated for this many days is history."),
                       as_json: bool = JSON) -> None:
         if rt.project is None:
             fail("no project: there is no state to migrate", USAGE)
-        if journal:
-            try:
-                with _exclusive_writers(rt, wait):
-                    moved = go_mod.journal_history(rt.providers.store, rt.project.home / go_mod.JOURNALS, rt.providers.clock.now(), older_than)
-            except statemove.MigrationError as exc:
-                fail(f"state not journaled: {exc}", INTERNAL, hint="nothing moved; run it again once no write command runs")
-            found = models.StateMigration(action="journal", moves=[models.StateMoveRow(old=old, new=new, state="moved") for old, new in moved],
-                                          done=[f"{old} -> {new}" for old, new in moved])
-            emit(as_json, found.model_dump(), found.render(), models.StateMigration)
-            return
         moves = rt.plugin.state_moves(rt.settings, rt.project.home) if rt.plugin is not None else []
         if keep is not None and back:
             kept = {row.get("old") for row in json.loads(keep.read_text()).get("moves", [])}
@@ -498,6 +487,10 @@ def _self(rt: Runtime, app: typer.Typer) -> None:
         try:
             with _exclusive_writers(rt, wait):
                 done = statemove.back(moves, note) if back else statemove.forward(moves, note)
+                runs = subjects.unmigrate_runs(rt.project.home) if back else subjects.migrate_runs(rt.project.home)  # run state <-> subject journals
+                for line in runs:
+                    note(line)
+                done = [*done, *runs]
         except statemove.MigrationError as exc:
             fail(f"state not migrated: {exc}", INTERNAL, hint="nothing moved; fix the named paths, then run it again")
         result = models.StateMigration(action="back" if back else "forward", moves=rows(), done=done)

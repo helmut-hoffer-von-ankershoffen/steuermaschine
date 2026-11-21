@@ -19,7 +19,6 @@ from .defaults import ReadOnlyStore
 from .plugins import Alarm, GoItem
 
 RANK = {"refused": 20, "dry_run": 25, "review": 30, "waiting": 40}
-JOURNALS = "journals"  # one JSON lines file per pipeline: the runs that are history, one line each
 HISTORY_DAYS = 2.0  # a run not updated for this many days is history: never a NEXT
 
 
@@ -37,26 +36,6 @@ def is_history(state: dict[str, Any], now: float, days: float) -> bool:
     """A finished run, or one not updated for `days`: history, which never produces a NEXT."""
     at = updated_at(state)
     return state.get("status") == "finished" or (at is not None and now - at > days * 86400)
-
-
-def journal_history(store: Any, folder: Any, now: float, days: float) -> list[tuple[str, str]]:
-    """Move every run that is history out of the run states into `folder/<pipeline>.jsonl` (append first, then delete).
-    Returns (state, journal) per moved run."""
-    import json
-
-    moved = []
-    for kind in sorted(k for k in _kinds(store) if k.startswith("runs.")):
-        for key in store.keys(kind):
-            state = store.load(kind, key)
-            if not state or not is_history(state, now, days):
-                continue
-            folder.mkdir(parents=True, exist_ok=True)
-            target = folder / f"{kind.removeprefix('runs.')}.jsonl"
-            with target.open("a", encoding="utf-8") as out:
-                out.write(json.dumps({"key": key, "journaled_at": now, "state": state}, sort_keys=True, default=str) + "\n")
-            store.delete(kind, key)
-            moved.append((f"{kind}/{key}", str(target)))
-    return moved
 
 
 def run_states(store: Any) -> list[dict[str, Any]]:

@@ -30,7 +30,7 @@ ID = typer.Argument(..., metavar="ID", help="The bead id, full or the short suff
     "due-YYYYMMDD-HHMM in local time."))
 def beads_tasks_add(title: str = typer.Argument(..., metavar="TITLE", help="The bead title, one line."), priority: str = typer.Option("2", "-p", "--priority", metavar="N", help="0 (highest) to 4."),
                     agent: str = typer.Option("", "-a", "--assignee", metavar="AGENT", help="Who works on it."),
-                    labels: list[str] | None = typer.Option(None, "-l", "--labels", metavar="LABEL", help="A label."),
+                    labels: list[str] | None = typer.Option(None, "-l", "--labels", metavar="LABEL[,LABEL...]", help="A label."),
                     due: str | None = typer.Option(None, "--due", metavar="WHEN", help="HH:MM today, or YYYY-MM-DD HH:MM."),
                     description: str = typer.Option("", "-d", "--description", metavar="TEXT", help="The owner's words."),
                     kind: str = typer.Option("task", "--type", metavar="TYPE", help="task, bug, feature, ..."),

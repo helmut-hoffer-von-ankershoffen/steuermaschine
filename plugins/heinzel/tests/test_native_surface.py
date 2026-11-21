@@ -3,6 +3,7 @@ NEXT a visible command that parses, the cold-help eval table, and the paths serv
 
 import inspect
 import json
+from types import SimpleNamespace
 import tomllib
 from pathlib import Path
 
@@ -122,20 +123,30 @@ def test_the_document_cap_moves_old_checkpoints_then_log_lines():
     assert cap.apply("y" * 500, cap.Cap(limit=10)) == ("y" * 500, "")
 
 
-def test_status_write_caps_the_document(tmp_path):
+def test_status_write_renders_the_state_section_and_caps_the_document(tmp_path, monkeypatch):
+    from steuermaschine.native import NativeRuntime, using
+    from steuermaschine_heinzel.native import alarm, status as status_mod
+    from steuermaschine_heinzel.native.handoff_lib import hour
+
     doc = tmp_path / "AGENTS.md"
-    doc.write_text("# Doc\n## 5. State\n" + "".join(f"### c{n}\n" + "x" * 40 + "\n" for n in range(5)) + "## 8. Log\n- 11-21 10:00 one\n")
+    doc.write_text("# Doc\n## 5. State\n" + "".join(f"### c{n}\n" + "x" * 40 + "\n" for n in range(5)) + "## 6. Work\nrules\n## 8. Log\n- 11-21 10:00 one\n")
+    monkeypatch.setattr(alarm, "alarm_list", lambda check=False: alarm.Alarms(checked=False))
+    monkeypatch.setattr(alarm, "owner_asks", lambda: ["one message"])
+    monkeypatch.setattr(hour, "build", lambda *a, **k: SimpleNamespace(render=lambda: ["facts"]))
+    rt = app_runtime(tmp_path, coord_document=str(doc), status_doc_cap_bytes=300, coord_log_dir=str(tmp_path / "log"))
+    with using(NativeRuntime(rt.providers, rt.settings, rt.project, commands=lambda: [])):
+        lines = status_mod.write_document(False, status_mod.Status())
+        again = status_mod.write_document(False, status_mod.Status())
+    text = doc.read_text()
+    assert text.count(status_mod.BEGIN) == 1 and text.index(status_mod.BEGIN) < text.index("## 6. Work") and "- one message" in text
+    assert "### c2" in text and "### c3" not in text and lines[-1] == "facts" and again[-1] == "facts"
+    archive = next((tmp_path / "log").glob("*.md")).read_text()
+    assert "### c4" in archive
+
+
+def test_place_replaces_or_appends_the_state_section():
     from steuermaschine_heinzel.native import status as status_mod
 
-    rt = app_runtime(tmp_path, coord_document=str(doc), status_doc_cap_bytes=120, status_log_dir=str(tmp_path / "log"))
-    from steuermaschine.native import NativeRuntime, using
-
-    with using(NativeRuntime(rt.providers, rt.settings, rt.project, commands=lambda: [])):
-        try:
-            lines = status_mod.write_document(False)
-        except Exception as error:
-            lines = [str(error)]
-    assert "### c2" in doc.read_text() and "### c3" not in doc.read_text()
-    archive = next((tmp_path / "log").glob("*.md")).read_text()
-    assert "### c4" in archive and lines
-    assert json.loads(json.dumps(lines))
+    block = f"{status_mod.BEGIN}\nnew\n{status_mod.END}"
+    assert status_mod.place(f"a\n{status_mod.BEGIN}\nold\n{status_mod.END}\nb", block) == f"a\n{block}\nb"
+    assert status_mod.place("a\nb", block) == f"a\nb\n{block}\n"

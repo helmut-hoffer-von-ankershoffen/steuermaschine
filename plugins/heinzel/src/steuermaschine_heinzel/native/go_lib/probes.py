@@ -256,7 +256,7 @@ def probe_receipts(w: World) -> list[Any]:
 
 PIPELINE_KINDS = ("runs.head.admit", "runs.release.cut")
 OPEN = ("finished", "superseded")
-HISTORY_DAYS = 2.0  # a run not updated for this long is history (setting go_history_days): `sm self migrate-state --journal` moves it
+HISTORY_DAYS = 2.0  # a run not updated for this long is history (setting go_history_days): its journal keeps it, go skips it
 ADMIT_STEPS = ("check", "pr", "queue")  # the steps of `sm head admit` today; a run that names any other is state of the deleted admission
 
 

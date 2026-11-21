@@ -185,7 +185,7 @@ def _inflight(f: dict[str, Any]) -> InFlight:
 def combine_plan(prs: list[int] = typer.Argument(None, help="Explicit member PRs (skips the label requirement)."),
                  area: str = typer.Option("web", "--area", help=f"One of {', '.join(moved.AREAS)}."),
                  plugin: str | None = typer.Option(None, "--plugin", help="With --area plugin: the plugin (one combine per plugin)."),
-                 without: list[int] = typer.Option([], "--without", help="Leave this PR out; repeatable."),
+                 without: list[int] = typer.Option([], "--without", metavar="PR[,PR...]", help="Leave this PR out; repeatable."),
                  repo: str = REPO) -> CombinePlan:
     if area not in moved.AREAS:
         raise Refuse(f"--area must be one of {', '.join(moved.AREAS)}", "sm head combine plan --help", code=2)

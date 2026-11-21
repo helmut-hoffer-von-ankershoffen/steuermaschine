@@ -265,7 +265,7 @@ def decide(s: dict, now: float, w: Words | None = None, stall_minutes: int = 15)
             continue
         items.extend(pipeline_items(run, main_sha, w, item))
     if history:
-        items.append(item("history", f"{history} run(s) of versions that are out are history: `sm self migrate-state --journal` moves them to their journals"))
+        items.append(item("history", f"{history} run(s) of versions that are out are history; their journals keep them"))
 
     # 5. pull requests
     queued = set(queue.get("queued", []))

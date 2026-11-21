@@ -34,7 +34,7 @@ class GoSettings(BaseModel):
     go_packet_globs: list[str] = Field([], description="Globs of admission wave.json files (direct and predict/bound route). Empty: no packet is listed.")
     go_packet_hours: float = Field(30.0, description="How old an admission packet may be to be listed.")
     go_stall_minutes: int = Field(15, description="A green queued PR unmerged for this long is STALLED.")
-    go_history_days: float = Field(2.0, description="A pipeline run not updated for this many days is history: never a NEXT; `sm self migrate-state --journal` moves it.")
+    go_history_days: float = Field(2.0, description="A pipeline run not updated for this many days is history: it stays in its journal and is never a NEXT.")
     go_budget_seconds: float = Field(18.0, description="Deadline for all probes of `go` together.")
     go_pr_actions_file: Path | None = Field(None, description="The reviewed PR action table (TOML with hold = true rows); none: no PR holds are known.")
     mini_cli: str = Field("hz", description="The command of the product on this machine, asked for its version.")

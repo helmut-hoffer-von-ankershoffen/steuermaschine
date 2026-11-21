@@ -285,7 +285,7 @@ def _changed(action: str, argv: list[str], prs: list[str], after: list[str] | No
     "sm queue list"))
 def queue_add(
     pr: list[str] = typer.Argument(..., metavar="PR...", help="PR numbers; `plugins 38` names a PR of another repository."),
-    after: list[str] = typer.Option([], "--after", metavar="PR", help="Merge only after this PR merged (repeatable)."),
+    after: list[str] = typer.Option([], "--after", metavar="PR[,PR...]", help="Merge only after this PR merged (repeatable)."),
     bead: str | None = typer.Option(None, "--bead", help="The bead this PR closes; recorded at the merge."),
     reviewed: str | None = typer.Option(None, "--reviewed", metavar="REASON", help="Queue a PR the diff guard flagged; the reason of the independent review."),
     reviewed_head: str | None = typer.Option(None, "--reviewed-head", metavar="SHA", help="Pin one core PR to its independently reviewed full SHA; needs --reviewed."),

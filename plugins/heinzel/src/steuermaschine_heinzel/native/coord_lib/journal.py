@@ -3,7 +3,7 @@
 Two functions other areas import (inside a native command, where `runtime()` is set; or pass `rt`):
 
     from steuermaschine_heinzel.native.coord_lib.journal import note, stamp
-    note("queue: #12 merged")                       # one dated line at the end of the tracking document
+    note("queue: #12 merged")                       # one dated line in the log of the day (coord_log_dir)
     stamp("abc", merged=12)                         # `merged_in:` note and label merged-12 on the bead, once
     stamp("abc", released="0.9.40")                 # `released_in:` note and label released-v0.9.40, once
 
@@ -25,14 +25,14 @@ from steuermaschine.github import Gh
 from steuermaschine.models import Model
 from steuermaschine.native import runtime
 
-from .base import child_env, document, journal_lock, setting, tracker_dir
+from .base import child_env, journal_lock, log_file, setting, tracker_dir
 
 TAG = re.compile(r"v?(\d+)\.(\d+)\.(\d+)$")
 
 
 # ----------------------------------------------------------------------------- note
 class Noted(Model):
-    """One line appended to the journal of the tracking document."""
+    """One line appended to the log of the day."""
 
     line: str
     document: str
@@ -42,10 +42,13 @@ class Noted(Model):
 
 
 def note(line: str, rt: Any = None) -> Noted:
-    """Append one dated line to the log at the end of the tracking document. Safe when several agents write at once."""
+    """Append one dated line to the log (the file of the day in coord_log_dir), never to the tracking document: only
+    `sm status --write` writes state there. Safe when several agents write at once."""
     rt = rt or runtime()
-    target = document(rt.settings)
-    written = core_journal.append(target, line, rt.providers.clock.now(), lock_file=journal_lock(rt.settings))
+    now = rt.providers.clock.now()
+    target = log_file(rt.settings, now)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    written = core_journal.append(target, line, now, lock_file=journal_lock(rt.settings))
     return Noted(line=written, document=str(target))
 
 

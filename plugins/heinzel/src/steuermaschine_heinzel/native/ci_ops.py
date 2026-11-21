@@ -606,7 +606,7 @@ def rejudge_after(rt: NativeRuntime, pr: int) -> tuple[list[str], bool]:
 def ci_sonar_close(config: Path | None = typer.Option(None, "--config", metavar="FILE", help="Another reviewed manifest (default: setting ci_ops_sonar_closures_file)."),
                    apply: bool = typer.Option(False, "--apply", help="Change Sonar. Without it the command only shows what it would close."),
                    pull_request: int | None = typer.Option(None, "--pull-request", metavar="NUMBER", help="Close exact reviewed issues of this pull request."),
-                   issue: list[str] | None = typer.Option(None, "--issue", metavar="KEY", help="An exact issue key; needs --pull-request.")) -> SonarClose:
+                   issue: list[str] | None = typer.Option(None, "--issue", metavar="KEY[,KEY...]", help="An exact issue key; needs --pull-request.")) -> SonarClose:
     rt = runtime()
     lines: list[str] = []
     edge = sonar_close.Edge(commands=providers_of(rt).commands, out=lines.append)
@@ -636,7 +636,7 @@ def ci_sonar_close(config: Path | None = typer.Option(None, "--config", metavar=
     "The same plan and checks as before (the old name was sm ci sonar-close --pull-request PR): every requested key must be\n"
     "open, in that PR, in that project, file and rule; any mismatch refuses with no write. A code smell needs a new head."))
 def review_sonar(pr: int = typer.Argument(..., metavar="PR", help="The pull request whose reviewed issues are closed."),
-                 issue: list[str] | None = typer.Option(None, "--issue", metavar="KEY", help="An exact issue key."),
+                 issue: list[str] | None = typer.Option(None, "--issue", metavar="KEY[,KEY...]", help="An exact issue key."),
                  apply: bool = typer.Option(False, "--apply", help="Change Sonar. Without it the command only shows what it would close."),
                  config: Path | None = typer.Option(None, "--config", metavar="FILE", help="Another reviewed manifest (default: setting ci_ops_sonar_closures_file).")) -> SonarClose:
     return ci_sonar_close(config=config, apply=apply, pull_request=pr, issue=issue)

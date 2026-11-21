@@ -30,8 +30,9 @@ class Seen(Model):
 
 
 @native("box list", help=H("List the box.", "Use when testing.", "nothing (read-only).", "sm box list", "sm go"))
-def box_list(kind: str = typer.Argument("all", help="Which kind."), tag: list[str] | None = typer.Option(None, "--tag", metavar="TAG", help="A tag.")) -> Seen:
-    return Seen(what=f"list {kind}", items=list(tag or []))
+def box_list(kind: str = typer.Argument("all", help="Which kind."), tag: list[str] | None = typer.Option(None, "--tag", metavar="TAG[,TAG...]", help="A tag."),
+             text: list[str] | None = typer.Option(None, "--text", metavar="TEXT", help="A text that may hold a comma.")) -> Seen:
+    return Seen(what=f"list {kind}", items=[*(tag or []), *(text or [])])
 
 
 @native("box put", writes=True, help=H("Put into the box.", "Use when testing.", "writes the box.", "sm box put x", "sm go"))
@@ -162,7 +163,9 @@ def test_a_project_without_a_surface_is_unchanged(tmp_path):
 
 
 def test_list_options_take_repeats_and_comma_lists_through_one_parser():
-    assert invoke(rt(), ["stuff", "list", "--tag", "a,b", "--tag", "c"]).stdout == "list all a,b,c\n"
+    assert json.loads(invoke(rt(), ["--format", "json", "stuff", "list", "--tag", "a,b", "--tag", "c"]).stdout)["items"] == ["a", "b", "c"]
+    kept = json.loads(invoke(rt(), ["--format", "json", "stuff", "list", "--text", "test_x[a,b]", "--text", "c"]).stdout)["items"]
+    assert kept == ["test_x[a,b]", "c"]  # not a key list: a comma inside a value stays
     assert listopts.split(["a, b", "", "c", 3]) == ["a", "b", "c", 3]
     root = command_tree(rt())
     assert "Repeat it, or give A,B." in next(p.help for p in surface.find(root, "stuff list").params if "--tag" in getattr(p, "opts", []))
@@ -212,29 +215,10 @@ def test_only_real_calls_are_counted(tmp_path, monkeypatch):
     assert doc["calls"] == 1 and {"command": "box plumbing", "calls": 0, "last": "", "hidden": True} in doc["commands"]
 
 
-def test_old_runs_move_to_their_journals(tmp_path):
-    from steuermaschine.defaults import FileStore
-
-    store = FileStore(tmp_path)
-    old, fresh = "2026-11-01T10:00:00+0000", "2026-11-21T10:00:00+0000"
-    store.save("runs.box.run", "1.0.0", {"status": "refused", "updated": old})
-    store.save("runs.box.run", "1.0.1", {"status": "refused", "updated": fresh})
-    store.save("runs.box.run", "1.0.2", {"status": "finished"})
+def test_history_is_finished_or_untouched_for_days():
     now = datetime(2026, 11, 21, 12, tzinfo=UTC).timestamp()
-    assert go.is_history({"updated": "nonsense"}, now, 2) is False
-    moved = go.journal_history(store, tmp_path / go.JOURNALS, now, 2)
-    assert sorted(m[0] for m in moved) == ["runs.box.run/1.0.0", "runs.box.run/1.0.2"] and store.keys("runs.box.run") == ["1.0.1"]
-    lines = [json.loads(x) for x in (tmp_path / go.JOURNALS / "box.run.jsonl").read_text().splitlines()]
-    assert [x["key"] for x in lines] == ["1.0.0", "1.0.2"]
-
-
-def test_migrate_state_journal_command(tmp_path, monkeypatch):
-    monkeypatch.setenv("STEUERMASCHINE_HOME", str(tmp_path))
-    r = rt(tmp_path)
-    r.providers.store.save("runs.box.run", "1.0.0", {"status": "finished"})
-    out = invoke(r, ["self", "migrate-state", "--journal"])
-    assert out.exit_code == 0 and "runs.box.run/1.0.0 ->" in out.stdout
-    assert invoke(r, ["self", "migrate-state", "--journal"]).stdout == "nothing to move\n"
+    assert go.is_history({"status": "finished"}, now, 2) and go.is_history({"updated": "2026-11-01T10:00:00+0000"}, now, 2)
+    assert not go.is_history({"updated": "2026-11-21T10:00:00+0000"}, now, 2) and not go.is_history({"updated": "nonsense"}, now, 2)
 
 
 def test_rewrite_keeps_the_moved_text_first(tmp_path):
