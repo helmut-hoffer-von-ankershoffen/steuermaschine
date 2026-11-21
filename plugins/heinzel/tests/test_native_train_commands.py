@@ -216,7 +216,7 @@ def test_a_dry_tick_with_an_open_release_pr_starts_nothing_and_says_why(rt, gh, 
     monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: pytest.fail("a dry tick started a process"))
     gh.on("pr list", [{"headRefName": "release/v0.9.41"}])
     before = {p.name: p.read_bytes() for p in (rt.home / "train").iterdir()}
-    out, tick = doc(rt, area.TrainTick, "daemon", "train", "--dry-run")
+    out, tick = doc(rt, area.TrainTick, "daemon", "train", "--local", "--dry-run")
     assert out.exit_code == 0 and tick.action == "tick" and tick.lines[0].startswith("sm release train 20")
     assert any(line.startswith("skip:") for line in tick.lines), tick.lines
     assert {p.name: p.read_bytes() for p in (rt.home / "train").iterdir() if p.name != "train.lock"} == before and gh.writes() == []
@@ -365,7 +365,7 @@ def test_a_setting_wins_over_the_old_variable_and_the_tick_says_so(rt, gh, monke
     monkeypatch.setenv("HZ_TRAIN_CHECKOUT", "/elsewhere")
     monkeypatch.setenv("HZ_RELEASE_DIR", "/private/tmp/other-release")
     monkeypatch.setenv("HZ_TRAIN_EVERY", "120")
-    out = invoke(rt, ["daemon", "train", "--dry-run"])
+    out = invoke(rt, ["daemon", "train", "--local", "--dry-run"])
     assert out.exit_code == 0
     assert f"warning: HZ_TRAIN_CHECKOUT=/elsewhere is ignored; the setting heinzel.release_train_checkout ({rt.home / 'checkout'}) wins" in out.stderr
     assert "warning: HZ_RELEASE_DIR=/private/tmp/other-release is ignored; a release of the train is prepared in the train's checkout" in out.stderr
@@ -382,7 +382,7 @@ def test_no_warning_when_the_variables_agree_or_are_unset(rt, gh, monkeypatch):
     gh.on("pr list", [{"headRefName": "release/v0.9.41"}])
     monkeypatch.setenv("HZ_RELEASE_DIR", str(rt.home / "checkout"))
     monkeypatch.setenv("HZ_TRAIN_STATE_DIR", str(rt.home / "train"))
-    assert "warning" not in invoke(rt, ["daemon", "train", "--dry-run"]).stderr
+    assert "warning" not in invoke(rt, ["daemon", "train", "--local", "--dry-run"]).stderr
 
 
 # ----------------------------------------------------------------------------- the live state files, adopted as they are

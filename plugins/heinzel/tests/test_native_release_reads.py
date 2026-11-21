@@ -61,9 +61,11 @@ def doc(rt, model, *args):
 
 # ----------------------------------------------------------------------------- status
 def test_status_without_a_release_in_flight_reads_the_real_train_files(rt, gh):
+    gh.on("run list", [])
     out = invoke(rt, ["release", "status"])
-    assert out.exit_code == 0 and out.stdout.strip() == "no release in flight"  # 0.9.35 is done, 0.9.36 is cleared
-    assert gh.calls == []
+    assert out.exit_code == 0 and out.stdout.splitlines()[0] == "no release in flight"  # 0.9.35 is done, 0.9.36 is cleared
+    assert out.stdout.splitlines()[1] == "CI release chain: no run yet (sm release VERSION dispatches one)"
+    assert all("release-chain.yml" in " ".join(call) for call in gh.calls)  # the CI chain only; the local train is files
     out, status = doc(rt, area.ReleaseStatus, "release", "status", "--line")
     assert status.active is False and status.lines == []
 

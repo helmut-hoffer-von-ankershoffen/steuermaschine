@@ -152,7 +152,8 @@ def run(module, argv: list[str], live: bool = False) -> tuple[int, list[str]]:
 class TrainTick(Model):
     """One tick of the release train's dispatcher, or the run of one release."""
 
-    action: str = Field(description="tick: start idle runners, then decide on a cut. run: take one release as far as it goes.")
+    action: str = Field(description="follow: make the newest accepted release live here, then iOS. tick (--local): start idle runners, then decide on a "
+                                    "cut. run: take one release as far as it goes.")
     version: str = ""
     exit: int = Field(description="0 done or nothing to do, 1 a step failed (the next tick resumes), 3 blocked or refused.")
     lines: list[str] = []
@@ -166,24 +167,32 @@ class TrainTick(Model):
 
 
 @native("daemon train", writes=True, tick=True, replaces=("hz-train",), help=H(
-    "One tick of the release train: start a runner for every active release that has none, then cut when every condition holds.",
+    "One tick of the Mini's release follower: when a newer Core release is accepted, make it live here, then build iOS.",
     "Use for the launchd job (every 10 minutes); by hand for a single tick only while that job is stopped.",
-    "may start detached release runners (`--run`), which freeze merges, merge the release PR, tag and publish; writes the train's state, logs and notes.",
-    "sm daemon train", "sm release train status",
-    "A cut needs: no train before its tag or blocked, no foreign unfinished release, the previous tail at least at its\n"
-    "acceptance dispatch, no open release PR, no merge freeze, releasable commits on main, the main gate ok, and\n"
-    "auto-cut on (setting release_train_auto_cut; off by default) or --now. A runner takes its release to LIVE-OK:\n"
-    "`sm release resume X --live`, then `sm mini update --minimum X` every tick until the Mini proves it.\n"
-    "--run X.Y.Z is the detached runner of one release (started by the tick; it takes that version's lock itself).\n"
-    "Exit 0: done or nothing to do. 1: a step failed, the next tick resumes. 3: blocked or refused."))
+    "runs `sm mini update --minimum X` (updates and restarts the live hz on this machine) and `sm release ios X` (uploads "
+    "to TestFlight) once per accepted release; writes what it followed to the store.",
+    "sm daemon train", "sm release status",
+    "The release itself runs in GitHub Actions (Core's workflow \"Release\", `sm release VERSION`) and needs no\n"
+    "machine of ours. The follower acts only on the Latest release whose acceptance.json says accepted, retries\n"
+    "`sm mini update` every tick until LIVE-OK, then `sm release ios X` up to 3 times (skipped while that command\n"
+    "does not exist). Exit 0: done or nothing to do. 1: a step failed, the next tick resumes."))
 def daemon_train(dry_run: bool = typer.Option(False, "--dry-run", help="Say what the tick would do; start and write nothing."),
-                 now: bool = typer.Option(False, "--now", help="Cut in this tick even with auto-cut off; skips the cadence floor. Every other condition still holds."),
-                 run_version: str | None = typer.Option(None, "--run", metavar="X.Y.Z", help="Run one release under its own lock (what the tick starts detached).")) -> TrainTick:
+                 now: bool = typer.Option(False, "--now", hidden=True, help="With --local: cut in this tick even with auto-cut off."),
+                 run_version: str | None = typer.Option(None, "--run", metavar="X.Y.Z", hidden=True,
+                                                        help="With the local train: run one release under its own lock (what its tick starts detached)."),
+                 local: bool = typer.Option(False, "--local", hidden=True, help="Fallback for one release: the old local train tick that cuts and drives releases.")) -> TrainTick:
     if run_version is not None:
         if not VERSION.fullmatch(run_version) or dry_run or now:
             raise Refuse("--run takes one exact version X.Y.Z and no other option", "sm daemon train --help", code=2)
         code, lines = run(train(warn=True), ["run", run_version], live=True)
         return TrainTick(action="run", version=run_version, exit=code, lines=lines)
+    if not local:
+        if now:
+            raise Refuse("the release runs in CI: cut with `sm release VERSION`; --now belongs to the hidden --local train", "sm release --help", code=2)
+        from .release_ci import follow
+
+        done = follow(dry_run)
+        return TrainTick(action="follow", version=done.version, exit=done.exit, lines=done.lines)
     code, lines = run(train(warn=True), ["tick", *(["--dry-run"] if dry_run else []), *(["--now"] if now else [])])
     return TrainTick(action="tick", exit=code, lines=lines)
 
