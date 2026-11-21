@@ -40,6 +40,7 @@ from .native.plugin_gallery import GallerySettings
 from .native.preflight import PreflightSettings
 from .native.queue import QueueSettings
 from .native.refill import RefillSettings
+from .native.release_ios import IosSettings
 from .native.release_lib.binding import ReleaseSettings
 from .native.ship import ShipSettings
 from .native.skills import SkillsSettings
@@ -52,7 +53,7 @@ from .native.why import WhySettings
 from .native.window import WindowSettings
 
 
-class HeinzelSettings(AdmissionSettings, WindowSettings, AgentsSettings, AskAlarmSettings, AsksSettings, BriefSettings, CiOpsSettings, CiSettings, ClassifySettings, CombineSettings, CoordSettings, DispatchSettings, DocsSettings, FlakesSettings, GallerySettings, GoSettings, GuardsSettings, HandoffSettings, LeakwatchSettings, LoadguardSettings, LockSettings, LoopsSettings, MergeTierSettings, MiniSettings, PreflightSettings, QueueSettings, RefillSettings, ReleaseSettings, SelectSettings, ShipSettings, SkillsSettings, StatusSettings, TickSettings, TrainSettings, UpdaterHoldSettings, VelocitySettings, WhySettings, BaseModel):
+class HeinzelSettings(AdmissionSettings, WindowSettings, AgentsSettings, AskAlarmSettings, AsksSettings, BriefSettings, CiOpsSettings, CiSettings, ClassifySettings, CombineSettings, CoordSettings, DispatchSettings, DocsSettings, FlakesSettings, GallerySettings, GoSettings, GuardsSettings, HandoffSettings, IosSettings, LeakwatchSettings, LoadguardSettings, LockSettings, LoopsSettings, MergeTierSettings, MiniSettings, PreflightSettings, QueueSettings, RefillSettings, ReleaseSettings, SelectSettings, ShipSettings, SkillsSettings, StatusSettings, TickSettings, TrainSettings, UpdaterHoldSettings, VelocitySettings, WhySettings, BaseModel):
     """The table [heinzel]. Every field can also be set as SM_HEINZEL__<FIELD> in the environment.
     Each area adds its fields as a mixin in its own module and is listed in the bases here."""
 

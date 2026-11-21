@@ -222,6 +222,20 @@ def release_alarm(receipt: dict | None, changed_at: float | None, active_release
 
 
 
+def ios_alarm(receipt: dict | None, now: float, stuck: int = 3600) -> dict | None:
+    """The newest release's TestFlight step (release_lib/ios.py receipt): NOT-CLEAN is an ALERT until it is clean; a
+    step still running `stuck` seconds after its start is an ALERT too (it died or hangs)."""
+    if not receipt or receipt.get("clean") is True:
+        return None
+    version = receipt.get("version")
+    if receipt.get("running"):
+        started = stamp(receipt.get("at"))
+        if started is None or now - started < stuck:
+            return None
+        return alarm("ALERT", f"ios:{version}:stuck", f"IOS v{version} TestFlight step running for {minutes(started, now)} min; sm release ios {version}")
+    return alarm("ALERT", f"ios:{version}", f"IOS v{version} NOT-CLEAN on TestFlight: {str(receipt.get('reason') or '?')[:100]}; sm release ios {version}")
+
+
 def required_contexts(rules) -> list[str]:
     """REQUIRED narrowed to what main's rules demand; all of REQUIRED when the rules cannot be read."""
     if not isinstance(rules, list):

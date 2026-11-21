@@ -6,6 +6,7 @@ from __future__ import annotations
 from ..go_lib import legacy
 from ..go_lib.probes import World
 from ..queue_lib import core_facts
+from ..release_lib import ios
 from . import rules
 
 
@@ -20,7 +21,7 @@ def collect(w: World, now: float) -> list[dict]:
     def guarded(name: str, check) -> None:
         try:
             out.extend(a for a in (check() or []) if a)
-        except Exception as error:  # noqa: BLE001  one blind check must not hide the others
+        except Exception as error:
             out.append(rules.alarm("WARN", f"blind:{name}", f"ALARM CHECK {name} unavailable: {str(error)[:80]}"))
 
     def stalls():
@@ -118,6 +119,7 @@ def collect(w: World, now: float) -> list[dict]:
     guarded("admission", lambda: rules.admission_alarms(runs(), covered(), now, waiting=waiting()))
     guarded("registry-slots", slots)
     guarded("release", release)
+    guarded("ios", lambda: [rules.ios_alarm(ios.latest_receipt(w.state_dir), now, ios.STUCK_SECONDS)])
     return out
 
 

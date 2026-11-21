@@ -20,6 +20,7 @@ from steuermaschine.models import Model
 from . import merge_tier
 from .go_lib import legacy, probes
 from .queue_lib import core_facts
+from .release_lib import ios
 
 REQUIRED = core_facts.CONTEXTS  # the required contexts of Core's release policy at main
 
@@ -63,6 +64,7 @@ class PullRequestWhy(Model):
     roles_known: bool = False
     gate_notes: list[str] = []  # clauses of the merge gate's verdict that only inform (Core ADR 0149): never red
     advisory_failing: dict[str, list[str]] = {}  # advisory lane -> its failing names (consumers: the plugins)
+    ios: str = ""  # the newest release's TestFlight step (release_lib/ios.py): build and group, or NOT-CLEAN
     why: str = ""
     more: list[str] = Field([], description="`sm why PR` with a red check: the CI cause and, for a red merge gate, Sonar's verdict.")
 
@@ -75,6 +77,8 @@ class PullRequestWhy(Model):
         out.append(f"  last tick waiting: {self.queue_waits_on}" if self.queue_waits_on else "  ")
         out += [f"  gate note (not red): {note}" for note in self.gate_notes]
         out.append("  role: " + (", ".join(self.roles) or ("standalone" if self.roles_known else "unknown (no combine member lists configured)")))
+        if self.ios:
+            out.append(f"  {self.ios}")
         out.append(f"  WHY: {self.why}")
         return out + self.more
 
@@ -169,6 +173,6 @@ def explain(w: probes.World, number: int) -> PullRequestWhy:
     return PullRequestWhy(number=number, state=str(pr.get("state") or ""), head=sha, merge_state=str(pr.get("mergeStateStatus") or ""), title=str(pr.get("title") or ""),
                           checks=checks, queue=f"{item['status']} {str(item.get('detail', ''))[:50]}" if item else "not queued", freeze=frozen, release_holds=holds,
                           main_run=main, queue_waits_on=blocked, roles=found, roles_known=known, gate_notes=notes.info,
-                          advisory_failing=notes.advisory_failing,
+                          advisory_failing=notes.advisory_failing, ios=ios.summary(ios.latest_receipt(w.state_dir)),
                           why=verdict(number, pr.get("state", "?"), pr.get("mergeStateStatus", "?"), checks, item, frozen, holds, main_ok))
 

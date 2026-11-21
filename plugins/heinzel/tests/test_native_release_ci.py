@@ -169,6 +169,7 @@ def accepted(gh, version="0.9.54", ok=True):
 
 def test_the_tick_follows_an_accepted_release_once(rt, gh, monkeypatch):
     accepted(gh)
+    monkeypatch.setattr(area, "IOS", "release ios-absent")  # the path of a command that does not exist: the follower skips iOS
     updates = []
     monkeypatch.setattr(area.mini, "update", lambda w, version: updates.append(version) or Proof(live=True))
     out, tick = doc(rt, train_area.TrainTick, "daemon", "train")
@@ -180,6 +181,7 @@ def test_the_tick_follows_an_accepted_release_once(rt, gh, monkeypatch):
 
 def test_the_tick_retries_until_live(rt, gh, monkeypatch):
     accepted(gh)
+    monkeypatch.setattr(area, "IOS", "release ios-absent")
     answers = [Proof(live=False), Proof(live=True)]
     monkeypatch.setattr(area.mini, "update", lambda w, version: answers.pop(0))
     out, tick = doc(rt, train_area.TrainTick, "daemon", "train")
@@ -231,3 +233,11 @@ def test_an_unreadable_marker_is_not_followed(rt, gh, monkeypatch):
     monkeypatch.setattr(area.mini, "update", lambda w, version: pytest.fail("followed without a marker"))
     _, tick = doc(rt, train_area.TrainTick, "daemon", "train")
     assert "no accepted acceptance.json" in tick.lines[0]
+
+
+def test_the_tick_records_a_failed_ios_upload_without_crashing(rt, gh, monkeypatch):
+    accepted(gh)
+    monkeypatch.setattr(area.mini, "update", lambda w, version: Proof(live=True))
+    out, tick = doc(rt, train_area.TrainTick, "daemon", "train")  # the real `sm release ios`, no Core repository set here
+    assert out.exit_code == 1 and tick.lines[-1] == "follow: iOS upload of 0.9.54: failed"
+    assert any(line.startswith("IOS NOT-CLEAN 0.9.54: ") and "ios_core_repo" in line for line in tick.lines)

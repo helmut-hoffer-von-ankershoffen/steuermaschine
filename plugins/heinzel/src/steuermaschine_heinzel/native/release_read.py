@@ -25,6 +25,7 @@ from steuermaschine.models import Model
 from steuermaschine.native import native, runtime
 
 from .. import state as statedir  # the plugin's state paths
+from .release_lib import ios
 from .release_lib.binding import assets_cache, captured, conf, core_repo, moved, release_dir, required_core_checkout, train_state_dir
 from .release_lib.names import translate, translated
 
@@ -61,6 +62,7 @@ class ReleaseStatus(Model):
     frozen: bool = Field(False, description="The hold of the run lock is set: heavy local commands of builders wait.")
     blockers: list[str] = []
     next: str = ""
+    ios: str = Field("", description="The newest release's TestFlight step: build and group, or NOT-CLEAN with its reason (sm release ios).")
     ci_chain: list[str] = Field([], description="The newest runs of Core's workflow \"Release\": the running one with its open jobs, else the last one.")
     lines: list[str] = []
 
@@ -103,10 +105,11 @@ def release_status(line: bool = typer.Option(False, "--line", help="One line for
 
     chain = chain_status(github().gh)
     running = any(" in_progress" in text or " queued" in text or " waiting" in text for text in chain[:1])
+    tests = ios.summary(ios.latest_receipt(statedir.dashboard_dir(conf())))
     if not summary.get("active"):
         if line:
-            return ReleaseStatus(active=running, ci_chain=chain, lines=chain[:1] if running else [])
-        return ReleaseStatus(active=running, ci_chain=chain, lines=[status.render(summary), *chain])
+            return ReleaseStatus(active=running, ci_chain=chain, ios=tests, lines=chain[:1] if running else [])
+        return ReleaseStatus(active=running, ci_chain=chain, ios=tests, lines=[status.render(summary), *chain, *filter(None, [tests])])
     text = translate(summary["next"])
     if line and summary.get("tail") is not None:
         lines = [f"RELEASE v{summary['version']} tagged {summary['age_min']}m: tail " + ", ".join(t.split(None, 1)[0] + " " + t.split(None, 1)[1].split(",")[0] for t in summary["tail"]) + f"; {text}"]
@@ -114,8 +117,8 @@ def release_status(line: bool = typer.Option(False, "--line", help="One line for
         lines = [f"RELEASE v{summary['version']} PR #{summary['pr']} {summary['age_min']}m: CI {summary['ci']}, acceptance {summary['acc']} "
                  f"#{summary['acc_attempt']}, freeze {'on' if summary['frozen'] else 'off'}; {text}"]
     else:
-        lines = translated(status.render(summary).splitlines())
-    return ReleaseStatus(active=True, version=str(summary["version"]), pull_request=summary["pr"], phase=str(summary["phase"] or ""),
+        lines = [*translated(status.render(summary).splitlines()), *filter(None, [tests])]
+    return ReleaseStatus(active=True, ios=tests, version=str(summary["version"]), pull_request=summary["pr"], phase=str(summary["phase"] or ""),
                          age_minutes=summary["age_min"], candidate_ci=str(summary["ci"] or ""), acceptance=str(summary["acc"] or ""),
                          acceptance_attempt=summary["acc_attempt"], checks=CheckCounts(**summary["checks"]) if summary["checks"] else None,
                          frozen=bool(summary["frozen"]), blockers=translated(summary["blockers"]), next=text, ci_chain=chain,
