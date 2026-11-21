@@ -31,3 +31,14 @@ def test_render_after_the_tag_has_no_pr_none_and_no_question_marks(tmp_path):
                "tail": status.tail_stages(tail, NOW)}
     text = status.render(summary)
     assert "PR #None" not in text and "?" not in text and "tail stages:" in text and "PyPI" in text
+
+
+def test_unreadable_or_odd_receipts_read_as_no_tail_and_odd_times_as_unknown_age(tmp_path):
+    (tmp_path / "v1.0.0.json").write_text("[1]")
+    (tmp_path / "v1.0.1.json").write_text("{")
+    assert status.read_tail("1.0.0", str(tmp_path)) is None and status.read_tail("1.0.1", str(tmp_path)) is None
+    lines = status.tail_stages({"pypi": "yesterday", "compose_run_id": 5, "compose": "2026-11-21T09:50:00Z",
+                                "acceptance_marker": {"a": 1}}, NOW)
+    assert "running, age unknown" in lines[1] and "marker     recorded" in lines[4]
+    assert status.tail_stages(None, NOW)[0].strip().endswith("not started")
+    assert status._age("2026-11-21T11:59:59Z", NOW) == "0m ago"
