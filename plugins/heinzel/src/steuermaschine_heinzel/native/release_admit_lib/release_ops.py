@@ -92,7 +92,7 @@ def prepare(packet: Path, core_repo: Path, review_root: Path, *, nonconsumers: P
 def check_stored_args(args: dict[str, Any], approved_doc: dict[str, Any], approved: str) -> None:
     """The stored arguments are not trusted: each must agree with the reviewed transaction before anything runs."""
     rs.require(args.get("route") == rs.release.MODE and (approved_doc.get("release_main") or {}).get("mode") == rs.release.MODE,
-               "this is not a release-main transaction; PR admission is `sm head apply`")
+               "this is not a release-main transaction; there is no PR admission any more")
     rs.require(args.get("sha256") == approved, "stored prepare arguments belong to another prepared transaction")
     rs.require(args.get("core_repo") == approved_doc.get("core_repo"), "stored prepare arguments differ from the reviewed transaction: core checkout")
     rs.require(rs.digest(a._stable_file(Path(args["packet"]), a.MAX_PACKET_BYTES)) == approved_doc.get("packet_sha256"),

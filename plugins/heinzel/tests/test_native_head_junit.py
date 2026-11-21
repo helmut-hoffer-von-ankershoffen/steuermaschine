@@ -64,7 +64,7 @@ def test_a_web_all_head_gets_one_full_junit_run_logged_as_waived(rt, head, tmp_p
     log = (tmp_path / "allow-full.log").read_text()
     assert "web/ALL selection" in log and str(head.resolve()) in log
     text = invoke(rt, ["head", "junit", str(head), "--sel", str(selection(tmp_path, ["ALL"])), "--output", str(out)]).stdout
-    assert "2 Vitest cases (the whole suite, web/ALL)" in text and f"--junit web={out.resolve()}" in text
+    assert "2 Vitest cases (the whole suite, web/ALL)" in text and f"{out.resolve()} is a local record" in text
 
 
 def test_a_red_run_is_not_a_junit_of_the_head(rt, head, tmp_path, ran):

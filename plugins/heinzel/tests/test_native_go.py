@@ -130,7 +130,10 @@ def test_all_62_decisions_of_the_old_tools_own_test_file_are_reproduced_byte_for
     # decide() call of the old tool's 48 tests, with its state, time, decision and text.
     matrix = [renamed(doc) for doc in json.loads((FIXTURES / "go-matrix.json").read_text())]
     assert len(matrix) == 62 and len({doc["decision"]["kind"] for doc in matrix}) >= 20
+    retired = lambda doc: (doc["state"].get("tools") or {}).get("rehearse") or (doc["state"].get("rehearse") or {}).get("last") or (doc["state"].get("rehearse") or {}).get("current")  # noqa: E731
     for n, doc in enumerate(matrix):
+        if retired(doc):  # the old tool's rehearsal decisions: `sm release rehearse` is deleted
+            continue
         mine = rules.decide(doc["state"], doc["now"], OldWords())
         if not doc["state"]["active_runs"]["complete"]:
             expected = "active runs: unknown/incomplete inventory; idle not established"
@@ -194,7 +197,7 @@ def test_idle_cut_ready_and_the_review_wait():
     assert rules.decide(state(), NOW)["kind"] == "idle"
     cut = rules.decide(state(since_tag={"count": 3}), NOW)
     assert cut["kind"] == "cut-ready" and cut["next"] == "sm release cut 0.9.40" and "Consumer pin" in cut["trap"]
-    assert rules.decide(state(since_tag={"count": 3}, tools={"rehearse": True}), NOW)["next"] == "sm release rehearse start --consumers"
+    assert rules.decide(state(since_tag={"count": 3}, tools={"rehearse": True}), NOW)["next"] == "sm release cut 0.9.40"
     review = rules.decide(state(packets=[packet()]), NOW)
     assert review["kind"] == "packet-prepared" and review["next"] is None and "9a" * 32 in review["waiting"] and review["then"].startswith("after the verdict")
 
@@ -240,16 +243,6 @@ def test_a_packet_of_the_predict_bind_route_carries_the_focus_head():
     assert d["kind"] == "packet-prepared" and "no packet" not in json.dumps(d)
 
 
-def test_a_running_sm_head_prepare_is_reported_for_its_packet_and_not_as_packet_new():
-    new = packet(prepared_sha256=None)
-    proc = {"pid": 4711, "etime": "07:12", "kind": "prepare", "packet": "/p/packet.json", "core_repo": "/wt", "waits": True}
-    d = rules.decide(state(focus=[focus()], packets=[new], procs=[proc]), NOW)
-    assert d["kind"] == "prepare-running" and d["next"] is None
-    assert d["phase"] == "prepare running (pid 4711, 07:12) (it waits for the idle window) for fix/e2e e9c943810"
-    assert d["waiting"] == "pid 4711 to write /p/prepare.out; then run sm go again"
-    assert rules.decide(state(packets=[new], procs=[{**proc, "packet": "p/packet.json"}]), NOW)["kind"] == "prepare-running"  # a relative argument
-    assert rules.decide(state(packets=[new], procs=[{**proc, "packet": "/other/packet.json"}]), NOW)["kind"] == "packet-new"
-    assert rules.same_packet("/x/p/packet.json", "p/packet.json") and not rules.same_packet("/x/p/packet.json", "q/packet.json")
 
 
 def test_a_running_prepare_or_admission_for_the_focus_worktree_without_a_readable_packet_is_not_no_packet():
@@ -283,28 +276,8 @@ def make_world(tmp_path, commands=None, **settings):
     return probes.World(commands=p.commands, clock=p.clock, state_dir=tmp_path / "state", core="/core", repo="o/r", settings=settings)
 
 
-def test_the_packet_probe_finds_the_direct_route_and_the_bound_route_and_reads_prepared_and_verdict(tmp_path):
-    direct = wave(tmp_path / "admit-B" / "topic" / "m-437bb247")
-    bound = wave(tmp_path / "admit-B" / "race" / "predict" / "bound-437bb247d164", kind="bound", branch="fix/race")
-    wave(tmp_path / "admit-B" / "race" / "predict-only", kind="predict")
-    (bound / "prepare.out").write_text('{"b": 1, "a": 2}\n')
-    from steuermaschine.hashing import canonical_sha256
-
-    digest = canonical_sha256('{"b": 1, "a": 2}')
-    (bound / "APPLY-REVIEW.md").write_text(f"ok\nVERDICT: APPROVE sha256={digest}\n")
-    w = make_world(tmp_path, go_packet_globs=[str(tmp_path / "admit-*/*/m-*/wave.json"), str(tmp_path / "admit-*/*/predict/bound-*/wave.json")])
-    w.clock.t = max((direct / "wave.json").stat().st_mtime, (bound / "wave.json").stat().st_mtime) + 5
-    found = {p["branch"]: p for p in probes.probe_packets(w)}
-    assert set(found) == {"fix/e2e", "fix/race"}
-    assert found["fix/race"]["route"] == "bound" and found["fix/race"]["prepared_sha256"] == found["fix/race"]["approved_sha256"] == digest
-    assert found["fix/e2e"]["prepared_sha256"] is None
 
 
-def test_a_packet_named_by_a_running_prepare_is_read_even_outside_the_globs(tmp_path):
-    elsewhere = wave(tmp_path / "elsewhere" / "x")
-    w = make_world(tmp_path, go_packet_globs=[str(tmp_path / "none/*.json")])
-    w.clock.t = (elsewhere / "wave.json").stat().st_mtime + 1
-    assert [p["dir"] for p in probes.probe_packets(w, [str(elsewhere / "packet.json"), "relative/packet.json", None])] == [str(elsewhere)]
 
 
 # ------------------------------------------------------------------ adopted state files and the sweep
@@ -319,7 +292,7 @@ def test_legacy_readers_fill_defaults_and_fail_closed_on_holds(tmp_path):
 
 def test_sentences_from_state_files_are_renamed_to_sm_commands_and_file_names_stay():
     text = "STALL #801 BLOCKED; hz-queue why | CANDIDATE run 5: 2 failed; hz-faillog 5 | hz-rehearse status --json | see ~/.cache/hz-queue.json | hz-alarm ack k"
-    assert legacy.sweep(text, ROWS) == ("STALL #801 BLOCKED; sm queue why | CANDIDATE run 5: 2 failed; sm ci faillog 5 | sm release rehearse status --json "
+    assert legacy.sweep(text, ROWS) == ("STALL #801 BLOCKED; sm queue why | CANDIDATE run 5: 2 failed; sm ci faillog 5 | the rehearse step status --json "
                                         "| see ~/.cache/hz-queue.json | sm alarm ack k")
 
 
@@ -364,7 +337,7 @@ def test_go_in_text_through_the_command_tree(tmp_path):
     assert out.exit_code == 0, out
     lines = out.stdout.splitlines()
     assert lines[0] == "ALERT    STALL #801 BLOCKED; sm queue why  (silence: sm alarm ack stall:801)"
-    assert lines[1] == f"PHASE    main {MAIN[:8]} green, 3 commits since v0.9.39, no candidate" and lines[2] == "NEXT     sm release rehearse start --consumers"
+    assert lines[1] == f"PHASE    main {MAIN[:8]} green, 3 commits since v0.9.39, no candidate" and lines[2] == "NEXT     sm release cut 0.9.40"
     assert "         focused slots: PLANS 9%" in lines and lines[-1].endswith("s, read-only)") and not OLD.search(out.stdout)
     assert not [argv for argv in commands.calls if argv[0] not in ("git", "gh", "ps", "hz")]
 
@@ -413,7 +386,7 @@ def test_an_alert_acknowledged_with_sm_alarm_ack_no_longer_leads_go():
 def test_go_items_for_the_core_frame_carry_phase_next_and_the_rest(tmp_path):
     rt = runtime_for(tmp_path, scripted(tmp_path))
     items = go_mod.go_items(rt.providers, rt.settings)
-    assert items[0].rank == 10 and items[0].phase.endswith("green, 3 commits since v0.9.39, no candidate") and items[0].next == "sm release rehearse start --consumers"
+    assert items[0].rank == 10 and items[0].phase.endswith("green, 3 commits since v0.9.39, no candidate") and items[0].next == "sm release cut 0.9.40"
 
 
 # ------------------------------------------------------------------ the rehearsal verdict: the store document first, the old file only without one
@@ -427,62 +400,12 @@ def decided(rt):
         return go_mod.go(all_=False, live=False)
 
 
-def test_the_rehearsal_probe_reads_the_store_document_and_the_old_file_only_without_one(tmp_path):
-    w = make_world(tmp_path)
-    (tmp_path / "state").mkdir()
-    assert probes.rehearsal_state(w) is None and probes.probe_rehearse(w) == {}
-    (tmp_path / "state" / "rehearse.json").write_text(json.dumps({"last": RED}))
-    assert probes.probe_rehearse(w) == {"current": None, "last": RED, "last_green": None}
-    w.rehearsal = {"last": GREEN, "last_green": MAIN}
-    assert probes.probe_rehearse(w) == {"current": None, "last": GREEN, "last_green": MAIN}
-    w.rehearsal = {}
-    assert probes.probe_rehearse(w) == {"current": None, "last": None, "last_green": None}
-    w.rehearsal = ["not an object"]
-    with pytest.raises(ValueError, match="in the store is not an object"):
-        probes.rehearsal_state(w)
 
 
-def test_a_red_rehearsal_in_the_store_alone_blocks_the_cut_and_names_the_failed_runs(tmp_path):
-    rt = runtime_for(tmp_path, scripted(tmp_path))
-    assert decided(rt).kind == "cut-ready"
-    rt.providers.store.save(*REHEARSAL, {"last": RED})
-    report = decided(rt)
-    assert report.kind == "rehearsal-red" and "is RED: End-to-end web (ubuntu-latest): failure https://github.com/o/r/actions/runs/71" in report.phase
-    assert report.next == "sm release rehearse status --json" and "cut" not in report.next and report.unknown == []
-    items = go_mod.go_items(rt.providers, rt.settings)  # the same verdict through the hook of the core frame
-    assert "is RED" in items[0].phase and items[0].next == "sm release rehearse status --json"
 
 
-def test_a_red_rehearsal_in_the_old_file_alone_still_blocks_the_cut(tmp_path):
-    rt = runtime_for(tmp_path, scripted(tmp_path))
-    (tmp_path / "state" / "rehearse.json").write_text(json.dumps({"last": RED}))
-    assert decided(rt).kind == "rehearsal-red"
 
 
-def test_with_both_the_store_document_decides_cut_readiness(tmp_path):
-    rt = runtime_for(tmp_path, scripted(tmp_path))
-    (tmp_path / "state" / "rehearse.json").write_text(json.dumps({"last": RED}))
-    rt.providers.store.save(*REHEARSAL, {"last": GREEN, "last_green": MAIN})
-    green = decided(rt)
-    assert green.kind == "cut-ready" and green.next.startswith("sm release cut ") and "rehearsal green" in green.phase
-    (tmp_path / "state" / "rehearse.json").write_text(json.dumps({"last": GREEN}))
-    rt.providers.store.save(*REHEARSAL, {"last": RED})
-    assert decided(rt).kind == "rehearsal-red"
-
-
-def test_an_open_rehearsal_in_the_store_is_running_and_offers_no_cut(tmp_path):
-    rt = runtime_for(tmp_path, scripted(tmp_path))
-    rt.providers.store.save(*REHEARSAL, {"current": {"main": MAIN, "started": NOW - 60, "lanes": []}})
-    report = decided(rt)
-    assert report.kind == "rehearsal-running" and report.next == "" and "rehearsal" in report.waiting_on
-
-
-def test_an_unreadable_rehearsal_document_is_an_unknown_probe_not_a_green_light(tmp_path):
-    rt = runtime_for(tmp_path, scripted(tmp_path))
-    rt.providers.store.save(*REHEARSAL, ["not", "an", "object"])
-    report = decided(rt)
-    assert any("rehearse:" in u and "the rehearsal state in the store is not an object" in u for u in report.unknown), report.unknown
-    assert report.next == "sm release rehearse start --consumers"  # no cut is offered on a verdict that could not be read
 
 
 def test_global_idle_uses_complete_active_inventory_not_recent_history():
@@ -525,3 +448,5 @@ def test_active_probe_actual_paginated_provider_refuses_incomplete(tmp_path, fai
     assert inventory["reason"].startswith("unknown:") if failure else inventory["reason"] == "truncated"
     decision = rules.decide(state(active_runs=inventory), NOW)
     assert not any("idle window open" in fact for fact in decision["facts"])
+
+

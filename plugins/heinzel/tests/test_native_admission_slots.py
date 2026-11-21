@@ -85,51 +85,13 @@ def apply(env, approval=None):
     return s.apply_prepared(rt, prepared, packet, rt.core, {}, approval or s.digest(a.canonical(prepared)))
 
 
-def test_full_operating_proof_one_slot_append_all_state_retained_and_restored(env):
-    rt, prepared, _ = env
-    path = apply(env)
-    assert rt.events == ['pause','write','restore']
-    assert rt.writes == [(s.NAMES[1], prepared['desired'][s.NAMES[1]])]
-    assert rt.values[s.NAMES[0]] == '{}'
-    receipt = json.loads(path.read_text())
-    assert receipt['registry_changed'] is True and not rt.paused
-    assert set(receipt['after']) == set(s.NAMES)
 
 
-@pytest.mark.parametrize('defect', ['main','pr','freeze','holds','prhold','queue','new-lock','budget','org','presence','unknown-run'])
-def test_guard_failures_do_not_write_and_restore(env, defect):
-    rt, prepared, _ = env
-    if defect == 'main': rt.main = 'e'*40
-    if defect == 'pr': rt.prhead = 'e'*40
-    if defect == 'freeze': (rt.cache/'merge-freeze').touch()
-    if defect == 'holds':
-        (rt.cache/'release-holds').mkdir();(rt.cache/'release-holds/x').touch()
-    if defect == 'prhold': (rt.management/'tools/pr-actions.toml').write_text('"5"={hold=true}')
-    if defect == 'queue': rt.queue_state = lambda: 'unexpected loaded'
-    if defect == 'new-lock':
-        (rt.cache/'release').mkdir();(rt.cache/'release/v0.9.37.lock').touch()
-    if defect == 'budget': rt.values.update({f'BIG_{i}':'x'*45000 for i in range(6)})
-    if defect == 'org': rt.org[s.NAMES[1]] = ''
-    if defect == 'presence': rt.values[s.NAMES[3]] = ''
-    if defect == 'unknown-run': rt.rows['queued'] = [{'id':9, 'status':'queued'}]
-    with pytest.raises(a.AdmissionError): apply(env)
-    assert not rt.writes and rt.events[-1] == 'restore'
-    assert not list(statedir.root().glob('focused-admission-receipts/*.json'))
 
 
-@pytest.mark.parametrize('defect', ['readback','other','main-after','restore'])
-def test_after_write_mismatch_has_no_rollback_or_success(env, defect):
-    rt, _, _ = env; rt.defect=defect
-    with pytest.raises(a.AdmissionError): apply(env)
-    assert len(rt.writes)==1 and rt.events[-1]=='restore'
-    if defect != 'restore': assert not list(statedir.root().glob('focused-admission-receipts/*.json'))
     # A restore failure can occur after an immutable write receipt. It must still fail the operation.
 
 
-def test_approval_fails_before_process_mutation(env):
-    rt, _, _ = env
-    with pytest.raises(a.AdmissionError): apply(env, '0'*64)
-    assert rt.events == []
 
 
 def test_exact_nonconsumer_exception_and_unknown_run(env):
@@ -201,11 +163,6 @@ def test_pause_failure_always_attempts_restore(env,monkeypatch):
     assert rt.events==['verified restore']
 
 
-def test_alias_pr_hold_cannot_be_skipped(env):
-    rt,_,_=env
-    (rt.management/'tools/pr-actions.toml').write_text('"5"={hold=false}\n"#5"={hold=true}')
-    with pytest.raises(a.AdmissionError): apply(env)
-    assert not rt.writes
 
 
 def test_preopen_refuses_matching_open_pr(env,monkeypatch):
@@ -224,10 +181,6 @@ def test_active_status_transition_detected_across_membership_passes(env):
     with pytest.raises(a.AdmissionError,match='membership drift'):s.check_consumers(rt,{})
 
 
-def test_symlink_installed_entry_supports_help(tmp_path,capsys):
-    # moved: there is no installed script any more; the argv form answers --help in process
-    with pytest.raises(SystemExit) as stop: s.main(['--help'])
-    assert stop.value.code==0 and 'prepare' in capsys.readouterr().out
 
 
 def test_module_entry_is_not_a_second_door_to_the_write():
@@ -238,36 +191,6 @@ def test_module_entry_is_not_a_second_door_to_the_write():
     assert '__main__' not in Path(s.__file__).read_text()
 
 
-def test_prepare_uses_trusted_main_and_both_canonical_pair_validations(env,monkeypatch):
-    rt,_,packet=env
-    # Fixture state mutations above were explicitly isolated; all operational IO below is replaced.
-    monkeypatch.delenv('HZ_QUEUE_STATE')
-    for key in ('HZ_TRAIN_STATE_DIR','HZ_RELEASE_DIR'):monkeypatch.delenv(key,raising=False)
-    review=rt.home/'review.md';review.write_text('Independent source APPROVE')
-    packet['schema']=1
-    packet['review']=dict(path='review.md',sha256=s.digest(review.read_bytes()),head=HEAD,base=BASE,tree=TREE,
-        manifest_sha256=s.digest(a.canonical(packet['manifest'])),main_manifest_sha256=s.digest(a.canonical(packet['main_manifest'])))
-    path=rt.home/'packet.json';path.write_bytes(a.canonical(packet))
-    work=rt.home/'workspace';work.mkdir();snapshot=work/'snapshot';snapshot.mkdir();source=rt.home/'trusted-source';source.mkdir()
-    monkeypatch.setattr(a,'_read_main',lambda _:BASE)
-    monkeypatch.setattr(a,'_prepare_core_snapshot',lambda *args:(work,snapshot))
-    monkeypatch.setattr(a,'_canonical_source',lambda *args:(source,'d'*40,rt.repo,s.NAMES[0],()))
-    monkeypatch.setattr(a,'_repository_from_remote',lambda _:rt.repo)
-    monkeypatch.setattr(s,'reader_contract',lambda *args:None)
-    seen=[]
-    def validate(candidate,repo,main,slug,var,protected,archive,**kw):
-        assert repo==snapshot and main==BASE and archive==source
-        assert kw['protected_producer'] is True
-        seen.append(kw['resulting_main'])
-    monkeypatch.setattr(a,'validate_canonical',validate)
-    def append(archive,legacy,slots,additions):
-        assert archive==source and len(slots)==4 and len(additions)==2
-        return dict(result=[0,'exact compressed candidate'])
-    monkeypatch.setattr(a,'_isolated_slot_append',append)
-    prepared,*_=s.prepare(rt,path,rt.home,protected=True,pr=5)
-    assert seen==[False,True] and prepared['main']==BASE and prepared['protected_producer'] is True
-    assert 'pr_update' not in prepared
-    assert not rt.writes and rt.events==[]
 
 
 def test_trusted_codec_subprocess_does_not_import_candidate(tmp_path,monkeypatch):
@@ -311,46 +234,6 @@ def test_release_tail_lock_is_in_exclusion_inventory(env):
     assert s.version_locks(rt.cache)==[tail]
 
 
-@pytest.mark.parametrize('defect', ['none', 'readback', 'main-after', 'restore-drift'])
-def test_actual_exclusions_and_restoration_around_slot_operation(env, defect):
-    rt,_,_=env
-    rt.domain='gui/fixture';rt.service='gui/fixture/queue';rt.plist=rt.home/'original-queue.plist'
-    rt.plist.write_text('reviewed original queue configuration')
-    loaded=True
-    def launch(*args,check=True,**kw):
-        nonlocal loaded
-        assert args[0]=='launchctl'
-        operation=args[1]
-        if operation=='print':
-            return subprocess.CompletedProcess(args,0 if loaded else 113,
-                f'path = {rt.plist}\nstate = running'.encode() if loaded else b'',
-                b'' if loaded else b'Could not find service')
-        rt.events.append(operation)
-        if operation=='bootout':loaded=False
-        elif operation=='bootstrap':loaded=True
-        else:raise AssertionError(args)
-        return subprocess.CompletedProcess(args,0,b'',b'')
-    rt.run=launch
-    rt.queue_state=lambda **kw:s.Runtime.queue_state(rt,**kw)
-    rt.wait_queue_pause=lambda:s.Runtime.wait_queue_pause(rt)
-    rt.restore_queue=lambda:s.Runtime.restore_queue(rt)
-    rt.exclusions=lambda:s.Runtime.exclusions(rt)
-    original=rt.set_variable
-    def write(name,value):
-        original(name,value)
-        if defect=='restore-drift':rt.plist.write_text('changed unapproved queue configuration')
-    rt.set_variable=write
-    rt.defect=defect
-    if defect=='none':
-        apply(env)
-        assert loaded and rt.events==['bootout','write','bootstrap']
-    else:
-        with pytest.raises(a.AdmissionError):apply(env)
-        assert len(rt.writes)==1
-        if defect=='restore-drift':
-            assert not loaded and rt.events==['bootout','write']
-        else:
-            assert loaded and rt.events[-1]=='bootstrap'
 
 
 def test_unreadable_version_inventory_cannot_be_treated_as_empty(env,monkeypatch):
@@ -420,71 +303,6 @@ def test_owner_identity_is_fresh_for_every_variable_read(env):
     assert sum('organization-variables' in path for path in calls)==1
 
 
-@pytest.mark.parametrize('mode',['delayed','persistent','identity','error','transport-timeout','late-absence'])
-def test_bounded_pause_observation_before_actual_exclusion_operation(env,monkeypatch,mode):
-    rt,_,_=env
-    rt.domain='gui/fixture';rt.service='gui/fixture/queue';rt.plist=rt.home/'original-queue.plist'
-    rt.plist.write_text('reviewed original queue configuration')
-    clock=[0.0];requested=False;loaded=True;polls=0;failed=False;absence=False;restoring=False;timeouts=[]
-    monkeypatch.setattr(s.time,'monotonic',lambda:clock[0])
-    monkeypatch.setattr(s.time,'sleep',lambda delay:clock.__setitem__(0,clock[0]+delay))
-    original_lock=a._lock
-    @contextmanager
-    def lock(path):
-        assert absence, 'a lock was acquired before authenticated pause proof'
-        rt.events.append('lock:'+path.name)
-        with original_lock(path) as handle:yield handle
-    monkeypatch.setattr(a,'_lock',lock)
-    def launch(*args,check=True,timeout=30,**kw):
-        nonlocal requested,loaded,polls,failed,absence
-        assert args[0]=='launchctl'
-        op=args[1]
-        if op=='print':
-            assert args[2]==rt.service
-            if requested and not absence and not failed and not restoring:
-                assert 0 < timeout <= 3
-                timeouts.append(timeout);polls+=1
-                assert not rt.writes
-                if mode in ('identity','error','transport-timeout'):
-                    failed=True
-                    if mode=='transport-timeout':raise subprocess.TimeoutExpired(args,timeout)
-                    if mode=='error':return subprocess.CompletedProcess(args,5,b'',b'permission denied')
-                    return subprocess.CompletedProcess(args,0,b'path = /wrong/plist\nstate = running',b'')
-                if mode=='late-absence':
-                    clock[0]+=9;failed=True;loaded=False
-                elif mode=='delayed' and polls>=3:
-                    loaded=False;absence=True;rt.events.append('proven-absent')
-                elif mode=='persistent' and clock[0]>=7.9:failed=True
-            return subprocess.CompletedProcess(args,0 if loaded else 113,
-                f'path = {rt.plist}\nstate = running'.encode() if loaded else b'',
-                b'' if loaded else b'Could not find service')
-        rt.events.append(op)
-        if op=='bootout':
-            assert not requested;requested=True
-        elif op=='bootstrap':loaded=True
-        else:raise AssertionError(args)
-        return subprocess.CompletedProcess(args,0,b'',b'')
-    rt.run=launch
-    rt.queue_state=lambda **kw:s.Runtime.queue_state(rt,**kw)
-    rt.wait_queue_pause=lambda:s.Runtime.wait_queue_pause(rt)
-    def restore():
-        nonlocal restoring
-        restoring=True
-        return s.Runtime.restore_queue(rt)
-    rt.restore_queue=restore
-    rt.exclusions=lambda:s.Runtime.exclusions(rt)
-    if mode=='delayed':
-        apply(env)
-        assert len(rt.writes)==1 and loaded and polls==3
-        assert rt.events.index('proven-absent') < rt.events.index('lock:queue.lock') < rt.events.index('write')
-        assert rt.events[-1]=='bootstrap'
-    else:
-        with pytest.raises((a.AdmissionError,subprocess.TimeoutExpired)):apply(env)
-        assert not rt.writes and loaded
-        assert not any(event.startswith('lock:') for event in rt.events)
-        if mode=='persistent':assert 8 <= clock[0] < 8.3
-    assert rt.events.count('bootout')==1
-    assert timeouts and all(0 < timeout <= 3 for timeout in timeouts)
 
 
 def test_pause_refuses_plist_drift_even_with_absent_response(env):
@@ -574,164 +392,20 @@ def update_apply(f):
                             s.digest(a.canonical(f['prepared'])),snapshot=f['snapshot'])
 
 
-def test_expected_head_real_history_receipt_keeps_remote_unchanged(update_env):
-    f=update_env;rt=f['rt'];before=f['git'](f['remote'],'rev-parse','refs/heads/'+f['branch'])
-    receipt=json.loads(update_apply(f).read_bytes())
-    assert receipt['pr_update']==f['prepared']['pr_update']
-    assert rt.events==['pause','write','restore'] and len(rt.writes)==1
-    assert set(receipt['after'])==set(s.NAMES) and rt.values[s.NAMES[0]]=='{}'
-    assert f['git'](f['remote'],'rev-parse','refs/heads/'+f['branch'])==before==f['old']
-    assert not any('push' in command for command in f['commands'])
-    assert all('/actions/' not in path and '/pulls/' in path or '/git/ref/' in path or path=='repos/'+rt.repo
-               for path in f['api_calls'])
 
 
-def test_no_implicit_update_mode_or_prepared_representation_change(update_env):
-    f=update_env
-    f['prepared'].pop('pr_update')
-    with pytest.raises(a.AdmissionError,match='PR identity changed'):update_apply(f)
-    assert not f['rt'].writes
-    f['pull']['head']['sha']=f['new']
-    update_apply(f)
-    assert 'pr_update' not in json.loads(next(statedir.root().glob('focused-admission-receipts/*.json')).read_bytes())
 
 
-@pytest.mark.parametrize('defect',[
-    'pr-number','pr-id-bool','official-id-bool','official-name','official-fork','head-repo-id',
-    'base-repo-id','fork','deleted-head','closed','base-ref','branch','main-branch','release-branch',
-    'pr-old','ref-old','ref-name','ref-type','detached','dirty','index','local-head','wrong-local-branch',
-    'unrelated','missing-old','shallow','replace','graft','snapshot-replace','snapshot-graft','api-error'])
-def test_explicit_update_refuses_identity_and_real_git_defects(update_env,defect):
-    f=update_env;rt=f['rt'];git=f['git'];head=f['pull']['head'];base=f['pull']['base']
-    if defect=='pr-number':f['pull']['number']=6
-    elif defect=='pr-id-bool':f['pull']['id']=True
-    elif defect=='official-id-bool':f['identity']['id']=True
-    elif defect=='official-name':f['identity']['full_name']='foreign/repo'
-    elif defect=='official-fork':f['identity']['fork']=True
-    elif defect=='head-repo-id':head['repo']['id']=42
-    elif defect=='base-repo-id':base['repo']['id']=42
-    elif defect=='fork':head['repo']['fork']=True
-    elif defect=='deleted-head':head['repo']=None
-    elif defect=='closed':f['pull']['state']='closed'
-    elif defect=='base-ref':base['ref']='other'
-    elif defect=='branch':head['ref']='other'
-    elif defect=='main-branch':head['ref']='main'
-    elif defect=='release-branch':head['ref']='release/v1.2.3'
-    elif defect=='pr-old':head['sha']=f['new']
-    elif defect=='ref-old':f['ref']['object']['sha']=f['new']
-    elif defect=='ref-name':f['ref']['ref']='refs/heads/other'
-    elif defect=='ref-type':f['ref']['object']['type']='tag'
-    elif defect=='detached':git(rt.core,'switch','--detach',f['new'])
-    elif defect=='dirty':(rt.core/'untracked').touch()
-    elif defect=='index':
-        (rt.core/'file').write_text('staged');git(rt.core,'add','file')
-    elif defect=='local-head':git(rt.core,'update-ref','refs/heads/'+f['branch'],f['old'])
-    elif defect=='wrong-local-branch':git(rt.core,'switch','-c','other')
-    elif defect=='unrelated':
-        unrelated=git(rt.core,'commit-tree',f['tree'],'-m','unrelated')
-        git(rt.core,'update-ref','refs/heads/'+f['branch'],unrelated)
-        f['packet']['manifest']['head']=unrelated
-    elif defect=='missing-old':
-        git(f['remote'],'update-ref','-d','refs/heads/'+f['branch'])
-    elif defect=='shallow':(f['snapshot']/'.git/shallow').write_text(f['old']+'\n')
-    elif defect in ('replace','snapshot-replace'):
-        git(f['snapshot'] if defect.startswith('snapshot') else rt.core,'replace',f['old'],f['new'])
-    elif defect in ('graft','snapshot-graft'):
-        core=f['snapshot'] if defect.startswith('snapshot') else rt.core
-        (core/'.git/info/grafts').write_text(f['new']+' '+f['old']+'\n')
-    elif defect=='api-error':rt.api=lambda _:(_ for _ in ()).throw(a.AdmissionError('API unavailable'))
-    with pytest.raises(a.AdmissionError):f['authenticate']()
-    assert not rt.writes
 
 
-def test_inherited_git_context_does_not_change_real_ancestry(update_env,monkeypatch):
-    f=update_env
-    for key,value in {'GIT_DIR':'/missing/git','GIT_WORK_TREE':'/missing/work','GIT_INDEX_FILE':'/missing/index',
-                      'GIT_OBJECT_DIRECTORY':'/missing/objects','GIT_SHALLOW_FILE':'/missing/shallow',
-                      'GIT_REPLACE_REF_BASE':'refs/other/','GIT_GRAFT_FILE':'/missing/grafts',
-                      'GIT_CONFIG_COUNT':'1','GIT_CONFIG_KEY_0':'remote.origin.url','GIT_CONFIG_VALUE_0':'foreign'}.items():
-        monkeypatch.setenv(key,value)
-    assert f['authenticate']()==f['prepared']['pr_update']
 
 
-@pytest.mark.parametrize('field', ['mode','pr','pr_id','repository','repository_id','branch','old','new','extra','missing'])
-def test_typed_record_drift_never_writes(update_env,field):
-    f=update_env;record=f['prepared']['pr_update']
-    if field=='missing':record.pop('old')
-    elif field=='extra':record['extra']='unknown'
-    elif field in ('pr','pr_id','repository_id'):record[field]+=1
-    else:record[field]='wrong'
-    with pytest.raises(a.AdmissionError):update_apply(f)
-    assert not f['rt'].writes
 
 
-@pytest.mark.parametrize('stage', ['before','after'])
-@pytest.mark.parametrize('drift', ['old','stable-id','official-id','main','hold','consumer','remote-ref','local-head','local-branch'])
-def test_update_drift_preserves_write_and_restoration_rules(update_env,stage,drift):
-    f=update_env;rt=f['rt']
-    def change():
-        if drift=='old':f['ref']['object']['sha']=f['new']
-        elif drift=='stable-id':f['pull']['id']+=1
-        elif drift=='official-id':
-            f['identity']['id']+=1
-            for side in ('head','base'):f['pull'][side]['repo']['id']=f['identity']['id']
-        elif drift=='main':rt.main='d'*40
-        elif drift=='hold':(rt.management/'tools/pr-actions.toml').write_text('"5"={hold=true}')
-        elif drift=='remote-ref':
-            # Simulate another actor advancing the official server after its old
-            # tip was approved. The admission helper itself never publishes it.
-            f['git'](f['remote'],'fetch',str(rt.core),f['new'])
-            f['git'](f['remote'],'update-ref','refs/heads/'+f['branch'],f['new'])
-        elif drift=='local-head':f['git'](rt.core,'update-ref','refs/heads/'+f['branch'],f['old'])
-        elif drift=='local-branch':f['git'](rt.core,'switch','-c','other')
-        else:rt.rows['queued']=[dict(id=9,status='queued')]
-    if stage=='before':change()
-    else:
-        original=rt.set_variable
-        def write(*args):original(*args);change()
-        rt.set_variable=write
-    with pytest.raises(a.AdmissionError):update_apply(f)
-    assert len(rt.writes)==(stage=='after') and rt.events[-1]=='restore'
-    assert not list(statedir.root().glob('focused-admission-receipts/*.json'))
 
 
-def test_update_operating_proof_uses_actual_exclusions_and_locks(update_env):
-    f=update_env;rt=f['rt'];rt.domain='gui/fixture';rt.service='gui/fixture/queue'
-    rt.plist=rt.home/'queue.plist';rt.plist.write_text('reviewed queue fixture');loaded=True
-    def launch(*args,**kwargs):
-        nonlocal loaded
-        assert args[0]=='launchctl'
-        if args[1]=='print':
-            return subprocess.CompletedProcess(args,0 if loaded else 113,
-                f'path = {rt.plist}\nstate = running'.encode() if loaded else b'',
-                b'' if loaded else b'Could not find service')
-        rt.events.append(args[1])
-        if args[1]=='bootout':loaded=False
-        elif args[1]=='bootstrap':loaded=True
-        else:raise AssertionError(args)
-        return subprocess.CompletedProcess(args,0,b'',b'')
-    rt.run=launch
-    rt.queue_state=lambda **kw:s.Runtime.queue_state(rt,**kw)
-    rt.wait_queue_pause=lambda:s.Runtime.wait_queue_pause(rt)
-    rt.restore_queue=lambda:s.Runtime.restore_queue(rt)
-    rt.exclusions=lambda:s.Runtime.exclusions(rt)
-    (rt.cache/'release').mkdir();version=rt.cache/'release/v1.2.3.lock';version.touch()
-    receipt=json.loads(update_apply(f).read_bytes())
-    assert loaded and rt.events==['bootout','write','bootstrap'] and receipt['pr_update']==f['prepared']['pr_update']
-    for lock in (rt.cache/'queue.lock',rt.cache/'train/train.lock',rt.cache/'release.lock',version):
-        assert lock.exists()
-        with a._lock(lock):pass
 
 
-@pytest.mark.parametrize(('args','old'), [
-    (args,old) for args in ([],['--pr','0'],['--pr','-1'],['--pr','5'])
-    for old in ('short','A'*40,'a'*39,'a'*41,'a'*40)
-    if args!=['--pr','5'] or old!='a'*40])
-def test_update_cli_requires_full_sha_and_positive_pr(tmp_path,args,old,capsys):
-    # moved: the argv form runs in process (there is no script and no module entry)
-    code=s.main(['prepare','missing','--core-repo',str(tmp_path),'--review-root',str(tmp_path),'--expected-remote-head',old,*args])
-    err=capsys.readouterr().err
-    assert code==1 and ('expected remote head' in err or 'PR must be positive' in err)
 
 
 def prepare_update_cli(f,monkeypatch):
@@ -761,45 +435,8 @@ def prepare_update_cli(f,monkeypatch):
     return path,args,validations
 
 
-@pytest.mark.parametrize('defect',['none','mode','old','branch','new','missing-record','no-cli-flag','cli-old','approval','packet'])
-def test_actual_cli_prepare_apply_freezes_typed_identity(update_env,monkeypatch,capsys,defect):
-    f=update_env;path,args,validations=prepare_update_cli(f,monkeypatch)
-    assert s.main(['prepare',*args])==0
-    prepared=json.loads(capsys.readouterr().out)
-    assert prepared['pr_update']==f['prepared']['pr_update'] and validations==[False,True]
-    assert not f['rt'].writes
-    approved=copy.deepcopy(prepared)
-    if defect=='missing-record':approved.pop('pr_update')
-    elif defect in ('mode','old','branch','new'):approved['pr_update'][defect]='tampered'
-    elif defect=='no-cli-flag':args=args[:-2]
-    elif defect=='cli-old':args[-1]=f['new']
-    elif defect=='packet':
-        packet=json.loads(path.read_bytes());packet['manifest']['tree']='e'*40;path.write_bytes(a.canonical(packet))
-    approved_path=f['rt'].home/'approved.json';approved_path.write_bytes(a.canonical(approved))
-    approval=s.digest(a.canonical(approved)) if defect!='approval' else '0'*64
-    code=s.main(['apply',*args,'--prepared',str(approved_path),'--approved-sha256',approval])
-    if defect=='none':
-        assert code==0 and len(f['rt'].writes)==1
-        receipt=json.loads(Path(capsys.readouterr().out.strip()).read_bytes())
-        assert receipt['pr_update']==prepared['pr_update']
-    else:
-        assert code==1 and not f['rt'].writes
-        assert f['rt'].events==[]
 
 
-def test_real_normal_merge_of_current_main_is_a_valid_prospective_update(update_env):
-    f=update_env;rt=f['rt'];git=f['git']
-    git(rt.core,'switch','main');(rt.core/'main-file').write_text('current main')
-    git(rt.core,'add','main-file');git(rt.core,'commit','-m','main advance')
-    base=git(rt.core,'rev-parse','HEAD')
-    git(rt.core,'switch',f['branch']);git(rt.core,'merge','--no-ff','main','-m','normal main merge')
-    new=git(rt.core,'rev-parse','HEAD');tree=git(rt.core,'rev-parse','HEAD^{tree}')
-    f['packet']['manifest'].update(head=new,base=base,tree=tree)
-    f['packet']['main_manifest'].update(base=base,tree=tree)
-    rt.main=base;f['prepared']['head']=new
-    f['prepared']['pr_update']=f['authenticate']()
-    receipt=json.loads(update_apply(f).read_bytes())
-    assert receipt['pr_update']['old']==f['old'] and receipt['pr_update']['new']==new
 
 
 def test_genuine_preopen_inventory_is_unchanged(env,monkeypatch):
@@ -814,17 +451,3 @@ def test_genuine_preopen_inventory_is_unchanged(env,monkeypatch):
     assert len(calls)==2 and not rt.writes
 
 
-@pytest.mark.parametrize('defect',['missing-old','shared-tree-conflict','partial-pair','full-slots','readback'])
-def test_update_retains_codec_and_readback_refusals(update_env,monkeypatch,defect):
-    f=update_env
-    if defect=='missing-old':f['prepared']['pr_update'].pop('old')
-    elif defect=='readback':f['rt'].defect='readback'
-    else:
-        def refused(source,legacy,slots,additions):
-            # Both complete, independently validated plans still reach the same
-            # unchanged trusted-codec boundary; no partial repair is attempted.
-            assert set(additions)=={f"pull_request:{f['new']}",f"push-tree:{f['tree']}"}
-            raise a.AdmissionError(defect)
-        monkeypatch.setattr(a,'_isolated_slot_append',refused)
-    with pytest.raises(a.AdmissionError):update_apply(f)
-    assert len(f['rt'].writes)==(defect=='readback') and f['rt'].events[-1:] in ([],['restore'])

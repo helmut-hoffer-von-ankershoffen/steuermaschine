@@ -66,12 +66,6 @@ def stuck(env, monkeypatch):
     return rt, prepared, packet, run, proofs
 
 
-def test_zombie_run_is_admitted_and_slot_written(stuck):
-    rt, prepared, packet, _, proofs = stuck
-    s.apply_prepared(rt, prepared, packet, rt.core, proofs, s.digest(a.canonical(prepared)))
-    # Cancel probes only before the write; the post-write guard re-reads but never POSTs.
-    assert rt.events[0] == 'pause' and rt.events[-2:] == ['write', 'restore'] and len(rt.writes) == 1
-    assert 'probe' in rt.events and set(rt.probes) == {43095386045}
 
 
 DEFECTS = {
@@ -98,13 +92,6 @@ DEFECTS = {
 }
 
 
-@pytest.mark.parametrize('defect', sorted(DEFECTS))
-def test_any_change_refuses_apply_without_write(stuck, defect):
-    rt, prepared, packet, run, proofs = stuck
-    DEFECTS[defect](rt, run)
-    with pytest.raises(a.AdmissionError):
-        s.apply_prepared(rt, prepared, packet, rt.core, proofs, s.digest(a.canonical(prepared)))
-    assert not rt.writes and rt.events[-1] == 'restore'
 
 
 @pytest.mark.parametrize('defect', sorted(set(DEFECTS) - {'new-run', 'bad-slot'}))
@@ -175,31 +162,6 @@ def test_generator_snapshots_only_harmless_runs_without_probing(stuck):
     assert s.read_nonconsumers(rt, output['receipts'], rt.home)  # round-trips through the reader
 
 
-def test_generator_excludes_run_changed_after_inventory(stuck):
-    rt, _, _, run, _ = stuck
-    original = rt.api
-    rt.api = lambda path: dict(run, head_sha='6' * 40) if path.endswith(f'/runs/{run["id"]}') else original(path)
-    output, excluded = s.stuck_queued_receipts(rt, set())
-    assert output['receipts'] == []
-    assert excluded == [{'id': run['id'], 'reason': 'active run changed during exact authentication'}]
-
-
-def test_generator_refuses_missing_run(stuck):
-    rt, _, _, run, _ = stuck
-    original = rt.api
-    def api(path):
-        if path.endswith(f'/runs/{run["id"]}'):
-            raise a.AdmissionError('run missing')
-        return original(path)
-    rt.api = api
-    with pytest.raises(a.AdmissionError, match='run missing'):
-        s.stuck_queued_receipts(rt, set())
-
-
-def test_cli_nonconsumers_requires_stuck_queued_flag(monkeypatch):
-    monkeypatch.setattr(s, 'Runtime', lambda *args, **kwargs: pytest.fail('runtime constructed'))
-    assert s.main(['nonconsumers', '--core-repo', 'x', '--review-root', '.']) == 1
-    assert s.main(['blockers', '--core-repo', 'x', '--review-root', '.', '--stuck-queued']) == 1
 
 
 def test_real_runtime_probe_is_one_exact_post(tmp_path, monkeypatch):
@@ -214,12 +176,3 @@ def test_real_runtime_probe_is_one_exact_post(tmp_path, monkeypatch):
     assert calls == [('gh', 'api', '-X', 'POST', 'repos/o/r/actions/runs/7/cancel')]
 
 
-def test_post_write_guard_refusing_probe_would_not_matter(stuck):
-    """A cancel answer flipping after the write cannot fail the transaction: no POST then."""
-    rt, prepared, packet, _, proofs = stuck
-    def probe(run_id):
-        rt.probes.append(run_id)
-        return (0, b'') if rt.writes else (1, REFUSAL)
-    rt.cancel_probe = probe
-    s.apply_prepared(rt, prepared, packet, rt.core, proofs, s.digest(a.canonical(prepared)))
-    assert len(rt.writes) == 1 and list(statedir.root().glob('focused-admission-receipts/*.json'))

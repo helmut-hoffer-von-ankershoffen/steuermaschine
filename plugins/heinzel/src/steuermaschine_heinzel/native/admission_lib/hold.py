@@ -29,7 +29,7 @@ def admission_hold(rt: Any, label: str) -> Iterator[None]:
     try:
         line.hold(owner, label, pid=os.getpid(), host=socket.gethostname())
     except Busy:
-        raise Refuse("cannot register the admission hold: the validation window's state is locked by another command", "sm ci window status") from None
+        raise Refuse("cannot register the admission hold: the validation window's state is locked by another command", "sm release admit --help") from None
     try:
         yield
     finally:

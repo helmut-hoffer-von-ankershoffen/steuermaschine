@@ -96,7 +96,7 @@ def test_gap_is_empty_at_the_admitted_main_and_names_the_trap_after_another_merg
     world.move_main(world.b)
     reason = plan_module.gap("803")
     assert reason.startswith("stale main plan: no focused plan for tree ") and f"on main {world.b[:8]}" in reason
-    assert "Next: re-prepare #803 at main" in reason and "sm head prepare PACKET --pr 803" in reason
+    assert "Next: #803 needs a new head on main" in reason and "sm ship WORKTREE --live" in reason
     world.registry[f"push-tree:{plan_module.merge_tree(world.core, '803', world.b, world.h803)}"] = {"base": world.b}
     assert plan_module.gap("803") == ""  # re-prepared at B: planned again
 
@@ -148,7 +148,7 @@ def test_queue_add_refuses_a_core_pr_whose_merge_has_no_plan(queue, lib, monkeyp
     monkeypatch.setattr(plan_module.hzlib, "ghj", answer(world, plan_module.hzlib.ghj))
     assert queue.main(["add", "803"]) == 1
     err = capsys.readouterr().err
-    assert "refused 803: stale main plan: no focused plan" in err and "sm head prepare PACKET --pr 803" in err
+    assert "refused 803: stale main plan: no focused plan" in err and "sm ship WORKTREE --live" in err
     assert not queue.load()["items"]
 
 
@@ -165,7 +165,7 @@ def test_queue_why_names_the_stale_plan_and_the_next_command(queue, lib, monkeyp
     out = capsys.readouterr().out
     assert "item 803: stale main plan: no focused plan" in out
     verdict = [line for line in out.splitlines() if line.startswith("verdict:")]
-    assert verdict and "#803 stale main plan" in verdict[0] and "re-prepare #803" in verdict[0]
+    assert verdict and "#803 stale main plan" in verdict[0] and "#803 needs a new head" in verdict[0]
 
 
 def test_registry_reads_core_codec_through_the_protected_reader(monkeypatch, real_main_plan, tmp_path):

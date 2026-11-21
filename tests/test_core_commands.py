@@ -12,7 +12,7 @@ import pytest
 
 from steuermaschine import API_VERSION, USAGE
 from steuermaschine.app import Runtime, natives, write_units
-from steuermaschine.commands import doc, gate, lim, window
+from steuermaschine.commands import doc, gate, lim
 from steuermaschine.config import Project, Settings
 from steuermaschine.engine import Refuse
 from steuermaschine.helpdoc import H
@@ -23,7 +23,6 @@ from steuermaschine.plugins import stack_of
 from steuermaschine.protocols import Result
 from steuermaschine.runlock import Policy, Refusal
 from steuermaschine.testing import FakeCommands, fake_providers, invoke
-from steuermaschine.window import Rules, Window, WindowStatus
 
 
 def core_alone(reviewed: bool = True, commands: FakeCommands | None = None) -> Runtime:
@@ -181,22 +180,6 @@ def test_doc_section_keeps_a_relative_file_when_the_default_is_not_configured(tm
     assert "not configured" in invoke(rt, ["doc", "section"]).stderr
 
 
-def test_window_status_alone_uses_the_core_rules():
-    rt = core_alone()
-    Window(rt.providers.store, rt.providers.clock, Rules(), "core").enter("feat/x", "a" * 40, 2, 0, owner="o", pid=1, host="h")
-    found = WindowStatus.model_validate(json.loads(invoke(rt, ["--format", "json", "ci", "window", "status"]).stdout))
-    assert found.cap == Rules().cap and found.active is not None and found.active.branch == "feat/x"
-
-
-def test_window_status_takes_the_window_a_plugin_hands_in():
-    def factory(rt):
-        return Window(rt.providers.store, rt.providers.clock, Rules(cap=2), "project")
-
-    rt = stacked(Extras("base", {window.WINDOW: factory}))
-    found = WindowStatus.model_validate(json.loads(invoke(rt, ["--format", "json", "ci", "window", "status"]).stdout))
-    assert found.cap == 2 and found.active is None
-
-
 # ----------------------------------------------------------------------------- the order rule for core commands
 def test_a_plugin_command_at_a_core_path_replaces_it_and_is_the_write_unit_at_that_path():
     rt = stacked(Replaces(), reviewed=False)
@@ -206,7 +189,7 @@ def test_a_plugin_command_at_a_core_path_replaces_it_and_is_the_write_unit_at_th
     assert [u.fn for u in write_units(rt) if u.path == "lim"] == [own_lim]
 
 
-@pytest.mark.parametrize("path", ["gate run", "gate wait", "gate status", "lim", "doc section", "ci window status"])
+@pytest.mark.parametrize("path", ["gate run", "gate wait", "gate status", "lim", "doc section"])
 def test_the_core_commands_follow_the_help_contract(path):
     assert invoke(core_alone(), [*path.split(), "--help"]).exit_code == 0
     lint = json.loads(invoke(core_alone(), ["--format", "json", "self", "lint"]).stdout)

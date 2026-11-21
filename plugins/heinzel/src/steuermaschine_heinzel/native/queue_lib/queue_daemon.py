@@ -69,7 +69,6 @@ from . import edge  # moved: siblings are imported relatively, no sys.path entry
 from . import combine_notes as hz_combine_notes  # noqa: E402
 from . import hzlib  # noqa: E402
 from . import known_main_infra  # noqa: E402
-from ..admission_lib import repair_main  # noqa: E402
 from . import main_batch  # noqa: E402
 from . import main_checkpoint  # noqa: E402
 from . import release_candidate as rc  # noqa: E402
@@ -618,25 +617,10 @@ def known_failures(jobs: list[dict]) -> tuple[list[str], dict]:
     return [j["name"] for j in failed], beads
 
 
-REPAIRED = "repaired-plan"  # the label of a main whose only failure was a missing focused plan, admitted since (`sm head prepare --repair-main`)
-
-
-def repaired_main(run: int, sha: str, jobs: list[dict]) -> dict:
-    """The written repair-main admission of exactly this attempt-1 failure ({receipt_sha256, ...}), else {}."""
-    failed = {j["name"]: j.get("id") for j in jobs if j.get("conclusion") not in GREEN_JOB}
-    return repair_main.receipt_for(Path.home(), run, sha, failed) or {}
-
-
 def main_attempt_failures(run: int, sha: str, jobs: list[dict], *, restoring: bool = False) -> tuple[list[str], dict, str]:
     """Classify one main attempt, keeping scoped infrastructure evidence out of all release readers."""
     receipt = known_main_infra.reviewed_incident(KNOWN_MAIN_INFRA, run, sha, jobs)
     recorded = load().get("main_reruns", {}).get(str(run), {}) if restoring else {}
-    repair = repaired_main(run, sha, jobs) if not receipt else {}
-    if repair:
-        if restoring and recorded.get("repair_receipt_sha256") != repair["receipt_sha256"]:
-            return [], {}, ""  # only the rerun this repair requested restores
-        names = [job["name"] for job in jobs if job["name"] != aggregate() and job.get("conclusion") not in GREEN_JOB]
-        return names, dict.fromkeys(names, REPAIRED), ""
     if restoring and "infra_receipt_sha256" in recorded:
         if (not receipt or recorded.get("sha") != sha
                 or recorded["infra_receipt_sha256"] != receipt["receipt_sha256"]
@@ -700,11 +684,6 @@ def main_rerun_plan() -> tuple[str, str, dict]:
         if not receipt or receipt["receipt_sha256"] != infra_digest:
             return "refuse", f"run {rid} reviewed infrastructure receipt changed or expired during validation", {}
         facts["infra_receipt_sha256"] = infra_digest
-    if set(beads.values()) == {REPAIRED}:
-        repair = repaired_main(rid, latest["headSha"], jobs)
-        if not repair:
-            return "refuse", f"run {rid} repair receipt changed during validation", {}
-        facts["repair_receipt_sha256"] = repair["receipt_sha256"]
     if hzlib.merge_frozen():
         return "refuse", "release guard: merge freeze is on", {}
     return "rerun", f"run {rid} at {latest['headSha'][:8]}: {tagged(beads)}", facts
@@ -714,12 +693,9 @@ FOCUSED_JOB = "Focused tests"  # Core's focused jobs (`Focused tests (python)`, 
 
 
 def rerun_refusing_jobs(jobs: list[dict], beads: dict) -> list[str]:
-    """The focused jobs a `rerun --failed` of this attempt would start again: every focused job of a repaired main (it was
-    skipped behind the missing plan and depends on the rerun job), else every focused job that did not pass. Core refuses
+    """The focused jobs a `rerun --failed` of this attempt would start again: every focused job that did not pass. Core refuses
     them on attempt 2, so the rerun cannot pass (bead 4yen)."""
-    repaired = bool(beads) and set(beads.values()) == {REPAIRED}
-    return [j["name"] for j in jobs if str(j.get("name", "")).startswith(FOCUSED_JOB)
-            and (repaired or j.get("conclusion") not in GREEN_JOB)]
+    return [j["name"] for j in jobs if str(j.get("name", "")).startswith(FOCUSED_JOB) and j.get("conclusion") not in GREEN_JOB]
 
 
 def main_rerun(dry_run: bool = False) -> int:
@@ -790,19 +766,11 @@ def rerun_restoration() -> dict:
     failed, beads, _ = main_attempt_failures(rid, sha, first, restoring=True)
     if not failed or not all(beads.values()):
         return {}  # an UNKNOWN attempt-1 failure keeps the old rule: only a first-attempt full pass restores
-    repaired = set(beads.values()) == {REPAIRED}
-    # A repaired main never ran its tests on attempt 1 (no plan); attempt 2 is its first focused run, judged by the aggregate.
-    if not (full_pass(second, sha) or (repaired and focused_pass(second, sha))):
+    if not full_pass(second, sha):
         return {}
-    return {"run": rid, "sha": sha, "jobs": failed, "beads": sorted(set(beads.values())), **({"repaired": True} if repaired else {})}
+    return {"run": rid, "sha": sha, "jobs": failed, "beads": sorted(set(beads.values()))}
 
 
-def focused_pass(jobs: list[dict] | None, sha: str) -> bool:
-    """Every job completed green and the policy's aggregate succeeded (a focused main: the owning lanes only)."""
-    if not jobs or any(j.get("status") != "completed" or j.get("conclusion") not in GREEN_JOB for j in jobs):
-        return False
-    policy = reviewed_policy(sha)
-    return policy is not None and any(j["name"] == policy.aggregate and j.get("conclusion") == "success" for j in jobs)
 
 
 def restored_by_rerun() -> bool:

@@ -255,7 +255,7 @@ def core_worktree(worktree: Path, usage: str) -> Path:
     "Use before handing a packet over, on the committed head: it reproduces what hosted CI and the release candidate check.",
     "nothing outside this machine: local checks through the run lock, one GitHub read, its summary JSON and logs next to SEL (or --out).",
     "sm head preflight ~/Code/heinzel-chat-composer --sel ~/Code/packets/chat/SEL.json",
-    "sm head validate WORKTREE --lanes ... when READY names hosted lanes (web or e2e files changed), else sm head admit WORKTREE",
+    "sm head admit WORKTREE (hosted PR CI runs the e2e lanes when READY names them)",
     "Checks, in this order (one is left out only by --skip NAME, and the verdict names every skipped one):\n"
     "  tree        clean tree, head ahead of the base, merge-base == base tip, local base == remote main\n"
     "  lint        `make lint` (format, ruff, contracts, typos, ...) through the run lock\n"
@@ -284,8 +284,8 @@ def core_worktree(worktree: Path, usage: str) -> Path:
     "              the PR would sit BLOCKED with every check green\n"
     "SEL is the packet selection ({\"python\": [...], \"web\": [...], \"browser\": [...]}). Journeys kept off hosted CI go\n"
     "under \"local_only\": {\"tests/e2e/x_test.py\": \"reason\"} in SEL, or in the file given by --local-only.\n"
-    "The hosted e2e lanes are not run here: READY ends with the `sm head validate` command and its lanes when the head\n"
-    "touches web or e2e files. The summary is preflight-head-<sha8>.json next to SEL (--out DIR overrides).\n"
+    "The hosted e2e lanes are not run here: READY names them when the head touches web or e2e files; PR CI runs them.\n"
+    " The summary is preflight-head-<sha8>.json next to SEL (--out DIR overrides).\n"
     "Exit 0 READY, 1 NOT READY, 2 usage. --consumers builds a wheel of the head and checks the plugin in a temporary\n"
     "worktree of the plugins repository; its target `check` is a full suite the run lock refuses unless the coordinator\n"
     "adds --allow-full, `--consumers-target check-fast` needs no such call."))
@@ -329,7 +329,7 @@ def head_preflight(worktree: Path = typer.Argument(..., metavar="WORKTREE", help
             report.next = f"full set ({full}): hosted PR CI is the validation; sm head admit {wt}"
         elif head.hosted_wanted(changed):
             report.hosted_lanes = head.hosted_lanes(changed)
-            report.next = f"sm head validate {wt} --lanes {','.join(report.hosted_lanes)}"
+            report.next = f"hosted PR CI runs the lanes {','.join(report.hosted_lanes)}; sm head admit {wt}"
         else:
             report.next = f"sm head admit {wt}"
     providers.store.save(SUMMARY_KIND, c.sha[:8], report.model_dump(mode="json"))  # the last preflight of this head, for `sm head admit` and the coordinator

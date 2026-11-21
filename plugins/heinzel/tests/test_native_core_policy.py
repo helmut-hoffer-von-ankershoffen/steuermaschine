@@ -105,7 +105,7 @@ GARBLED = {
     "version as text": _raw(policy="1"),
     "unknown key": kit.encode(kit.manifest() | {"extra": 1}),
     "sources key": kit.encode(kit.manifest() | {"sources": {}}),  # policy 1 has no checksums
-    "missing key": kit.encode({k: v for k, v in kit.manifest().items() if k != "lanes"}),
+    "missing key": kit.encode({k: v for k, v in kit.manifest().items() if k != "required_contexts"}),
     "workflow outside workflows": _raw(workflow="ci.yml"),
     "escaping path": _raw(recorder="../x.py"),
     "control character path": _raw(recorder="scripts/x\ty.py"),
@@ -246,3 +246,69 @@ def test_a_base_that_is_not_an_ancestor_of_the_head_fails_closed(core):
     assert core_policy.ci_changes(repo, sibling, head) == (
         f"base {sibling[:12]} is not an ancestor of head {head[:12]} (or either is missing in the clone)",)
     assert core_policy.ci_changes(repo, base, head) == ("src/a.py: CI path (not listed as not CI at base " + base[:12] + ")",)
+
+
+# ----------------------------------------------------------------------------- a policy without the focused-plan and merge-gate parts
+OPTIONAL = ("lanes", "focused_job", "gate_checks", "judge_workflow")
+
+
+def _slim(**override) -> bytes:
+    """The policy of a Core that dropped its focused scripts and the merge-gate workflow."""
+    data = {k: v for k, v in kit.manifest("new").items() if k not in OPTIONAL}
+    return kit.encode(data | override)
+
+
+def test_a_policy_without_the_optional_keys_is_read_with_empty_values():
+    policy = core_policy.at_commit_api(api(kit.files("new", policy=_slim(required_contexts=["CI OK"]))), C)
+    assert policy.lanes == {} and policy.focused_job == "" and policy.gate_checks == {} and policy.judge_workflow == ""
+    assert policy.judge_file == "" and policy.api_checks == frozenset() and policy.lane_kind("web") is None
+    assert policy.aggregate == "CI OK" and policy.required_contexts == {"CI OK"}
+
+
+def test_a_policy_without_merge_gate_in_the_required_contexts_is_read():
+    for contexts in (["CI OK"], ["CI OK", "coverage-floor", "merge-gate"]):  # without gate_checks neither shape names them
+        policy = core_policy.at_commit_api(api(kit.files("new", policy=_slim(required_contexts=contexts))), C)
+        assert policy.required_contexts == set(contexts)
+
+
+@pytest.mark.parametrize("dropped", OPTIONAL)
+def test_each_optional_key_alone_may_be_missing(dropped):
+    data = kit.manifest("new")
+    data.pop(dropped)
+    data["required_contexts"] = ["CI OK", "coverage-floor", "merge-gate"] if dropped != "gate_checks" else ["CI OK"]
+    core_policy.at_commit_api(api(kit.files("new", policy=kit.encode(data))), C)
+
+
+@pytest.mark.parametrize("required", sorted(core_policy.KEYS - set(OPTIONAL)))
+def test_every_other_key_is_still_required(required):
+    data = {k: v for k, v in kit.manifest("new").items() if k != required}
+    with pytest.raises(CandidateError):
+        core_policy.at_commit_api(api(kit.files("new", policy=kit.encode(data))), C)
+
+
+@pytest.mark.parametrize("override", [
+    {"required_contexts": []}, {"required_contexts": ["merge-gate"]},  # the aggregate must be required
+    {"gate_checks": {"coverage": "coverage-floor", "sonar": "merge-gate"}, "required_contexts": ["CI OK"]},  # a named gate must be required
+    {"judge_workflow": "ci.yml"}, {"focused_job": "Focused tests"}, {"lanes": {}},
+])
+def test_what_is_present_is_still_checked(override):
+    blobs = kit.files("new", policy=kit.encode(kit.manifest("new") | override))
+    with pytest.raises(CandidateError):
+        core_policy.at_commit_api(api(blobs), C)
+
+
+def test_the_policy_still_fails_closed_on_a_missing_file_and_invalid_json():
+    with pytest.raises(CandidateError, match="missing at"):
+        core_policy.at_commit_api(lambda path: None, C)
+    with pytest.raises(CandidateError, match="not valid JSON"):
+        core_policy.at_commit_api(api(kit.files("new", policy=b"{not json")), C)
+
+
+def test_the_merge_gate_readers_tolerate_a_policy_without_the_gate(monkeypatch):
+    from steuermaschine_heinzel.native.queue_lib import core_facts
+
+    slim = core_policy.at_commit_api(api(kit.files("new", policy=_slim(required_contexts=["CI OK"]))), C)
+    monkeypatch.setattr(core_facts, "at_main", lambda: slim)
+    assert core_facts.api_checks() == () and core_facts.contexts() == ("CI OK",) and core_facts.judge_file() == ""
+    with pytest.raises(CandidateError, match="no coverage check"):
+        core_facts.gate_check("coverage")

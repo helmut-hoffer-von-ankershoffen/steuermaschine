@@ -320,10 +320,10 @@ def test_full_pass_needs_the_aggregate_and_every_test_cell_of_the_commits_policy
     assert q.full_pass(rows, SHA) is complete
 
 
-def test_full_pass_and_focused_pass_fail_closed_without_a_policy(q, monkeypatch):
+def test_full_pass_fail_closed_without_a_policy(q, monkeypatch):
     monkeypatch.setattr(q, "reviewed_policy", lambda sha: None)
     rows = [{"name": n, "status": "completed", "conclusion": "success"} for n in SHARDED]
-    assert q.full_pass(rows, SHA) is False and q.focused_pass(rows, SHA) is False
+    assert q.full_pass(rows, SHA) is False
 
 
 def test_the_policy_of_a_main_commit_comes_from_the_contents_api(q):

@@ -227,7 +227,7 @@ def test_types_are_left_out_for_what_the_hook_leaves_out(core, capsys, path):
 def test_the_web_warning_names_the_validation_lanes(core, capsys):
     tree(core, {"scripts/related_tests.py": ""})
     go(core, Fake(core, changed=["web/src/a.ts"]))
-    assert step(result(capsys), "related")["data"]["warnings"] == ["the push hook runs the whole web gate; run `sm head validate --lanes web-1,web-2`"]
+    assert step(result(capsys), "related")["data"]["warnings"] == ["the push hook runs the whole web gate; hosted PR CI runs the web lanes"]
 
 
 def test_unreadable_types_line_warns_that_the_defaults_ran(core, capsys):
