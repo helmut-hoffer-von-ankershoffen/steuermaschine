@@ -43,7 +43,7 @@ def in_sm_words(value):
 
 
 def test_every_rule_answers_as_the_old_tool_did():
-    assert len(RECORDED) == len(alarm_cases.CASES) >= 35
+    assert len(RECORDED) == len(alarm_cases.CASES) >= 29
     for row, (name, args, kwargs) in zip(RECORDED, alarm_cases.CASES, strict=True):
         mine = alarm_cases.call(rules, name, args, kwargs)
         assert mine == in_sm_words(row["result"]), (row["case"], name)
@@ -53,7 +53,7 @@ def test_every_rule_answers_as_the_old_tool_did():
 def test_the_recorded_cases_cover_every_alarm_class():
     texts = json.dumps(RECORDED)
     for word in ("STALL #801 BLOCKED with green checks for 277 min", "MAIN RED run 5", "CANDIDATE release/v0.9.40 CI run 5", "ADMISSION blocked by 2",
-                 "ADMISSION idle", "REGISTRY focused slots", "paused for", "unfinished, receipt unchanged", "REHEARSAL RED", "REHEARSAL INCOMPLETE", "REHEARSAL of main"):
+                 "ADMISSION idle", "REGISTRY focused slots", "paused for", "unfinished, receipt unchanged"):
         assert word in texts, word
 
 
@@ -169,48 +169,11 @@ RED = {"main": "da1362306815dc5e", "verdict": "red", "suspects": ["fix: late imp
 GREEN = {"main": "f19a3782232cb24b", "verdict": "green", "failures": []}
 
 
-def test_a_red_rehearsal_in_the_store_alone_is_an_alert_that_names_the_failed_runs(tmp_path):
-    state, rt = world_for(tmp_path, scripted())
-    rt.providers.store.save(*REHEARSAL, {"last": RED, "last_green": "f19a3782232cb24b"})
-    out = invoke(rt, ["alarm", "check"])
-    assert out.exit_code == 3 and list(state.iterdir()) == [], out
-    assert ("ALERT REHEARSAL RED main da13623068: End-to-end web (ubuntu-latest): failure https://github.com/o/r/actions/runs/71, Consumer (heinzel-acme)"
-            " | merges since last green (1): fix: late import (#801); a retired rehearsal's verdict (its state file)") in out.stdout
 
 
-def test_an_incomplete_rehearsal_in_the_store_is_a_warn_and_a_preempted_one_is_not(tmp_path):
-    _, rt = world_for(tmp_path, scripted())
-    rt.providers.store.save(*REHEARSAL, {"last": {"main": "da1362306815dc5e", "verdict": "incomplete"}})
-    out = invoke(rt, ["alarm", "check"])
-    assert out.exit_code == 0 and "WARN REHEARSAL INCOMPLETE main da13623068: not every lane ran" in out.stdout
-    rt.providers.store.save(*REHEARSAL, {"last": {"main": "da1362306815dc5e", "verdict": "incomplete", "preempted": True, "yielded": "yielded to PR 801"}})
-    assert "WARN" not in invoke(rt, ["alarm", "check"]).stdout
 
 
-def test_a_red_rehearsal_in_the_old_file_alone_is_still_an_alert(tmp_path):
-    state, rt = world_for(tmp_path, scripted())
-    (state / "rehearse.json").write_text(json.dumps({"last": RED}))
-    out = invoke(rt, ["alarm", "check"])
-    assert out.exit_code == 3 and "ALERT REHEARSAL RED main da13623068: End-to-end web (ubuntu-latest)" in out.stdout
 
 
-def test_with_both_the_store_document_wins_over_the_old_file(tmp_path):
-    state, rt = world_for(tmp_path, scripted())
-    (state / "rehearse.json").write_text(json.dumps({"last": RED}))
-    rt.providers.store.save(*REHEARSAL, {"last": GREEN, "last_green": GREEN["main"]})
-    assert invoke(rt, ["alarm", "check"]).stdout.strip() == "OK"  # the old red verdict is history once the native rehearsal has written
-    (state / "rehearse.json").write_text(json.dumps({"last": GREEN}))
-    rt.providers.store.save(*REHEARSAL, {"last": RED})
-    out = invoke(rt, ["alarm", "check"])
-    assert out.exit_code == 3 and "ALERT REHEARSAL RED main da13623068" in out.stdout
-    rt.providers.store.save(*REHEARSAL, {})  # written and empty is still written: the old file stays out
-    (state / "rehearse.json").write_text(json.dumps({"last": RED}))
-    assert invoke(rt, ["alarm", "check"]).stdout.strip() == "OK"
 
 
-def test_with_neither_there_is_no_rehearsal_alarm_and_an_unreadable_store_document_is_a_blind_check(tmp_path):
-    _, rt = world_for(tmp_path, scripted())
-    assert invoke(rt, ["alarm", "check"]).stdout.strip() == "OK"
-    rt.providers.store.save(*REHEARSAL, ["not", "an", "object"])
-    out = invoke(rt, ["alarm", "check"])
-    assert "WARN ALARM CHECK rehearsal unavailable: the rehearsal state in the store is not an object" in out.stdout

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from test_pipeline_head_admit import HEAD, native, runtime
@@ -92,3 +94,44 @@ def test_the_builder_refuses_an_unknown_layout_and_a_review_without_its_root(tmp
         ops.build_packet(tmp_path, "fix/x", "origin/main", tmp_path / "p.json", layout="nope")
     with pytest.raises(ops.PacketRefused, match="--review needs --review-root"):
         ops.build_packet(tmp_path, "fix/x", "origin/main", tmp_path / "p.json", review="REVIEW.md")
+
+
+# ----------------------------------------------------------------------------- verify: regenerate and compare, on a stubbed builder
+def _stub_builder(monkeypatch, rebuilt):
+    fm = ops.fm
+    monkeypatch.setattr(fm, "Repo", lambda path: SimpleNamespace(commit=lambda ref: ref))
+    monkeypatch.setattr(ops, "trusted_base", lambda repo, base: base)
+    monkeypatch.setattr(fm, "read_junit", lambda values: {})
+    monkeypatch.setattr(fm, "read_review", lambda rel, roots: None)
+    monkeypatch.setattr(fm, "build", lambda *a, **kw: rebuilt)
+
+
+def _packet(**manifest):
+    return {"manifest": {"head": "h" * 40, "base": "b" * 40, "tree": "t" * 40, "selection": {}, "production": [], "case_sha256": {}, **manifest},
+            "main_manifest": {"head": "h" * 40}, "review": {"manifest_sha256": "m", "main_manifest_sha256": "mm", "path": "R.md", "sha256": "s"}}
+
+
+def test_verify_reports_byte_equal_different_and_formatting_only(tmp_path, monkeypatch):
+    theirs = _packet()
+    path = tmp_path / "p.json"
+    path.write_bytes(json.dumps(theirs, indent=1).encode())
+    _stub_builder(monkeypatch, _packet())
+    monkeypatch.setattr(ops.fm, "layout_of", lambda data: "indent")
+    monkeypatch.setattr(ops.fm, "packet_bytes", lambda packet, layout="indent": json.dumps(packet, indent=1).encode())
+    assert ops.verify_packet(tmp_path, path).status == "byte_equal"
+    changed = ops.verify_packet.__globals__["fm"]
+    _stub_builder(monkeypatch, _packet(tree="x" * 40))
+    different = ops.verify_packet(tmp_path, path)
+    assert different.status == "different" and "DIFFERENT manifest.tree" in different.differences
+    _stub_builder(monkeypatch, _packet())
+    monkeypatch.setattr(changed, "packet_bytes", lambda packet, layout="indent": json.dumps(packet, indent=4).encode())
+    formatting = ops.verify_packet(tmp_path, path)
+    assert formatting.status == "different" and formatting.differences == ["DIFFERENT formatting only (same JSON value)"]
+
+
+def test_verify_refuses_unsupported_manifest_fields(tmp_path, monkeypatch):
+    path = tmp_path / "p.json"
+    path.write_text(json.dumps(_packet(surprise=1)))
+    _stub_builder(monkeypatch, _packet())
+    with pytest.raises(ops.PacketRefused, match="unsupported fields"):
+        ops.verify_packet(tmp_path, path)

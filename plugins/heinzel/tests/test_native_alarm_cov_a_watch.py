@@ -46,7 +46,6 @@ def markers(monkeypatch):
     monkeypatch.setattr(rules, "admission_alarms", lambda runs, covered, now, waiting: [])
     monkeypatch.setattr(rules, "slot_alarm", lambda sizes: rules.alarm("WARN", "registry-slots", json.dumps(sizes, sort_keys=True)))
     monkeypatch.setattr(rules, "release_alarm", lambda data, changed, active, now: rules.alarm("INFO", "release", f"{data} {active}"))
-    monkeypatch.setattr(rules, "rehearsal_alarms", lambda state, now: [])
 
 
 QUIET = {
@@ -210,10 +209,6 @@ def test_release_receipt_variants(tmp_path):
     assert keys(watch.collect(world(tmp_path, answers), NOW))["release"]["text"] == "{'version': '1'} 1"
 
 
-def test_rehearsal_errors_become_blind_warnings(tmp_path):
-    w = world(tmp_path, dict(QUIET))
-    w.rehearsal = "not an object"
-    assert "blind:rehearsal" in keys(watch.collect(w, NOW))
 
 
 def test_recorded_rows():

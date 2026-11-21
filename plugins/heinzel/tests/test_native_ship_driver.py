@@ -50,7 +50,7 @@ def drive(tmp_path, monkeypatch, set_=None, fake=None, **options):
     fake = fake or FakeEngine()
     monkeypatch.setattr(ship_driver, "engine", lambda: fake)
     with native(rt):
-        return fake, ship_driver.ship(worktree(tmp_path), live=options.pop("live", False), set_=set_, wait=options.pop("wait", None))
+        return fake, ship_driver.ship(worktree(tmp_path), live=options.pop("live", False), approved="", author="", set_=set_, wait=options.pop("wait", None))
 
 
 def test_the_driver_hands_the_given_inputs_to_the_pipeline_unchanged(tmp_path, monkeypatch):
@@ -78,7 +78,7 @@ def waiting(tmp_path, monkeypatch, view, listing, minutes=10):
     monkeypatch.setattr(ship_driver, "engine", lambda: FakeEngine())
     with native(rt):
         rt.providers.store.save("runs.head.admit", HEAD, {"data": {"pr": 7}, "inputs": {}})
-        return rt, ship_driver.ship(worktree(tmp_path), live=True, set_=None, wait=minutes)
+        return rt, ship_driver.ship(worktree(tmp_path), live=True, approved="", author="", set_=None, wait=minutes)
 
 
 def test_wait_ends_zero_when_the_pr_merged(tmp_path, monkeypatch):
@@ -132,7 +132,7 @@ def test_wait_with_a_finished_run_and_no_pr_refuses(tmp_path, monkeypatch):
     rt = runtime(tmp_path)
     monkeypatch.setattr(ship_driver, "engine", lambda: FakeEngine())
     with native(rt), pytest.raises(Refuse, match="no PR is recorded"):
-        ship_driver.ship(worktree(tmp_path), live=True, set_=None, wait=5)
+        ship_driver.ship(worktree(tmp_path), live=True, approved="", author="", set_=None, wait=5)
 
 
 def test_an_unreadable_github_and_no_queue_entry_is_unknown_not_dropped(tmp_path, monkeypatch):
@@ -144,3 +144,12 @@ def test_wait_ends_with_exit_75_when_a_promote_is_switching(tmp_path, monkeypatc
     monkeypatch.setattr(ship_driver, "switch_pending", lambda commands, now: 4242)
     with pytest.raises(Wait, match=r"promote \(pid 4242\) is switching"):
         waiting(tmp_path, monkeypatch, json.dumps({"state": "OPEN"}), entries((7, "queued", "")))
+
+
+def test_the_approved_digest_and_the_author_reach_the_pipeline(tmp_path, monkeypatch):
+    rt = runtime(tmp_path)
+    fake = FakeEngine()
+    monkeypatch.setattr(ship_driver, "engine", lambda: fake)
+    with native(rt):
+        ship_driver.ship(worktree(tmp_path), live=True, approved="d" * 64, author="builder-1", set_=None, wait=None)
+    assert fake.calls[0][2].approved == "d" * 64 and fake.calls[0][2].author == "builder-1"

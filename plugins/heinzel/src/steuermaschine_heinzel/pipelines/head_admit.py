@@ -18,6 +18,7 @@ from __future__ import annotations
 import fnmatch
 import hashlib
 import json
+import tomllib
 from pathlib import Path
 from typing import Any
 
@@ -75,6 +76,33 @@ PROTECTED = (".github/*", "release.sh", "*/release.sh", "scripts/*release*", "sc
              "quarantine.toml", "*/quarantine.toml", "conftest.py", "*/conftest.py", ".coveragerc", "*/.coveragerc", "scripts/*coverage*")
 
 
+TOOL_TABLES = ("coverage", "pytest")  # the coverage config and the pytest options: they can lower a floor, deselect tests or raise a timeout
+
+
+def _tables_at(ctx: Ctx, wt: str, rev: str) -> dict[str, Any]:
+    """The `tool.coverage` and `tool.pytest` tables of pyproject.toml at REV; ValueError when it cannot be read or parsed."""
+    done = ctx.providers.commands.run(["git", "-C", wt, "show", f"{rev}:pyproject.toml"], timeout=120)
+    if done.rc != 0:
+        raise ValueError(f"cannot read pyproject.toml at {rev}")
+    try:
+        tool = tomllib.loads(str(done.out)).get("tool", {})
+    except tomllib.TOMLDecodeError as exc:
+        raise ValueError(f"pyproject.toml at {rev} is not valid TOML: {exc}") from None
+    return {name: tool.get(name) for name in TOOL_TABLES}
+
+
+def _pyproject_weakens(ctx: Ctx, wt: str) -> bool:
+    """True when pyproject.toml changed in `tool.coverage` or `tool.pytest`, or when either side cannot be read or parsed
+    (fail closed). A dependency or version change alone is not protected."""
+    base = ctx.providers.commands.run(["git", "-C", wt, "merge-base", "origin/main", "HEAD"], timeout=120)
+    if base.rc != 0:
+        return True
+    try:
+        return _tables_at(ctx, wt, str(base.out).strip()) != _tables_at(ctx, wt, "HEAD")
+    except ValueError:
+        return True
+
+
 def protected_changes(ctx: Ctx) -> list[str]:
     """The paths this head changes against main that need a blocking review. A diff that cannot be read refuses (fail closed)."""
     wt = ctx.subject.facts["worktree"]
@@ -83,10 +111,8 @@ def protected_changes(ctx: Ctx) -> list[str]:
         raise Refuse(f"cannot read the changed paths of {wt} against origin/main: {(done.err or done.out).strip()[:200]}", f"git -C {wt} fetch origin main")
     names = [n for n in str(done.out).split("\0") if n]
     found = {n for n in names if any(fnmatch.fnmatchcase(n, pat) for pat in PROTECTED)}
-    if "pyproject.toml" in names:  # the coverage config lives in it: only a diff that names coverage counts
-        diff = ctx.providers.commands.run(["git", "-C", wt, "diff", "-U0", "origin/main...HEAD", "--", "pyproject.toml"], timeout=120)
-        if diff.rc != 0 or "coverage" in str(diff.out).lower():
-            found.add("pyproject.toml")
+    if "pyproject.toml" in names and _pyproject_weakens(ctx, wt):
+        found.add("pyproject.toml")
     return sorted(found)
 
 

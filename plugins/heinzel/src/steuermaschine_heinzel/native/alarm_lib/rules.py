@@ -220,32 +220,6 @@ def release_alarm(receipt: dict | None, changed_at: float | None, active_release
     return None
 
 
-def rehearsal_alarms(state: dict | None, now: float, open_limit: int = REHEARSAL_OPEN_MIN) -> list[dict]:
-    """The rehearsal state: ALERT while the last verdict is red (failed runs and the merges since the last green
-    rehearsal), WARN while it is incomplete or a rehearsal has been open for too long. An incomplete verdict marked
-    `preempted` (the rehearsal cancelled its own lanes for a queued PR or an admission) is expected: INFO."""
-    if not isinstance(state, dict):
-        return []
-    out = []
-    current = state.get("current") if isinstance(state.get("current"), dict) else None
-    if current and minutes(current.get("started"), now) > open_limit:
-        out.append(alarm("WARN", "rehearsal:open", f"REHEARSAL of main {str(current.get('main'))[:10]} open for "
-                         f"{minutes(current.get('started'), now)} min: a retired rehearsal (no command ends it any more)"))
-    last = state.get("last") if isinstance(state.get("last"), dict) else None
-    if not last:
-        return out
-    main = str(last.get("main"))[:10]
-    if last.get("verdict") == "red":
-        failures = [str(f) for f in last.get("failures") or []]
-        suspects = [str(s) for s in last.get("suspects") or []]
-        merges = (f" | merges since last green ({len(suspects)}): " + "; ".join(suspects[-SUSPECT_CAP:])) if suspects else " | no earlier green rehearsal to compare with"
-        out.append(alarm("ALERT", f"rehearsal:{main}", f"REHEARSAL RED main {main}: {named(failures, 8) if failures else 'failures unreadable'}"
-                         f"{merges}; a retired rehearsal's verdict (its state file)"))
-    elif last.get("verdict") == "incomplete":
-        detail = last.get("yielded") or (last.get("consumers") or {}).get("detail") or "not every lane ran"
-        out.append(alarm("INFO" if last.get("preempted") is True else "WARN", f"rehearsal:{main}",
-                         f"REHEARSAL INCOMPLETE main {main}: {detail}; proves nothing, the next tick retries when main moves"))
-    return out
 
 
 def required_contexts(rules) -> list[str]:

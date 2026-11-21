@@ -44,3 +44,11 @@ def test_a_written_without_receipt_refusal_passes_through_the_tracker_unchanged(
         wait.tracked(rt, run)
     with pytest.raises(a.AdmissionError, match="plain refusal"):
         wait.tracked(rt, lambda: (_ for _ in ()).throw(a.AdmissionError("plain refusal")))
+
+
+def test_a_run_of_another_repository_is_not_a_harmless_zombie():
+    from steuermaschine_heinzel.native.admission_lib import receipt_guard
+
+    rt = SimpleNamespace(repo="o/core", now=lambda: 0)
+    row = {"id": 1, "status": "queued", "conclusion": None, "repository": {"full_name": "other/x"}}
+    assert receipt_guard.row_failure(rt, row, {}, [], paths=set(), min_age=0, stamp=None) == "repository changed"

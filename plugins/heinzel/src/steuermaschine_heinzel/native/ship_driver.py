@@ -129,14 +129,17 @@ def _summary(worktree: str, report: Report, derived: list[str], pr: int | None, 
     "Use when a head is committed in its own worktree and should go out; type it again after every stop.",
     "what `head admit` writes: state on this machine; with --live also one push, the PR and one queue entry. Waiting only reads.",
     "sm ship ~/Code/heinzel-fix --live --wait 45 --set bead=abc --set title=\"fix(web): short title\"",
-    "the NEXT line it prints; exit 75: the same command again",
-    "No packet, no reviewer stop, no plan slot: Core's CI runs the full matrix on every PR. The one review left is the diff guard's:\n"
-    "a PR that changes .github/, release or publish scripts or security paths is flagged and queued only with --set reviewed=\"review: FILE\"\n"
-    "(an asynchronous review recorded with `sm review verdict`).\n"
+    "the NEXT line it prints (a review stop names the digest and the brief); exit 75: the same command again",
+    "No packet, no plan slot: Core's CI runs the full matrix on every PR. One blocking stop is kept: a head that changes .github/, the\n"
+    "release, publish, PyPI or acceptance scripts, quarantine.toml, the coverage config or a conftest.py stops with the digest of exactly\n"
+    "those paths; a different agent records `sm review verdict DIGEST --approve`, then run this again with --approved DIGEST.\n"
+    "The diff guard stays too: a flagged PR is queued only with --set reviewed=\"review: FILE\".\n"
     "--wait MINUTES, after the queue step: exit 0 when the PR merged, exit 1 with the reason when it was closed or the queue dropped it,\n"
     "exit 75 when the ceiling is reached (run it again to keep waiting)."))
 def ship(worktree: str = typer.Argument(..., metavar="WORKTREE", help="The clean worktree of the head, on its own work branch."),
          live: bool = typer.Option(False, "--live", help="Also run the steps that write outside this machine (push and PR, queue)."),
+         approved: str = typer.Option("", "--approved", metavar="SHA256", help="The digest a different agent approved at the protected-path stop."),
+         author: str = typer.Option("", "--as", metavar="NAME", help="Who drives this run; the reviewer must be someone else."),
          set_: list[str] | None = typer.Option(None, "--set", metavar="NAME=VALUE", help="An input of `head admit` (remembered)."),
          wait: int | None = typer.Option(None, "--wait", min=1, metavar="MINUTES", help="After the queue step, wait up to MINUTES for the PR to merge.")) -> ShipResult:
     rt = runtime()
@@ -145,7 +148,7 @@ def ship(worktree: str = typer.Argument(..., metavar="WORKTREE", help="The clean
     store = rt.providers.store
     _given(store, pl, subject.key, set_)  # refuses a --set of a name the pipeline does not take
     now = {pair.partition("=")[0]: pair.partition("=")[2] for pair in set_ or []}
-    report = engine().advance(pl, worktree, Options(live=live, approved="", author=config.environment().steuermaschine_agent or "coordinator", inputs=now))
+    report = engine().advance(pl, worktree, Options(live=live, approved=approved, author=author or config.environment().steuermaschine_agent or "coordinator", inputs=now))
     number = _pr(store, pl, subject.key)
     if wait is None or report.status != "finished" or report.exit_code:
         return _summary(worktree, report, [], number, False)

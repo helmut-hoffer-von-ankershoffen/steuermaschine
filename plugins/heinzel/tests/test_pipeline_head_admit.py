@@ -161,20 +161,25 @@ def test_check_adopts_a_green_receipt_and_refuses_a_red_run(tmp_path):
 
 # ----------------------------------------------------------------------------- the blocking review of protected paths
 class DiffCommands(FakeGh):
-    """Answers the two git diff calls of the protected review."""
+    """Answers the git calls of the protected review: the changed names, the merge-base and pyproject.toml at each side."""
 
-    def __init__(self, names: list[str], pyproject: str = ""):
+    def __init__(self, names: list[str], base_toml: str | None = None, head_toml: str | None = None):
         super().__init__()
-        self.names, self.pyproject = names, pyproject
+        self.names, self.base_toml, self.head_toml = names, base_toml, head_toml
 
     def run(self, argv, **kw):
         from types import SimpleNamespace
 
-        if argv[0] == "git" and "--name-only" in argv:
+        if argv[0] != "git":
+            return super().run(argv, **kw)
+        if "--name-only" in argv:
             return SimpleNamespace(rc=0, out="\0".join(self.names) + "\0", err="")
-        if argv[0] == "git" and "pyproject.toml" in argv:
-            return SimpleNamespace(rc=0, out=self.pyproject, err="")
-        return super().run(argv, **kw)
+        if "merge-base" in argv:
+            return SimpleNamespace(rc=0, out="b" * 40 + "\n", err="")
+        if "show" in argv:
+            text = self.head_toml if argv[-1] == "HEAD:pyproject.toml" else self.base_toml
+            return SimpleNamespace(rc=0 if text is not None else 128, out=text or "", err="" if text is not None else "no such path")
+        return SimpleNamespace(rc=1, out="", err="unexpected")
 
 
 @pytest.mark.parametrize("path", [".github/workflows/ci.yml", "scripts/release.sh", "scripts/publish_pypi.py", "scripts/acceptance_run.py",
@@ -200,11 +205,32 @@ def test_an_ordinary_head_has_no_stop_and_a_new_head_changes_the_digest(tmp_path
         assert head_admit.protected_review(other)[0] != first
 
 
-def test_pyproject_counts_only_when_its_diff_names_coverage(tmp_path):
-    with native(runtime(tmp_path, DiffCommands(["pyproject.toml"], "+version = 2"))) as _:
-        rt = runtime(tmp_path, DiffCommands(["pyproject.toml"], "+version = 2"))
-        assert head_admit.protected_changes(context(rt, tmp_path / "wt")) == []
-    rt = runtime(tmp_path, DiffCommands(["pyproject.toml"], "+[tool.coverage.report]"))
+CORE_TOML = """[project]
+name = "x"
+dependencies = ["a"]
+[tool.coverage.report]
+fail_under = 90
+[tool.pytest.ini_options]
+addopts = "-q"
+"""
+
+
+@pytest.mark.parametrize(("head_toml", "protected"), [
+    (CORE_TOML.replace("fail_under = 90", "fail_under = 50"), True),  # the floor lowered: no word "coverage" in the diff
+    (CORE_TOML.replace("[tool.coverage.report]", "[tool.coverage.report]\nomit = [\"src/x.py\"]"), True),
+    (CORE_TOML.replace('addopts = "-q"', 'addopts = "-q -k not_slow"'), True),
+    (CORE_TOML.replace('["a"]', '["a", "b"]'), False),  # a dependency alone is no weakening
+    (CORE_TOML.replace('name = "x"', 'name = "y"'), False),
+    ("[tool.coverage.report\nfail_under =", True),  # unparsable at HEAD: fail closed
+    (None, True),  # deleted at HEAD
+])
+def test_pyproject_is_protected_when_its_coverage_or_pytest_tables_change_or_cannot_be_read(tmp_path, head_toml, protected):
+    rt = runtime(tmp_path, DiffCommands(["pyproject.toml"], CORE_TOML, head_toml))
+    assert head_admit.protected_changes(context(rt, tmp_path / "wt")) == (["pyproject.toml"] if protected else [])
+
+
+def test_an_unparsable_pyproject_at_main_fails_closed_too(tmp_path):
+    rt = runtime(tmp_path, DiffCommands(["pyproject.toml"], "not = [toml", CORE_TOML))
     assert head_admit.protected_changes(context(rt, tmp_path / "wt")) == ["pyproject.toml"]
 
 

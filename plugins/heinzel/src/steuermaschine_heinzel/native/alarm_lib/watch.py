@@ -4,7 +4,7 @@ fails yields one WARN naming the blind check, never silence. Nothing is written 
 from __future__ import annotations
 
 from ..go_lib import legacy
-from ..go_lib.probes import World, rehearsal_state
+from ..go_lib.probes import World
 from ..queue_lib import core_facts
 from . import rules
 
@@ -118,7 +118,6 @@ def collect(w: World, now: float) -> list[dict]:
     guarded("admission", lambda: rules.admission_alarms(runs(), covered(), now, waiting=waiting()))
     guarded("registry-slots", slots)
     guarded("release", release)
-    guarded("rehearsal", lambda: rules.rehearsal_alarms(rehearsal_state(w), now))
     return out
 
 
