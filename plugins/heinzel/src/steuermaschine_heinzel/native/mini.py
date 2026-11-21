@@ -1,7 +1,9 @@
 """mini verify: prove the Mini runs a healthy, accepted Core release (LIVE-OK). Read-only: it asks the installed
 product for its version and status, reads two URLs and the release receipts; it never restarts or signals anything.
+mini update: when that proof fails, the supported update, a restart of the web and daemon jobs, then the same proof.
 
-`verify(world, minimum)` is the importable function (go --live and release verify --mini use it).
+`verify(world, minimum)` and `update(world, minimum)` are the importable functions (go --live, release verify --mini
+and release resume --live use them).
 """
 
 from __future__ import annotations
@@ -35,6 +37,9 @@ class MiniSettings(BaseModel):
     mini_port: int = Field(8737, description="The port of the live web service on this machine.")
     mini_remote_url: str | None = Field(None, description="The URL users reach the live service at (over the tailnet); none: LIVE-OK cannot be proven.")
     mini_bin_dir: Path | None = Field(None, description="Where the product's command is installed; put first on PATH for the status reads. Unset: PATH as it is.")
+    mini_jobs: list[str] = Field(["io.github.helmut-hoffer-von-ankershoffen.heinzel.web", "io.github.helmut-hoffer-von-ankershoffen.heinzel.daemon"],
+                                 description="The launchd jobs `sm mini update` restarts after the update (Core's ui and daemon unit labels).")
+    mini_update_wait_seconds: int = Field(180, description="How long `sm mini update` waits after the restart for the served version to equal the installed one.")
 
 
 class Unverified(Exception):
@@ -60,9 +65,10 @@ class MiniVerify(Model):
     doctor: str = ""  # healthy | unverified
     plugins: str = ""
     held: str = ""  # the version the Mini's updater holds back for want of an acceptance marker
+    updated: list[str] = []  # what `sm mini update` did before the proof (empty: nothing was changed)
 
     def render(self) -> list[str]:
-        out = []
+        out = [f"update: {step}" for step in self.updated]
         if self.cli:
             out.append(f"{self.target_kind}={self.target} cli={self.cli}")
         if self.web_ok is not None:
@@ -187,12 +193,17 @@ def observed_version(status: dict[str, Any]) -> str:
     return version if isinstance(version, str) and re.fullmatch(VERSION, version) else "?"
 
 
+def product(s: dict[str, Any]) -> tuple[str, dict[str, str]]:
+    """The product's command name and the environment it runs in."""
+    bin_dir = s.get('mini_bin_dir')
+    env = child_environment(PATH=path_with(str(Path(str(bin_dir)).expanduser()))) if bin_dir else child_environment()
+    return str(s.get("mini_cli") or "hz"), env
+
+
 def verify(w: probes.World, minimum: str | None = None) -> MiniVerify:
     """The whole proof. Never raises for missing evidence: the result says how far it got and why it stopped."""
     s = w.settings or {}
-    cli_name = str(s.get("mini_cli") or "hz")
-    bin_dir = s.get('mini_bin_dir')
-    env = child_environment(PATH=path_with(str(Path(str(bin_dir)).expanduser()))) if bin_dir else child_environment()
+    cli_name, env = product(s)
     port = int(s.get("mini_port") or 8737)
     remote = s.get("mini_remote_url")
     out = MiniVerify(target_kind="minimum" if minimum else "latest")
@@ -261,6 +272,41 @@ def verify(w: probes.World, minimum: str | None = None) -> MiniVerify:
     return out
 
 
+def update(w: probes.World, minimum: str | None = None) -> MiniVerify:
+    """Make the proof hold: nothing when it holds already. Else the supported `hz system update --channel stable --yes`,
+    then, when the proof still fails, `launchctl kickstart -k` of both jobs, then the proof again until the version
+    served on the port equals the installed one and the rest holds (or the wait ends). An installed version older than
+    --minimum after the update (the stable channel does not offer it yet) restarts nothing."""
+    before = verify(w, minimum)
+    if before.live:
+        return before.model_copy(update={"updated": ["nothing to do: already live"]})
+    s = w.settings or {}
+    cli_name, env = product(s)
+    commands: Any = w.commands
+    done = commands.run([cli_name, "system", "update", "--channel", "stable", "--yes"], timeout=900, env=env)
+    if done.rc:
+        tail = (done.err or done.out).strip().splitlines()[-1:] or [""]
+        return before.model_copy(update={"reason": f"{cli_name} system update exited {done.rc}: {tail[0][:160]}", "updated": []})
+    steps = [f"{cli_name} system update --channel stable --yes: ok"]
+    after = verify(w, minimum)
+    if after.live:
+        return after.model_copy(update={"updated": steps})
+    if after.cli and minimum and version_key(after.cli) < version_key(minimum):
+        return after.model_copy(update={"updated": [*steps, f"the stable channel does not offer v{minimum} yet; nothing restarted"]})
+    for job in s.get("mini_jobs") or MiniSettings.model_fields["mini_jobs"].default:
+        kicked = commands.run(["launchctl", "kickstart", "-k", f"gui/{os.getuid()}/{job}"], timeout=60)
+        if kicked.rc:
+            return after.model_copy(update={"reason": f"launchctl kickstart -k {job} exited {kicked.rc}", "updated": steps})
+        steps.append(f"kickstarted {job}")
+    deadline = w.now() + int(s.get("mini_update_wait_seconds") or 180)
+    while not (after := verify(w, minimum)).live and w.now() < deadline:
+        clock: Any = w.clock
+        clock.sleep(10)
+    if not after.live and after.web_version != after.cli and after.cli:
+        after.reason = f"the version served on port {int(s.get('mini_port') or 8737)} is {after.web_version or '?'}, the installed one {after.cli}"
+    return after.model_copy(update={"updated": steps})
+
+
 @native("mini verify", writes=False, replaces=("hz-verify-mini",), help=H(
     "Prove the Mini runs a healthy, accepted Core release (LIVE-OK).",
     "Use after a release is published and before telling the owner it is live.",
@@ -274,3 +320,17 @@ def mini_verify(minimum: str | None = typer.Option(None, "--minimum", metavar="X
     if minimum is not None and not re.fullmatch(VERSION, minimum):
         raise Refuse("--minimum requires an exact X.Y.Z", "sm mini verify --minimum 0.9.39", code=2)
     return verify(world(), minimum)
+
+
+@native("mini update", writes=True, help=H(
+    "Bring the Mini to a healthy, accepted Core release and prove it (LIVE-OK).",
+    "Use after a release is accepted, when `sm mini verify` says NOT-LIVE; `sm release resume VERSION --live` runs it itself.",
+    "runs `hz system update --channel stable --yes` and restarts the web and daemon launchd jobs (`launchctl kickstart -k`); nothing when the proof holds already.",
+    "sm mini update --minimum 0.9.53", "sm beads sweep   (after LIVE-OK)",
+    "The restart happens only when the proof still fails after the update and the installed version is not older than\n"
+    "--minimum. Then it waits (setting mini_update_wait_seconds) until the version served on the port equals the\n"
+    "installed one and the whole proof of `sm mini verify` holds. The last line is `LIVE-OK X.Y.Z` (exit 0) or `NOT-LIVE: reason` (exit 1)."))
+def mini_update(minimum: str | None = typer.Option(None, "--minimum", metavar="X.Y.Z", help="Accept this version or a newer accepted one.")) -> MiniVerify:
+    if minimum is not None and not re.fullmatch(VERSION, minimum):
+        raise Refuse("--minimum requires an exact X.Y.Z", "sm mini update --minimum 0.9.53", code=2)
+    return update(world(), minimum)

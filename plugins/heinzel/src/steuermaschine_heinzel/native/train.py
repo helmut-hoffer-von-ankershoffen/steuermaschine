@@ -59,6 +59,8 @@ class TrainSettings(BaseModel):
                                                              "with local heavy runs).", json_schema_extra=old_variable("HZ_TRAIN_GATE_HOLD"))
     release_train_resume_all: bool = Field(False, description="After a tag, re-run every deferred CI run (`sm ci rerun --all`) instead of only those of open queued "
                                                               "and combine PRs.", json_schema_extra=old_variable("HZ_TRAIN_RESUME_ALL"))
+    release_train_auto_cut: bool = Field(False, description="Let a tick cut the next release by itself. Off: ticks drive the active trains to LIVE-OK, and only "
+                                                            "`sm daemon train --now` cuts.")
     release_train_notify: str | None = Field(None, description="A command that pushes a text to the owner (the text is its one argument); the alarm's fallback "
                                                                "when alarm_notify is unset.", json_schema_extra=old_variable("HZ_TRAIN_NOTIFY"))
 
@@ -164,16 +166,18 @@ class TrainTick(Model):
 
 
 @native("daemon train", writes=True, tick=True, replaces=("hz-train",), help=H(
-    "One tick of the release train: start a runner for every active release that has none, then cut the next release when every condition holds.",
+    "One tick of the release train: start a runner for every active release that has none, then cut when every condition holds.",
     "Use for the launchd job (every 10 minutes); by hand for a single tick only while that job is stopped.",
     "may start detached release runners (`--run`), which freeze merges, merge the release PR, tag and publish; writes the train's state, logs and notes.",
     "sm daemon train", "sm release train status",
     "A cut needs: no train before its tag or blocked, no foreign unfinished release, the previous tail at least at its\n"
-    "acceptance dispatch, no open release PR, no merge freeze, releasable commits on main, the main gate ok.\n"
+    "acceptance dispatch, no open release PR, no merge freeze, releasable commits on main, the main gate ok, and\n"
+    "auto-cut on (setting release_train_auto_cut; off by default) or --now. A runner takes its release to LIVE-OK:\n"
+    "`sm release resume X --live`, then `sm mini update --minimum X` every tick until the Mini proves it.\n"
     "--run X.Y.Z is the detached runner of one release (started by the tick; it takes that version's lock itself).\n"
     "Exit 0: done or nothing to do. 1: a step failed, the next tick resumes. 3: blocked or refused."))
 def daemon_train(dry_run: bool = typer.Option(False, "--dry-run", help="Say what the tick would do; start and write nothing."),
-                 now: bool = typer.Option(False, "--now", help="Skip the cadence floor for this tick."),
+                 now: bool = typer.Option(False, "--now", help="Cut in this tick even with auto-cut off; skips the cadence floor. Every other condition still holds."),
                  run_version: str | None = typer.Option(None, "--run", metavar="X.Y.Z", help="Run one release under its own lock (what the tick starts detached).")) -> TrainTick:
     if run_version is not None:
         if not VERSION.fullmatch(run_version) or dry_run or now:

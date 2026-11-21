@@ -243,7 +243,7 @@ def test_the_train_starts_one_release_as_sm_release_resume_and_its_runner_as_sm_
     assert "HZ_GATE_PRIORITY" not in env and "HZ_GATE_HOLD_EXEMPT" not in env  # the run lock reads no environment
     assert module.edge.gate() == [*sm, "gate", "run", "--priority", "2", "--hold-exempt", "--"]  # the options instead
     source = Path(module.__file__).read_text()
-    assert 'cmd = [*edge.sm(), "release", "resume", version, "--intro", intro, "--snapshot-acceptance", "--candidate-gate"]' in source
+    assert 'cmd = [*edge.sm(), "release", "resume", version, "--intro", intro, "--snapshot-acceptance", "--candidate-gate", "--live"]' in source
     assert 'with_name("hz-' not in source and '["hz-' not in source  # no path to, and no argument list of, an old tool
 
 
