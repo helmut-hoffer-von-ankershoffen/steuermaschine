@@ -248,7 +248,7 @@ def test_rewrite_keeps_the_moved_text_first(tmp_path):
 
 def test_self_doc_and_tokens(tmp_path):
     out = invoke(rt(), ["self", "doc"]).stdout
-    assert out.startswith("# `sm` command reference") and "## `sm stuff`" in out and "### `sm stuff put` (writes)" in out and "box plumbing" not in out
+    assert out.startswith("# `sm` command reference") and "## `sm stuff`" in out and "### `sm stuff put` (writes)" in out and "## `sm stuff` (writes)" not in out and "box plumbing" not in out
     assert json.loads(invoke(rt(), ["--format", "json", "self", "doc"]).stdout).startswith("# `sm`")
     transcript = tmp_path / "t.jsonl"
     transcript.write_text("\n".join([json.dumps({"message": {"usage": {"input_tokens": 3, "output_tokens": 4, "cache_read_input_tokens": 5, "cache_creation_input_tokens": 6}}}),

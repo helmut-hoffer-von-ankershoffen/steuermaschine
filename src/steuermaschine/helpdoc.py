@@ -138,6 +138,6 @@ def markdown(rows: list[dict[str, Any]], prog: str) -> str:
         depth = len(row["path"].split())
         lines = [ln.strip() for ln in row["help"].splitlines() if ln.strip()]
         keep = [ln for ln in lines[1:6] if WHEN.match(ln) or ln.startswith(("Changes:", "Example:"))]
-        out += [f"{'#' * min(depth + 1, 4)} `{row['path']}`" + (" (writes)" if not row["read_only"] else ""), "", row["purpose"], ""]
+        out += [f"{'#' * min(depth + 1, 4)} `{row['path']}`" + (" (writes)" if not row["read_only"] and not row["group"] else ""), "", row["purpose"], ""]
         out += [f"- {ln}" for ln in keep] + ([""] if keep else [])
     return "\n".join(out).rstrip() + "\n"

@@ -12,10 +12,12 @@ from steuermaschine.engine import Refuse
 from steuermaschine.helpdoc import H
 from steuermaschine.models import Model
 from steuermaschine.native import native
+from steuermaschine.surface import translate
 
 from .alarm_lib import rules, watch
 from .go import tool_rows, world
 from .go_lib import legacy
+from .surface import RENAMES
 
 
 class AlarmRow(Model):
@@ -58,7 +60,7 @@ def iso(epoch: Any) -> str:
 
 
 def rows(items: list[dict[str, Any]]) -> list[AlarmRow]:
-    return [AlarmRow(level=i["cls"], key=i["key"], text=legacy.sweep(i.get("text") or "", tool_rows()), first_seen=iso(i.get("first")),
+    return [AlarmRow(level=i["cls"], key=i["key"], text=translate(legacy.sweep(i.get("text") or "", tool_rows()), RENAMES), first_seen=iso(i.get("first")),
                      acknowledged=bool(i.get("acked")), new=bool(i.get("new"))) for i in rules.order(items)]
 
 
