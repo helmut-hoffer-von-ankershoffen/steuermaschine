@@ -24,7 +24,8 @@ from .release_lib import ios
 class IosSettings(BaseModel):
     ios_core_repo: Path | None = Field(None, description="The Core git repository the release tag is checked out from (a worktree per run). None: the setting queue_core_repo.")
     ios_developer_dir: Path | None = Field(None, description="DEVELOPER_DIR for xcodebuild. None: the Xcode that xcode-select names.")
-    ios_wait_minutes: int = Field(45, description="How long `sm release ios` waits for App Store Connect to process the build and add it to the internal group.")
+    ios_wait_minutes: int = Field(30, description="How long `sm release ios` waits for App Store Connect to process the build until testers can install it; longer is NOT-CLEAN (stuck).")
+    ios_tool_ref: str | None = Field(None, description="A git ref of the Core repository for apple/scripts/testflight (tags older than its notes and beta verbs). None: the tag's own.")
 
 
 class ReleaseIos(Model):
@@ -53,7 +54,7 @@ def run(w: probes.World, version: str) -> ReleaseIos:
     repo = s.get("ios_core_repo") or s.get("queue_core_repo") or w.core
     if not repo:
         raise Refuse("`sm release ios` checks out the release tag: set ios_core_repo (or queue_core_repo) in [heinzel]", "sm self config", code=2)
-    done = ios.publish(w, version, Path(str(repo)).expanduser(), ios.receipt_dir(w.state_dir) / "work", int(s.get("ios_wait_minutes") or 45) * 60)
+    done = ios.publish(w, version, Path(str(repo)).expanduser(), ios.receipt_dir(w.state_dir) / "work", int(s.get("ios_wait_minutes") or 30) * 60)
     return ReleaseIos(version=done.version, clean=done.clean, build=done.build, revision=done.revision, uploaded=done.uploaded, state=done.state,
                       in_group=done.in_group, reason=done.reason, lines=done.lines())
 
@@ -61,10 +62,12 @@ def run(w: probes.World, version: str) -> ReleaseIos:
 @native("release ios", writes=True, help=H(
     "Put the iOS app of one Core release on TestFlight and confirm it reached the internal group.",
     "Use after a release is ACCEPTED when `sm release status` shows ios NOT-CLEAN; `sm release resume X --live` runs it itself.",
-    "checks the tag out in a worktree, archives with xcodebuild, verifies, uploads to App Store Connect, assigns to the internal group; writes ios/vX.Y.Z.json.",
+    "checks the tag out in a worktree, archives with xcodebuild, verifies, uploads to App Store Connect, assigns to the internal group, sets What to Test; writes ios/vX.Y.Z.json.",
     "sm release ios 0.9.54", "sm release status",
     "Marketing version: the tag's pyproject version (must equal VERSION). Build number: one above the highest build App Store\n"
     "Connect holds. HEINZEL_SOURCE_REVISION: the tag's commit. Signing: the tag's ExportOptions-testflight.plist.\n"
+    "Done means VALID, in the internal group, internal beta state IN_BETA_TESTING, and What to Test set from the tag's GitHub\n"
+    "release notes. Processing longer than ios_wait_minutes (30), an invalid binary or a bad beta state is NOT-CLEAN and an alarm.\n"
     "Idempotent: when App Store Connect holds a build of VERSION, it only waits for it and confirms it.\n"
     "The last line is `IOS-OK X.Y.Z build N ...` (exit 0) or `IOS NOT-CLEAN X.Y.Z: reason` (exit 1)."))
 def release_ios(version: str = typer.Argument(..., metavar="VERSION", help="The exact released Core version X.Y.Z; its tag vX.Y.Z must exist.")) -> ReleaseIos:

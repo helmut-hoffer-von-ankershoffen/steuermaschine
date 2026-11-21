@@ -39,6 +39,9 @@ EXPORT_OPTIONS = "apple/distribution/ExportOptions-testflight.plist"
 PROJECT = "apple/Heinzel.xcodeproj"
 DONE_STATES = ("VALID",)
 BAD_STATES = ("FAILED", "INVALID")
+BETA_OK = "IN_BETA_TESTING"
+BETA_BAD = ("MISSING_EXPORT_COMPLIANCE", "PROCESSING_EXCEPTION", "EXPIRED", "INVALID")
+STUCK_SECONDS = 3600  # a receipt still `running` this long after its start: the step died or hangs
 
 
 class IosFailed(Exception):
@@ -54,21 +57,24 @@ class IosResult:
     uploaded: bool = False  # this call built and uploaded the build (False: it was there already)
     state: str = ""  # the App Store Connect processing state last seen
     in_group: bool = False
+    beta: str = ""  # the internal beta state last seen (IN_BETA_TESTING: testers can install it)
+    notes: bool = False  # the What to Test text was set from the release notes
     reason: str = ""
     steps: list[str] = field(default_factory=list)
 
     def lines(self) -> list[str]:
         out = [f"ios: {step}" for step in self.steps]
         if self.clean:
-            out.append(f"IOS-OK {self.version} build {self.build} in the internal TestFlight group")
+            out.append(f"IOS-OK {self.version} build {self.build} {self.beta} in the internal TestFlight group")
         else:
             out.append(f"IOS NOT-CLEAN {self.version}: {self.reason}")
         return out
 
-    def receipt(self, now: float) -> dict[str, Any]:
-        stamp = datetime.datetime.fromtimestamp(now, datetime.UTC).isoformat(timespec="seconds")
+    def receipt(self, started: float) -> dict[str, Any]:
+        stamp = datetime.datetime.fromtimestamp(started, datetime.UTC).isoformat(timespec="seconds")
         return {"version": self.version, "clean": self.clean, "build": self.build, "revision": self.revision, "uploaded": self.uploaded,
-                "state": self.state, "in_group": self.in_group, "reason": self.reason, "at": stamp}
+                "state": self.state, "in_group": self.in_group, "beta": self.beta, "notes": self.notes, "reason": self.reason,
+                "at": stamp, "started": started}
 
 
 # ----------------------------------------------------------------------------- receipts
@@ -97,20 +103,22 @@ def latest_receipt(state_dir: Path) -> dict[str, Any] | None:
 
 
 def summary(data: dict[str, Any] | None) -> str:
-    """One line for `sm release status` and `sm why`."""
+    """One line for `sm release status` and `sm why`; empty before the first run."""
     if not data:
-        return "ios: no TestFlight receipt yet (sm release ios VERSION)"
+        return ""
+    if data.get("running"):
+        return f"ios: v{data.get('version')} TestFlight step running since {data.get('at')}"
     if data.get("clean"):
-        return f"ios: v{data.get('version')} TestFlight build {data.get('build')} {data.get('state')}, in the internal group"
+        return f"ios: v{data.get('version')} TestFlight build {data.get('build')} {data.get('beta') or data.get('state')}, in the internal group"
     return f"ios: v{data.get('version')} NOT-CLEAN: {str(data.get('reason') or '?')[:140]}; sm release ios {data.get('version')}"
 
 
-def write_receipt(state_dir: Path, result: IosResult, now: float) -> None:
+def write_receipt(state_dir: Path, result: IosResult, started: float, running: bool = False) -> None:
     folder = receipt_dir(state_dir)
     folder.mkdir(parents=True, exist_ok=True)
     target = folder / f"v{result.version}.json"
     partial = target.with_suffix(".json.partial")
-    partial.write_text(json.dumps(result.receipt(now), indent=2) + "\n")
+    partial.write_text(json.dumps({**result.receipt(started), "running": running}, indent=2) + "\n")
     partial.replace(target)
 
 
@@ -136,6 +144,8 @@ class Context:
     work: Path  # archive and export, outside the worktree
     env: dict[str, str]
     result: IosResult
+    tool: Path | None = None  # the testflight tool; None: the tag's
+
 
     def run(self, argv: list[str], timeout: float, what: str, cwd: Path | None = None) -> str:
         res = self.w.commands.run(argv, cwd=str(cwd or self.checkout), timeout=timeout, env=self.env)
@@ -145,7 +155,8 @@ class Context:
         return res.out or ""
 
     def testflight(self, *args: str, timeout: float = 120) -> str:
-        return self.run(["uv", "run", "--quiet", "--script", str(self.checkout / TESTFLIGHT), *args], timeout, f"testflight {args[0]}")
+        tool = self.tool or self.checkout / TESTFLIGHT
+        return self.run(["uv", "run", "--quiet", "--script", str(tool), *args], timeout, f"testflight {args[0]}")
 
     def rows(self) -> list[dict[str, Any]]:
         return parse_status(self.testflight("status"))
@@ -217,20 +228,54 @@ def confirm(ctx: Context, build: str, wait_seconds: int) -> None:
         if row and row["expired"]:
             raise IosFailed(f"build {build} is expired")
         if row and row["state"] in DONE_STATES:
-            if row["in_group"]:
+            if row["in_group"] and beta_ready(ctx, build):
                 return
-            if not assigned:
+            if not row["in_group"] and not assigned:
                 ctx.testflight("assign", build)
                 assigned = True
                 r.steps.append(f"assigned build {build} to the internal group")
                 continue
         if ctx.w.now() >= deadline:
-            raise IosFailed(f"build {build} is {r.state}{', not in the internal group' if r.state == 'VALID' else ''} after {wait_seconds // 60} min; "
-                            "run the same command again")
+            where = f"{r.state}, beta {r.beta or '?'}" if r.in_group else f"{r.state}{', not in the internal group' if r.state == 'VALID' else ''}"
+            raise IosFailed(f"build {build} is {where} after {wait_seconds // 60} min; run the same command again")
         clock.sleep(30)
 
 
-def publish(w: Any, version: str, core_repo: Path, work_root: Path, wait_seconds: int = 2700) -> IosResult:
+def beta_ready(ctx: Context, build: str) -> bool:
+    """Testers can install it: IN_BETA_TESTING. A state that never becomes it fails at once."""
+    r = ctx.result
+    found = re.search(r"internalBuildState=(\S+)", ctx.testflight("beta", build))
+    r.beta = found[1] if found else "?"
+    if r.beta in BETA_BAD:
+        raise IosFailed(f"build {build} beta state is {r.beta}")
+    return r.beta == BETA_OK
+
+
+def set_notes(ctx: Context, build: str) -> None:
+    """The release notes of the tag's GitHub release as the build's What to Test text."""
+    res = ctx.w.commands.run(["gh", "release", "view", f"v{ctx.version}", "-R", ctx.w.repo, "--json", "body", "-q", ".body"], timeout=60)
+    if res.rc or not (res.out or "").strip():
+        raise IosFailed(f"the release notes of v{ctx.version} are unreadable (gh release view exited {res.rc})")
+    notes = ctx.work / "what-to-test.txt"
+    notes.write_text(f"Heinzel {ctx.version}\n\n{res.out.strip()}\n")
+    ctx.testflight("notes", build, str(notes))
+    ctx.result.notes = True
+    ctx.result.steps.append(f"What to Test set from the v{ctx.version} release notes")
+
+
+def tool_of(w: Any, core_repo: Path, ref: str | None, work: Path) -> Path | None:
+    """The testflight tool at REF of the core repository (setting ios_tool_ref); None: the tag's own."""
+    if not ref:
+        return None
+    res = w.commands.run(["git", "-C", str(core_repo), "show", f"{ref}:{TESTFLIGHT}"], timeout=30)
+    if res.rc or not res.out:
+        raise IosFailed(f"{TESTFLIGHT} is not at {ref} in {core_repo}")
+    tool = work / "testflight"
+    tool.write_text(res.out)
+    return tool
+
+
+def publish(w: Any, version: str, core_repo: Path, work_root: Path, wait_seconds: int = 1800) -> IosResult:
     """The whole step; never raises for a failure: the result (and its receipt) says why."""
     result = IosResult(version=version)
     if not VERSION.fullmatch(version):
@@ -246,13 +291,16 @@ def publish(w: Any, version: str, core_repo: Path, work_root: Path, wait_seconds
         return result
     base = work_root / f"v{version}"
     checkout, work = base / "src", base / "work"
+    started = w.now()
+    write_receipt(w.state_dir, result, started, running=True)
     try:
         result.revision = commit_of(w, core_repo, version)
         fresh_checkout(w, core_repo, checkout, result.revision)
         work.mkdir(parents=True, exist_ok=True)
         developer = w.settings.get("ios_developer_dir")
         env = child_environment(DEVELOPER_DIR=str(Path(str(developer)).expanduser())) if developer else child_environment()
-        ctx = Context(w=w, version=version, checkout=checkout, work=work, env=env, result=result)
+        ctx = Context(w=w, version=version, checkout=checkout, work=work, env=env, result=result,
+                      tool=tool_of(w, core_repo, w.settings.get("ios_tool_ref"), work))
         marketing, options = tag_facts(ctx)
         rows = ctx.rows()
         mine = builds_of(rows, version)
@@ -267,6 +315,7 @@ def publish(w: Any, version: str, core_repo: Path, work_root: Path, wait_seconds
             build_and_upload(ctx, marketing, options, build)
         result.build = build
         confirm(ctx, build, wait_seconds)
+        set_notes(ctx, build)
         result.clean = True
     except IosFailed as exc:
         result.reason = str(exc)
@@ -276,7 +325,7 @@ def publish(w: Any, version: str, core_repo: Path, work_root: Path, wait_seconds
         drop_checkout(w, core_repo, checkout)
         if result.clean:
             shutil.rmtree(work, ignore_errors=True)  # a failed run keeps its archive and logs for the person who looks
-        write_receipt(w.state_dir, result, w.now())
+        write_receipt(w.state_dir, result, started)
         fcntl.flock(lock, fcntl.LOCK_UN)
         lock.close()
     return result

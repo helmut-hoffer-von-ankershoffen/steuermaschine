@@ -119,7 +119,7 @@ def collect(w: World, now: float) -> list[dict]:
     guarded("admission", lambda: rules.admission_alarms(runs(), covered(), now, waiting=waiting()))
     guarded("registry-slots", slots)
     guarded("release", release)
-    guarded("ios", lambda: [rules.ios_alarm(ios.latest_receipt(w.state_dir))])
+    guarded("ios", lambda: [rules.ios_alarm(ios.latest_receipt(w.state_dir), now, ios.STUCK_SECONDS)])
     return out
 
 

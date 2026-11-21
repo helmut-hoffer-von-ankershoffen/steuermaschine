@@ -98,13 +98,13 @@ def release_status(line: bool = typer.Option(False, "--line", help="One line for
         summary = status.summarize(train, pr, runs, jobs, (Path(str(lock_dir)).expanduser() / f"{prefix}.hold").exists(), now)
     tests = ios.summary(ios.latest_receipt(statedir.dashboard_dir(conf())))
     if not summary.get("active"):
-        return ReleaseStatus(active=False, ios=tests, lines=[] if line else [status.render(summary), tests])
+        return ReleaseStatus(active=False, ios=tests, lines=[] if line else [status.render(summary), *filter(None, [tests])])
     text = translate(summary["next"])
     if line:
         lines = [f"RELEASE v{summary['version']} PR #{summary['pr']} {summary['age_min']}m: CI {summary['ci']}, acceptance {summary['acc']} "
                  f"#{summary['acc_attempt']}, freeze {'on' if summary['frozen'] else 'off'}; {text}"]
     else:
-        lines = [*translated(status.render(summary).splitlines()), tests]
+        lines = [*translated(status.render(summary).splitlines()), *filter(None, [tests])]
     return ReleaseStatus(active=True, ios=tests, version=str(summary["version"]), pull_request=summary["pr"], phase=str(summary["phase"] or ""),
                          age_minutes=summary["age_min"], candidate_ci=str(summary["ci"] or ""), acceptance=str(summary["acc"] or ""),
                          acceptance_attempt=summary["acc_attempt"], checks=CheckCounts(**summary["checks"]) if summary["checks"] else None,
