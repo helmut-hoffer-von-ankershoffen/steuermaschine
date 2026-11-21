@@ -30,7 +30,7 @@ from steuermaschine.models import Model
 from steuermaschine.native import native, runtime
 from steuermaschine.protocols import Busy
 
-from . import mini
+from . import mini, release_ios
 from .go import world
 from .queue_lib import hzlib
 from .release_lib.binding import moved
@@ -147,9 +147,10 @@ class ReleaseRun(Model):
     acceptance_run: int | None = None
     lines: list[str] = []
     live: list[str] = Field([], description="With --live: the lines of `sm mini update` after ACCEPTED; the last is LIVE-OK X.Y.Z or NOT-LIVE: reason.")
+    ios: list[str] = Field([], description="With --live: the lines of `sm release ios` after ACCEPTED; NOT-CLEAN is an alarm and leaves the exit code alone.")
 
     def render(self) -> list[str]:
-        return closing(self.lines, self.stopped) + self.live
+        return closing(self.lines, self.stopped) + self.live + self.ios
 
     @property
     def exit_code(self) -> int:
@@ -189,6 +190,7 @@ def outcome(module, action: str, version: str, code: int, lines: list[str], erro
     "published, PyPI, compose, acceptance, verdict. Exit 0: ACCEPTED. Exit 1: stopped (the line says why) or NOT ACCEPTED.\n"
     "VERSION is X.Y.Z, `patch` (the unfinished release, else the next patch) or `migrate-legacy`.\n"
     "--live: after ACCEPTED, `sm mini update --minimum VERSION` too; exit 0 only at LIVE-OK (the release train's runs use it).\n"
+    "It also runs `sm release ios VERSION`: a TestFlight failure is IOS NOT-CLEAN and an alarm, never an un-publish.\n"
     "One action besides resuming at a time: --pause, --prepare-only, --absorb, --reject-release, --candidate-capacity.\n"
     "The candidate gate needs the candidate's first attempt green: never rerun a failed candidate job to pass it.\n"
     "A failed compose run is replaced once by a fresh compose (same inputs) when plugins main moved past it and a plugin\n"
@@ -247,6 +249,7 @@ def release_resume(
     if live and done.exit == 0 and done.finished and done.accepted:
         proof = mini.update(world(), done.version)
         done.live, done.exit = proof.render(), proof.exit_code
+        done.ios = release_ios.after_accepted(world(), done.version)
     return done
 
 
@@ -437,8 +440,8 @@ def release_replan(version: str = typer.Argument(..., metavar="VERSION", help="E
                    main_ci: str = typer.Option(..., "--main-ci", help="Only full is supported."),
                    reason: str = typer.Option(..., "--reason", help="Why the pre-external cut must be replanned."),
                    live: bool = typer.Option(False, "--live/--dry-run", help="Archive and replace local cut state (default: prove only).")) -> ReleaseReplan:
-    from .release_lib import replan
     from .admission_lib.focused_admit import AdmissionError
+    from .release_lib import replan
 
     if not EXACT.fullmatch(version) or main_ci != "full":
         raise Refuse("replan needs an exact release version and --main-ci full")

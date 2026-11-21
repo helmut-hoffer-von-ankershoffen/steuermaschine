@@ -25,6 +25,7 @@ from steuermaschine.models import Model
 from steuermaschine.native import native, runtime
 
 from .. import state as statedir  # the plugin's state paths
+from .release_lib import ios
 from .release_lib.binding import assets_cache, captured, conf, core_repo, moved, release_dir, required_core_checkout, train_state_dir
 from .release_lib.names import translate, translated
 
@@ -61,6 +62,7 @@ class ReleaseStatus(Model):
     frozen: bool = Field(False, description="The hold of the run lock is set: heavy local commands of builders wait.")
     blockers: list[str] = []
     next: str = ""
+    ios: str = Field("", description="The newest release's TestFlight step: build and group, or NOT-CLEAN with its reason (sm release ios).")
     lines: list[str] = []
 
     def render(self) -> list[str]:
@@ -94,15 +96,16 @@ def release_status(line: bool = typer.Option(False, "--line", help="One line for
             jobs = done.out.splitlines() if not done.rc else []
         lock_dir, prefix = conf().get("lock_directory") or statedir.root(), conf().get("lock_prefix") or "gate"
         summary = status.summarize(train, pr, runs, jobs, (Path(str(lock_dir)).expanduser() / f"{prefix}.hold").exists(), now)
+    tests = ios.summary(ios.latest_receipt(statedir.dashboard_dir(conf())))
     if not summary.get("active"):
-        return ReleaseStatus(active=False, lines=[] if line else [status.render(summary)])
+        return ReleaseStatus(active=False, ios=tests, lines=[] if line else [status.render(summary), tests])
     text = translate(summary["next"])
     if line:
         lines = [f"RELEASE v{summary['version']} PR #{summary['pr']} {summary['age_min']}m: CI {summary['ci']}, acceptance {summary['acc']} "
                  f"#{summary['acc_attempt']}, freeze {'on' if summary['frozen'] else 'off'}; {text}"]
     else:
-        lines = translated(status.render(summary).splitlines())
-    return ReleaseStatus(active=True, version=str(summary["version"]), pull_request=summary["pr"], phase=str(summary["phase"] or ""),
+        lines = [*translated(status.render(summary).splitlines()), tests]
+    return ReleaseStatus(active=True, ios=tests, version=str(summary["version"]), pull_request=summary["pr"], phase=str(summary["phase"] or ""),
                          age_minutes=summary["age_min"], candidate_ci=str(summary["ci"] or ""), acceptance=str(summary["acc"] or ""),
                          acceptance_attempt=summary["acc_attempt"], checks=CheckCounts(**summary["checks"]) if summary["checks"] else None,
                          frozen=bool(summary["frozen"]), blockers=translated(summary["blockers"]), next=text, lines=lines)
