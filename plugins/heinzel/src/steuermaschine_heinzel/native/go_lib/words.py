@@ -87,7 +87,7 @@ class Words:
         return f"sm ci faillog {target}"
 
     def ship(self, number: object) -> str:
-        return f"sm head ship {number}"
+        return f"sm head ship {number}"  # go writes it as `sm ship N --live` (surface.RENAMES)
 
     def pr_open(self, worktree: str, bead: str, subject: str, body: str | None = None) -> str:
         return f"cd {q(worktree)} && sm head pr {q(bead)} {q(subject)}" + (f" --body-file {q(body)}" if body else "")

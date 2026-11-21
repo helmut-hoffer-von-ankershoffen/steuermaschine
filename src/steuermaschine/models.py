@@ -239,12 +239,12 @@ class StateMoveRow(Model):
 class StateMigration(Model):
     """What `self migrate-state` found or did."""
 
-    action: str = Field(description="check | list | forward | back")
+    action: str = Field(description="check | list | forward | back | journal")
     moves: list[StateMoveRow] = []
     done: list[str] = Field(default_factory=list, description="One line per path that moved, in order.")
 
     def render(self) -> list[str]:
-        if self.action in ("forward", "back"):
+        if self.action in ("forward", "back", "journal"):
             return self.done or ["nothing to move"]
         pending = [m for m in self.moves if m.state == "old"]
         head = [f"{len(pending)} of {len(self.moves)} state path(s) still at the old name"] if self.action in ("check", "forward") else []

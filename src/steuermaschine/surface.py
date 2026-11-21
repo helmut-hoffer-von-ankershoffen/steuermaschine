@@ -69,6 +69,7 @@ class Default:
     group: str
     target: str
     empty: str = ""
+    metavar: str = ""  # the usage line of the group, such as `[VERSION] | COMMAND [ARGS]...`
 
     @property
     def path(self) -> str:
@@ -83,6 +84,7 @@ class Surface:
     verbs: tuple[tuple[str, str], ...]
     visible: tuple[str, ...]
     rules: tuple[str, ...] = ()
+    helps: tuple[tuple[str, str], ...] = ()  # (path, help in contract form) for a group the surface gives a new meaning
     path: str = "surface"
 
 
@@ -117,7 +119,7 @@ def _group(root: Any, words: list[str]) -> Any:
         child = node.commands.get(word)
         if child is None:
             child = type(root)(name=word, help=H(f"{word}: the commands below.", "Use when one of them is what you need.", "nothing by itself.",
-                                                 f"sm {' '.join(words)} --help", "sm"), no_args_is_help=True,
+                                                 f"sm {' '.join(words)} --help", "sm"), no_args_is_help=True, rich_markup_mode=None,
                                context_settings=dict(getattr(root, "context_settings", {}) or {}))
             node.commands[word] = child
         node = child
@@ -273,15 +275,20 @@ def apply(root: Any, items: Iterable[Any], writes: dict[str, bool], fail: Callab
         if (group := find(root, default.group)) is not None:
             route(group, default)
     if surface is not None:  # 4. hide what is not visible
+        for path, text in surface.helps:
+            if (group := find(root, path)) is not None:
+                group.help, group.short_help = text, text.replace("\b", "").strip().splitlines()[0]
         hide(root, surface.visible)
-        root.help = root_help(surface, prog, project_line)
+        root.help, root.sm_surface = root_help(surface, prog, project_line), True
         root.format_help = lambda ctx, formatter: formatter.write(root.help.replace("\b\n", "") + "\n")
     install_resolver(root, renames, prog)
 
 
 def route(group: Any, default: Default) -> None:
     parse = group.parse_args
-    group.no_args_is_help = False
+    group.no_args_is_help, group.sm_default = False, default.target
+    if default.metavar:
+        group.subcommand_metavar = default.metavar
 
     def parse_args(ctx: Any, args: list[str]) -> list[str]:
         if not args and default.empty:
@@ -315,8 +322,8 @@ def root_help(surface: Surface, prog: str, project_line: str) -> str:
              "Commands, in the order of a working day:"]
     lines += [f"  {(prog + ' ' + usage).strip():<{width}}{text}" for usage, text in surface.verbs]
     lines += ["", "Rules:",
-              "  --live          a command that writes outside this machine (push, pull request, merge, publish) runs only with",
-              "                  --live; without it, it shows what it would do and changes nothing there.",
+              "  --live          a command that writes outside this machine (push, pull request, merge) runs only with --live;",
+              "                  without it, it shows what it would do. Its -h says when it is an exception.",
               "  --format json   works on every command: exactly one JSON document on stdout.",
               f"  -h              works on every command: what it does, what it changes, an example. `{prog} X -h` runs nothing.",
               *surface.rules, "",
@@ -370,6 +377,9 @@ def dry_run(root: Any, words: list[str], prog: str = "sm") -> str:
     node, ctx, rest, path = root, None, list(words), []
     try:
         while True:
+            if hasattr(node, "commands") and not rest:
+                return "" if not path or getattr(node, "invoke_without_command", False) or not getattr(node, "no_args_is_help", True) \
+                    else f"{prog} {' '.join(path)}: needs a command"
             ctx = node.make_context(path[-1] if path else prog, rest, parent=ctx, resilient_parsing=False)
             if not hasattr(node, "commands"):
                 return ""
@@ -378,7 +388,7 @@ def dry_run(root: Any, words: list[str], prog: str = "sm") -> str:
                 return "" if getattr(node, "invoke_without_command", False) or path == [] else f"{prog} {' '.join(path)}: needs a command"
             name, child, rest = node.resolve_command(ctx, args)
             path.append(name)
-            if getattr(child, "hidden", False):
+            if getattr(child, "hidden", False) and getattr(node, "sm_default", None) != name:  # the default a group runs is the group's
                 return f"{prog} {' '.join(path)} is hidden"
             node = child
     except Exception as exc:  # a usage error of the parser

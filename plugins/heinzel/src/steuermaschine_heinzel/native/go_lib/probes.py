@@ -255,6 +255,7 @@ def probe_receipts(w: World) -> list[Any]:
 
 PIPELINE_KINDS = ("runs.head.admit", "runs.release.cut")
 OPEN = ("finished", "superseded")
+HISTORY_DAYS = 2.0  # a run not updated for this long is history (setting go_history_days): `sm self migrate-state --journal` moves it
 ADMIT_STEPS = ("check", "pr", "queue")  # the steps of `sm head admit` today; a run that names any other is state of the deleted admission
 
 
@@ -267,9 +268,12 @@ def from_deleted_admission(state: dict) -> bool:
 def probe_pipelines(w: World) -> list[Any]:
     """The unfinished pipeline runs, each with what `go` needs to judge it: is the process of a running step alive,
     and where is the worktree's head now (a head run whose worktree moved on is superseded by the next run)."""
+    from steuermaschine.go import is_history
+
     out = []
+    days = float(w.settings.get("go_history_days") or HISTORY_DAYS)
     for state in w.runs:
-        if not isinstance(state, dict) or state.get("status") in OPEN or from_deleted_admission(state):
+        if not isinstance(state, dict) or state.get("status") in OPEN or from_deleted_admission(state) or is_history(state, w.now(), days):
             continue
         row = {k: state.get(k) for k in ("pipeline", "key", "label", "arg", "status", "phase", "next", "waiting_on", "trap", "running", "pid", "review", "fingerprint")}
         row["external_done"] = any(v.get("status") == "done" and k in ("apply", "pr", "queue", "admit apply", "resume") for k, v in (state.get("steps") or {}).items())

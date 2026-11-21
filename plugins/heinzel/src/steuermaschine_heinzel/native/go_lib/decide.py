@@ -36,6 +36,12 @@ def next_patch(version: str) -> str:
     return ".".join([*parts[:-1], str(int(parts[-1]) + 1)]) if len(parts) == 3 and all(p.isdigit() for p in parts) else ""
 
 
+def released(run: dict, latest: str) -> bool:
+    """A release run whose version is the latest release or older."""
+    arg = str(run.get("arg") or run.get("key") or "")
+    return run.get("pipeline") == "release.cut" and bool(latest) and bool(re.fullmatch(r"\d+\.\d+\.\d+", arg)) and version_key(arg) <= version_key(latest)
+
+
 def version_key(text: str) -> tuple[int, ...]:
     return tuple(int(x) for x in re.findall(r"\d+", text)[:3])
 
@@ -252,8 +258,14 @@ def decide(s: dict, now: float, w: Words | None = None, stall_minutes: int = 15)
                               None, "idle", f"apply pid {proc['pid']} to print its receipt path; then run {w.go()} again"))
 
     # 4b. engine pipeline runs (sm head admit, sm release cut): their own state says where they stand
+    history = 0
     for run in get("pipelines", []):
+        if released(run, latest):  # a cut of a version that is out already: history, never a NEXT
+            history += 1
+            continue
         items.extend(pipeline_items(run, main_sha, w, item))
+    if history:
+        items.append(item("history", f"{history} run(s) of versions that are out are history: `sm self migrate-state --journal` moves them to their journals"))
 
     # 5. pull requests
     queued = set(queue.get("queued", []))

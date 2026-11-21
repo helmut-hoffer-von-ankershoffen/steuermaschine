@@ -6,6 +6,7 @@ go_lib/legacy.py. Every command it names is an sm command.
 
 from __future__ import annotations
 
+import functools
 from pathlib import Path
 from typing import Any
 
@@ -15,12 +16,14 @@ from pydantic import BaseModel, Field
 from steuermaschine.helpdoc import H
 from steuermaschine.models import Model
 from steuermaschine.native import native, runtime
+from steuermaschine.surface import translate
 
 from .. import state as statedir  # the plugin's state paths
 from .go_lib import decide as rules
 from .go_lib import legacy, probes, views
 from .go_lib import live as live_commands
 from .go_lib.words import Words
+from .surface import RENAMES
 
 
 class GoSettings(BaseModel):
@@ -31,6 +34,7 @@ class GoSettings(BaseModel):
     go_packet_globs: list[str] = Field([], description="Globs of admission wave.json files (direct and predict/bound route). Empty: no packet is listed.")
     go_packet_hours: float = Field(30.0, description="How old an admission packet may be to be listed.")
     go_stall_minutes: int = Field(15, description="A green queued PR unmerged for this long is STALLED.")
+    go_history_days: float = Field(2.0, description="A pipeline run not updated for this many days is history: never a NEXT; `sm self migrate-state --journal` moves it.")
     go_budget_seconds: float = Field(18.0, description="Deadline for all probes of `go` together.")
     go_pr_actions_file: Path | None = Field(None, description="The reviewed PR action table (TOML with hold = true rows); none: no PR holds are known.")
     mini_cli: str = Field("hz", description="The command of the product on this machine, asked for its version.")
@@ -129,9 +133,14 @@ class SmWords(Words):
 
 def report(state: dict[str, Any], now: float, seconds: float = 0.0, show: int = 8, stall_minutes: int = 15, acks: dict[str, Any] | None = None,
            commands: list[dict[str, Any]] | None = None) -> Go:
-    """The decision as the `go` contract. With `commands` (the rows of the running command tree) every `sm` command
-    on NEXT, THEN and ALSO that is not live is shown as missing instead of offered (ka69)."""
+    """The decision as the `go` contract. Every old command name is written as its visible verb (surface.RENAMES). With
+    `commands` (the rows of the running command tree) every `sm` command on NEXT, THEN and ALSO that is not a visible
+    command is shown as missing instead of offered (ka69, h8jg5)."""
     result = _report(state, now, seconds, show, stall_minutes, acks)
+    visible = functools.partial(translate, renames=RENAMES)  # NEXT names only visible commands: old names become the new verbs
+    result.next, result.then, result.trap = visible(result.next), visible(result.then), visible(result.trap)
+    result.also = [GoAlso(phase=visible(a.phase), next=visible(a.next), waiting_on=visible(a.waiting_on)) for a in result.also]
+    result.aside = [visible(a) for a in result.aside]
     if commands is not None:
         check = live_commands.checker(commands)
         result.next, result.then = check(result.next), check(result.then)

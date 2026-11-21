@@ -459,9 +459,21 @@ def _self(rt: Runtime, app: typer.Typer) -> None:
                       listing: bool = typer.Option(False, "--list", help="Only list every move with its state."),
                       keep: Path | None = typer.Option(None, "--keep", metavar="FILE", help="With --back: a JSON list (from --list --format json of the target release) of moves that stay."),
                       wait: int = typer.Option(600, "--wait", metavar="SECONDS", help="How long to wait for running write commands to finish before refusing."),
+                      journal: bool = typer.Option(False, "--journal", help="Also move finished runs, and runs not updated for --older-than days, into their journals."),
+                      older_than: float = typer.Option(2.0, "--older-than", metavar="DAYS", help="With --journal: a run not updated for this many days is history."),
                       as_json: bool = JSON) -> None:
         if rt.project is None:
             fail("no project: there is no state to migrate", USAGE)
+        if journal:
+            try:
+                with _exclusive_writers(rt, wait):
+                    moved = go_mod.journal_history(rt.providers.store, rt.project.home / go_mod.JOURNALS, rt.providers.clock.now(), older_than)
+            except statemove.MigrationError as exc:
+                fail(f"state not journaled: {exc}", INTERNAL, hint="nothing moved; run it again once no write command runs")
+            found = models.StateMigration(action="journal", moves=[models.StateMoveRow(old=old, new=new, state="moved") for old, new in moved],
+                                          done=[f"{old} -> {new}" for old, new in moved])
+            emit(as_json, found.model_dump(), found.render(), models.StateMigration)
+            return
         moves = rt.plugin.state_moves(rt.settings, rt.project.home) if rt.plugin is not None else []
         if keep is not None and back:
             kept = {row.get("old") for row in json.loads(keep.read_text()).get("moves", [])}
@@ -675,7 +687,7 @@ def _self(rt: Runtime, app: typer.Typer) -> None:
         root = command_tree(rt)
         problems += listopts.findings(root, PROG)  # one parser for list options
         if surface.of(natives(rt))[0] is not None:  # the `sm -h` contract of a declared surface replaces the root's five lines
-            problems = [p for p in problems if not p.startswith(f"{PROG}: ")] + surface.help_findings(root.help or "")
+            problems += surface.help_findings(root.help or "")
         emit(as_json, problems, problems or ["help contract: every command passes"], models.LintFindings)
         raise typer.Exit(1 if problems else 0)
 

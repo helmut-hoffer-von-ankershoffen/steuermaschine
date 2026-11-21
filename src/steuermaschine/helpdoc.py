@@ -9,7 +9,7 @@ Every command and group starts its help with five lines, in this order:
 Strict: every argument and option says what it is (its own help text); the lint names the ones that do not (letter A).
 The lines come in the order above (letter O; a long line may wrap onto the next), and the example types the program,
 or feeds it from a pipe (`... | sm ...`) (letter X).
-Hidden commands follow the contract too. The lint walks the built command tree (it never runs a command). Output format is not part of a command's help:
+Hidden commands follow the contract too. The root of a declared surface has the `sm -h` contract instead (surface.py). The lint walks the built command tree (it never runs a command). Output format is not part of a command's help:
 the root option --format text|json applies to every command.
 """
 
@@ -99,7 +99,8 @@ def tree(root: Any, prog: str, writes: dict[str, bool] | None = None) -> list[di
         rows.append({"path": path, "group": is_group, "hidden": path in hidden, "purpose": text.splitlines()[0] if text else "",
                      "help": text, "options": opts, "arguments": args, "declared": path in writes,
                      "read_only": (not writes[path]) if path in writes and not is_group else bool(READ_ONLY.search(text)),
-                     "missing": missing(text) + disorder(text, prog) + ("A" if (bare := undocumented(command)) else ""), "undocumented": bare})
+                     "missing": "" if getattr(command, "sm_surface", False) else missing(text) + disorder(text, prog) + ("A" if (bare := undocumented(command)) else ""),
+                     "undocumented": undocumented(command)})
     return rows
 
 
