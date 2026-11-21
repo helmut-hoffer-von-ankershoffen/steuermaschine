@@ -102,7 +102,7 @@ def main_commands(runs, jobs=None) -> FakeCommands:
 def test_ci_main_names_the_failing_jobs_and_the_queue_verdict_and_writes_nothing(tmp_path):
     jobs = {"total_count": 2, "jobs": [{"name": "web-2 (macos-latest)", "conclusion": "failure"}, {"name": "CI OK", "conclusion": "failure"}]}
     commands = main_commands([run_row(12, RED, conclusion="failure"), run_row(11, GREEN)], jobs)
-    out = invoke(runtime_for(tmp_path, commands), ["ci", "main"])
+    out = invoke(runtime_for(tmp_path, commands), ["why", "main"])
     assert out.exit_code == 0, out
     lines = out.stdout.splitlines()
     assert lines[0] == "aaaaaaaa run 12 completed/failure 2026-11-13T10:12:00Z feat: x (#1)  FAILED: web-2 (macos-latest), CI OK"
@@ -113,7 +113,7 @@ def test_ci_main_names_the_failing_jobs_and_the_queue_verdict_and_writes_nothing
 
 def test_ci_main_in_json_explains_a_cancelled_run(tmp_path):
     runs = [run_row(13, PENDING, status="in_progress"), run_row(12, RED, conclusion="cancelled"), run_row(11, GREEN)]
-    out = invoke(runtime_for(tmp_path, main_commands(runs)), ["--format", "json", "ci", "main"])
+    out = invoke(runtime_for(tmp_path, main_commands(runs)), ["--format", "json", "why", "main"])
     assert out.exit_code == 0, out
     doc = ci_evidence.CiMain.model_validate_json(out.stdout)
     assert doc.notes == ["run 12: cancelled, ignored (newer run pending)"] and doc.queue_state == "green"
@@ -121,7 +121,7 @@ def test_ci_main_in_json_explains_a_cancelled_run(tmp_path):
 
 
 def test_ci_main_without_runs_is_unknown(tmp_path):
-    out = invoke(runtime_for(tmp_path, main_commands([])), ["ci", "main"])
+    out = invoke(runtime_for(tmp_path, main_commands([])), ["why", "main"])
     assert out.stdout.splitlines() == ["  note: no runs listed (gh failed or empty)", "merge queue main_state: unknown"]
 
 

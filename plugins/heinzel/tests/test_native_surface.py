@@ -95,8 +95,8 @@ def test_the_resolver_answers_an_old_name(tmp_path):
     assert out.exit_code == 2 and "Did you mean: sm review sonar PR" in out.stderr
     out = invoke(app_runtime(tmp_path), ["ci", "sonar-close", "--pull-request", "1"])
     assert out.exit_code == 2 and "Renamed: sm review sonar (was: sm ci sonar-close)" in out.stderr and out.stdout == ""
-    out = invoke(app_runtime(tmp_path), ["head", "pr", "abc", "fix: x"])
-    assert out.exit_code == 2 and "Renamed: sm ship" in out.stderr
+    out = invoke(app_runtime(tmp_path), ["beads", "tasks", "add", "a title"])
+    assert out.exit_code == 2 and "Renamed: sm work add (was: sm beads tasks add)" in out.stderr
 
 
 def test_why_picks_the_subject_kind():

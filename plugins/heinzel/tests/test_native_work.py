@@ -34,15 +34,15 @@ def test_the_alias_runs_the_same_command_object(tmp_path):
 
 def test_work_tasks_add_creates_the_bead_like_beads_tasks_add(tmp_path):
     c = world()
-    done = invoke(app_runtime(tmp_path, c), ["work", "tasks", "add", "Logo cut off", "-p", "1"])
+    done = invoke(app_runtime(tmp_path, c), ["work", "add", "Logo cut off", "-p", "1"])
     assert done.stdout == "xy9\n"
     assert bd(c)[0][:4] == ["bd", "create", "--title", "Logo cut off"]
 
 
 def test_work_tasks_ls_reads_like_beads_tasks_ls(tmp_path):
     rows = [{"id": "heinzel-management-abc", "title": "T", "status": "open", "priority": 2}]
-    new = invoke(app_runtime(tmp_path, world(rows)), ["--format", "json", "work", "tasks", "ls", "all"])
-    old = invoke(app_runtime(tmp_path, world(rows)), ["--format", "json", "beads", "tasks", "ls", "all"])
+    new = invoke(app_runtime(tmp_path, world(rows)), ["--format", "json", "work", "list", "all"])
+    old = invoke(app_runtime(tmp_path, world(rows)), ["--format", "json", "work", "list", "all"])
     assert new.stdout == old.stdout and json.loads(new.stdout)
 
 

@@ -63,7 +63,11 @@ REVIEW_NEXT = Verb("review next", "review list")
 
 RELEASE = Default("release", "drive", empty="train status", metavar="[VERSION] | plugin NAME")  # `sm release 0.9.55` is the release driver; bare: where the releases stand
 
-# Old visible names with a new verb. Read-only ones run the new command; writing ones exit 2 and name it.
+# Old visible names with a new verb. A stub (the default) where the new verb runs the very same command: a read-only
+# one runs it and says `Renamed:` on stderr, a writing one exits 2 and names it. Where the new verb reads more or
+# drives a different pipeline (`why PR` beside `ci why PR`, `ship` beside `head pr`), or code and jobs still run the
+# old name as a child process, the old name stays hidden and working (`stub=False`) and only texts such as NEXT and
+# the resolver name the new verb; `sm self stats --calls` shows when nothing calls it any more (S9 deletes it then).
 RENAMES = [
     Renamed("beads tasks add", "work add"), Renamed("beads tasks note", "work note"), Renamed("beads tasks done", "work done"),
     Renamed("beads tasks ls", "work list"), Renamed("beads tasks show", "work show"),
@@ -72,13 +76,13 @@ RENAMES = [
     Renamed("beads brief", "work brief"), Renamed("beads refill", "work refill"), Renamed("beads sweep", "work sweep"),
     Renamed("review list", "review next"),
     Renamed("ci sonar-close", "review sonar"),
-    Renamed("ci why", "why"), Renamed("pr why", "why"), Renamed("queue why", "why"), Renamed("head merge-ready", "why"),
-    Renamed("head sonar", "why"), Renamed("pr sonar", "why"), Renamed("ci main", "why main"),
-    Renamed("release status", "why"),
-    Renamed("head pr", "ship"), Renamed("head admit", "ship"), Renamed("release cut", "release"),
-    Renamed("doc hour", "status --write"), Renamed("doc handoff", "status --write --live"),
-    Renamed("tick", "alarm list --check"), Renamed("alarm check", "alarm list --check"), Renamed("doc asks", "alarm list"),
-    # Still run by code or jobs as a child process: unchanged, and only renamed in texts such as NEXT.
+    Renamed("ci main", "why main"),
+    Renamed("ci why", "why", stub=False), Renamed("pr why", "why", stub=False), Renamed("queue why", "why", stub=False),
+    Renamed("head merge-ready", "why", stub=False), Renamed("head sonar", "why", stub=False), Renamed("pr sonar", "why", stub=False),
+    Renamed("release status", "why", stub=False),
+    Renamed("head pr", "ship", stub=False), Renamed("head admit", "ship", stub=False), Renamed("release cut", "release", stub=False),
+    Renamed("doc hour", "status --write", stub=False), Renamed("doc handoff", "status --write --live", stub=False),
+    Renamed("tick", "alarm list --check", stub=False), Renamed("alarm check", "alarm list --check", stub=False), Renamed("doc asks", "alarm list", stub=False),
     Renamed("go", "", stub=False),
     Renamed("release resume", "release", stub=False),
     Renamed("head ship", "ship --live", stub=False),

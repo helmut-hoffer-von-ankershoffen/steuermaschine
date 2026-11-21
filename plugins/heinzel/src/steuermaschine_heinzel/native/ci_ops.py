@@ -628,15 +628,20 @@ def ci_sonar_close(config: Path | None = typer.Option(None, "--config", metavar=
 
 
 @native("review sonar", writes=True, replaces=("hz-sonar-close",), help=H(
-    "Close reviewed Sonar findings of one pull request with their written reason (bugs and vulnerabilities only).",
-    "Use after a finding of the PR was reviewed as a false positive or accepted and its row is in the reviewed manifest.",
+    "Close reviewed Sonar findings with their written reason: exact reviewed issues of one PR, or main's file/rule rows.",
+    "Use after a finding was reviewed as a false positive or accepted and its row is in the reviewed manifest.",
     "nothing without --apply (a preview); with --apply it comments the reason on each planned issue and transitions it in Sonar.",
     "sm review sonar 485 --issue AZexample1,AZexample2",
     "sm review sonar 485 --issue AZexample1 --apply   (after reading the preview), then sm why 485",
-    "The same plan and checks as before (the old name was sm ci sonar-close --pull-request PR): every requested key must be\n"
-    "open, in that PR, in that project, file and rule; any mismatch refuses with no write. A code smell needs a new head."))
-def review_sonar(pr: int = typer.Argument(..., metavar="PR", help="The pull request whose reviewed issues are closed."),
-                 issue: list[str] | None = typer.Option(None, "--issue", metavar="KEY[,KEY...]", help="An exact issue key."),
+    "Only bugs and vulnerabilities; a code smell needs a new head. The manifest (setting ci_ops_sonar_closures_file, or --config)\n"
+    "names the project and one [[closure]] row per finding: file, rule, reason, and for a PR issue also pull_request, issue,\n"
+    "the full rule (python:S5332) and transition (falsepositive or accept). The whole plan is checked before the first write:\n"
+    "every requested key must be open, in that PR, in that project, file and rule. Any mismatch refuses (exit 1) with no write.\n"
+    "Without PR: main's file/rule rows of the manifest. The `sonar` CLI must be signed in; no token passes through this command.\n"
+    "After a live closure on a PR it runs the merge gate's re-judge (setting ci_ops_rejudge_after_close)."))
+def review_sonar(pr: int | None = typer.Argument(None, metavar="[PR]", help="The pull request whose reviewed issues are closed; none: main's rows."),
+                 pull_request: int | None = typer.Option(None, "--pull-request", metavar="NUMBER", help="The same as PR."),
+                 issue: list[str] | None = typer.Option(None, "--issue", metavar="KEY[,KEY...]", help="An exact issue key; needs a PR."),
                  apply: bool = typer.Option(False, "--apply", help="Change Sonar. Without it the command only shows what it would close."),
                  config: Path | None = typer.Option(None, "--config", metavar="FILE", help="Another reviewed manifest (default: setting ci_ops_sonar_closures_file).")) -> SonarClose:
-    return ci_sonar_close(config=config, apply=apply, pull_request=pr, issue=issue)
+    return ci_sonar_close(config=config, apply=apply, pull_request=pr if pr is not None else pull_request, issue=issue)

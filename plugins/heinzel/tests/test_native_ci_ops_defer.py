@@ -345,7 +345,7 @@ def test_every_command_of_the_area_has_contract_help_a_model_and_no_former_name(
     for c in commands:
         assert issubclass(c.model, Model) and c.replaces, c.path
     _, rt = env
-    for argv in (["ci", "defer", "--help"], ["ci", "rerun", "--help"], ["ci", "quarantine", "--help"], ["ci", "sonar-close", "--help"], ["ci", "deferred", "--help"]):
+    for argv in (["ci", "defer", "--help"], ["ci", "rerun", "--help"], ["ci", "quarantine", "--help"], ["review", "sonar", "--help"], ["ci", "deferred", "--help"]):
         shown = invoke(rt, argv)
         assert shown.exit_code == 0 and "hz-" not in shown.stdout, argv
     for name, info in ci_ops.CiOpsSettings.model_fields.items():

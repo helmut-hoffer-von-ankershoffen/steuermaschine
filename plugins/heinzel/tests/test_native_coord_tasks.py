@@ -33,21 +33,21 @@ def bd(c):
 
 def test_add_creates_the_bead_with_labels_and_prints_the_short_id(tmp_path):
     c = world()
-    done = invoke(app_runtime(tmp_path, c), ["beads", "tasks", "add", "Logo cut off", "-p", "1", "-a", "logo", "-l", "ui,web", "--due", "10:30", "-d", "owner words", "--type", "bug"])
+    done = invoke(app_runtime(tmp_path, c), ["work", "add", "Logo cut off", "-p", "1", "-a", "logo", "-l", "ui,web", "--due", "10:30", "-d", "owner words", "--type", "bug"])
     today = time.strftime("%Y%m%d", time.localtime(NOW))
     assert done.stdout == "xy9\n"
     assert bd(c) == [["bd", "create", "--title", "Logo cut off", "-p", "1", "-t", "bug", "--silent", "-a", "logo", "-l", f"ui,web,due-{today}-1030", "-d", "owner words"]]
-    assert invoke(app_runtime(tmp_path, c), ["beads", "tasks", "add", " "]).exit_code == 2
+    assert invoke(app_runtime(tmp_path, c), ["work", "add", " "]).exit_code == 2
 
 
 def test_add_with_ask_writes_the_ask_row_too_and_says_so_when_the_table_is_missing(tmp_path):
     (tmp_path / "AGENTS.md").write_text(TABLE)
     c = world()
-    doc = beads.TaskDone.model_validate(json.loads(invoke(app_runtime(tmp_path, c), ["--format", "json", "beads", "tasks", "add", "Make the logo bigger", "--ask"]).stdout))
+    doc = beads.TaskDone.model_validate(json.loads(invoke(app_runtime(tmp_path, c), ["--format", "json", "work", "add", "Make the logo bigger", "--ask"]).stdout))
     assert doc.bead == "xy9" and doc.ask_row.startswith("| Make the logo bigger (") and doc.ask_row in (tmp_path / "AGENTS.md").read_text()
     assert bd(c)[0][-2:] == ["-l", "owner-ask"]
     (tmp_path / "AGENTS.md").write_text("no table\n")
-    done = invoke(app_runtime(tmp_path, world()), ["beads", "tasks", "add", "x", "--ask"])
+    done = invoke(app_runtime(tmp_path, world()), ["work", "add", "x", "--ask"])
     assert done.exit_code == 1 and "the bead exists, but the tracking document has no asks table" in done.stderr
 
 
@@ -56,12 +56,12 @@ def test_note_pr_claim_due_set_and_done_call_the_tracker_with_the_time_and_the_f
     rows = [{"id": "heinzel-management-abc", "labels": ["due-20261112-0900", "ui"]}]
     c = world(rows)
     rt = app_runtime(tmp_path, c)
-    assert invoke(rt, ["beads", "tasks", "note", "abc", "root cause found"]).stdout == "updated heinzel-management-abc\n"
+    assert invoke(rt, ["work", "note", "abc", "root cause found"]).stdout == "updated heinzel-management-abc\n"
     invoke(rt, ["beads", "tasks", "pr", "heinzel-management-abc", "796", "merged"])
     invoke(rt, ["beads", "tasks", "pr", "abc", "797"])
     invoke(rt, ["beads", "tasks", "claim", "abc", "builder-1", "--due", "2026-11-13 09:00"])
     assert invoke(rt, ["beads", "tasks", "due-set", "abc", "11:45"]).stdout == "ok\n"
-    assert invoke(rt, ["beads", "tasks", "done", "abc", "live in 0.9.40"]).stdout == "closed heinzel-management-abc\n"
+    assert invoke(rt, ["work", "done", "abc", "live in 0.9.40"]).stdout == "closed heinzel-management-abc\n"
     calls = bd(c)
     today = time.strftime("%Y%m%d", time.localtime(NOW))
     assert ["bd", "update", "heinzel-management-abc", "--append-notes", f"{stamp} root cause found"] in calls
@@ -70,22 +70,22 @@ def test_note_pr_claim_due_set_and_done_call_the_tracker_with_the_time_and_the_f
     assert ["bd", "label", "remove", "heinzel-management-abc", "due-20261112-0900"] in calls and ["bd", "label", "add", "heinzel-management-abc", "due-20261113-0900"] in calls
     assert ["bd", "label", "add", "heinzel-management-abc", f"due-{today}-1145"] in calls
     assert calls[-2:] == [["bd", "show", "heinzel-management-abc", "--json"], ["bd", "close", "heinzel-management-abc", "--force", "--reason", "live in 0.9.40"]]
-    assert invoke(rt, ["beads", "tasks", "done", "abc", " "]).exit_code == 2
+    assert invoke(rt, ["work", "done", "abc", " "]).exit_code == 2
 
 
 def test_done_refuses_a_partial_id_that_the_tracker_resolves_to_another_bead_and_closes_nothing(tmp_path):
     for answer in ([{"id": "heinzel-management-abcd"}], {"id": "heinzel-management-abcd"}, [], [{"id": "heinzel-management-abc"}, {"id": "heinzel-management-abcd"}]):
         c = world()
         c.on(["bd", "show"], ok(answer))
-        done = invoke(app_runtime(tmp_path, c), ["beads", "tasks", "done", "abc", "verified live"])
+        done = invoke(app_runtime(tmp_path, c), ["work", "done", "abc", "verified live"])
         assert done.exit_code == 2 and "is not the exact id of one bead" in done.stderr and "close" not in [call[1] for call in bd(c)], answer
     c = world()
     c.on(["bd", "show"], ok("not json"))
-    done = invoke(app_runtime(tmp_path, c), ["beads", "tasks", "done", "abc", "verified live"])
+    done = invoke(app_runtime(tmp_path, c), ["work", "done", "abc", "verified live"])
     assert done.exit_code == 1 and "is not JSON" in done.stderr and "close" not in [call[1] for call in bd(c)]
     c = world()
     c.on(["bd", "show"], ok({"id": "heinzel-management-abc"}))  # one object instead of a list: the same bead
-    assert invoke(app_runtime(tmp_path, c), ["beads", "tasks", "done", "heinzel-management-abc", "verified live"]).exit_code == 0
+    assert invoke(app_runtime(tmp_path, c), ["work", "done", "heinzel-management-abc", "verified live"]).exit_code == 0
     assert bd(c)[-1][:3] == ["bd", "close", "heinzel-management-abc"]
 
 
@@ -130,7 +130,7 @@ def test_every_write_refuses_with_the_trackers_message_when_bd_fails_and_writes_
     assert done.exit_code == 1 and "not JSON" in done.stderr and not [call for call in c.calls if call[1] == "label"]
     c = world()
     c.on(["bd", "show"], FAIL)
-    assert invoke(app_runtime(tmp_path, c), ["beads", "tasks", "show", "abc"]).exit_code == 1
+    assert invoke(app_runtime(tmp_path, c), ["work", "show", "abc"]).exit_code == 1
 
 
 def test_add_refuses_when_bd_prints_no_bead_id_and_writes_no_ask_row(tmp_path):
@@ -138,12 +138,12 @@ def test_add_refuses_when_bd_prints_no_bead_id_and_writes_no_ask_row(tmp_path):
     for printed in ('Error: no issue found matching "nope"\n', "", "heinzel-management-\n", "heinzel-management-AB\n", "other-prefix-xy9\n", "heinzel-management-xy9 extra\n"):
         c = world()
         c.on(["bd", "create"], ok(printed))
-        done = invoke(app_runtime(tmp_path, c), ["beads", "tasks", "add", "New thing", "--ask"])
+        done = invoke(app_runtime(tmp_path, c), ["work", "add", "New thing", "--ask"])
         assert done.exit_code == 1 and "printed no bead id" in done.stderr and done.stdout == "", printed
     assert (tmp_path / "AGENTS.md").read_text() == TABLE
     c = world()
     c.on(["bd", "create"], ok("heinzel-management-uz3c.3\n"))
-    assert invoke(app_runtime(tmp_path, c), ["beads", "tasks", "add", "--", "-starts with a dash"]).stdout == "uz3c.3\n"
+    assert invoke(app_runtime(tmp_path, c), ["work", "add", "--", "-starts with a dash"]).stdout == "uz3c.3\n"
     assert c.calls[-1][:4] == ["bd", "create", "--title", "-starts with a dash"]
 
 
@@ -154,7 +154,7 @@ def test_ids_that_are_not_of_the_projects_form_are_refused_before_bd_runs(tmp_pa
             done = invoke(app_runtime(tmp_path, c), ["beads", "tasks", *args])
             assert done.exit_code == 2 and "not a bead id" in done.stderr and not c.calls, (bad, args)
     c = world()
-    assert invoke(app_runtime(tmp_path, c), ["beads", "tasks", "note", "heinzel-management-uz3c.3", "x"]).exit_code == 0
+    assert invoke(app_runtime(tmp_path, c), ["work", "note", "heinzel-management-uz3c.3", "x"]).exit_code == 0
     assert c.calls[-1][2] == "heinzel-management-uz3c.3"
 
 
@@ -168,15 +168,15 @@ def test_due_ls_and_show_only_read(tmp_path):
     rt = app_runtime(tmp_path, c)
     due = invoke(rt, ["beads", "tasks", "due"]).stdout.splitlines()
     assert [line.split()[0] for line in due] == ["OVERDUE", "due"] and "bbb" in due[0] and "aaa" in due[1] and "builder-with-a-l " in due[1]
-    listed = beads.TaskList.model_validate(json.loads(invoke(rt, ["--format", "json", "beads", "tasks", "ls", "all"]).stdout))
+    listed = beads.TaskList.model_validate(json.loads(invoke(rt, ["--format", "json", "work", "list", "all"]).stdout))
     assert [row.bead for row in listed.rows] == ["aaa", "bbb", "ccc", "ddd"] and listed.rows[3].due == ""
-    assert invoke(rt, ["beads", "tasks", "ls", "ready"]).stdout.splitlines()[3].startswith("ddd   P? -")
+    assert invoke(rt, ["work", "list", "ready"]).stdout.splitlines()[3].startswith("ddd   P? -")
     assert ["bd", "ready", "--json"] in c.calls and ["bd", "list", "--json", "--limit", "0"] in c.calls and ["bd", "list", "--status", "in_progress", "--json", "--limit", "0"] in c.calls
-    shown = invoke(rt, ["beads", "tasks", "show", "abc"]).stdout
+    shown = invoke(rt, ["work", "show", "abc"]).stdout
     assert shown.startswith("heinzel-management-abc\n") and len(shown) <= 1801
     assert not [call for call in bd(c) if call[1] in ("update", "close", "create", "label")]
     c.on(["bd", "list"], ok("not json"))
-    assert invoke(rt, ["beads", "tasks", "ls"]).stdout == ""  # an empty listing prints nothing (core: no empty line)
+    assert invoke(rt, ["work", "list"]).stdout == ""  # an empty listing prints nothing (core: no empty line)
     assert beads.dlabel(None, NOW) is None and beads.dlabel("2026-11-13 09:00", NOW) == "due-20261113-0900"
 
 
@@ -228,15 +228,15 @@ def test_refill_command_counts_slots_names_dead_owners_and_start_lines(tmp_path)
     c.on(["bd", "list"], ok([b("x28", "stale work", u=stale), b("lv1", "moving", u=stale)]))
     c.on(["gh", "pr", "list"], ok([{"headRefName": "fix/lv1-thing", "title": "t", "updatedAt": fresh}, {"headRefName": "other", "title": "no bead", "updatedAt": fresh}]))
     rt = app_runtime(tmp_path, c, refill_test_load=3.0)
-    out = invoke(rt, ["beads", "refill"]).stdout.splitlines()
+    out = invoke(rt, ["work", "refill"]).stdout.splitlines()
     assert out[0] == "2 in progress, 10 free slots, 2 ready, load 3"
     assert out[1].startswith("DEAD x28 idle 240 min -> resume a1a821f217b36c21e or restart: stale work") and out[2] == "START new P1 Haiku: Fix docs typo" and len(out) == 3
-    doc = refill.Refill.model_validate(json.loads(invoke(app_runtime(tmp_path, c, refill_test_load=30.0), ["--format", "json", "beads", "refill"]).stdout))
+    doc = refill.Refill.model_validate(json.loads(invoke(app_runtime(tmp_path, c, refill_test_load=30.0), ["--format", "json", "work", "refill"]).stdout))
     assert doc.free_slots == 0 and doc.start == []
     c.on(["bd", "ready"], ok("[not json"))
     c.on(["gh", "pr", "list"], ok("x"))
     (tmp_path / "research" / "agent-ids.md").unlink()
-    out = invoke(rt, ["beads", "refill"]).stdout.splitlines()
+    out = invoke(rt, ["work", "refill"]).stdout.splitlines()
     assert out[0].startswith("2 in progress, 10 free slots, 0 ready") and "resume no agent id" in out[1] and len(out) == 3  # both owners look dead without PR evidence
 
 

@@ -61,7 +61,7 @@ def test_brief_full_names_the_measure():
 def test_brief_makes_the_worktree_and_prints_the_prompt(tmp_path):
     c = world(tmp_path)
     rt = app_runtime(tmp_path, **rt_of(tmp_path, c))
-    done = invoke(rt, ["beads", "brief", "logo", "feat/logo", "--task", "Bigger logo."])
+    done = invoke(rt, ["work", "brief", "logo", "feat/logo", "--task", "Bigger logo."])
     assert done.exit_code == 0
     code = tmp_path / "Code"
     assert ["git", "-C", str(code / "heinzel"), "fetch", "-q", "origin", "main"] in c.calls
@@ -69,27 +69,27 @@ def test_brief_makes_the_worktree_and_prints_the_prompt(tmp_path):
     assert f"Worktree: {code}/heinzel-logo" in done.stdout and "section 6" in done.stdout and "Bigger logo." in done.stdout
     assert f"Read section 6 of {tmp_path}/AGENTS.md first" in done.stdout  # the document setting
     n = len(c.calls)
-    again = json.loads(invoke(rt, ["--format", "json", "beads", "brief", "logo", "feat/logo"]).stdout)  # reuse
+    again = json.loads(invoke(rt, ["--format", "json", "work", "brief", "logo", "feat/logo"]).stdout)  # reuse
     assert brief.BuilderBrief.model_validate(again).created is False
     assert [call[3:5] for call in c.calls[n:] if call[0] == "git"] == [["worktree", "list"]]  # a reuse only reads
 
 
 def test_brief_names_the_bead_and_the_other_repository(tmp_path):
     c = world(tmp_path)
-    done = invoke(app_runtime(tmp_path, **rt_of(tmp_path, c)), ["beads", "brief", "sounds", "feat/s", "--repo", "plugins", "--bead", "ab12"])
+    done = invoke(app_runtime(tmp_path, **rt_of(tmp_path, c)), ["work", "brief", "sounds", "feat/s", "--repo", "plugins", "--bead", "ab12"])
     assert f"Worktree: {tmp_path}/Code/heinzel-plugins-sounds" in done.stdout
     assert "Bead: ab12 (note the PR on it; after merge: sm beads stamp ab12 --merged <PR>)" in done.stdout
-    done = invoke(app_runtime(tmp_path, **rt_of(tmp_path, c)), ["beads", "brief", "x", "feat/x", "--repo", "nope"])
+    done = invoke(app_runtime(tmp_path, **rt_of(tmp_path, c)), ["work", "brief", "x", "feat/x", "--repo", "nope"])
     assert done.exit_code == 2 and "unknown repository 'nope'" in done.stderr
 
 
 def test_brief_refuses_when_full_and_force_goes_ahead_and_logs(tmp_path):
     c = world(tmp_path, agents=5)
     rt = app_runtime(tmp_path, **rt_of(tmp_path, c, load=3.0))
-    done = invoke(rt, ["beads", "brief", "logo", "feat/logo", "--task", "Bigger logo."])
+    done = invoke(rt, ["work", "brief", "logo", "feat/logo", "--task", "Bigger logo."])
     assert done.exit_code == 1 and "5 agents are working" in done.stderr and "--force" in done.stderr
     assert not (tmp_path / "Code/heinzel-logo").exists() and not [call for call in c.calls if call[0] == "git"]
-    done = invoke(rt, ["beads", "brief", "logo", "feat/logo", "--task", "Bigger logo.", "--force", "owner asked"])
+    done = invoke(rt, ["work", "brief", "logo", "feat/logo", "--task", "Bigger logo.", "--force", "owner asked"])
     assert done.exit_code == 0 and (tmp_path / "Code/heinzel-logo").exists() and "Bigger logo." in done.stdout
     logged = (tmp_path / "AGENTS.md").read_text()
     assert "owner asked" in logged and "forced" in logged and "hz-" not in logged
@@ -98,13 +98,13 @@ def test_brief_refuses_when_full_and_force_goes_ahead_and_logs(tmp_path):
 def test_brief_refuses_over_load_40_and_an_empty_force_reason(tmp_path):
     for extra in ([], ["--force", "  "]):
         c = world(tmp_path)
-        done = invoke(app_runtime(tmp_path, **rt_of(tmp_path, c, load=55.0)), ["beads", "brief", "logo", "feat/logo", *extra])
+        done = invoke(app_runtime(tmp_path, **rt_of(tmp_path, c, load=55.0)), ["work", "brief", "logo", "feat/logo", *extra])
         assert done.exit_code == 1 and "load 55.0 is over 40" in done.stderr
 
 
 def test_brief_reports_a_git_refusal(tmp_path):
     c = world(tmp_path, worktree_fails="fatal: a branch named 'feat/logo' already exists")
-    done = invoke(app_runtime(tmp_path, **rt_of(tmp_path, c)), ["beads", "brief", "logo", "feat/logo"])
+    done = invoke(app_runtime(tmp_path, **rt_of(tmp_path, c)), ["work", "brief", "logo", "feat/logo"])
     assert done.exit_code == 1 and "worktree failed: fatal: a branch named" in done.stderr
 
 
@@ -179,12 +179,12 @@ def test_brief_adds_a_real_worktree_on_a_new_branch_from_origin_main(tmp_path):
     git("remote", "add", "origin", str(clone))
     git("fetch", "-q", "origin", "main")
     rt = app_runtime(tmp_path, Subprocess(), brief_code_dir=str(tmp_path / "Code"), brief_test_load=1.0, coord_tool_path=[])
-    done = invoke(rt, ["beads", "brief", "logo", "feat/logo", "--task", "Bigger logo."])
+    done = invoke(rt, ["work", "brief", "logo", "feat/logo", "--task", "Bigger logo."])
     assert done.exit_code == 0, done
     assert (tmp_path / "Code/heinzel-logo/.git").exists() and "feat/logo" in git("branch", "--list", "feat/logo")
     assert f"Worktree: {tmp_path}/Code/heinzel-logo" in done.stdout and "section 6" in done.stdout and "Bigger logo." in done.stdout
-    assert invoke(rt, ["beads", "brief", "logo", "feat/logo"]).exit_code == 0  # reuse
-    again = invoke(rt, ["beads", "brief", "logo2", "feat/logo"])  # the branch exists: git refuses, nothing is half-made
+    assert invoke(rt, ["work", "brief", "logo", "feat/logo"]).exit_code == 0  # reuse
+    again = invoke(rt, ["work", "brief", "logo2", "feat/logo"])  # the branch exists: git refuses, nothing is half-made
     assert again.exit_code == 1 and "worktree failed" in again.stderr and not (tmp_path / "Code/heinzel-logo2").exists()
 
 
@@ -192,7 +192,7 @@ def test_brief_adds_a_real_worktree_on_a_new_branch_from_origin_main(tmp_path):
 def test_a_topic_that_is_not_a_plain_name_is_refused_before_anything_runs(tmp_path):
     for topic in ("x/../../../outside/escaped", "..", "a/b", ".hidden", "a b", "ä"):
         c = world(tmp_path)
-        done = invoke(app_runtime(tmp_path, **rt_of(tmp_path, c)), ["beads", "brief", topic, "feat/x"])
+        done = invoke(app_runtime(tmp_path, **rt_of(tmp_path, c)), ["work", "brief", topic, "feat/x"])
         assert done.exit_code == 2 and "topic" in done.stderr and not c.calls, topic
     assert not (tmp_path / "outside").exists()
 
@@ -201,11 +201,11 @@ def test_a_topic_that_names_a_clone_or_the_tracker_is_refused(tmp_path):
     code = tmp_path / "Code"
     (code / "heinzel-plugins").mkdir(parents=True)
     c = world(tmp_path)
-    done = invoke(app_runtime(tmp_path, **rt_of(tmp_path, c)), ["beads", "brief", "plugins", "feat/x"])  # <core clone>-plugins is the plugins MAIN clone
+    done = invoke(app_runtime(tmp_path, **rt_of(tmp_path, c)), ["work", "brief", "plugins", "feat/x"])  # <core clone>-plugins is the plugins MAIN clone
     assert done.exit_code == 2 and "main clone" in done.stderr and not [call for call in c.calls if call[0] == "git"]
     (code / "heinzel-management").mkdir()
     c = world(tmp_path)
-    done = invoke(app_runtime(tmp_path, coord_tracker_dir=str(code / "heinzel-management"), **rt_of(tmp_path, c)), ["beads", "brief", "management", "feat/x"])
+    done = invoke(app_runtime(tmp_path, coord_tracker_dir=str(code / "heinzel-management"), **rt_of(tmp_path, c)), ["work", "brief", "management", "feat/x"])
     assert done.exit_code == 2 and "tracker" in done.stderr and not [call for call in c.calls if call[0] == "git"]
 
 
@@ -217,17 +217,17 @@ def test_an_existing_directory_is_reused_only_when_it_is_this_clones_worktree_on
     c = world(tmp_path)
     c.on(["git", "-C", str(code / "heinzel"), "worktree", "list"], ok(listing))
     rt = app_runtime(tmp_path, **rt_of(tmp_path, c))
-    assert invoke(rt, ["beads", "brief", "logo", "feat/logo"]).exit_code == 0  # reuse
-    done = invoke(rt, ["beads", "brief", "logo", "feat/other"])
+    assert invoke(rt, ["work", "brief", "logo", "feat/logo"]).exit_code == 0  # reuse
+    done = invoke(rt, ["work", "brief", "logo", "feat/other"])
     assert done.exit_code == 1 and "feat/logo" in done.stderr and "feat/other" in done.stderr
     (code / "heinzel-stray").mkdir()
-    done = invoke(rt, ["beads", "brief", "stray", "feat/stray"])
+    done = invoke(rt, ["work", "brief", "stray", "feat/stray"])
     assert done.exit_code == 1 and "not a worktree" in done.stderr
 
 
 def test_a_failed_fetch_is_a_refusal_and_no_worktree_is_added(tmp_path):
     c = world(tmp_path)
     c.on(["git", "-C", str(tmp_path / "Code/heinzel"), "fetch"], Result(1, "", "fatal: unable to access origin"))
-    done = invoke(app_runtime(tmp_path, **rt_of(tmp_path, c)), ["beads", "brief", "logo", "feat/logo"])
+    done = invoke(app_runtime(tmp_path, **rt_of(tmp_path, c)), ["work", "brief", "logo", "feat/logo"])
     assert done.exit_code == 1 and "fetch" in done.stderr and "unable to access" in done.stderr
     assert not [call for call in c.calls if "worktree" in call and "add" in call]
