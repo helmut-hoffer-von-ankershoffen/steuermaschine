@@ -163,4 +163,5 @@ def mirrored(fn: Any) -> Any:
 
                 print(f"sm: the subject journals were not updated ({type(error).__name__}: {error})", file=sys.stderr)
 
+    run.__annotations__ = dict(getattr(fn, "__annotations__", {}))  # Python 3.14+: wraps copies __annotate__, which a set __annotations__ voids
     return run
