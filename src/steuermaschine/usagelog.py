@@ -19,6 +19,8 @@ from typing import Any
 from .protocols import Commands
 
 FILE = "invocations.jsonl"
+CALLS = "calls"  # the trusted call counts: calls/YYYY-MM.tsv, one short line per real call, kept for KEEP_MONTHS
+KEEP_MONTHS = 3
 MAX_BYTES = 1_000_000  # above this the file moves to `invocations.jsonl.1` (one generation is kept)
 FLAG = re.compile(r"^--?[A-Za-z][A-Za-z0-9-]*")
 NOTE: dict[str, str] = {}  # the reason of the refusal in progress, set by `reason()`, read and cleared by `record`
@@ -57,6 +59,35 @@ def command_path(root: Any, args: list[str]) -> str:
         words.append(arg)
         node = children[arg]
     return " ".join(words)
+
+
+def is_leaf(root: Any, args: list[str]) -> bool:
+    """Whether `args` name a command that runs (a leaf, or a group that runs without a subcommand), not help."""
+    if "-h" in args or "--help" in args:
+        return False
+    node = root
+    for arg in args:
+        children = getattr(node, "commands", None)
+        if not arg.startswith("-") and children and arg in children:
+            node = children[arg]
+    return not hasattr(node, "commands") or bool(getattr(node, "invoke_without_command", False))
+
+
+def count_call(home: Path, path: str, code: int, now: float) -> None:
+    """One line `YYYY-MM-DD<TAB>command<TAB>exit<TAB>caller` in this month's calls file; files older than KEEP_MONTHS go.
+    The lines are short and appended in one write, so concurrent processes do not interleave."""
+    at = datetime.fromtimestamp(now, UTC)
+    folder = home / CALLS
+    folder.mkdir(parents=True, exist_ok=True)
+    target = folder / f"{at:%Y-%m}.tsv"
+    if not target.exists():
+        oldest = (at.year * 12 + at.month - 1) - KEEP_MONTHS
+        for old in folder.glob("*.tsv"):
+            year, _, month = old.stem.partition("-")
+            if year.isdigit() and month.isdigit() and int(year) * 12 + int(month) - 1 <= oldest:
+                old.unlink(missing_ok=True)
+    with target.open("a", encoding="utf-8") as out:
+        out.write(f"{at:%Y-%m-%d}\t{path}\t{code}\t{caller()}\n")
 
 
 def failure_class(code: int) -> str:
@@ -107,6 +138,8 @@ def record(home: Path | None, commands: Commands | None, root: Any, args: list[s
             os.replace(path, path.with_name(FILE + ".1"))
         with path.open("a", encoding="utf-8") as out:
             out.write(json.dumps(line, sort_keys=True) + "\n")
+        if is_leaf(root, args):
+            count_call(home, line["command"], code, started)
     except Exception:
         pass
     finally:

@@ -1,4 +1,4 @@
-"""why PR: one screen for "why is this PR not merging" (GitHub state, the required checks with older failed
+"""Why one PR does not merge (`sm why PR`, in why_subject.py): one screen for "why is this PR not merging" (GitHub state, the required checks with older failed
 duplicates, its queue entry, holds, main, its role in a combine PR) and the single most likely reason. Read-only.
 
 `explain(world, number)` is the importable function; other areas build on it instead of reading the same things again.
@@ -13,12 +13,10 @@ import re
 from pathlib import Path
 from typing import Any
 
-import typer
 from pydantic import BaseModel, Field
 
 from steuermaschine.helpdoc import H
 from steuermaschine.models import Model
-from steuermaschine.native import native
 
 from . import merge_tier
 from .go import world
@@ -68,6 +66,7 @@ class PullRequestWhy(Model):
     gate_notes: list[str] = []  # clauses of the merge gate's verdict that only inform (Core ADR 0149): never red
     advisory_failing: dict[str, list[str]] = {}  # advisory lane -> its failing names (consumers: the plugins)
     why: str = ""
+    more: list[str] = Field([], description="`sm why PR` with a red check: the CI cause and, for a red merge gate, Sonar's verdict.")
 
     def render(self) -> list[str]:
         out = [f"PR {self.number} {self.state or None} {self.head[:7]} github={self.merge_state or None}  {self.title[:50]}"]
@@ -79,7 +78,7 @@ class PullRequestWhy(Model):
         out += [f"  gate note (not red): {note}" for note in self.gate_notes]
         out.append("  role: " + (", ".join(self.roles) or ("standalone" if self.roles_known else "unknown (no combine member lists configured)")))
         out.append(f"  WHY: {self.why}")
-        return out
+        return out + self.more
 
 
 def per_name(runs: list[dict[str, Any]], names: Any = REQUIRED) -> list[CheckState]:
@@ -175,14 +174,3 @@ def explain(w: probes.World, number: int) -> PullRequestWhy:
                           advisory_failing=notes.advisory_failing,
                           why=verdict(number, pr.get("state", "?"), pr.get("mergeStateStatus", "?"), checks, item, frozen, holds, main_ok))
 
-
-@native("why", writes=False, replaces=("hz-why",), help=H(
-    "Why is this PR not merging? One screen and the single most likely reason.",
-    "Use when a green PR is unmerged after 15 minutes; that is an incident, not a wait.",
-    "nothing (read-only; four GitHub reads, the queue state file and the hold files).",
-    "sm why 795", "the command on the WHY line; if it names none, sm queue why",
-    "Lines: the PR's state and GitHub merge state; every required check of Core's release policy with its latest result and any older\n"
-    "non-success duplicate on the same head; its queue entry; freeze and release holds; main's latest CI run; what the last\n"
-    "queue tick waited on; its role in a combine PR; WHY."))
-def why(pr: int = typer.Argument(..., metavar="PR", help="PR number in the Core repository.")) -> PullRequestWhy:
-    return explain(world(), pr)

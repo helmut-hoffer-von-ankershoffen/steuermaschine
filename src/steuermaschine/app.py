@@ -20,7 +20,7 @@ from typing import Any, NoReturn
 import typer
 from pydantic import BaseModel, RootModel
 
-from . import ALARM, API_VERSION, INTERNAL, OK, PROG, REFUSED, USAGE, WAITING, dispatch, helpdoc, models, plugins, reviewgraph, statemove, statsreport, toolmap, usagelog, verdicts
+from . import ALARM, API_VERSION, INTERNAL, OK, PROG, REFUSED, USAGE, WAITING, dispatch, helpdoc, listopts, models, plugins, reviewgraph, statemove, statsreport, surface, toolmap, usagelog, verdicts
 from . import config as config_mod
 from . import go as go_mod
 from . import native as native_mod
@@ -550,12 +550,19 @@ def _self(rt: Runtime, app: typer.Typer) -> None:
         "Use at the start of each day to find what to improve in the tooling; a repeated refusal of one command is a signal that someone routes by hand.",
         "nothing (read-only; it reads invocations.jsonl and gate-history.jsonl in the state directory; reports unchanged reruns and flaky candidates by tree SHA).",
         f"{PROG} self stats --since 7d", "file a bead for each Top friction line"))
-    def stats(since: str = typer.Option("1d", "--since", metavar="1d|7d|30d", help="The window to report: the last 1, 7 or 30 days."), as_json: bool = JSON) -> None:
+    def stats(since: str = typer.Option("1d", "--since", metavar="1d|7d|30d", help="The window to report: the last 1, 7 or 30 days."),
+              calls: bool = typer.Option(False, "--calls", help="Calls per command over 30 days (or --since), every command listed; says whether the counts are trusted."),
+              as_json: bool = JSON) -> None:
         if since not in statsreport.WINDOWS:
             fail(f"--since is 1d, 7d or 30d, not '{since}'", USAGE)
         if rt.project is None:
             fail("no project: there is no state to read", USAGE)
         home = rt.project.home
+        if calls:
+            paths = {r["path"].removeprefix(PROG).strip(): r["hidden"] for r in helpdoc.tree(command_tree(rt), PROG) if not r["group"]}
+            counted = statsreport.calls(statsreport.read_calls(home / usagelog.CALLS), paths, 30 if since == "1d" else statsreport.WINDOWS[since])
+            emit(as_json, counted.model_dump(), counted.render(), statsreport.CallsReport)
+            return
         report = statsreport.build(statsreport.read_lines(home / usagelog.FILE), statsreport.read_lines(home / "gate-history.jsonl"), since)
         emit(as_json, report.model_dump(), report.render(), statsreport.StatsReport)
 
@@ -630,9 +637,30 @@ def _self(rt: Runtime, app: typer.Typer) -> None:
         "The whole command tree as data: path, purpose, read-only or not, options.",
         "Use for generating agent skills or MCP tools, or to see every command at once.", "nothing (read-only; it runs no command).",
         f"{PROG} self tree --json", f"{PROG} self lint"))
-    def tree(as_json: bool = JSON) -> None:
+    def tree(all_: bool = typer.Option(False, "--all", help="Also the hidden commands (old names and plumbing that jobs and hooks call)."), as_json: bool = JSON) -> None:
+        rows = [r for r in helpdoc.tree(command_tree(rt), PROG, writes_of(rt)) if all_ or not r["hidden"]]
+        emit(as_json, rows, [f"{'R' if r['read_only'] else 'W'}{'H' if r['hidden'] else ''} {r['path']}: {r['purpose']}" for r in rows], models.TreeRow)
+
+    @self_.command("doc", context_settings=CTX, short_help="The command reference in Markdown, from the command tree.", help=H(
+        "The command reference in Markdown, generated from the command tree: every visible command with its Use, Changes and Example lines.",
+        "Use when a skill, a start document or a new agent needs the commands; paste it between the generated markers.",
+        "nothing (read-only; it prints, it runs no command).", f"{PROG} self doc > reference.md", f"{PROG} self lint"))
+    def doc(as_json: bool = JSON) -> None:
         rows = [r for r in helpdoc.tree(command_tree(rt), PROG, writes_of(rt)) if not r["hidden"]]
-        emit(as_json, rows, [f"{'R' if r['read_only'] else 'W'} {r['path']}: {r['purpose']}" for r in rows], models.TreeRow)
+        text = helpdoc.markdown(rows, PROG)
+        emit(as_json, text, [text], models.Markdown)
+
+    @self_.command("tokens", context_settings=CTX, short_help="Tokens of one agent session, from its transcript file.", help=H(
+        "Tokens of one agent session, from its transcript (JSON lines with a usage block per model answer).",
+        "Use after a session, to measure what a task or a cold start cost.", "nothing (read-only; it reads the one file).",
+        f"{PROG} self tokens ~/.claude/projects/X/SESSION.jsonl", "compare with the budget of the task"))
+    def tokens(transcript: Path = typer.Argument(..., metavar="TRANSCRIPT", help="The session transcript, one JSON object per line."), as_json: bool = JSON) -> None:
+        try:
+            text = transcript.expanduser().read_text(encoding="utf-8")
+        except OSError as exc:
+            fail(f"cannot read {transcript}: {exc.strerror}", USAGE)
+        found = models.Tokens.count(text.splitlines())
+        emit(as_json, found.model_dump(), found.render(), models.Tokens)
 
     @self_.command("lint", context_settings=CTX, short_help="Check every command's help against the help contract.", help=H(
         "Check every command's help against the help contract (purpose, Use when, Changes:, Example:, Next:).",
@@ -644,6 +672,10 @@ def _self(rt: Runtime, app: typer.Typer) -> None:
         problems += [f"{row['path']}: {found}" for row in rows if (found := helpdoc.disagrees(row))]
         for rule in (rt.plugin.lint_rules() if rt.plugin else []):  # hook sm_help_lint_rules
             problems += [f"{row['path']}: {found}" for row in rows if (found := rule(row))]
+        root = command_tree(rt)
+        problems += listopts.findings(root, PROG)  # one parser for list options
+        if surface.of(natives(rt))[0] is not None:  # the `sm -h` contract of a declared surface replaces the root's five lines
+            problems = [p for p in problems if not p.startswith(f"{PROG}: ")] + surface.help_findings(root.help or "")
         emit(as_json, problems, problems or ["help contract: every command passes"], models.LintFindings)
         raise typer.Exit(1 if problems else 0)
 
@@ -720,12 +752,22 @@ def promoted_commit() -> str:
     return name if len(name) >= 7 and all(c in "0123456789abcdef" for c in name) else ""
 
 
-def writes_of(rt: Runtime) -> dict[str, bool]:
-    """Command path (with the program name) -> whether it writes, for every command that declares it: native
-    commands by `writes=`, pipelines and the core's writers always. Other commands are read from their help."""
+def _declared_writes(rt: Runtime) -> dict[str, bool]:
     out = {f"{PROG} {c.path}": bool(c.writes) for c in natives(rt) if hasattr(c, "fn")}
     out.update({f"{PROG} {pl.subject} {pl.verb}": True for pl in (rt.pipelines() if rt.project else [])})
     out.update({f"{PROG} {path}": True for path in (*CORE_WRITERS, "ci cancel")})
+    return out
+
+
+def writes_of(rt: Runtime) -> dict[str, bool]:
+    """Command path (with the program name) -> whether it writes, for every command that declares it: native
+    commands by `writes=`, pipelines and the core's writers always. Other commands are read from their help.
+    A renamed old name is a stub and writes nothing; a verb mounted at a new path writes what its target writes."""
+    out = _declared_writes(rt)
+    _, verbs, renames, _ = surface.of(natives(rt))
+    out.update({f"{PROG} {v.path}": out[f"{PROG} {v.target}"] for v in verbs if f"{PROG} {v.target}" in out})
+    out.update({f"{PROG} {r.old}": False for r in renames if r.stub})
+    out[PROG] = False  # the root runs nothing by itself
     return out
 
 
@@ -746,7 +788,10 @@ def command_tree(rt: Runtime) -> Any:
         built = typer.main.get_command(native_app)
         _merge_deep(root, built)
         native_mod.mount_aliases(root, natives(rt))
-        rt.plugin_paths |= {c.path.split()[0] for c in (rt.plugin.native(rt.settings) if rt.plugin else [])} - RESERVED
+        rt.plugin_paths |= {c.path.split()[0] for c in (rt.plugin.native(rt.settings) if rt.plugin else []) if hasattr(c, "fn")} - RESERVED
+    project_line = f"Project: {rt.project.name} (plugin {rt.project.plugin})" if rt.project else ""
+    surface.apply(root, natives(rt), _declared_writes(rt), fail, typer.echo, PROG, project_line)  # the visible verbs, stubs, the resolver
+    listopts.install(root)  # one rule for list options: repeated or A,B
     dispatch.add_format_option(root, choose_format)  # `--format` after the command, for every command of every layer
     return root
 

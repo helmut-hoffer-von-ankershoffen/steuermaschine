@@ -6,6 +6,9 @@ from __future__ import annotations
 import datetime
 from typing import Any
 
+import typer
+
+from steuermaschine.engine import Refuse
 from steuermaschine.helpdoc import H
 from steuermaschine.models import Model
 from steuermaschine.native import native
@@ -34,9 +37,13 @@ class Alarms(Model):
 
     checked: bool  # True: the world was read now; False: only the recorded state
     alarms: list[AlarmRow] = []
+    asks: list[str] = []  # `alarm list`: owner messages nobody reviewed, old ask rows (the old `doc asks`)
+    deadlines: list[str] = []  # `alarm list --check`: the deadline watch (the old `tick`)
 
     def render(self) -> list[str]:
-        return [a.line() for a in self.alarms] or ["OK"]
+        out = [a.line() for a in self.alarms] or ["OK"]
+        out += (["ASKS"] + [f"  {line}" for line in self.asks]) if self.asks else []
+        return out + ((["DEADLINES"] + [f"  {line}" for line in self.deadlines]) if self.deadlines else [])
 
     @property
     def exit_code(self) -> int:
@@ -92,8 +99,38 @@ def alarm_check() -> Alarms:
 
 
 @native("alarm list", writes=False, replaces=("hz-alarm",), help=H(
-    "The recorded alarms, without any network read.",
-    "Use when you want the alarm keys, or to see what is acknowledged.",
-    "nothing (read-only, local).", "sm alarm list", "sm alarm ack KEY, or sm alarm check"))
-def alarm_list() -> Alarms:
-    return Alarms(checked=False, alarms=rows(watch.recorded_rows(recorded(world()))))
+    "The alarms: recorded ones and unreviewed owner messages; with --check also GitHub now and the deadline watch.",
+    "Use at every tick, and whenever you want the alarm keys or to see what is acknowledged.",
+    "nothing (read-only; without --check local reads only: the alarm state, the session transcript, the tracking document).",
+    "sm alarm list            (every tick: sm alarm list --check)", "sm alarm ack KEY once you act on an alarm",
+    "--check reads GitHub, the queue and the release receipt now (the old `sm alarm check`) and adds the deadline watch (the old\n"
+    "`sm tick`: new crash reports, a changed tool environment). ASKS lists owner messages nobody reviewed yet (the old `sm doc asks`).\n"
+    "Exit 3 while an unacknowledged ALERT holds."))
+def alarm_list(check: bool = typer.Option(False, "--check", help="Also read GitHub, the queue and the release receipt now, and run the deadline watch.")) -> Alarms:
+    found = alarm_check() if check else Alarms(checked=False, alarms=rows(watch.recorded_rows(recorded(world()))))
+    found.asks = owner_asks()
+    if check:
+        found.deadlines = deadlines()
+    return found
+
+
+def owner_asks() -> list[str]:
+    from .asks_lib import asks
+
+    try:
+        shown = asks.audit(None, None)
+    except (FileNotFoundError, Refuse):  # no transcript or tracking document configured: no asks to show
+        return []
+    except Exception as error:  # noqa: BLE001 - an unreadable one: the alarms still print
+        return [f"unknown: {type(error).__name__}: {error}"[:200]]
+    return [line for line in shown.render() if line.strip()] if (shown.messages or shown.open) else []
+
+
+def deadlines() -> list[str]:
+    from .tick import tick
+
+    try:
+        lines = tick(raw=False).render()
+    except Exception as error:  # noqa: BLE001 - one watch failing leaves the alarms
+        return [f"unknown: {type(error).__name__}: {error}"[:200]]
+    return [line for line in lines if line.strip() and not line.startswith("OK")]
