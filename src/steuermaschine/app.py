@@ -20,7 +20,7 @@ from typing import Any, NoReturn
 import typer
 from pydantic import BaseModel, RootModel
 
-from . import ALARM, API_VERSION, INTERNAL, OK, PROG, REFUSED, USAGE, WAITING, dispatch, helpdoc, models, plugins, reviewgraph, statemove, statsreport, toolmap, usagelog, verdicts
+from . import ALARM, API_VERSION, INTERNAL, OK, PROG, REFUSED, USAGE, WAITING, dispatch, helpdoc, localtime, models, plugins, reviewgraph, statemove, statsreport, toolmap, usagelog, verdicts
 from . import config as config_mod
 from . import go as go_mod
 from . import native as native_mod
@@ -96,7 +96,7 @@ def emit(as_json: bool, data: Any, lines: list[str], model: type[BaseModel]) -> 
     """Text: the lines. json: exactly one JSON document on stdout, validated by `model` (a list: each row; a RootModel:
     the whole value). Every command prints through this or through `emit_result`, so json output is always typed."""
     if not json_mode(as_json):
-        typer.echo("\n".join(lines))
+        typer.echo(localtime.localize("\n".join(lines)))
         return
     rows = isinstance(data, list) and not issubclass(model, RootModel)
     data = [model.model_validate(d).model_dump() for d in data] if rows else model.model_validate(data).model_dump()
@@ -312,7 +312,8 @@ def emit_result(result: Any) -> None:
     else:  # a model with no lines prints nothing, not an empty line (`sm guard uv` must leave uv's output byte-exact)
         lines = [line for r in many for line in r.render()] if many is not None else ([] if isinstance(result, models.Nothing) else result.render())
         if lines:
-            typer.echo("\n".join(lines))
+            text = "\n".join(lines)
+            typer.echo(text if any(getattr(r, "verbatim", False) for r in (many or [result])) else localtime.localize(text))
 
 
 def _review(rt: Runtime, app: typer.Typer, hidden: bool = False) -> None:

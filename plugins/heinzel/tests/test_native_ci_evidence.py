@@ -105,8 +105,8 @@ def test_ci_main_names_the_failing_jobs_and_the_queue_verdict_and_writes_nothing
     out = invoke(runtime_for(tmp_path, commands), ["ci", "main"])
     assert out.exit_code == 0, out
     lines = out.stdout.splitlines()
-    assert lines[0] == "aaaaaaaa run 12 completed/failure 2026-11-13T10:12:00Z feat: x (#1)  FAILED: web-2 (macos-latest), CI OK"
-    assert lines[1] == "bbbbbbbb run 11 completed/success 2026-11-13T10:11:00Z feat: x (#1)"
+    assert lines[0] == "aaaaaaaa run 12 completed/failure 2026-11-13 10:12 UTC feat: x (#1)  FAILED: web-2 (macos-latest), CI OK"
+    assert lines[1] == "bbbbbbbb run 11 completed/success 2026-11-13 10:11 UTC feat: x (#1)"
     assert lines[2] == "merge queue main_state: red" and "main_failure" in lines[3]
     assert not (tmp_path / "queue.json").exists() and not [a for a in commands.calls if a[0] != "gh" or "-X" in a]
 
