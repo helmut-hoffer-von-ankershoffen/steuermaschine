@@ -234,6 +234,11 @@ class Policy:
         return self.directory / f"{self.prefix}.draining"
 
     @property
+    def load_waiting(self) -> Path:
+        """Markers (one file per pid) of exclusive requests that wait for the load to fall below their bar."""
+        return self.directory / f"{self.prefix}.load-waiting"
+
+    @property
     def fast_waiting(self) -> Path:
         """Markers `LEVEL-PID` of fast requests with a priority that wait for a fast slot."""
         return self.directory / f"{self.prefix}.fast-waiting"
@@ -510,7 +515,10 @@ class RunLock:
                 + sum(1 for number in range(self.p.fast_slots) if self._locked(self.p.fast_slot_file(number))))
 
     def fast_cap(self) -> int:
-        """How many fast runs may be going at once: all of `fast_slots` below `extra_slot_load`, one fewer below `max_load`, then one."""
+        """How many fast runs may be going at once: all of `fast_slots` below `extra_slot_load`, one fewer below `max_load`, then one.
+        One while an exclusive run waits for the load to fall: untimed fast runs must not keep it above that run's bar."""
+        if self.p.fast_slots and self._someone_waiting(self.p.load_waiting):
+            return 1
         load = self.load()
         if load < self.p.extra_slot_load:
             return self.p.fast_slots
@@ -543,10 +551,15 @@ class RunLock:
         self.p.waiting.mkdir(parents=True, exist_ok=True)
         self.p.urgent.mkdir(parents=True, exist_ok=True)
         self.p.draining.mkdir(parents=True, exist_ok=True)
+        self.p.load_waiting.mkdir(parents=True, exist_ok=True)
         self.p.fast_waiting.mkdir(parents=True, exist_ok=True)
 
     def _someone_waiting(self, directory: Path) -> bool:
-        for marker in directory.iterdir():
+        try:
+            markers = list(directory.iterdir())
+        except OSError:
+            return False  # nobody has waited here yet
+        for marker in markers:
             if alive(marker.name):
                 return True
             marker.unlink(missing_ok=True)
@@ -685,7 +698,8 @@ class RunLock:
         if not request.priority and self._draining():
             return "a full run (--full, exclusive) waits for the running work to end and starts first: no new fast check starts before it"
         cap = self.fast_cap()
-        return (f"all {cap} fast slot(s) are taken" + (f" (the cap is {cap} of {self.p.fast_slots} at load {self.load():.0f})" if cap < self.p.fast_slots else "")
+        waits = " while a full run (--full, exclusive) waits for the load to fall" if self._someone_waiting(self.p.load_waiting) else f" at load {self.load():.0f}"
+        return (f"all {cap} fast slot(s) are taken" + (f" (the cap is {cap} of {self.p.fast_slots}{waits})" if cap < self.p.fast_slots else "")
                 + f": {'; '.join(self._fast_holders())[:200] or 'held by other checks'}")
 
     def _fast_ahead(self, level: int) -> bool:
@@ -756,6 +770,7 @@ class RunLock:
             limit = EXCLUSIVE_DEFAULT_WAIT_SECONDS
         marker = (self.p.urgent if level == 2 else self.p.waiting) / str(self.pid())
         draining = self.p.draining / str(self.pid())
+        on_load = self.p.load_waiting / str(self.pid())
         if level in (1, 2):
             marker.touch()
         told, noted = -1.0, None
@@ -776,6 +791,10 @@ class RunLock:
                     turn = not self._someone_waiting(self.p.waiting) and not self._someone_waiting(self.p.urgent)
                 load = self.load()
                 turn = turn and load < self.p.max_load and not (bar and load >= bar)
+                if request.exclusive and not turn and not self.on_hold(request.hold_exempt):
+                    on_load.touch()  # the load is what it waits for: allow one fast slot, so fast runs do not hold the load up
+                else:
+                    on_load.unlink(missing_ok=True)
                 if not (turn and request.exclusive):
                     draining.unlink(missing_ok=True)  # waiting for the load or a hold, not for the running work
                 if turn and request.exclusive and not self.on_hold(request.hold_exempt):
@@ -803,6 +822,7 @@ class RunLock:
         finally:
             marker.unlink(missing_ok=True)
             draining.unlink(missing_ok=True)
+            on_load.unlink(missing_ok=True)
 
     def _exclusive_slot(self) -> IO[str] | None:
         """Slot 0 and the exclusive file, when no heavy slot is in use; else None and nothing held."""
