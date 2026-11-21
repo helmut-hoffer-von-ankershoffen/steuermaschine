@@ -57,48 +57,16 @@ class Probe:
         return step
 
 
-def test_head_apply_holds_the_window_while_it_runs_and_lets_go_after(rt, monkeypatch, tmp_path):
-    probe = Probe(rt, [applied()])
-    monkeypatch.setattr(ops, "apply", probe)
-    done = invoke(rt, ["head", "apply", str(tmp_path / "packet.json"), "--approved", "a" * 64])
-    assert done.exit_code == 0
-    assert probe.seen == [([f"head apply {tmp_path / 'packet.json'}"], "wait")]  # a validation asking now is kept waiting
-    assert line(rt).status().holds == []  # the hold ended with the command
-    line(rt).leave("fix/x", B, owner="v")
 
 
-def test_the_hold_ends_when_the_admission_fails(rt, monkeypatch, tmp_path):
-    monkeypatch.setattr(ops, "apply", Probe(rt, [a.AdmissionError("boom")]))
-    done = invoke(rt, ["head", "apply", str(tmp_path / "packet.json"), "--approved", "a" * 64])
-    assert done.exit_code == 1 and "boom" in done.stdout + done.stderr and line(rt).status().holds == []
 
 
-def test_apply_wait_waits_for_the_running_validation_with_the_hold_kept(rt, monkeypatch, tmp_path):
-    probe = Probe(rt, [a.AdmissionError(UNCOVERED), a.AdmissionError(UNCOVERED), applied()])
-    monkeypatch.setattr(ops, "apply", probe)
-    done = invoke(rt, ["head", "apply", str(tmp_path / "packet.json"), "--approved", "a" * 64, "--wait"])
-    assert done.exit_code == 0 and len(probe.seen) == 3
-    assert all(holds and state == "wait" for holds, state in probe.seen)  # held at every look: nothing new started in between
-    assert line(rt).status().holds == []
 
 
-def test_apply_without_wait_refuses_as_before(rt, monkeypatch, tmp_path):
-    monkeypatch.setattr(ops, "apply", Probe(rt, [a.AdmissionError(UNCOVERED)]))
-    done = invoke(rt, ["head", "apply", str(tmp_path / "packet.json"), "--approved", "a" * 64])
-    assert done.exit_code == 1 and "unknown active Actions run" in done.stdout + done.stderr and line(rt).status().holds == []
 
 
-def test_apply_wait_gives_up_with_75_after_the_limit_and_still_lets_go(rt, monkeypatch, tmp_path):
-    monkeypatch.setattr(ops, "apply", Probe(rt, [a.AdmissionError(UNCOVERED)] * 80))
-    done = invoke(rt, ["head", "apply", str(tmp_path / "packet.json"), "--approved", "a" * 64, "--wait"])
-    assert done.exit_code == 75 and line(rt).status().holds == []
 
 
-def test_head_prepare_holds_the_window(rt, monkeypatch, tmp_path):
-    probe = Probe(rt, [a.AdmissionError("boom")])
-    monkeypatch.setattr(ops, "prepare", probe)
-    done = invoke(rt, ["head", "prepare", str(tmp_path / "packet.json"), "--core-repo", str(tmp_path), "--review-root", str(tmp_path)])
-    assert done.exit_code == 1 and probe.seen[0][1] == "wait" and probe.seen[0][0][0].startswith("head prepare ") and line(rt).status().holds == []
 
 
 @pytest.mark.parametrize("path, target, extra", [(["release", "admit", "apply"], "apply", ["--approved", "a" * 64]),
@@ -120,33 +88,10 @@ def test_a_hold_does_not_stop_a_validation_that_already_runs(rt):
     assert line(rt).enter("fix/one", A, 2, in_flight=2, owner="one", pid=os.getpid(), host=socket.gethostname()).state == "go"
 
 
-def test_a_validation_wait_names_the_pending_admission(rt):
-    line(rt).hold("admit", "head apply P", pid=os.getpid(), host=socket.gethostname())
-    out = invoke(rt, ["ci", "window", "status"])
-    assert "hold     head apply P" in out.stdout
 
 
-def test_status_marks_a_gone_waiter_and_drop_removes_it(rt):
-    dead = os.getpid() + 7_000_000  # no such process
-    line(rt).enter("fix/one", A, 5, in_flight=0, owner="one", pid=os.getpid(), host=socket.gethostname())
-    line(rt).enter("fix/dead", B, 1, in_flight=0, owner="dead", pid=dead, host=socket.gethostname())
-    text = invoke(rt, ["ci", "window", "status"]).stdout
-    assert "waiting  1." not in text and "gone     fix/dead bbbbbbbbb" in text and "ci window drop bbbbbbbbb" in text
-    done = invoke(rt, ["ci", "window", "drop", B[:9]])
-    assert done.exit_code == 0 and "dropped fix/dead" in done.stdout
-    assert "gone" not in invoke(rt, ["ci", "window", "status"]).stdout
-    assert invoke(rt, ["ci", "window", "drop", B[:9]]).exit_code == 1  # nothing left to drop
 
 
-def test_drop_never_removes_a_live_or_unknown_waiter_without_proof_of_ownership(rt, tmp_path):  # review R2: unknown liveness is not a dead command
-    line(rt).enter("fix/one", A, 5, in_flight=0, owner="one", pid=os.getpid(), host=socket.gethostname())
-    line(rt).enter("fix/live", B, 1, in_flight=0, owner="live", pid=os.getpid(), host=socket.gethostname())
-    line(rt).enter("fix/away", "c" * 40, 1, in_flight=0, owner="away", pid=5, host="another-machine")
-    live = invoke(rt, ["ci", "window", "drop", B])
-    assert live.exit_code == 1 and "only its owner drops it" in live.stdout + live.stderr
-    away = invoke(rt, ["ci", "window", "drop", "c" * 9])
-    assert away.exit_code == 1 and "another machine" in away.stdout + away.stderr
-    assert [t.branch for t in line(rt).status().waiting] == ["fix/live", "fix/away"]
 
 
 def test_a_dead_waiter_does_not_take_the_turn_through_the_command(rt):
@@ -204,22 +149,5 @@ def test_a_refusal_before_the_write_is_still_retried_and_the_give_up_names_apply
         wait.retry_when_clear(never, clock=FakeClock(0.0), say=lambda s: None, max_minutes=1, poll_seconds=90)
 
 
-def test_head_apply_command_reports_written_no_receipt_as_a_refusal_without_the_blockers_hint(rt, monkeypatch, tmp_path):
-    from steuermaschine_heinzel.native.admission_lib import wait
-
-    def boom(*args, **kwargs):
-        raise wait.WrittenWithoutReceipt("the registry slot WAS WRITTEN but there is no receipt: x (unknown active Actions run)")
-
-    monkeypatch.setattr(ops, "apply", boom)
-    done = invoke(rt, ["head", "apply", str(tmp_path / "packet.json"), "--approved", "a" * 64, "--wait"])
-    assert done.exit_code == 1 and "WAS WRITTEN" in done.stdout + done.stderr and "head blockers" not in done.stdout + done.stderr.replace("sm head blockers, then", "")
 
 
-def test_release_hold_command_removes_a_stale_hold_and_status_prints_its_owner(rt):
-    dead = os.getpid() + 7_000_000
-    line(rt).hold("owner-1", "head apply P", pid=dead, host=socket.gethostname())
-    line(rt).hold("owner-2", "head apply Q", pid=os.getpid(), host=socket.gethostname())
-    assert "[owner-2]" in invoke(rt, ["ci", "window", "status"]).stdout
-    assert "may still run" in invoke(rt, ["ci", "window", "release-hold", "owner-2"]).stdout
-    assert "released the admission hold" in invoke(rt, ["ci", "window", "release-hold", "owner-2", "--force"]).stdout
-    assert line(rt).status().holds == []

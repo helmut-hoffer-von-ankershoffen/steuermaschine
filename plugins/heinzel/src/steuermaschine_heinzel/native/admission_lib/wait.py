@@ -1,4 +1,4 @@
-"""`sm head prepare --wait`: wait while an uncovered Actions run is active, and retry a truncated inventory.
+"""Waiting for the release admission: wait while an uncovered Actions run is active, and retry a truncated inventory.
 
 A prepare that meets an active run without a reviewed nonconsumer receipt refuses; so does one that GitHub answered
 with a short page ("truncated inventory"). Both pass by themselves. Waiting is done with the read-only run inventory
@@ -118,7 +118,7 @@ def tracked(rt: Any, run: Callable[[], Any]) -> Any:
             raise WrittenWithoutReceipt(
                 f"the registry slot WAS WRITTEN but there is no receipt: a check after the write refused ({error}). Do not run apply again and do not wait: "
                 "tell the coordinator; once no run is active, the slot holds this head's plan, and the receipt must be recovered by hand "
-                "(sm head blockers, then reprepare, which reads the written slot)") from error
+                "(the retired blockers read, then reprepare, which reads the written slot)") from error
         raise
 
 

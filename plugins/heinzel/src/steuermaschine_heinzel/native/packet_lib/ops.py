@@ -9,15 +9,12 @@ from __future__ import annotations
 
 import json
 import xml.etree.ElementTree as ET
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 from steuermaschine.models import Model
 
-from . import floor_check as fc
 from . import focused_manifest as fm
-from . import wave_size as ws
 
 MANIFEST_ERRORS = (fm.ManifestError, OSError, ValueError, KeyError, ET.ParseError)
 
@@ -165,91 +162,10 @@ class Overlap(Model):
     files: list[str]
 
 
-class SizeResult(Model):
-    """Whether one wave of heads fits the focused admission limits."""
-
-    fits: bool
-    base: str
-    branches: list[BranchSize]
-    union: dict[str, int]  # test ids per lane
-    limits: dict[str, int | None]  # None everywhere: no lane and no production maximum (owner 2026-11-14), kept for the shape
-    production: int
-    overlaps: list[Overlap] = []
-    conflicts: list[list[str]] = []
-    problems: list[str] = []
-    move: str = ""  # the branch to move to the next wave
-    lines: list[str] = []
-
-    @property
-    def exit_code(self) -> int:
-        return 0 if self.fits else 1
-
-    def render(self) -> list[str]:
-        return list(self.lines)
 
 
-def size_wave(specs: list[str], core: Path, base: str, gather: Callable[..., dict[str, Any]] = ws.facts_for,
-              conflicts: Callable[..., list[tuple[str, str]]] = ws.pair_conflicts) -> SizeResult:
-    """`wave_size.run`, returning what it printed together with the facts behind it."""
-    repo_path = Path(core).expanduser()
-    try:
-        repos = []
-        for spec in specs:
-            path, _, branch = spec.rpartition(":")
-            repos.append((Path(path).expanduser() if path else repo_path, branch or spec))
-        repo = fm.Repo(repos[0][0])
-        base = repo.commit(base)
-        policy = fm.Policy(repo, base)
-        limits = ws.limits_of(policy)
-        facts = [gather(fm.Repo(p), base, b, policy) for p, b in repos]
-        pairs = conflicts(repo, facts)
-    except (fm.ManifestError, OSError, ValueError) as error:
-        raise PacketRefused(str(error)) from error
-    problems, over, lanes, prod = ws.evaluate(facts, limits)
-    problems += [f"conflict {a} x {b}" for a, b in pairs]
-    lines = ws.report(facts, pairs, limits)
-    move = ""
-    if not problems:
-        lines.append("FITS")
-    else:
-        lines.append("REFUSED: " + "; ".join(problems))
-        move = (ws.to_move(facts, limits) if over else (pairs[0][1] if pairs else None)) or ""
-        if move:
-            lines.append(f"MOVE {move} to the next wave")
-    return SizeResult(
-        fits=not problems, base=base, production=len(prod), problems=problems, move=move, lines=lines,
-        branches=[BranchSize(branch=f["branch"], head=f["head"], conflict=f["conflict"], files=len(f["changed"]), selection=f["selection"],
-                             production=f["production"], protected=f["protected"], reasons=list(f.get("reasons") or [])) for f in facts],
-        union={lane: len(ids) for lane, ids in sorted(lanes.items())},
-        limits={**{lane: ws.lane_limit(lane, limits) for lane in sorted(lanes)}, "production": limits["production"]},
-        overlaps=[Overlap(first=a, second=b, files=files) for (a, b), files in ws.overlaps(facts).items()],
-        conflicts=[[a, b] for a, b in pairs])
 
 
 # ----------------------------------------------------------------------------- head floor
-class FloorResult(Model):
-    """Whether an admitted head is ready for the merge gate."""
-
-    ready: bool
-    head: str
-    main: str
-    pr: int | None = None
-    reasons: list[str] = []
-
-    @property
-    def exit_code(self) -> int:
-        return 0 if self.ready else 1
-
-    def render(self) -> list[str]:
-        return ["READY" if self.ready else "NOT READY: " + "; ".join(self.reasons)]
 
 
-def floor(target: str, core: Path, repo: str, base: str, *, git: Callable[[list[str]], str], gh: Callable[[list[str]], str],
-          decode: Callable[..., Any] | None = None) -> FloorResult:
-    """`floor_check.gather` and `evaluate`. `git` and `gh` take the full argv and return stdout, raising `Unreadable`."""
-    try:
-        facts = fc.gather(target, str(Path(core).expanduser()), repo, base, git, gh, decode or fc.decode_plan)
-    except (fc.Unreadable, ValueError, KeyError, OSError, fc.subprocess.SubprocessError) as error:  # type: ignore[attr-defined]  # the plan decoder's own process
-        raise PacketRefused(str(error)) from error
-    reasons = fc.evaluate(facts)
-    return FloorResult(ready=not reasons, head=facts["head"], main=facts["main"], pr=(facts.get("pr") or {}).get("number"), reasons=reasons)

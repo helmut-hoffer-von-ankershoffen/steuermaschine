@@ -1,7 +1,7 @@
 """Plugin-wide test defaults.
 
-The main plan check (`queue_lib/main_plan.gap`, bead q9kh) needs a Core checkout and GitHub; every queue test that is
-not about it sees a main whose resulting tree is planned. Tests of the check itself request `real_main_plan`.
+The merge rule (`queue_lib/main_plan.gap`) needs GitHub and the verdict store; every queue test that is
+not about it sees a PR for which the rule holds. Tests of the check itself request `real_main_plan`.
 """
 
 from pathlib import Path
@@ -36,7 +36,7 @@ _install_records_default()
 
 @pytest.fixture
 def real_main_plan():
-    """Opt out of the planned-main default: the test drives main_plan itself."""
+    """Opt out of the rule-holds default: the test drives main_plan itself."""
     return main_plan
 
 

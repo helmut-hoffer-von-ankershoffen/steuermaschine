@@ -81,8 +81,8 @@ def recorded_alarms(providers: Any, settings: Any) -> list[Any]:
     "nothing (read-only; it records nothing and notifies nobody: the alarm loop does both).",
     "sm alarm check", "act on each ALERT, then sm alarm ack KEY",
     "ALERT: a queued PR green and unmerged over 15 min (names the cause); main's latest CI run failed (names the jobs); a\n"
-    "release candidate run with a failed or cancelled job; a release paused or stuck over 30 min; a red rehearsal.\n"
-    "WARN: admission blocked over 20 min by an uncovered run; focused registry slots under 4,000 B free, or one slot over 85 % (`sm head slots collect` lists what can go); a check that\n"
+    "release candidate run with a failed or cancelled job; a release paused or stuck over 30 min.\n"
+    "WARN: admission blocked over 20 min by an uncovered run; focused registry slots under 4,000 B free, or one slot over 85 % (the registry only grows); a check that\n"
     "could not be read (`ALARM CHECK ... unavailable`). Alarms another source recorded are listed too."))
 def alarm_check() -> Alarms:
     w = world()

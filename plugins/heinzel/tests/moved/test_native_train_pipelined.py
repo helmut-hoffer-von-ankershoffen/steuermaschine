@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 def train(tool, tmp_path, monkeypatch):
     mod = tool("hz-train")
     monkeypatch.setattr(mod, "STATE_DIR", tmp_path / "train")
+    monkeypatch.setattr(mod, "AUTO_CUT", True)  # the cut rules below; auto-cut off has its own tests
     return mod
 
 
@@ -311,6 +312,7 @@ def test_14_every_defaults_to_zero_and_hz_train_every_restores_the_floor(tool, t
     monkeypatch.setenv("HZ_TRAIN_EVERY", "60")
     mod = tool("hz-train")
     monkeypatch.setattr(mod, "STATE_DIR", tmp_path / "train")
+    monkeypatch.setattr(mod, "AUTO_CUT", True)
     w = mod.Fake(tag_time=10_000_000.0 - 20 * 60)
     assert mod.tick(w) == 0 and "next train in 40 min" in w.out[-1]
 
@@ -447,7 +449,7 @@ def test_mini_requires_successful_fresh_proof_before_notify_and_ci(train, incide
     w.incident_active = train.Real().incident_active
 
     def verifier(argv, **kwargs):
-        assert argv == [*train.edge.sm(), "release", "verify", "--mini", "--minimum", version]
+        assert argv == [*train.edge.sm(), "mini", "update", "--minimum", version]
         assert kwargs["timeout"] > 0
         return subprocess.CompletedProcess(argv, 1, "LIVE-OK 0.9.34\n", "")
 
@@ -505,3 +507,32 @@ def test_incident_while_listing_deferred_ci_preserves_finish(train, incident, mo
     monkeypatch.setattr(train.subprocess, "run", command)
     assert train.run_version(w, version) == 0
     assert state.read_bytes() == before and not w.notified
+
+
+def test_auto_cut_off_drives_only_and_now_cuts(train, monkeypatch):
+    monkeypatch.setattr(train, "AUTO_CUT", False)
+    w = train.Fake()
+    assert train.tick(w) == 0 and not w.calls and "auto-cut is off" in w.out[-1] and "sm daemon train --now" in w.out[-1]
+    assert train.tick(w, now_flag=True) == 0 and ("release", "0.9.28", "Thin scrollbars; Clear button.") in w.calls
+
+
+def test_accepted_but_not_live_waits_in_the_mini_phase_without_an_attempt(train):
+    # `sm release resume X --live` exits 1 when the Mini is not live yet; the verdict in the tail receipt decides.
+    w = train.Fake(release_result=(1, "ACCEPTED 0.9.28 (run 42)\nNOT-LIVE: the version served on port 8737 is 0.9.27, the installed one 0.9.28"),
+                   live=False, tails=[("0.9.28", {"version": "0.9.28", "finished": True, "accepted": True, "acceptance_run": 42})])
+    assert train.tick(w) == 0 and "needs an accepted live build" in w.out[-1]
+    st = json.loads(train.version_path("0.9.28").read_text())
+    assert st["phase"] == "mini" and st["attempts"] == 0 and not w.notified
+    w.live = True
+    assert train.tick(w) == 0 and len(w.notified) == 1
+    assert json.loads(train.version_path("0.9.28").read_text())["phase"] == "done"
+
+
+def test_a_failed_release_without_the_verdict_still_counts_an_attempt(train):
+    w = train.Fake(release_result=(1, "STOPPED: compose failed"))
+    assert train.tick(w) == 1 and json.loads(train.version_path("0.9.28").read_text())["attempts"] == 1
+
+    class Unreadable(train.Fake):
+        def tail_receipts(self):
+            raise ValueError("broken")
+    assert not train.accepted(Unreadable(), "0.9.28")

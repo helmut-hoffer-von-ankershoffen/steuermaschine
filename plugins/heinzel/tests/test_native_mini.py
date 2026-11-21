@@ -187,3 +187,74 @@ def test_unreadable_status_and_invalid_tick_are_not_evidence():
             mini.object_data(raw, "status")
     for value, interval in ((None, 5), ("not-a-date", 5), ("2027-01-15T07:58:00", 5), (TICK, 0)):
         assert not mini.fresh_tick(value, interval, NOW)
+
+
+# ----------------------------------------------------------------------------- mini update
+def hung_web_after_update(m, fixed_by_kickstart=True):
+    """0.9.52's case: the update installs 0.9.40, the daemon follows, the web job keeps serving the old version."""
+    m.receipt("0.9.40", 43158281030)
+    m.web["version"] = m.daemon["version"] = m.daemon["installed_version"] = "0.9.39"
+
+    def update(argv):
+        m.cli = m.daemon["version"] = m.daemon["installed_version"] = "0.9.40"
+        return Result(0, "updated\n")
+
+    def kick(argv):
+        if fixed_by_kickstart and argv[-1].endswith("heinzel.web"):
+            m.web["version"] = "0.9.40"
+        return Result(0, "")
+    m.commands.on(["hz", "system", "update"], update)
+    m.commands.on(["launchctl", "kickstart"], kick)
+
+
+def update_run(m, *args):
+    return invoke(m.rt, ["mini", "update", *args])
+
+
+def test_update_does_nothing_when_already_live(tmp_path):
+    m = Mini(tmp_path)
+    out = update_run(m, "--minimum", "0.9.39")
+    assert out.exit_code == 0 and out.stdout.splitlines()[0] == "update: nothing to do: already live" and out.stdout.splitlines()[-1] == "LIVE-OK 0.9.39"
+    assert not [a for a in m.commands.calls if a[:3] == ["hz", "system", "update"] or a[0] == "launchctl"]
+
+
+def test_update_kickstarts_both_jobs_until_the_served_version_is_the_installed_one(tmp_path):
+    m = Mini(tmp_path)
+    hung_web_after_update(m)
+    out = update_run(m, "--minimum", "0.9.40")
+    assert out.exit_code == 0, out
+    lines = out.stdout.splitlines()
+    assert lines[0] == "update: hz system update --channel stable --yes: ok" and lines[-1] == "LIVE-OK 0.9.40"
+    kicks = [a for a in m.commands.calls if a[0] == "launchctl"]
+    assert [a[:3] for a in kicks] == [["launchctl", "kickstart", "-k"]] * 2
+    assert [a[3].rsplit(".", 1)[-1] for a in kicks] == ["web", "daemon"] and all(a[3].startswith("gui/") for a in kicks)
+    assert ["hz", "system", "update", "--channel", "stable", "--yes"] in m.commands.calls
+
+
+def test_update_waits_and_names_the_served_version_when_the_web_job_stays_old(tmp_path):
+    m = Mini(tmp_path)
+    hung_web_after_update(m, fixed_by_kickstart=False)
+    out = update_run(m, "--minimum", "0.9.40")
+    assert out.exit_code == 1
+    assert out.stdout.splitlines()[-1] == "NOT-LIVE: the version served on port 8737 is 0.9.39, the installed one 0.9.40"
+    assert m.rt.providers.clock.t >= NOW + 180
+
+
+def test_update_failure_and_an_older_stable_restart_nothing(tmp_path):
+    m = Mini(tmp_path)
+    m.commands.on(["hz", "system", "update"], Result(3, "", "network down\n"))
+    out = update_run(m, "--minimum", "0.9.40")
+    assert out.exit_code == 1 and out.stdout.splitlines()[-1] == "NOT-LIVE: hz system update exited 3: network down"
+    m.commands.on(["hz", "system", "update"], Result(0, "already newest\n"))
+    out = update_run(m, "--minimum", "0.9.40")
+    assert out.exit_code == 1 and "update: the stable channel does not offer v0.9.40 yet; nothing restarted" in out.stdout
+    assert not [a for a in m.commands.calls if a[0] == "launchctl"]
+
+
+def test_update_stops_when_a_kickstart_fails_and_refuses_a_loose_minimum(tmp_path):
+    m = Mini(tmp_path)
+    hung_web_after_update(m)
+    m.commands.on(["launchctl", "kickstart"], Result(113, "", "no such job"))
+    out = update_run(m)
+    assert out.exit_code == 1 and out.stdout.splitlines()[-1].startswith("NOT-LIVE: launchctl kickstart -k io.github.")
+    assert update_run(m, "--minimum", "0.9").exit_code == 2

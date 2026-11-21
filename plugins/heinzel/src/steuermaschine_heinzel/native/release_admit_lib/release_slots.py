@@ -270,7 +270,7 @@ def main(argv=None):
     source = workspace = None
     print(json.dumps({'event': 'focused_admission.start', 'operation': args.operation}), file=sys.stderr)
     try:
-        require(args.release_main_only, 'this entry admits release-main-only; PR admission is `sm head prepare` and `sm head apply`')
+        require(args.release_main_only, 'this entry admits release-main-only; there is no PR admission any more')
         require(args.pr is None and not args.reviewed_protected_producer,
                 'release-main-only excludes PR and protected producer options')
         require(not (args.packets or args.core_repos or args.prs or args.stuck_queued or args.cancel_blocking_pr_runs),

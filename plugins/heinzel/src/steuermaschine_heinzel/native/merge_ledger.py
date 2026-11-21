@@ -166,6 +166,8 @@ def ci_flake_ledger(runs: int = typer.Option(20, "--runs", min=1, max=100, help=
     gh = _gh(rt)
     if _merge_tier(rt, gh) is None:
         return Harvest(state="not-merge-tier")
+    if not core_facts.judge_file():
+        return Harvest(state="not-merge-tier")  # no merge-gate workflow in this Core's policy: no gate runs to harvest
     rows, why, _more = gh.pages(f"actions/workflows/{core_facts.judge_file()}/runs", {"status": "completed"}, key="workflow_runs", limit=runs)
     if why:
         raise Refuse(f"cannot list the merge gate runs: {why}", "sm ci flake-ledger")

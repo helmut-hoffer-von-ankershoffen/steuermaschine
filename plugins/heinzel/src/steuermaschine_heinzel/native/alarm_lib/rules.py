@@ -170,7 +170,7 @@ def admission_alarms(runs: list[dict], covered_heads: set[str], now: float, limi
     head = "ADMISSION blocked by" if waiting else "ADMISSION idle; a prepare/apply now would wait for"
     return [alarm("WARN" if waiting else "INFO", "admission-blocked", f"{head} {len(rows)} active uncovered run(s) > {limit} min: "
                   + "; ".join(text for _, text in rows[:4]) + (f"; +{len(rows) - 4} more" if len(rows) > 4 else "")
-                  + ("; sm release rehearse cancel frees the rehearsal/* runs" if waiting and any(" on rehearsal/" in text for _, text in rows) else ""))]
+                  + ("; cancel the rehearsal/* runs of the retired rehearsal" if waiting and any(" on rehearsal/" in text for _, text in rows) else ""))]
 
 
 def slot_free(sizes: dict) -> int:
@@ -198,7 +198,7 @@ def slot_fill_alarm(sizes: dict[str, int] | None, percent: int = SLOT_FILL_PERCE
     over = [f"{n.replace('FOCUSED_CI_PLANS', 'PLANS')} {used}%" for used, n in full if used > percent]
     if not over:
         return None
-    return alarm("WARN", "registry-slot-fill", f"REGISTRY focused slot over {percent}%: {', '.join(over)}; sm head slots collect (a dry run) lists what can go")
+    return alarm("WARN", "registry-slot-fill", f"REGISTRY focused slot over {percent}%: {', '.join(over)}; the registry only grows and no command lists its entries any more")
 
 
 def release_alarm(receipt: dict | None, changed_at: float | None, active_release_runs: int, now: float, limit: int = RELEASE_MIN) -> dict | None:
@@ -220,32 +220,6 @@ def release_alarm(receipt: dict | None, changed_at: float | None, active_release
     return None
 
 
-def rehearsal_alarms(state: dict | None, now: float, open_limit: int = REHEARSAL_OPEN_MIN) -> list[dict]:
-    """The rehearsal state: ALERT while the last verdict is red (failed runs and the merges since the last green
-    rehearsal), WARN while it is incomplete or a rehearsal has been open for too long. An incomplete verdict marked
-    `preempted` (the rehearsal cancelled its own lanes for a queued PR or an admission) is expected: INFO."""
-    if not isinstance(state, dict):
-        return []
-    out = []
-    current = state.get("current") if isinstance(state.get("current"), dict) else None
-    if current and minutes(current.get("started"), now) > open_limit:
-        out.append(alarm("WARN", "rehearsal:open", f"REHEARSAL of main {str(current.get('main'))[:10]} open for "
-                         f"{minutes(current.get('started'), now)} min: sm release rehearse step, or sm release rehearse cancel"))
-    last = state.get("last") if isinstance(state.get("last"), dict) else None
-    if not last:
-        return out
-    main = str(last.get("main"))[:10]
-    if last.get("verdict") == "red":
-        failures = [str(f) for f in last.get("failures") or []]
-        suspects = [str(s) for s in last.get("suspects") or []]
-        merges = (f" | merges since last green ({len(suspects)}): " + "; ".join(suspects[-SUSPECT_CAP:])) if suspects else " | no earlier green rehearsal to compare with"
-        out.append(alarm("ALERT", f"rehearsal:{main}", f"REHEARSAL RED main {main}: {named(failures, 8) if failures else 'failures unreadable'}"
-                         f"{merges}; sm release rehearse status --json"))
-    elif last.get("verdict") == "incomplete":
-        detail = last.get("yielded") or (last.get("consumers") or {}).get("detail") or "not every lane ran"
-        out.append(alarm("INFO" if last.get("preempted") is True else "WARN", f"rehearsal:{main}",
-                         f"REHEARSAL INCOMPLETE main {main}: {detail}; proves nothing, the next tick retries when main moves"))
-    return out
 
 
 def required_contexts(rules) -> list[str]:

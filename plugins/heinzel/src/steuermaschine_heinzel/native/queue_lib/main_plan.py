@@ -1,34 +1,32 @@
-"""The main plan check: does the focused plan registry hold the plan main will need after this PR merges?
+"""The merge rule for a Core PR, computed by sm alone (no plan registry, no reader of Core's).
 
-Main's push CI resolves the reviewed plan of its exact tree (`push-tree:<tree>`, base = the previous main). An
-admission prepares that plan for the tree of `merge-tree(main at admission, head)`. When another PR merged since,
-the PR's squash onto the NEW main is another tree without a plan, and its merge turns main red (the batch plan trap,
-2026-11-12 and again 2026-11-13 via a re-queue: #804 merged, then #803 on its old plan). This module computes the
-tree the merge would produce on CURRENT main and looks it up in the registry with Core's own codec, read from current
-main. A missing plan may instead be satisfied by protected Core verification of an original full hosted PR run
-against the exact current merge tree, including its complete job inventory and whole-project coverage. The queue
-refuses when neither independent route proves the current source.
+A Core PR merges only when all of these hold for the exact PINNED head:
+1. the status checks main's ruleset requires (read from GitHub, `rules/branches/main`) are green on it; an unreadable or empty ruleset refuses;
+2. main's tip is an ancestor of the head: the tree CI tested is the tree the squash produces, so a head BEHIND main is
+   updated and tested again, never merged;
+3. when the head changes a protected path against main (`native/protected.py`: `.github/`, the release, publish, PyPI and
+   acceptance scripts, the gate scripts, Makefile, uv.lock, the coverage and pytest config, quarantine.toml, conftest.py,
+   Core's own execution inputs), a protected-review verdict exists, recorded by a different agent
+   of exactly those files' content (the digest `sm head admit` stops at, `sm review verdict`): an update of the branch that leaves them alone keeps it.
 
-Fail closed: no Core checkout configured, an unreadable registry, a conflict or any error is a refusal with its reason.
+`queue add` does not evaluate the rule: it queues, and the merge-time guard decides. Fail closed: any unreadable fact is a
+refusal that names it.
 """
 # mypy: disable-error-code="no-untyped-call"
-# (main_checkpoint is moved, untyped code; this module calls its reviewed registry reader)
 from __future__ import annotations
 
-import tempfile
+import importlib
 from pathlib import Path
-from typing import Any
 
-from . import edge, hzlib, main_checkpoint
+from . import hzlib
 
-SETTING = "queue_core_repo"
-ORIGIN = f"https://github.com/{hzlib.CORE}.git"
-PREFIX = "stale main plan"
+SETTING = "queue_core_repo"  # kept: the setting still exists, nothing reads a Core checkout for this rule any more
+PREFIX = "merge rule"
 _core: list[Path] = []
 
 
 def configure(core_repo: Path | str | None) -> None:
-    """Set the Core checkout the merge tree is computed from (setting `queue_core_repo`); objects only, never changed."""
+    """Remember the configured Core checkout (setting `queue_core_repo`); the rule itself reads GitHub, not the checkout."""
     _core.clear()
     if core_repo:
         _core.append(Path(core_repo).expanduser())
@@ -38,102 +36,98 @@ def core_repo() -> Path | None:
     return _core[0] if _core else None
 
 
-def _git(repo: Path, *args: str) -> str:
-    result = edge.run(["git", *args], cwd=str(repo), capture_output=True, text=True, timeout=120, check=False)
-    if result.returncode:
-        raise ValueError(f"git {args[0]} failed: {(result.stderr or result.stdout).strip()[-300:]}")
-    return str(result.stdout).strip()
+def _raw(path: str, ref: str) -> tuple[str | None, bool]:
+    """(text, absent) of one file of Core at REF: the text when it is there, absent=True on GitHub's not-found, else (None, False)."""
+    code, out = hzlib.gh("api", "-H", "Accept: application/vnd.github.raw", f"repos/{hzlib.CORE}/contents/{path}?ref={ref}")
+    if code == 0:
+        return out, False
+    return None, '"status":"404"' in out.replace(" ", "") or "Not Found" in out
 
 
-def merge_tree(core: Path, pr: str, main: str, head: str, origin: str = ORIGIN) -> str:
-    """The tree a squash of `head` onto `main` produces, from a disposable clone (the configured checkout is not changed)."""
-    with tempfile.TemporaryDirectory(prefix="sm-main-plan-") as directory:
-        repo = Path(directory) / "repo"
-        _git(Path(directory), "clone", "--quiet", "--shared", "--no-checkout", "--", str(core), str(repo))
-        _git(repo, "fetch", "--quiet", "--no-tags", origin, "+refs/heads/main:refs/sm/main", f"+refs/pull/{pr}/head:refs/sm/head")
-        if _git(repo, "rev-parse", "refs/sm/main") != main:
-            raise ValueError(f"main moved while it was read ({main[:8]})")
-        if _git(repo, "rev-parse", "refs/sm/head") != head:
-            raise ValueError(f"the head of #{pr} moved while it was read ({head[:8]})")
-        result = edge.run(["git", "merge-tree", "--write-tree", main, head], cwd=str(repo), capture_output=True, text=True,
-                          timeout=120, check=False)
-        if result.returncode:
-            raise ValueError(f"#{pr} does not merge cleanly onto main {main[:8]}")
-        return str(result.stdout).split()[0]
+def _changed(pr: str) -> dict[str, str] | None:
+    """The files the PR changes, each with the id of its content at the head (`removed` when deleted): GitHub's own list, every
+    page. None when it cannot be read."""
+    code, out = hzlib.gh("api", "--paginate", f"repos/{hzlib.CORE}/pulls/{pr}/files?per_page=100", "--jq",
+                         '.[] | [.filename, .sha, .status] | @tsv')
+    if code != 0:
+        return None
+    found = {}
+    for line in out.splitlines():
+        name, _, rest = line.partition("\t")
+        blob, _, status = rest.partition("\t")
+        if name:
+            found[name] = "removed" if status == "removed" else blob
+    return found
 
 
-def registry(core: Path, main: str) -> dict[str, Any]:
-    """The decoded focused plan registry, through Core's codec of `main` (the checkpoint's isolated protected reader)."""
-    values = main_checkpoint.transports()
-    decoded: dict[str, Any] = main_checkpoint.isolated_reader({
-        "mode": "registry", "core_repo": str(core), "reader_head": main, "legacy": values["FOCUSED_CI_PLANS"],
-        "slots": [values[f"FOCUSED_CI_PLANS_V2_{i}"] for i in range(4)]})
-    return decoded
+def required_checks() -> set[str] | None:
+    """The status checks main's ruleset requires (what GitHub enforces), or None
+    when the ruleset cannot be read or requires none: the rule then refuses."""
+    rules = hzlib.ghj("api", f"repos/{hzlib.CORE}/rules/branches/main")
+    if not isinstance(rules, list):
+        return None
+    try:
+        found = {c["context"] for rule in rules if rule.get("type") == "required_status_checks" for c in rule["parameters"]["required_status_checks"]}
+    except (KeyError, TypeError, AttributeError):
+        return None
+    return found or None
 
 
-def next_command(pr: str, main: str) -> str:
-    return (f"re-prepare #{pr} at main {main[:8]}: sm head prepare PACKET --pr {pr} --core-repo WORKTREE --review-root ROOT "
-            f"(PACKET built at {main[:8]}: sm head packet preopen, or sm head packet bind --main {main})")
+def _verdict(head: str, blobs: dict[str, str]) -> str:
+    """'' when a different agent approved exactly the content of these protected files, else the refusal text."""
+    from steuermaschine.engine import Refuse
 
-
-def full_pr(core: Path, pr: str, main: str, head: str, tree: str) -> bool:
-    """Use original or narrowly recovered PR evidence through the authenticated protected Core reader."""
-    from . import core_policy
-
-    def api(path: str) -> dict[str, Any]:
-        value = hzlib.ghj("api", f"repos/{hzlib.CORE}/{path}", default=None)
-        if not isinstance(value, dict):
-            raise TypeError("full PR evidence unavailable")
-        return value
-
-    policy = core_policy.at_commit_api(api, main)
-    runs = api(f"{policy.workflow_runs}?head_sha={head}&event=pull_request&per_page=1").get("workflow_runs")
-    if not isinstance(runs, list) or len(runs) != 1:
-        raise ValueError("no unique latest full PR run")
-    run = runs[0]
-    attempt = run.get("run_attempt")
-    if (run.get("head_sha") != head or type(attempt) is not int or attempt not in (1, 2)
-            or type(run.get("id")) is not int or run["id"] <= 0
-            or run.get("status") != "completed" or run.get("conclusion") != "success"):
-        raise ValueError("latest full PR run is not successful on an eligible attempt")
-    capacity = attempt == 2
-    proof = main_checkpoint.isolated_reader({
-        "mode": "full-pr-capacity" if capacity else "full-pr", "core_repo": str(core), "reader_head": main,
-        "pr": pr, "head": head, "tree": tree, "run": run["id"],
-    })
-    expected = {"type": "full-pr-capacity/v1" if capacity else "full-pr/v1", "head": head, "base": main, "tree": tree,
-                "run": run["id"], "attempt": attempt, **({"original_attempt": 1} if capacity else {})}
-    return (isinstance(proof, dict) and proof == expected
-            and all(type(proof[key]) is int for key in ("run", "attempt", *(("original_attempt",) if capacity else ()))))
+    protected = importlib.import_module("steuermaschine_heinzel.native.protected")
+    digest, _record = protected.record(blobs)
+    paths = sorted(blobs)
+    try:
+        native = importlib.import_module("steuermaschine.native")
+        verdicts = importlib.import_module("steuermaschine.verdicts")
+        go = importlib.import_module("steuermaschine.go")
+        store = native.runtime().providers.store
+        verdicts.require_independent(store, digest, go.run_states(store), f"sm review verdict {digest} --approve --reviewer NAME --model M")
+    except Refuse as refused:
+        return f"{refused.message}: changed protected paths {', '.join(paths[:6])}"
+    except Exception as error:  # noqa: BLE001 - fail closed: no readable store, no verdict
+        return f"cannot read the protected-review verdicts ({error}): changed protected paths {', '.join(paths[:6])}"
+    return ""
 
 
 def gap(pr: str, head: str = "") -> str:
-    """Accept an exact current-main plan or independently verified complete hosted evidence; otherwise refuse."""
-    core = core_repo()
-    if core is None:
-        return f"{PREFIX}: cannot check #{pr}: the setting {SETTING} (a Core checkout) is not set; sm self config"
+    """'' when the merge rule holds for the pinned head of PR, else the refusal reason (always starting with PREFIX)."""
     try:
-        if not head:
-            info = hzlib.ghj("pr", "view", pr, "-R", hzlib.CORE, "--json", "headRefOid", default={}) or {}
-            head = info.get("headRefOid", "") if isinstance(info, dict) else ""
+        info = hzlib.ghj("pr", "view", pr, "-R", hzlib.CORE, "--json", "headRefOid,statusCheckRollup", default={}) or {}
+        current = info.get("headRefOid", "") if isinstance(info, dict) else ""
+        head = head or current
         ref = hzlib.ghj("api", f"repos/{hzlib.CORE}/git/ref/heads/main", default={}) or {}
         main = (ref.get("object") or {}).get("sha", "") if isinstance(ref, dict) else ""
         if len(head) != 40 or len(main) != 40:
             return f"{PREFIX}: cannot check #{pr}: its head or main is unreadable"
-        tree = merge_tree(core, pr, main, head)
+        if current != head:
+            return f"{PREFIX}: #{pr} is at {current[:8] or '?'}, not the pinned head {head[:8]}: ship it again"
+        required = required_checks()
+        if required is None:
+            return f"{PREFIX}: cannot read the required status checks of main's ruleset (unreadable or none): nothing is merged on a guess"
+        rollup = hzlib.latest_checks(info.get("statusCheckRollup") or [])
+        green = {c.get("name") or c.get("context") for c in rollup if c.get("conclusion") == "SUCCESS" or c.get("state") == "SUCCESS"}
+        if missing := sorted(required - green):
+            return f"{PREFIX}: #{pr} ({head[:8]}): required checks not green: {', '.join(missing)}"
+        compare = hzlib.ghj("api", f"repos/{hzlib.CORE}/compare/{main}...{head}", default={}) or {}
+        if compare.get("status") not in ("ahead", "identical"):
+            return (f"{PREFIX}: #{pr} ({head[:8]}) is {compare.get('status') or 'unreadable'} against main {main[:8]}: "
+                    "update the branch and let CI test it again")
+        changed = _changed(pr)
+        if changed is None:
+            return f"{PREFIX}: cannot read the files #{pr} changes"
+        protected = importlib.import_module("steuermaschine_heinzel.native.protected")
+        plan, absent = _raw("scripts/focused_plan.py", main)
+        if plan is None and not absent:
+            return f"{PREFIX}: cannot read Core's scripts/focused_plan.py at main {main[:8]}: its protected files are unknown"
+        found = protected.matches(list(changed), protected.execution_inputs(plan))
+        if "pyproject.toml" in changed and protected.pyproject_weakens(_raw("pyproject.toml", main)[0], _raw("pyproject.toml", head)[0]):
+            found.add("pyproject.toml")
     except Exception as error:  # noqa: BLE001 - fail closed: every error is a named refusal
         return f"{PREFIX}: cannot check #{pr}: {error}"
-    try:
-        plan = registry(core, main).get(f"push-tree:{tree}")
-    except Exception:  # noqa: BLE001 - independent full proof may still authenticate admission
-        plan = None
-    if isinstance(plan, dict) and plan.get("base") == main:
-        return ""
-    full_refusal = "no exact full hosted proof"
-    try:
-        if full_pr(core, pr, main, head, tree):
-            return ""
-    except Exception as error:  # noqa: BLE001 - fail closed with the independent proof refusal
-        full_refusal = str(error)
-    return (f"{PREFIX}: no focused plan for tree {tree[:8]} of #{pr} ({head[:8]}) on main {main[:8]}; "
-            f"Full hosted proof refused: {full_refusal}. Next: {next_command(pr, main)}")
+    if found and (reason := _verdict(head, {name: changed[name] for name in found})):
+        return f"{PREFIX}: #{pr} ({head[:8]}): {reason}"
+    return ""

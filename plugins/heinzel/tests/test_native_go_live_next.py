@@ -1,18 +1,11 @@
 """Bare `sm` (go): NEXT, THEN and ALSO name only live commands; a command that is not in the running tree, or an option
 it does not take, is shown as missing instead of offered (heinzel-management-ka69)."""
 
-from pathlib import Path
 
 import pytest
 
-from steuermaschine.app import Runtime, command_tree
-from steuermaschine.config import Project
-from steuermaschine.helpdoc import tree
-from steuermaschine.plugins import stack_of
-from steuermaschine.testing import fake_providers
 from steuermaschine_heinzel.native import go as area
 from steuermaschine_heinzel.native.go_lib import live
-from steuermaschine_heinzel.plugin import plugin
 
 ROWS = [
     {"path": "sm release", "group": True, "options": []},
@@ -57,14 +50,3 @@ def test_report_checks_next_then_and_also_against_the_running_tree(monkeypatch):
     assert area.report({"prs": []}, 0.0).next == "sm release cut"  # outside a running tree nothing is checked
 
 
-def test_against_the_real_tree_rehearse_and_cut_are_live_and_a_made_up_command_is_missing(tmp_path, monkeypatch):
-    monkeypatch.setenv("HOME", str(tmp_path))
-    stack = stack_of(plugin)
-    settings, _ = stack.validate({"heinzel": {}}, Path("."))
-    rt = Runtime(Project(name="t", plugin="heinzel", root=Path("."), plugins=["heinzel"]), stack, settings, _providers=fake_providers())
-    rows = tree(command_tree(rt), "sm")
-    check = live.checker(rows)
-    for command in ("sm release rehearse start --consumers", "sm mini verify --minimum 0.9.40", "sm go", "sm ci faillog 803", "sm release pr 0.9.41 --head X --dry-run"):
-        assert check(command) == command
-    assert check("sm release cut") == "sm release cut"  # the cut pipeline is live
-    assert check("sm release nosuch").startswith("missing:")

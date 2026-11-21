@@ -40,7 +40,6 @@ from .native.plugin_gallery import GallerySettings
 from .native.preflight import PreflightSettings
 from .native.queue import QueueSettings
 from .native.refill import RefillSettings
-from .native.rehearse import RehearseSettings
 from .native.release_lib.binding import ReleaseSettings
 from .native.ship import ShipSettings
 from .native.skills import SkillsSettings
@@ -53,7 +52,7 @@ from .native.why import WhySettings
 from .native.window import WindowSettings
 
 
-class HeinzelSettings(AdmissionSettings, AgentsSettings, AskAlarmSettings, AsksSettings, BriefSettings, CiOpsSettings, CiSettings, ClassifySettings, CombineSettings, CoordSettings, DispatchSettings, DocsSettings, FlakesSettings, GallerySettings, GoSettings, GuardsSettings, HandoffSettings, LeakwatchSettings, LoadguardSettings, LockSettings, LoopsSettings, MergeTierSettings, MiniSettings, PreflightSettings, QueueSettings, RefillSettings, RehearseSettings, ReleaseSettings, SelectSettings, ShipSettings, SkillsSettings, StatusSettings, TickSettings, TrainSettings, UpdaterHoldSettings, VelocitySettings, WhySettings, WindowSettings, BaseModel):
+class HeinzelSettings(AdmissionSettings, WindowSettings, AgentsSettings, AskAlarmSettings, AsksSettings, BriefSettings, CiOpsSettings, CiSettings, ClassifySettings, CombineSettings, CoordSettings, DispatchSettings, DocsSettings, FlakesSettings, GallerySettings, GoSettings, GuardsSettings, HandoffSettings, LeakwatchSettings, LoadguardSettings, LockSettings, LoopsSettings, MergeTierSettings, MiniSettings, PreflightSettings, QueueSettings, RefillSettings, ReleaseSettings, SelectSettings, ShipSettings, SkillsSettings, StatusSettings, TickSettings, TrainSettings, UpdaterHoldSettings, VelocitySettings, WhySettings, BaseModel):
     """The table [heinzel]. Every field can also be set as SM_HEINZEL__<FIELD> in the environment.
     Each area adds its fields as a mixin in its own module and is listed in the bases here."""
 
@@ -63,13 +62,6 @@ class HeinzelSettings(AdmissionSettings, AgentsSettings, AskAlarmSettings, AsksS
 
 
 CORE_SERVED = frozenset({"doc section", "gate run", "gate status", "lim"})  # command paths the core's own commands serve now
-
-
-def validation_window(rt: Any) -> Any:
-    """The window of `sm head validate`, for the core's `sm ci window status`; imported only when it is asked for."""
-    from .native import window
-
-    return window.the_window(rt)
 
 
 class Heinzel:
@@ -114,14 +106,12 @@ class Heinzel:
     @hookimpl
     def sm_provider_extras(self, settings: Any) -> Any:
         """What this project adds to the core's generic commands: the Mini's run lock policy (`sm gate`), the tracking
-        document as the default of `sm doc section`, the directory of `sm lim`'s full outputs, and the validation window
-        of `sm ci window status` (the focused cap, the settings' lease, the plugin's namespace)."""
-        from steuermaschine.commands import doc, gate, lim, window
+        document as the default of `sm doc section` and the directory of `sm lim`'s full outputs."""
+        from steuermaschine.commands import doc, gate, lim
 
         from .native import docs, lock
 
-        return {gate.POLICY: lock.policy, doc.DOCUMENT: lambda: docs.default_document(settings), lim.DIRECTORY: settings.get("guards_lim_dir"),
-                window.WINDOW: validation_window}
+        return {gate.POLICY: lock.policy, doc.DOCUMENT: lambda: docs.default_document(settings), lim.DIRECTORY: settings.get("guards_lim_dir")}
 
     @hookimpl
     def sm_state_moves(self, settings: Any, home: Any) -> Any:

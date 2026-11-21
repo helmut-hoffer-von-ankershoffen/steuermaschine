@@ -47,7 +47,7 @@ class JunitRun(Model):
         if self.exit:
             return [f"the full Vitest run exited {self.exit}; {self.output} is not a green JUnit of the head. Fix the failures in ONE commit, then run this again"]
         return [f"wrote {self.output}: {self.cases} Vitest cases (the whole suite, web/ALL); logged: {self.waived}",
-                f"Next: the packet takes it as --junit web={self.output} (sm head admit: --set junit=...,web={self.output})"]
+                f"Next: {self.output} is a local record; sm head admit takes no junit input any more"]
 
 
 def whole_suite(selection: Path) -> bool:
@@ -76,7 +76,7 @@ def count_cases(path: Path) -> int:
     "Use when `sm head select` gave the head `web: [\"web/ALL\"]` and its packet needs the full Vitest JUnit.",
     "writes the JUnit file given with --output (a local file the packet binds); one line in the gate's allow-full log.",
     "sm head junit ~/Code/heinzel-ui-asks --sel SEL.json --output ~/Code/packets/ui-asks/web.xml",
-    "sm head admit WORKTREE --set junit=python=PY.xml,web=FILE",
+    "sm head admit WORKTREE",
     "Refuses (exit 2) for any other web selection: focused Vitest files run with `sm gate run -- ... vitest run FILE`.\n"
     "Runs WORKTREE/web/node_modules/.bin/vitest with --maxWorkers=2 under the run lock (exit 75 when the lock gave up)."))
 def head_junit(worktree: Path = typer.Argument(..., metavar="WORKTREE", help="The Core worktree at the head (web/node_modules installed)."),
