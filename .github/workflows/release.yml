@@ -20,6 +20,7 @@ jobs:
       pull-requests: read
       statuses: read
       checks: read
+      actions: read
     outputs:
       release: ${{ steps.gate.outputs.release }}
       version: ${{ steps.gate.outputs.version }}

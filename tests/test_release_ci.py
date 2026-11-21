@@ -40,7 +40,7 @@ def repo(tmp_path):
 
 
 def fake_api(sha: str, *, head=None, state="success", description="APPROVE reviewer=rita", merged=True, context="Gate review",
-             login="owner", runs=None, tree=None, repo=None, fail=None):
+             login="owner", runs=None, suites=None, tree=None, repo=None, fail=None):
     """GitHub, faked. `tree` is the head's tree (default: the merged commit's own tree, i.e. exactly what was merged)."""
     def get(path: str):
         if fail and fail in path:
@@ -48,6 +48,8 @@ def fake_api(sha: str, *, head=None, state="success", description="APPROVE revie
         if path.endswith("/pulls"):
             commit = path.split("/")[-2]
             return [{"number": 7, "merge_commit_sha": commit, "merged_at": "2026-11-21T10:00:00Z" if merged else None, "head": {"sha": head or commit}}]
+        if "/actions/runs" in path:
+            return {"workflow_runs": [w for w in (suites or {}).get(path.rsplit("=", 1)[-1], [])]}
         if "/check-runs" in path:
             return {"check_runs": runs or []}
         if "/statuses" in path:
@@ -296,13 +298,27 @@ def test_a_hand_receipt_without_the_ci_marks_is_not_a_ci_receipt(follower, monke
     assert pv.check(stable, clone, cand)["reviewer"] == "rita"
 
 
-def test_the_workflow_check_run_is_a_verdict_only_from_github_actions(repo):
+def test_the_workflow_check_run_is_a_verdict_only_from_the_gate_review_run(repo):
     sha = git(repo, "rev-parse", "HEAD")
-    good = [{"id": 5, "name": "Gate review", "conclusion": "success", "app": {"slug": "github-actions"}}]
-    assert rc.verdict_for(sha, fake_api(sha, repo=repo, runs=good, state="failure"))[2] == "gate-review-workflow"
-    for runs in ([{**good[0], "app": {"slug": "evil-app"}}], [{**good[0], "conclusion": "failure"}], [good[0], {**good[0], "id": 9, "conclusion": "failure"}]):
+    good = [{"id": 5, "name": "Gate review", "conclusion": "success", "app": {"slug": "github-actions"}, "check_suite": {"id": 77}}]
+    run = {"path": ".github/workflows/gate-review.yml", "event": "pull_request_target", "head_sha": sha, "conclusion": "success"}
+    assert rc.verdict_for(sha, fake_api(sha, repo=repo, runs=good, suites={"77": [run]}, state="failure"))[2] == "gate-review-workflow"
+    bad = [
+        (good, {"77": [{**run, "path": ".github/workflows/ci.yml"}]}),  # a forged job named `Gate review` in the PR's own ci.yml
+        (good, {"77": [{**run, "event": "pull_request"}]}),
+        (good, {"77": [{**run, "head_sha": "f" * 40}]}),
+        (good, {"77": [{**run, "conclusion": "failure"}]}),
+        (good, {}),  # no Actions run behind the check suite
+        ([{**good[0], "check_suite": None}], {"77": [run]}),
+        ([{**good[0], "app": {"slug": "evil-app"}}], {"77": [run]}),
+        ([{**good[0], "conclusion": "failure"}], {"77": [run]}),
+        ([good[0], {**good[0], "id": 9, "conclusion": "failure"}], {"77": [run]}),
+    ]
+    for runs, suites in bad:
         with pytest.raises(rc.Refused, match="no `Gate review` success"):
-            rc.verdict_for(sha, fake_api(sha, repo=repo, runs=runs, state="failure"))
+            rc.verdict_for(sha, fake_api(sha, repo=repo, runs=runs, suites=suites, state="failure"))
+    with pytest.raises(rc.Refused, match=r"does not come from \.github/workflows/gate-review\.yml"):
+        rc.verdict_for(sha, fake_api(sha, repo=repo, runs=good, suites={"77": [{**run, "path": ".github/workflows/ci.yml"}]}, state="failure"))
 
 
 def test_the_allowlist_comes_from_the_repo_variable_and_fails_closed(repo, monkeypatch):

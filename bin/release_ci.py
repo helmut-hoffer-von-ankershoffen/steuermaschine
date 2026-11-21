@@ -44,6 +44,7 @@ import promote_verdict as pv  # noqa: E402  (sibling script, found through the p
 CONTEXT = "Gate review"
 BOT = "github-actions[bot]"
 WORKFLOW_REVIEWER = "gate-review-workflow"
+GATE_WORKFLOW = ".github/workflows/gate-review.yml"
 DESCRIPTION = re.compile(r"APPROVE reviewer=(\S.*)")
 REPO = os.environ.get("SM_RELEASE_REPO", "helmut-hoffer-von-ankershoffen/steuermaschine")
 LOOPS = re.compile(r"steuermaschine-stable|\.local/bin/sm<|/sm</string>")
@@ -96,12 +97,22 @@ def verdict_for(sha: str, api_get: Callable[[str], object] | None = None) -> tup
     runs = get(f"repos/{REPO}/commits/{head}/check-runs?per_page=100")
     mine = [r for r in (runs.get("check_runs", []) if isinstance(runs, dict) else [])
             if r.get("name") == CONTEXT and (r.get("app") or {}).get("slug") == "github-actions"]
-    if mine and max(mine, key=lambda r: int(r.get("id", 0))).get("conclusion") == "success":
-        return number, head, WORKFLOW_REVIEWER
+    forged = ""
+    if mine:
+        latest_run = max(mine, key=lambda r: int(r.get("id", 0)))
+        if latest_run.get("conclusion") == "success":
+            # Any workflow of the PR's own files can name a job `Gate review`: only the base branch's gate-review.yml counts.
+            suite = (latest_run.get("check_suite") or {}).get("id")
+            found = get(f"repos/{REPO}/actions/runs?check_suite_id={suite}") if suite else {}
+            runs_of = found.get("workflow_runs", []) if isinstance(found, dict) else []
+            if any(w.get("path") == GATE_WORKFLOW and w.get("event") == "pull_request_target" and w.get("head_sha") == head
+                   and w.get("conclusion") == "success" for w in runs_of):
+                return number, head, WORKFLOW_REVIEWER
+            forged = f" (a check run `{CONTEXT}` exists but does not come from {GATE_WORKFLOW} on pull_request_target for this head)"
     statuses = get(f"repos/{REPO}/commits/{head}/statuses?per_page=100")
     latest = next((s for s in statuses if s.get("context") == CONTEXT), None) if isinstance(statuses, list) else None  # newest first
     if latest is None or latest.get("state") != "success":
-        raise Refused(f"PR #{number} head {head[:12]} has no `{CONTEXT}` success: the independent review is missing")
+        raise Refused(f"PR #{number} head {head[:12]} has no `{CONTEXT}` success: the independent review is missing{forged}")
     login = (latest.get("creator") or {}).get("login", "")
     if login == BOT or login not in creators(get):
         raise Refused(f"the `{CONTEXT}` status of PR #{number} was set by {login or 'nobody'}, who is not in GATE_REVIEW_CREATORS")
