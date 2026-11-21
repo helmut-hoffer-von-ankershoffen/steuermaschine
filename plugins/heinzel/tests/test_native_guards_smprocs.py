@@ -74,6 +74,18 @@ def waiting_for_load(log: Path) -> bool:
     return "acquired after" not in text and bool(re.search(r"waiting \d+s: load \d+ is at or above", text))
 
 
+def not_admitted(log: Path, gate: subprocess.Popen) -> bool:
+    """Whether a live gate has not been admitted yet ("acquired after" is not in its stderr): it waits for the load bar, for
+    a slot, or the machine is too busy to start python at all (bead urj63: setup errors at load 60 and more). Like a gate
+    waiting for the load bar, it is not a missing process; the clock restarts up to LOAD_WAIT_CEILING."""
+    if gate.poll() is not None:
+        return False
+    try:
+        return "acquired after" not in log.read_text()
+    except OSError:
+        return True
+
+
 @pytest.fixture(scope="module")
 def live(tmp_path_factory):
     tmp = tmp_path_factory.mktemp("smprocs")
@@ -125,7 +137,7 @@ def live(tmp_path_factory):
             launcher_execd = "steuermaschine" in table.get(via_launcher.pid, {}).get("cmd", "")
             return table if len(kids) == 2 and launcher_execd and ungated in table else None
 
-        procs = wait_for(children_running, held_by_load=lambda: any(waiting_for_load(log) for log in logs))
+        procs = wait_for(children_running, held_by_load=lambda: any(waiting_for_load(log) or not_admitted(log, gate) for log, gate in zip(logs, (via_launcher, via_script), strict=True)))
         rows = governor.ps_table(ps("pid=,ppid=,pcpu=,uid=,args="))
         yield {"procs": procs, "rows": rows, "home": str(home), "stable": stable, "worktree": worktree, "launcher": via_launcher.pid,
                "script": via_script.pid, "daemon": daemon.pid, "daemon_sm": daemon_sm.pid, "ungated": ungated}
@@ -140,7 +152,7 @@ def stop(proc: subprocess.Popen) -> None:
         os.killpg(proc.pid, signal.SIGKILL)
     if proc.poll() is None:
         proc.kill()
-    proc.wait(timeout=10)
+    proc.wait(timeout=60)  # reaped late on a machine at load 60 (bead urj63)
 
 
 @pytest.fixture(scope="module")
