@@ -94,10 +94,16 @@ def release_status(line: bool = typer.Option(False, "--line", help="One line for
             jobs = done.out.splitlines() if not done.rc else []
         lock_dir, prefix = conf().get("lock_directory") or statedir.root(), conf().get("lock_prefix") or "gate"
         summary = status.summarize(train, pr, runs, jobs, (Path(str(lock_dir)).expanduser() / f"{prefix}.hold").exists(), now)
+    if summary.get("active") and not summary.get("pr"):  # past the tag the PR is merged and gone: show the tail stages
+        tail = status.read_tail(summary["version"], str(statedir.path("release")))
+        if tail is not None:
+            summary |= {"tail": status.tail_stages(tail, now)}
     if not summary.get("active"):
         return ReleaseStatus(active=False, lines=[] if line else [status.render(summary)])
     text = translate(summary["next"])
-    if line:
+    if line and summary.get("tail") is not None:
+        lines = [f"RELEASE v{summary['version']} tagged {summary['age_min']}m: tail " + ", ".join(t.split(None, 1)[0] + " " + t.split(None, 1)[1].split(",")[0] for t in summary["tail"]) + f"; {text}"]
+    elif line:
         lines = [f"RELEASE v{summary['version']} PR #{summary['pr']} {summary['age_min']}m: CI {summary['ci']}, acceptance {summary['acc']} "
                  f"#{summary['acc_attempt']}, freeze {'on' if summary['frozen'] else 'off'}; {text}"]
     else:
