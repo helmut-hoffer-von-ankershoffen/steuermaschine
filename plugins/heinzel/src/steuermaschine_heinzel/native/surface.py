@@ -19,7 +19,7 @@ SURFACE = Surface(
         ("check [WORKTREE]", "the cheap checks of a change, before it goes out: READY, or every failure with its fix"),
         ("ship WORKTREE|PR", "push the change, open its pull request and queue it for merge (--live); --wait to see the merge"),
         ("review next|verdict|sonar PR", "what waits for an independent review; record a verdict; close reviewed Sonar findings"),
-        ("release [VERSION]", "release a version (this writes even without --live; --live also updates the Mini); `release plugin NAME`"),
+        ("release [VERSION]", "release a version in GitHub Actions and watch it (the Mini follows by itself); `release plugin NAME`"),
         ("why [SUBJECT]", "why something does not move: a PR number, a version, a run id, `main`, a branch, a bead"),
         ("status", "every open pull request with its action and owner; --write: the hourly update (--live: push it)"),
         ("work add|list|show|note|done", "the work items (beads); `work brief`, `work refill`, `work sweep` to hand out work"),
@@ -31,19 +31,19 @@ SURFACE = Surface(
     visible=(
         "check", "ship", "why", "status", "note",
         "review", "review next", "review verdict", "review sonar",
-        "release", "release plugin",
+        "release", "release plugin", "release drive",
         "work", "work add", "work list", "work show", "work note", "work done", "work brief", "work refill", "work sweep",
         "mini", "mini verify", "mini update",
         "alarm", "alarm list", "alarm ack",
         "self", "self config", "self tree", "self stats", "self lint", "self tokens", "self doc",
     ),
     helps=(("release", H(
-        "release: one version from main to live on the Mini; bare: where the recent releases stand.",
+        "release: one version from main to Latest, in GitHub Actions; bare: where the recent releases stand.",
         "Use when a release is due, running or stopped: the same command continues where it stopped.",
-        "`release VERSION` freezes merges, opens and merges the release PR, tags and publishes, without --live too; bare: nothing (read-only).",
-        "sm release 0.9.55 --live", "sm why 0.9.55 while it runs; sm mini verify after it",
-        "VERSION is X.Y.Z or `patch` (the unfinished release, else the next patch); every option of the old `sm release resume`\n"
-        "works (see `sm release VERSION -h`). --live: after the release is accepted, update the Mini and prove it (LIVE-OK).\n"
+        "`release VERSION` dispatches Core's workflow \"Release\", which cuts, merges, tags, publishes and accepts; bare: nothing (read-only).",
+        "sm release 0.9.55", "sm why 0.9.55 while it runs; the Mini follows an accepted release by itself (sm daemon train)",
+        "VERSION is X.Y.Z or `next` (the release in flight, else the next patch), and the release in flight, the latest\n"
+        "release or the next patch or minor after it. --dry-run checks the cut and the tail and publishes nothing.\n"
         "`sm release plugin NAME` releases one plugin whose version on main is not published yet.")),),
     rules=("  WORKTREE        a git worktree of one change on its own branch; PR a pull request number of the core repository.",),
 )
@@ -61,7 +61,7 @@ WORK_NOTE = Verb("work note", "beads tasks note")
 WORK_DONE = Verb("work done", "beads tasks done")
 REVIEW_NEXT = Verb("review next", "review list")
 
-RELEASE = Default("release", "drive", empty="train status", metavar="[VERSION] | plugin NAME")  # `sm release 0.9.55` is the release driver; bare: where the releases stand
+RELEASE = Default("release", "run", empty="train status", metavar="[VERSION] | plugin NAME")  # `sm release 0.9.55` runs Core's CI release chain; bare: where the releases stand
 
 # Old visible names with a new verb. A stub (the default) where the new verb runs the very same command: a read-only
 # one runs it and says `Renamed:` on stderr, a writing one exits 2 and names it. Where the new verb reads more or
@@ -84,7 +84,7 @@ RENAMES = [
     Renamed("doc hour", "status --write", stub=False), Renamed("doc handoff", "status --write --live", stub=False),
     Renamed("tick", "alarm list --check", stub=False), Renamed("alarm check", "alarm list --check", stub=False), Renamed("doc asks", "alarm list", stub=False),
     Renamed("go", "", stub=False),
-    Renamed("release resume", "release", stub=False),
+    Renamed("release resume", "release drive", stub=False),  # every option of resume; `sm release VERSION` is the CI chain
     Renamed("head ship", "ship --live", stub=False),
     Renamed("queue add", "ship", stub=False),
     Renamed("queue list", "why", stub=False),
