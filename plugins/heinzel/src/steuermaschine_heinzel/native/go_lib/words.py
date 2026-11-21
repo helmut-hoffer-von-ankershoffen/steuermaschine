@@ -87,10 +87,10 @@ class Words:
         return f"sm ci faillog {target}"
 
     def ship(self, number: object) -> str:
-        return f"sm head ship {number}"
+        return f"sm head ship {number}"  # go writes it as `sm ship N --live` (surface.RENAMES)
 
     def pr_open(self, worktree: str, bead: str, subject: str, body: str | None = None) -> str:
-        return f"cd {q(worktree)} && sm head pr {q(bead)} {q(subject)}" + (f" --body-file {q(body)}" if body else "")
+        return f"sm ship {q(worktree)} --live --set bead={q(bead)} --set title={q(subject)}" + (f" --set body={q(body)}" if body else "")
 
     def apply_head(self) -> list[str]:
         return ["sm", "head", "apply"]
@@ -101,6 +101,8 @@ class Words:
     def focus(self, verb: str, worktree: object = None, entry: dict | None = None) -> str:
         """`sm focus list|done`. An entry that only the old focus file holds cannot be taken off with `done`: the
         first `sm focus add` makes the focus list of sm the only source, and the old file is not read any more."""
+        if verb == "list":  # a NEXT: the declared focus is hidden plumbing now; the work list is the visible view
+            return "sm work list"
         if verb == "done" and entry is not None and entry.get("source") == "old-file":
             return f"sm focus add {q(worktree)} --for {entry.get('for')} && sm focus done {q(worktree)}"
         return f"sm focus {verb}" + (f" {q(worktree)}" if worktree is not None else "")

@@ -28,8 +28,8 @@ DELIBERATE = {
 
 
 def tree(tmp_path) -> dict[str, bool]:
-    rows = json.loads(invoke(app_runtime(tmp_path), ["--format", "json", "self", "tree"]).stdout)
-    return {row["path"].removeprefix("sm").strip(): row["group"] for row in rows}
+    rows = json.loads(invoke(app_runtime(tmp_path), ["--format", "json", "self", "tree", "--all"]).stdout)
+    return {row["path"].removeprefix("sm").strip(): row["group"] and not row.get("default") for row in rows}  # `sm release 0.9.55` runs its default
 
 
 def unresolved(paths: dict[str, bool], words: list[str]) -> str:
@@ -57,7 +57,7 @@ def test_every_command_a_help_or_hint_names_exists(tmp_path):
     paths = tree(tmp_path)
     assert {"head admit", "release cut", "queue main-proof", "ci rerun"} <= set(paths)
     missing = []
-    rows = json.loads(invoke(app_runtime(tmp_path), ["--format", "json", "self", "tree"]).stdout)
+    rows = json.loads(invoke(app_runtime(tmp_path), ["--format", "json", "self", "tree", "--all"]).stdout)
     for row in rows:
         missing += [(f"help of {row['path']}", bad) for words in references(row["help"], True) if (bad := unresolved(paths, words))]
     for file in sorted(SRC.rglob("*.py")):

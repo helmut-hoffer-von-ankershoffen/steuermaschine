@@ -34,6 +34,7 @@ from . import WAITING
 from .engine import Refuse, Wait
 from .helpdoc import H
 from .protocols import Providers
+from .surface import Default, Renamed, Surface, Verb  # the visible surface, declared next to Group and Alias
 
 F = TypeVar("F", bound=Callable[..., Any])
 
@@ -175,16 +176,6 @@ class Alias:
     help: str = ""
 
 
-@dataclass(frozen=True)
-class Default:
-    """The default command of a group: `Default("release", "run")` makes `sm release 1.2.3` run `sm release run 1.2.3`.
-    Only a first word that names no subcommand of the group and is no option goes to the default; every command of the
-    group keeps its name, and the default keeps its own help and gate."""
-
-    path: str
-    command: str
-
-
 def native(path: str, *, help: str, writes: bool = False, tick: bool = False, replaces: tuple[str, ...] = ()) -> Callable[[F], F]:
     def mark(fn: F) -> F:
         setattr(fn, "__sm_native__", NativeCommand(" ".join(path.split()), fn, help, writes, tick, tuple(replaces)))  # noqa: B010
@@ -194,12 +185,14 @@ def native(path: str, *, help: str, writes: bool = False, tick: bool = False, re
 
 
 def collect(*modules: Any) -> list[Any]:
-    """Every `@native` function and every `Group` object in the given modules."""
+    """Every `@native` function and every `Group`, `Alias` and surface object (or list of renames) in the given modules."""
     out = []
     for module in modules:
         for value in vars(module).values():
-            if isinstance(value, Group | Alias | Default):
+            if isinstance(value, Group | Alias | Surface | Verb | Renamed | Default):
                 out.append(value)
+            elif isinstance(value, list) and value and all(isinstance(v, Renamed | Verb) for v in value):
+                out += value
             elif getattr(value, "__sm_native__", None) is not None and getattr(value, "__module__", None) == module.__name__:
                 out.append(value.__sm_native__)
     return out
@@ -337,28 +330,6 @@ def mount_aliases(root: Any, commands: list[Any]) -> None:
                 twin.help = alias.help
                 twin.short_help = alias.help.replace("\b", "").strip().splitlines()[0]
             parent.commands[name] = twin
-
-
-def mount_defaults(root: Any, commands: list[Any]) -> None:
-    """Give every group named by a `Default` in `commands` its default command. A missing group or command is skipped."""
-    import types
-
-    for default in (c for c in commands if isinstance(c, Default)):
-        group: Any = root
-        for word in default.path.split():
-            group = getattr(group, "commands", {}).get(word)
-            if group is None:
-                break
-        if group is None or default.command not in getattr(group, "commands", {}):
-            continue
-        original = group.resolve_command
-
-        def resolve(self: Any, ctx: Any, args: list[str], _original: Any = original, _name: str = default.command) -> Any:
-            if args and args[0] not in self.commands and not args[0].startswith("-"):
-                return _name, self.commands[_name], args
-            return _original(ctx, args)
-
-        group.resolve_command = types.MethodType(resolve, group)
 
 
 def _group_command(run: Callable[..., Any]) -> Callable[..., Any]:

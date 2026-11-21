@@ -111,10 +111,10 @@ def test_check_names_a_red_main_and_low_slots_exits_3_and_lists_what_others_reco
     out = invoke(rt, ["alarm", "check"])
     lines = out.stdout.splitlines()
     assert out.exit_code == 3, out
-    assert lines[0] == "ALERT MAIN RED run 5 at f19a3782: web-2 (ubuntu-24.04); sm ci faillog 5 [new; key main-red:5]"
+    assert lines[0] == "ALERT MAIN RED run 5 at f19a3782: web-2 (ubuntu-24.04); sm why 5 [new; key main-red:5]"
     assert lines[1].startswith("WARN REGISTRY focused slot over 85%: PLANS_V2_3 99%") and lines[1].endswith("[new; key registry-slot-fill]")
     assert lines[2].startswith("WARN REGISTRY focused slots have 1552 B free (< 4000)") and lines[2].endswith("sm status slots [new; key registry-slots]")
-    assert lines[3].startswith("ACKED STALL #801 unmerged; sm queue why [since ") and lines[3].endswith("; key stall:801]")
+    assert lines[3].startswith("ACKED STALL #801 unmerged; sm why [since ") and lines[3].endswith("; key stall:801]")
     doc = alarm_mod.Alarms.model_validate_json(invoke(rt, ["--format", "json", "alarm", "check"]).stdout)
     assert doc.checked and [a.key for a in doc.alarms] == ["main-red:5", "registry-slot-fill", "registry-slots", "stall:801"] and doc.alarms[3].first_seen.startswith("20")
 
@@ -158,7 +158,7 @@ def test_sm_alarm_ack_accepts_a_recorded_key_through_the_hook_and_the_old_file_i
     assert acked.exit_code == 0 and "acknowledged: stall:801" in acked.stdout, acked
     assert invoke(rt, ["alarm", "ack", "nope"]).exit_code == 2
     after = invoke(rt, ["alarm", "check"])
-    assert after.exit_code == 0 and after.stdout.startswith("ACKED STALL #801 unmerged; sm queue why"), after
+    assert after.exit_code == 0 and after.stdout.startswith("ACKED STALL #801 unmerged; sm why"), after
     assert (state / "alarm.json").read_text() == text
 
 

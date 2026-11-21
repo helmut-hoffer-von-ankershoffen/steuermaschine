@@ -23,7 +23,7 @@ from steuermaschine.engine import Refuse
 from steuermaschine.github import Gh
 from steuermaschine.helpdoc import H
 from steuermaschine.models import Model
-from steuermaschine.native import Default, call, native, runtime
+from steuermaschine.native import call, native, runtime
 
 from . import mini
 from .go import world
@@ -35,9 +35,6 @@ POLL = 30
 FIND = 90  # seconds to find the run a dispatch created
 IOS = "release ios"  # the iOS upload command; until it exists the follower reports the step as unavailable
 IOS_ATTEMPTS = 3
-
-
-RELEASE_DEFAULT = Default("release", "run")  # `sm release 0.9.54` is `sm release run 0.9.54`
 
 
 def client() -> Gh:
@@ -156,11 +153,18 @@ def release_run(
     timeout: int = typer.Option(300, "--timeout", metavar="MINUTES", help="Minutes to watch (default 300)."),
     local: bool = typer.Option(False, "--local", hidden=True, help="Fallback for one release: the local step runner (sm release resume) instead of CI."),
 ) -> ChainRun:
-    if version != "next" and not EXACT.fullmatch(version):
+    if version in ("next", "patch"):
+        version = "next"
+    elif not EXACT.fullmatch(version):
         raise Refuse(f"{version!r} is not X.Y.Z or `next`", "sm release run --help", code=2)
     if local:
         return run_local(version, intro, dry_run)
     gh = client()
+    if version != "next" and not dry_run:  # a mistyped version refuses before anything is dispatched
+        from .release_drive import guard
+
+        rows, _ = gh.try_json(["release", "list", "-R", core_repo(), "-L", "10", "--json", "tagName"])
+        guard(version, rows if isinstance(rows, list) else None, "")
     wanted = "" if version == "next" else version
     run_id = dispatch(gh, wanted, intro, dry_run)
     runtime().say(f"dispatched {WORKFLOW}: run {run_id} (https://github.com/{core_repo()}/actions/runs/{run_id})")

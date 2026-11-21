@@ -90,7 +90,7 @@ def test_red_ci_refuses_and_a_second_head_waits_for_the_lane(repo, capsys):
 
 def test_two_projects_on_one_machine_do_not_share_state(repo, tmp_path, capsys):
     sm(capsys, "head", "ship", ".", "--live")
-    assert (tmp_path / "state" / "toy-demo" / "state").is_dir()
+    assert (tmp_path / "state" / "toy-demo" / "journals").is_dir()  # the run lives in its subject journal
     (repo / "steuermaschine.toml").write_text('[project]\nname = "other"\nplugin = "toy"\n')
     code, out, _ = sm(capsys, "go")
     assert code == 0 and "PHASE    idle" in out and "project other" in out

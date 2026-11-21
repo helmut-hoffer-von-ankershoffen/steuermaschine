@@ -114,6 +114,13 @@ class Heinzel:
         return {gate.POLICY: lock.policy, doc.DOCUMENT: lambda: docs.default_document(settings), lim.DIRECTORY: settings.get("guards_lim_dir")}
 
     @hookimpl
+    def sm_journal_migrate(self, providers: Any, settings: Any) -> Any:
+        from . import state
+        from .native import journal_view
+
+        return journal_view.mirror(getattr(providers.store, "journals", None), state.dashboard_dir(settings), providers.clock.now())
+
+    @hookimpl
     def sm_state_moves(self, settings: Any, home: Any) -> Any:
         from . import state
 

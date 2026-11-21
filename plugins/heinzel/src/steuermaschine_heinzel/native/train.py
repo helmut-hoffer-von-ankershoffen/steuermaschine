@@ -39,6 +39,7 @@ from steuermaschine.plugins import old_variable
 from steuermaschine.protocols import Busy
 
 from .. import environment
+from .journal_view import mirrored
 from .queue_lib import edge as base
 from .queue_lib import hzlib
 from .train_lib import edge, legacy, resume_ci
@@ -176,6 +177,7 @@ class TrainTick(Model):
     "machine of ours. The follower acts only on the Latest release whose acceptance.json says accepted, retries\n"
     "`sm mini update` every tick until LIVE-OK, then the iOS upload up to 3 times (skipped while its command\n"
     "does not exist yet). Exit 0: done or nothing to do. 1: a step failed, the next tick resumes."))
+@mirrored  # it runs a program that writes the working files: the subject journals follow (journal_view.py)
 def daemon_train(dry_run: bool = typer.Option(False, "--dry-run", help="Say what the tick would do; start and write nothing."),
                  now: bool = typer.Option(False, "--now", hidden=True, help="With --local: cut in this tick even with auto-cut off."),
                  run_version: str | None = typer.Option(None, "--run", metavar="X.Y.Z", hidden=True,

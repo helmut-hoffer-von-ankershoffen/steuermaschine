@@ -55,10 +55,10 @@ def command_of(worktree: object) -> str:
     return f"sm check {worktree}"
 
 
-def bound(rt: Any, wt: Path, base: str, allow_full: bool = False) -> cheap.Ctx:
+def bound(rt: Any, wt: Path, base: str, allow_full: bool = False, full: bool = False) -> cheap.Ctx:
     """The context of one run: the preflight's edges, with the merge-base as the base (what the head itself changes)."""
-    inner = _preflight.bound(rt, wt, allow_full)
-    c = cheap.Ctx(wt=wt, standards=inner.standards, sh=inner.sh, gate=inner.gate, meta=inner.meta, gh=inner.gh, repo=inner.repo)
+    inner = _preflight.bound(rt, wt, allow_full or full, full, None if full else cheap.FAST_SECONDS)
+    c = cheap.Ctx(full=full, wt=wt, standards=inner.standards, sh=inner.sh, gate=inner.gate, meta=inner.meta, gh=inner.gh, repo=inner.repo)
     c.sha = c.git("rev-parse", "HEAD")[1].strip()
     rc, merge_base = c.git("merge-base", base, "HEAD")
     if rc != 0 or not c.sha or not merge_base.strip():
@@ -82,7 +82,7 @@ def extra_tests(sel: Path | None) -> list[str]:
 
 
 @native("check", writes=True, help=H(
-    "The cheap checks of exactly what a Core head changes, in one pass: READY and a receipt for the commit, or every failure with its fix.",
+    "The fast checks of exactly what a Core head changes, in one pass: READY and a receipt for the commit, or every failure with its fix.",
     "Use before you ask for a review and before any push, on your committed head; again after every new commit.",
     "writes the check receipt of the commit on this machine when every check is green (written once per commit; "
     "`sm review verdict --approve` needs it); runs local checks through the run lock.",
@@ -107,8 +107,10 @@ def extra_tests(sel: Path | None) -> list[str]:
     "  bound       HEAD and the tree did not change while the checks ran\n"
     "Which test belongs to which path is never listed here: Core's selector, hook and standards list at the commit say it.\n"
     "The head is compared with its merge-base with the base. When the selector selects the full set, Core's\n"
-    "scripts/related_tests.py narrows the unit tests; when it says everything too, the whole unit suite runs through the run\n"
-    "lock (where the lock refuses a whole suite, the coordinator adds --allow-full); when it fails, the run fails.\n"
+    "scripts/related_tests.py narrows the unit tests; when it says everything too, the whole unit suite is left to PR CI (a\n"
+    "warning says so; --allow-full, the coordinator's call, runs it here through the heavy lane); when it fails, the run fails.\n"
+    "Everything here is fast: each command runs in a fast slot of the run lock (up to three at once, any load, never exclusive)\n"
+    "and is stopped after 150 s. The whole unit suite, integration and e2e never run here; PR CI runs them.\n"
     "E2E lanes never run here. --sel FILE adds tests ({\"python\": [files]}).\n"
     "The receipt is bound to the commit and names the base it was measured from: any new commit needs a new run, and\n"
     "an approval needs the receipt's base to be the base the reviewed packet builds the head on. A run with --skip or\n"
@@ -118,7 +120,9 @@ def check(worktree: Path | None = typer.Argument(None, metavar="WORKTREE", help=
           base: str | None = typer.Option(None, "--base", metavar="REV", help="The ref the head branched from (default: the setting preflight_base)."),
           sel: Path | None = typer.Option(None, "--sel", metavar="FILE", help='More tests to run and to measure coverage with: JSON {"python": [test files]}.'),
           skip: list[str] | None = typer.Option(None, "--skip", metavar="NAME", help="Leave one check out (repeatable); named in the verdict, and no receipt is written."),
-          allow_full: bool = typer.Option(False, "--allow-full", help="Let the run lock run the whole unit suite when nothing narrows the change (the coordinator's call; logged).")) -> HeadCheck:
+          allow_full: bool = typer.Option(False, "--allow-full", help="Let the run lock run the whole unit suite when nothing narrows the change (the coordinator's call; logged)."),
+          full: bool = typer.Option(False, "--full", hidden=True, help="A full local run: the whole unit suite when nothing narrows the change, "
+                                                                      "through the heavy lane (load bar, exclusive push lane); logged.")) -> HeadCheck:
     rt, usage = runtime(), "sm check --help"
     providers: Any = rt.providers
     wt = _preflight.core_worktree(worktree or Path.cwd(), usage)
@@ -128,7 +132,7 @@ def check(worktree: Path | None = typer.Argument(None, metavar="WORKTREE", help=
         raise Refuse(f"--skip takes one of {', '.join(cheap.STEPS)}; unknown: {', '.join(unknown)}", usage, code=USAGE)
     default = str(_preflight.setting(rt, "preflight_base"))
     ref = base or default
-    c = bound(rt, wt, ref, allow_full)
+    c = bound(rt, wt, ref, allow_full, full or allow_full)
     try:
         selection = affected.selection(select.Repo(wt), c.changed())
     except select.RepoError as why:

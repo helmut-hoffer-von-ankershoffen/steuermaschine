@@ -19,6 +19,23 @@ from .defaults import ReadOnlyStore
 from .plugins import Alarm, GoItem
 
 RANK = {"refused": 20, "dry_run": 25, "review": 30, "waiting": 40}
+HISTORY_DAYS = 2.0  # a run not updated for this many days is history: never a NEXT
+
+
+def updated_at(state: dict[str, Any]) -> float | None:
+    """When a run state last changed (its `updated` stamp), as epoch seconds; None when it has none."""
+    import time
+
+    try:
+        return time.mktime(time.strptime(str(state.get("updated") or ""), "%Y-%m-%dT%H:%M:%S%z"))
+    except ValueError:
+        return None
+
+
+def is_history(state: dict[str, Any], now: float, days: float) -> bool:
+    """A finished run, or one not updated for `days`: history, which never produces a NEXT."""
+    at = updated_at(state)
+    return state.get("status") == "finished" or (at is not None and now - at > days * 86400)
 
 
 def run_states(store: Any) -> list[dict[str, Any]]:
@@ -64,7 +81,7 @@ def compute(project: Any, store: Any, plugin: Any, providers: Any, settings: Any
     counts: dict[str, int] = {}
     for s in states:
         counts[s.get("status", "?")] = counts.get(s.get("status", "?"), 0) + 1
-        if s.get("status") == "finished":
+        if is_history(s, now, HISTORY_DAYS):  # finished, or untouched for days: never a NEXT
             continue
         rank = RANK.get(str(s.get("status")), 50) - (15 if s.get("key") in focus or s.get("arg") in focus else 0)
         nxt = s.get("next", "") if s.get("status") != "waiting" else ""

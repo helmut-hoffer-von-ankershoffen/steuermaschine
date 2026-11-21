@@ -18,6 +18,7 @@ from steuermaschine.native import Group, native, runtime
 from steuermaschine.plugins import old_variable
 
 from . import branch_owner, queue_hold
+from .journal_view import mirrored
 from .queue_lib import hzlib
 from .ship_lib import deps, pr, push_gate, repos, ship
 from .ship_lib.deps import Done
@@ -111,6 +112,7 @@ def head_guard(pr: list[str] = typer.Argument(..., metavar="PR", help="A PR numb
     "Exit 0 queued or already cleared, 2 NEEDS_REVIEW (start an independent reviewer; ship again with its written reason),\n"
     "1 the queue refused (moved head, combine notes, `sm queue hold`). --fix-forward passes PR, REASON and every option to the queue's\n"
     "fix-forward lane, which refuses REASON and --reviewed-head there (exit 1, nothing queued)."))
+@mirrored  # it runs a program that writes the working files: the subject journals follow (journal_view.py)
 def head_ship(
     pr: str = typer.Argument(..., metavar="PR", help="The pull request number."),
     reason: str | None = typer.Argument(None, metavar="REASON", help="The written reason of an independent review: queue past a FLAG."),
@@ -155,9 +157,9 @@ def is_focus(worktree: Path) -> bool:
     "commit-message rule and the confidential terms before anything is pushed or opened; nothing you wrote is printed\n"
     "before that. It pushes the checked commit (SHA:refs/heads/BRANCH) and ships only this repository's PR at that SHA.\n"
     "Exit 75: the push check says WAIT, or the run lock was not free within head_pr_lock_max_wait_seconds.\n"
-    "The push takes the run lock's push lane (setting lock_push_lane; a focus head or a release/* branch asks for it itself with\n"
-    "`sm gate run --exclusive`): its pre-push hook's timed session starts only on an idle machine below the start bar, and no other\n"
-    "heavy command starts until the push ends.\n"
+    "The push takes a fast slot of the run lock (up to three at once, fewer under load, no load bar; a focus head goes ahead of the\n"
+    "others): its pre-push hook runs the fast checks. Full suites run on hosted PR CI. A release/* push is a full, exclusive run:\n"
+    "it starts only on an idle machine below the load bars and no other command starts beside it.\n"
     "Exit 2 after the PR is open: the guard answered NEEDS_REVIEW. It does not run the repository's `make pr`.\n"
     "While `sm queue hold` holds the queue, --live refuses with the hold's reason (exit 1, nothing pushed)."))
 def head_pr(

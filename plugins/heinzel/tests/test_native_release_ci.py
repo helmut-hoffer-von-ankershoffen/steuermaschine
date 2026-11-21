@@ -50,6 +50,7 @@ def run_view(status="completed", conclusion="success"):
 
 
 def dispatchable(gh, view):
+    gh.on("release list -R helmut-hoffer-von-ankershoffen/heinzel -L 10", [{"tagName": "v0.9.53"}])
     gh.on(LISTING, [{"databaseId": 4}], [{"databaseId": 4}, {"databaseId": 5, "displayTitle": "Release 0.9.54"}])
     gh.on(WORKFLOW, "")
     gh.on("run view 5", view)
@@ -92,7 +93,14 @@ def test_a_run_still_going_after_the_timeout_waits(rt, gh):
     assert out.exit_code == 75 and "still in_progress" in done.lines[-1]
 
 
+def test_a_mistyped_version_refuses_before_any_dispatch(rt, gh):
+    gh.on("release list -R helmut-hoffer-von-ankershoffen/heinzel -L 10", [{"tagName": "v0.9.53"}])
+    out = invoke(rt, ["release", "0.9.64"])
+    assert out.exit_code == 2 and not any("workflow" in c for c in gh.calls)
+
+
 def test_a_dispatch_without_a_new_run_refuses_instead_of_guessing(rt, gh):
+    gh.on("release list -R helmut-hoffer-von-ankershoffen/heinzel -L 10", [{"tagName": "v0.9.53"}])
     gh.on(LISTING, [{"databaseId": 4}])
     gh.on(WORKFLOW, "")
     out = invoke(rt, ["release", "0.9.54"])

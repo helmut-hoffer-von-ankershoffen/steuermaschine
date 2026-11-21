@@ -17,7 +17,7 @@ import fcntl
 import os
 import stat
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from contextlib import ExitStack
 from pathlib import Path
 
@@ -104,3 +104,20 @@ def add_table_row(document: Path, heading: str, cells: Sequence[str], lock_files
         lines.insert(end, row)
         replace_text(document, "\n".join(lines) + "\n")
     return row
+
+
+def rewrite(document: Path, change: Callable[[str], tuple[str, str]], keep: Callable[[str], None], lock_files: Sequence[Path] = ()) -> tuple[str, str]:
+    """Change the whole document under every lock in `lock_files`: `change(text)` returns (new text, moved text); the
+    moved text goes to `keep` first, then the document is replaced atomically (`replace_text`). Nothing is written when
+    nothing moved. Returns (old text, new text)."""
+    with ExitStack() as stack:
+        for lock_path in lock_files:
+            lock_path.parent.mkdir(parents=True, exist_ok=True)
+            lock = stack.enter_context(lock_path.open("a+"))
+            fcntl.flock(lock, fcntl.LOCK_EX)
+        text = document.read_text(encoding="utf-8")
+        new, moved = change(text)
+        if moved:
+            keep(moved)
+            replace_text(document, new)
+    return text, new

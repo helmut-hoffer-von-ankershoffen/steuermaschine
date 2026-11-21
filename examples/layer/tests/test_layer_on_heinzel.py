@@ -97,7 +97,10 @@ def test_the_layer_loads_alone_and_on_heinzel_in_the_listed_order(project, capsy
 def test_heinzel_keeps_its_commands_and_the_core_its_own_under_the_layer(project, capsys):
     project('["heinzel", "layer"]')
     code, out, _ = sm(capsys, "--help")
-    assert code == 0 and all(f"  {word}" in out for word in ("beads", "queue", "release", "gate", "lim", "doc", "self"))
+    assert code == 0 and all(f"  sm {word}" in out for word in ("work", "release", "self"))  # heinzel's visible verbs
+    code, out, _ = sm(capsys, "--format", "json", "self", "tree", "--all")
+    paths = {row["path"] for row in json.loads(out)}
+    assert code == 0 and {"sm beads", "sm queue", "sm gate", "sm lim", "sm doc"} <= paths  # hidden, still there
     project('["layer"]')
     code, out, _ = sm(capsys, "--help")
     assert code == 0 and "  beads" not in out and "  gate" in out  # heinzel is blocked when it is not listed

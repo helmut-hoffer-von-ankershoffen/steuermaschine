@@ -260,7 +260,7 @@ def run_capture(repo: Path, plugin: str, log: Path) -> tuple[int, str]:
     gate = lock_of()
     gate.commands = Logged(rt.providers.commands, log)
     outcome = gate.run(Request(argv=capture_argv(plugin), environ=capture_environment(child_environment(), plugin),
-                               cwd=str(repo), timeout_seconds=TIMEOUT_SECONDS))
+                               cwd=str(repo), timeout_seconds=TIMEOUT_SECONDS, full=True))
     return outcome.exit_code, "" if outcome.status == "ran" else outcome.reason or outcome.status
 
 
