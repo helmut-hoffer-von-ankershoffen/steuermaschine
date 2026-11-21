@@ -1,4 +1,4 @@
-"""NEXT names only live commands. Every `sm ...` command in a NEXT, THEN or ALSO line is checked against the command
+"""NEXT names only live, visible commands. Every `sm ...` command in a NEXT, THEN or ALSO line is checked against the command
 tree that runs (its path and its options); one that is not there is shown as missing instead of offered to be run.
 
 `checker(rows)` takes the rows of `steuermaschine.helpdoc.tree(root, "sm")`; `rows_of_running_tree()` reads them from
@@ -14,12 +14,15 @@ from collections.abc import Callable
 PROG = "sm"
 ALWAYS = frozenset({"--help", "-h", "--format"})  # the root and help options every command takes
 COMMAND = re.compile(rf"(?:(?<=^)|(?<=[\s:`(\"'])){PROG}\s+[^&;|#`)\n]*")
-MISSING = "missing: `{command}` is not a live command (sm tools gaps); nothing to run for it now"
+MISSING = "missing: `{command}` is not a visible command; nothing to run for it now (sm why)"
 
 
 def checker(rows: list[dict]) -> Callable[[str], str]:
     """A function that returns its text unchanged when every `sm` command in it is live, else the missing line."""
-    leaves = {tuple(str(r["path"]).split()[1:]): set(r.get("options") or []) for r in rows if not r.get("group")}
+    leaves = {tuple(str(r["path"]).split()[1:]): set(r.get("options") or []) for r in rows if not r.get("group") and not r.get("hidden")}
+    options = {str(r["path"]): set(r.get("options") or []) for r in rows}
+    leaves |= {tuple(str(r["path"]).split()[1:]): options.get(f"{r['path']} {r['default']}", set())  # `sm release 0.9.55 --live`
+               for r in rows if r.get("default") and not r.get("hidden")}
 
     def check(text: str) -> str:
         if not text:

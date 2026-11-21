@@ -32,7 +32,7 @@ class Close:
         self.subprocess = SimpleNamespace(run=None)
 
     def main(self, argv):
-        self.last = done = invoke(self.rt, ["ci", "sonar-close", *argv])
+        self.last = done = invoke(self.rt, ["review", "sonar", *argv])
         sys.stdout.write(done.stdout)
         sys.stderr.write(done.stderr)
         if done.exit_code == 2:
@@ -255,7 +255,7 @@ def test_preview_in_text_and_json(setup):
     assert close.main(pr_args()) == 0
     assert close.last.stdout.splitlines() == ["open before: 1", "would close reviewed-key src/web.py:12 python:S5332"]
     responses.append({"total": 1, "issues": [finding(line=12)]})
-    doc = json.loads(invoke(close.rt, ["--format", "json", "ci", "sonar-close", *pr_args()]).stdout)
+    doc = json.loads(invoke(close.rt, ["--format", "json", "review", "sonar", *pr_args()]).stdout)
     result = ci_ops.SonarClose.model_validate(doc)
     assert not result.live and result.project == PROJECT and result.pull_request == 485 and result.open_before == 1 and result.open_after is None
     closure, = result.closures
@@ -269,7 +269,7 @@ def test_apply_makes_exactly_these_calls_in_this_order(setup):
     second = row(issue="second", file="src/api.py", transition="accept", reason="Accepted: test-only endpoint.")
     close, calls, responses = setup(rows=[row(), second], issues=[finding(), finding(key="second", component=PROJECT + ":src/api.py")])
     responses.append({"total": 0, "issues": []})
-    done = invoke(close.rt, ["--format", "json", "ci", "sonar-close", *pr_args("--issue", "second", "--apply")])
+    done = invoke(close.rt, ["--format", "json", "review", "sonar", *pr_args("--issue", "second", "--apply")])
     assert done.exit_code == 0, done
     assert [(c[0], c[1], c[2], c[3].split("?")[0]) for c in calls] == [
         ("sonar", "api", "get", "/api/issues/search"),  # the whole plan is read and checked first
@@ -327,5 +327,5 @@ def test_main_route_matches_the_rule_exactly(setup):
 
 def test_without_a_manifest_setting_or_config_it_refuses(tmp_path, monkeypatch):
     rt = runtime(tmp_path, monkeypatch, Cli(Close(tmp_path / "x.toml")), ci_ops_sonar_closures_file=None)
-    done = invoke(rt, ["ci", "sonar-close"])
+    done = invoke(rt, ["review", "sonar"])
     assert done.exit_code == 2 and "ci_ops_sonar_closures_file" in done.stderr

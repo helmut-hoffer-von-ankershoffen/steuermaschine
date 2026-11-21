@@ -14,6 +14,8 @@ from typing import Any
 import typer
 from pydantic import BaseModel, Field
 
+from steuermaschine import journal as core_journal
+from steuermaschine.engine import Refuse
 from steuermaschine.github.sonar import Sonar, urllib_fetch
 from steuermaschine.helpdoc import H
 from steuermaschine.models import Model
@@ -33,6 +35,8 @@ class StatusSettings(BaseModel):
                                          description="Repositories of the pull request table (same owner as `repo`): name -> prefix of its keys in the action table.")
     status_gate_repos: list[str] = Field(default=list(DEFAULT_REPOS), description="Repositories whose merge gate is read (Sonar, coverage badge, ruleset).")
     status_gate_notes: dict[str, str] = Field(default={}, description="Repositories without a readable gate: name -> the one line shown for it.")
+    status_doc_cap_bytes: int = Field(16 * 1024, description="`sm status --write`: the size the tracking document may not grow past; older checkpoints and log lines move out.")
+    status_keep_checkpoints: int = Field(3, description="`sm status --write`: the newest checkpoints that stay in the tracking document.")
 
 
 class StatusGate(Model):
@@ -82,6 +86,7 @@ class Status(Model):
     no_owner: list[str] = []
     unknown: list[str] = []  # what could not be read, with the reason
     read_only: bool = True
+    written: list[str] = []  # `--write`: what was moved and written
     view: str = Field("table", exclude=True)  # table | markdown | stale
     check: bool = Field(False, exclude=True)
     now: float = Field(0.0, exclude=True)
@@ -97,7 +102,7 @@ class Status(Model):
         out += table.render([p.model_dump() for p in self.prs], markdown).split("\n")
         while out and not out[-1]:
             out.pop()
-        return out + unknown + ([f"NO OWNER: {', '.join(self.no_owner)}"] if self.check and self.no_owner else [])
+        return out + unknown + ([f"NO OWNER: {', '.join(self.no_owner)}"] if self.check and self.no_owner else []) + [f"WRITTEN  {w}" for w in self.written]
 
     @property
     def exit_code(self) -> int:
@@ -163,18 +168,109 @@ def collect(w: probes.World, view: str = "table", check: bool = False) -> Status
                   no_owner=[r["pr"] for r in rows if r["owner"] == "NO OWNER"], unknown=unknown, view=view, check=check, now=w.now())
 
 
-@native("status", writes=False, replaces=("hz-status",), help=H(
+@native("status", writes=True, replaces=("hz-status",), help=H(
     "The hourly view: merge gate per repository, focused slot usage, every open pull request with its action and owner.",
     "Use for the hourly owner update and the handoff, and when you need every open pull request on one screen.",
-    "nothing (read-only: GitHub reads, the Sonar and coverage badge reads, the reviewed action table).",
-    "sm status            (markdown: sm status --md; machines: sm --format json status)",
-    "sm ci why NUMBER for one pull request under Needs work; sm queue list for the ready ones.",
+    "without --write nothing (GitHub reads only). With --write: caps the tracking document (older checkpoints and log lines move to"
+    " the dated log file) and writes the hourly facts; with --write --live also commits and pushes the handoff.",
+    "sm status            (markdown: sm status --md; every hour: sm status --write --live)",
+    "sm why NUMBER for one pull request under Needs work.",
     "The first lines are the merge gate: Sonar ratings, coverage, what main requires. `<<< NOT A`, `RED`, `BYPASS` or\n"
     "`NO RULESET` is what to act on. Then `Focused slots`: bytes used per registry variable and about how many heads\n"
     "still fit. Then the pull requests, grouped Ready, Needs work, Held and Draft. A failing `review` check and a\n"
     "diagnostic `Focused ...` run never put a pull request under Needs work; the checks merge-gate and coverage-floor\n"
-    "do only once main requires them. A pull request without a row in the action table prints NO OWNER."))
+    "do only once main requires them. A pull request without a row in the action table prints NO OWNER.\n"
+    "--write takes over the hourly update, the handoff and the checkpoint upkeep (the old `doc hour`, `doc handoff`): the\n"
+    "tracking document never grows past the setting status_doc_cap_bytes; the newest status_keep_checkpoints stay."))
 def status(md: bool = typer.Option(False, "--md", help="Markdown tables, for the handoff document."),
            check: bool = typer.Option(False, "--check", help="Exit 1 when a pull request has no owner."),
-           stale: bool = typer.Option(False, "--stale", help="Only the pull requests unchanged for more than six hours.")) -> Status:
-    return collect(world(), "stale" if stale else "markdown" if md else "table", check)
+           stale: bool = typer.Option(False, "--stale", help="Only the pull requests unchanged for more than six hours."),
+           write: bool = typer.Option(False, "--write", help="Cap the tracking document and write the hourly facts (local)."),
+           live: bool = typer.Option(False, "--live", help="With --write: also commit and push the handoff.")) -> Status:
+    if live and not write:
+        raise Refuse("--live goes with --write", "sm status --write --live", code=2)
+    found = collect(world(), "stale" if stale else "markdown" if md else "table", check)
+    if write:
+        found.written = write_document(live, found)
+        found.read_only = False
+    return found
+
+
+BEGIN = "<!-- sm status --write: begin (generated; do not edit) -->"
+END = "<!-- sm status --write: end -->"
+
+
+def state_block(found: Status, now: float) -> str:
+    """The state section of the tracking document: release in flight, open pull requests with their action, alarms
+    and what waits for the owner, from the same reads as `sm status`, `sm why` and `sm alarm list`."""
+    from steuermaschine.native import call
+
+    from . import alarm
+
+    def release_status(line: bool = False) -> Any:  # through the registry of the runtime: an import would widen the reach of every writer
+        return call(next(c for c in runtime().commands() if getattr(c, "path", "") == "release status"), line=line)
+
+    def lines(read: Any) -> list[str]:
+        try:
+            return [line for line in read() if line.strip()]
+        except Exception as error:
+            return [f"unknown: {type(error).__name__}: {error}"[:200]]
+
+    shown = found.model_copy(update={"view": "markdown", "check": False, "written": []})
+    stamp = datetime.fromtimestamp(now, UTC).strftime("%Y-%m-%d %H:%M UTC")
+    out = [BEGIN, f"## State now (written by `sm status --write` at {stamp})", "", "**Release**", ""]
+    out += [f"- {line}" for line in lines(lambda: release_status(line=False).render())] or ["- no release in flight"]
+    out += ["", *shown.render(), "", "**Alarms**", ""]
+    out += [f"- {line}" for line in lines(lambda: alarm.alarm_list(check=False).render())]
+    asks = lines(alarm.owner_asks)
+    out += ["", "**For the owner**", "", *([f"- {line}" for line in asks] or ["- nothing open"]), END]
+    return "\n".join(out)
+
+
+def place(text: str, block: str) -> str:
+    """The document with the state section replaced, or inserted before the work instructions (`## 6.`), else at the end."""
+    if BEGIN in text and END in text:
+        head, rest = text.split(BEGIN, 1)
+        return head + block + rest.split(END, 1)[1]
+    lines = text.split("\n")
+    at = next((i for i, line in enumerate(lines) if line.startswith("## 6.")), len(lines))
+    return "\n".join([*lines[:at], block, "", *lines[at:]])
+
+
+def write_document(live: bool, found: Status | None = None) -> list[str]:
+    """Render the state section, cap the tracking document, then the hourly facts; with `live` the handoff commit and push."""
+    from .coord_lib.base import document, journal_lock, log_file
+    from .handoff_lib import hour, snapshot
+    from .status_lib import cap
+
+    rt: Any = runtime()
+    s = rt.settings
+    path = document(s)
+    limits = cap.Cap(limit=int(s.get("status_doc_cap_bytes") or 16 * 1024), keep=int(s.get("status_keep_checkpoints") or 3))
+    now = rt.providers.clock.now()
+    archive = log_file(s, now)
+    block = state_block(found or Status(), now)
+    out: list[str] = []
+
+    def change(text: str) -> tuple[str, str]:
+        placed = place(text, block)
+        capped, moved = cap.apply(placed, limits)
+        return capped, moved or ("\n" if placed != text else "")  # a new state section is a change even when nothing moves
+
+    def keep(moved: str) -> None:  # the moved text is safe before the document shrinks
+        if not moved.strip():
+            return
+        archive.parent.mkdir(parents=True, exist_ok=True)
+        with archive.open("a", encoding="utf-8") as handle:
+            handle.write(f"\n## Moved from {path.name} by sm status --write\n\n{moved}\n")
+
+    text, capped = core_journal.rewrite(path, change, keep, [journal_lock(s)])
+    out.append(f"{path.name}: state section written; {len(text.encode())} -> {len(capped.encode())} bytes" +
+               (f"; older checkpoints and log lines moved to {archive}" if len(capped) < len(place(text, block)) else ""))
+    if (size := len(capped.encode())) > limits.limit:
+        out.append(f"{path.name} is {size} bytes, over the cap of {limits.limit}: the rest is not checkpoints or log; shorten it by hand")
+    try:
+        done = hour.build(rt, rt.commands(), not live, include_local_commits=False)
+    except snapshot.StepFailed as stop:
+        raise Refuse(str(stop), "sm status --write") from None
+    return out + [line for line in done.render()[:3]]

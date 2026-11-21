@@ -437,8 +437,8 @@ def release_replan(version: str = typer.Argument(..., metavar="VERSION", help="E
                    main_ci: str = typer.Option(..., "--main-ci", help="Only full is supported."),
                    reason: str = typer.Option(..., "--reason", help="Why the pre-external cut must be replanned."),
                    live: bool = typer.Option(False, "--live/--dry-run", help="Archive and replace local cut state (default: prove only).")) -> ReleaseReplan:
-    from .release_lib import replan
     from .admission_lib.focused_admit import AdmissionError
+    from .release_lib import replan
 
     if not EXACT.fullmatch(version) or main_ci != "full":
         raise Refuse("replan needs an exact release version and --main-ci full")

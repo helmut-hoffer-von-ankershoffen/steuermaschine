@@ -181,7 +181,7 @@ def test_probe_queue_train_release_holds(tmp_path, monkeypatch):
     assert "unreadable: bad toml" in probes.probe_holds(w)["files"][-1]
     monkeypatch.setattr(L, "alarm_state", lambda d: {"alarms": 1})
     monkeypatch.setattr(L, "admission_receipt_heads", lambda d: ["r"])
-    assert probes.probe_alarms(w) == {"alarms": 1} and probes.probe_receipts(w) == ["r"]
+    assert probes.probe_alarms(w) == {"alarms": 1} and probes.probe_receipts(w) == []
     assert probes.probe_tools(w) == {"rehearse": False, "drop_candidate": True}
 
 
@@ -304,7 +304,7 @@ def test_focus(tmp_path, monkeypatch):
     assert row["head"] is None and "no commit" in row["error"]
     w.focus_list = None
     monkeypatch.setattr(probes.legacy, "focus_entries", lambda d: [{"worktree": "/old"}])
-    assert probes.declared_focus(w)[0]["source"] == "old-file"
+    assert probes.declared_focus(w) == []  # the scripted era's focus file is not read
 
 
 def test_collect_and_deadline(tmp_path, monkeypatch):
