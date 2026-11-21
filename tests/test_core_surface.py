@@ -158,7 +158,7 @@ def test_a_project_without_a_surface_is_unchanged(tmp_path):
     from tests.test_core_native import rt as demo
 
     assert "sm demo list" in visible(demo())
-    assert "Did you mean" in invoke(demo(), ["lsit"]).stderr or invoke(demo(), ["lsit"]).exit_code == 2
+    assert "Did you mean" in invoke(demo(), ["lst-demo"]).stderr or invoke(demo(), ["lst-demo"]).exit_code == 2
 
 
 def test_list_options_take_repeats_and_comma_lists_through_one_parser():
