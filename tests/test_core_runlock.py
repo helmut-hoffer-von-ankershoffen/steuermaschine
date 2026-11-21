@@ -568,3 +568,23 @@ def test_a_fast_run_with_a_priority_goes_ahead_of_those_without(tmp_path):
     (rl.p.fast_waiting / f"2-{os.getppid()}").unlink()
     assert rl.run(Request(argv=["pytest", "tests/a.py"], max_wait_seconds=3)).status == "ran"
     assert list(rl.p.fast_waiting.iterdir()) == []  # a request leaves no marker behind
+
+
+def test_an_exclusive_run_that_waits_for_the_load_leaves_fast_runs_one_slot(tmp_path):
+    seen = []
+
+    class Clock(FakeClock):
+        def sleep(self, seconds):
+            super().sleep(seconds)
+            other, _ = alive_lock(tmp_path, FakeClock(), load=12.0)
+            seen.append((len(list(other.p.load_waiting.iterdir())), other.fast_cap(), other.run(Request(argv=["pytest", "tests/a.py"], max_wait_seconds=3))))
+
+    with tmp_path.joinpath("runlock.fast.0.lock").open("a+") as running:  # slot 0 is taken: with the cap of 3 slot 1 would be free
+        fcntl.flock(running, fcntl.LOCK_EX)
+        quiet, _ = alive_lock(tmp_path, load=12.0)
+        assert quiet.fast_cap() == 3 and quiet.run(Request(argv=["true"])).status == "ran"  # no exclusive run waits: three slots
+        rl, _ = alive_lock(tmp_path, Clock(), load=12.0, start_load=10.0)
+        assert rl.run(Request(argv=["git", "push"], full=True, exclusive=True, max_wait_seconds=6)).exit_code == 75
+    marked, cap, out = seen[0]
+    assert (marked, cap, out.exit_code) == (1, 1, 75) and "the cap is 1 of 3 while a full run (--full, exclusive) waits for the load to fall" in out.reason
+    assert not list(rl.p.load_waiting.iterdir()) and rl.fast_cap() == 3  # the marker goes with the request
