@@ -31,7 +31,7 @@ SURFACE = Surface(
     visible=(
         "check", "ship", "why", "status", "note",
         "review", "review next", "review verdict", "review sonar",
-        "release", "release plugin",
+        "release", "release plugin", "release drive",
         "work", "work add", "work list", "work show", "work note", "work done", "work brief", "work refill", "work sweep",
         "mini", "mini verify", "mini update",
         "alarm", "alarm list", "alarm ack",
@@ -84,7 +84,7 @@ RENAMES = [
     Renamed("doc hour", "status --write", stub=False), Renamed("doc handoff", "status --write --live", stub=False),
     Renamed("tick", "alarm list --check", stub=False), Renamed("alarm check", "alarm list --check", stub=False), Renamed("doc asks", "alarm list", stub=False),
     Renamed("go", "", stub=False),
-    Renamed("release resume", "release", stub=False),
+    Renamed("release resume", "release drive", stub=False),  # every option of resume; `sm release VERSION` is the CI chain
     Renamed("head ship", "ship --live", stub=False),
     Renamed("queue add", "ship", stub=False),
     Renamed("queue list", "why", stub=False),

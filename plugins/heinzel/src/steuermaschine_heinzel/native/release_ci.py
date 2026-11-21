@@ -153,16 +153,16 @@ def release_run(
     timeout: int = typer.Option(300, "--timeout", metavar="MINUTES", help="Minutes to watch (default 300)."),
     local: bool = typer.Option(False, "--local", hidden=True, help="Fallback for one release: the local step runner (sm release resume) instead of CI."),
 ) -> ChainRun:
+    from .release_drive import guard
+
     if version in ("next", "patch"):
         version = "next"
     elif not EXACT.fullmatch(version):
-        raise Refuse(f"{version!r} is not X.Y.Z or `next`", "sm release run --help", code=2)
+        guard(version, None, "")  # refuses a non-version with the driver's own words
     if local:
         return run_local(version, intro, dry_run)
     gh = client()
     if version != "next" and not dry_run:  # a mistyped version refuses before anything is dispatched
-        from .release_drive import guard
-
         rows, _ = gh.try_json(["release", "list", "-R", core_repo(), "-L", "10", "--json", "tagName"])
         guard(version, rows if isinstance(rows, list) else None, "")
     wanted = "" if version == "next" else version
