@@ -2,6 +2,7 @@
 
     promote_verdict.py check STABLE REPO COMMIT
     promote_verdict.py record STABLE REPO COMMIT --reviewer NAME [--base SHA|none] [--notes TEXT]
+    promote_verdict.py record-ci STABLE REPO COMMIT --reviewer NAME --source "ci TAG URL"
 
 The receipt is the file STABLE/verdicts/<full commit SHA> (STABLE is $SM_STABLE of bin/promote). It lives next to the
 gate receipts of the stable install, not in any repository: no snapshot or push can publish it, the promote that
@@ -24,6 +25,12 @@ case-insensitive), and `recorded-by`, when set, is the reviewer. Anything else e
 option and no setting that skips it. `record` writes the file after the same checks and refuses when
 $STEUERMASCHINE_AGENT is set and is not --reviewer: the agent that records is the reviewer.
 
+`record-ci` is for the Mini follower (bin/release_ci.py follow): the CI of a release already holds the independent
+verdict (the `Gate review` status on the merged pull request's head; the release exists only because it was present).
+The follower looks it up and records it here, with an extra line `source: ci TAG URL`. Such a receipt is checked exactly
+like any other (commit, base = the live release, reviewer none of the authors) except that `recorded-by` is `ci-follower`
+instead of the reviewer.
+
 The limit, stated plainly: every agent commits under the owner's git identity with a model trailer and runs under one
 uid that can write STABLE/verdicts. The identity check therefore catches only a verdict recorded under a committer's
 name or email; it cannot tell one agent from another. Unlike the apply verdict (bound to agent ids of the runs that
@@ -42,7 +49,8 @@ import sys
 from pathlib import Path
 
 HEX40 = re.compile(r"[0-9a-f]{40}")
-KEYS = ("commit", "base", "reviewer", "recorded-by", "at", "notes")
+KEYS = ("commit", "base", "reviewer", "recorded-by", "at", "notes", "source")
+CI_RECORDER = "ci-follower"
 REQUIRED = ("commit", "base", "reviewer", "at")
 VERDICT = "VERDICT: APPROVE"
 
@@ -150,7 +158,8 @@ def check(stable: Path, repo: Path, commit: str) -> dict[str, str]:
         raise Refused(f"the verdict reviewed the diff from {fields['base'][:12]}, but the live release is {want[:12]}: "
                       "the reviewer must read the diff from the live release (sm self reviews), then record again")
     by = fields.get("recorded-by", "unset")
-    if by not in ("unset", fields["reviewer"]):
+    ci = fields.get("source", "").startswith("ci ") and by == CI_RECORDER
+    if by not in ("unset", fields["reviewer"]) and not ci:
         raise Refused(f"the verdict was recorded by {by}, not by its reviewer {fields['reviewer']}: the agent that records is the reviewer")
     independent(repo, fields["base"], commit, fields["reviewer"])
     return fields
@@ -183,18 +192,38 @@ def record(stable: Path, repo: Path, commit: str, reviewer: str, base: str, note
     return path
 
 
+def record_ci(stable: Path, repo: Path, commit: str, reviewer: str, source: str, now: str) -> Path:
+    """A receipt for the verdict the release's CI recorded (`source` is `ci TAG URL`); base is the live release."""
+    full = full_sha(repo, commit)
+    if not full:
+        raise Refused(f"{commit} is not a commit of {repo}")
+    if not source.startswith("ci ") or not reviewer.strip() or any(c in reviewer + source for c in "\r\n"):
+        raise Refused("--reviewer must be a name on one line and --source one line starting with `ci `")
+    base = promoted_base(stable, repo)
+    independent(repo, base, full, reviewer)
+    lines = [f"commit: {full}", f"base: {base}", f"reviewer: {reviewer.strip()}", f"recorded-by: {CI_RECORDER}", f"at: {now}", f"source: {source.strip()}"]
+    path = receipt_path(stable, full)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{full}.{os.getpid()}")
+    tmp.write_text("\n".join([*lines, VERDICT]) + "\n", encoding="utf-8")
+    tmp.replace(path)
+    with (path.parent / "records.log").open("a", encoding="utf-8") as log:
+        log.write(" | ".join(lines) + "\n")
+    return path
+
+
 def _options(rest: list[str]) -> dict[str, str] | None:
     opts: dict[str, str] = {}
     while rest:
         name = rest.pop(0)
-        if name not in ("--reviewer", "--base", "--notes") or not rest or name[2:] in opts:
+        if name not in ("--reviewer", "--base", "--notes", "--source") or not rest or name[2:] in opts:
             return None
         opts[name[2:]] = rest.pop(0)
     return opts if "reviewer" in opts else None
 
 
 def main(argv: list[str]) -> int:
-    if len(argv) < 4 or argv[0] not in ("check", "record"):
+    if len(argv) < 4 or argv[0] not in ("check", "record", "record-ci"):
         print(__doc__, file=sys.stderr)
         return 2
     verb, stable, repo, commit, rest = argv[0], Path(argv[1]), Path(argv[2]), argv[3], argv[4:]
@@ -211,6 +240,10 @@ def main(argv: list[str]) -> int:
             print(__doc__, file=sys.stderr)
             return 2
         now = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        if verb == "record-ci":
+            path = record_ci(stable, repo, commit, opts["reviewer"], opts.get("source", ""), now)
+            print(f"verdict: recorded {path}", file=sys.stderr)
+            return 0
         path = record(stable, repo, commit, opts["reviewer"], opts.get("base", ""), opts.get("notes", ""), now, os.environ.get("STEUERMASCHINE_AGENT", ""))
         print(f"verdict: recorded {path}", file=sys.stderr)
         return 0
