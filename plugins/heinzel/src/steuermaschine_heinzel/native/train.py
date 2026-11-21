@@ -169,13 +169,13 @@ class TrainTick(Model):
 @native("daemon train", writes=True, tick=True, replaces=("hz-train",), help=H(
     "One tick of the Mini's release follower: when a newer Core release is accepted, make it live here, then build iOS.",
     "Use for the launchd job (every 10 minutes); by hand for a single tick only while that job is stopped.",
-    "runs `sm mini update --minimum X` (updates and restarts the live hz on this machine) and `sm release ios X` (uploads "
-    "to TestFlight) once per accepted release; writes what it followed to the store.",
+    "runs `sm mini update --minimum X` (updates and restarts the live hz on this machine) and the iOS upload of X (to "
+    "TestFlight) once per accepted release; writes what it followed to the store.",
     "sm daemon train", "sm release status",
     "The release itself runs in GitHub Actions (Core's workflow \"Release\", `sm release VERSION`) and needs no\n"
     "machine of ours. The follower acts only on the Latest release whose acceptance.json says accepted, retries\n"
-    "`sm mini update` every tick until LIVE-OK, then `sm release ios X` up to 3 times (skipped while that command\n"
-    "does not exist). Exit 0: done or nothing to do. 1: a step failed, the next tick resumes."))
+    "`sm mini update` every tick until LIVE-OK, then the iOS upload up to 3 times (skipped while its command\n"
+    "does not exist yet). Exit 0: done or nothing to do. 1: a step failed, the next tick resumes."))
 def daemon_train(dry_run: bool = typer.Option(False, "--dry-run", help="Say what the tick would do; start and write nothing."),
                  now: bool = typer.Option(False, "--now", hidden=True, help="With --local: cut in this tick even with auto-cut off."),
                  run_version: str | None = typer.Option(None, "--run", metavar="X.Y.Z", hidden=True,

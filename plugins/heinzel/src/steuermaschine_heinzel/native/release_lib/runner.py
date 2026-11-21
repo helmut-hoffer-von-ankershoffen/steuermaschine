@@ -1038,7 +1038,11 @@ def publish_release_pr(work: str, tag: str, checked_head: str) -> None:
     # Changelog screenshots: pin images to the checked release commit (the tag does not exist yet) once core's
     # release_notes.py accepts --ref; an older script is called as before.
     script = Path(work) / "scripts" / "release_notes.py"
-    ref = ["--ref", checked_head] if re.fullmatch(r"[0-9a-f]{40}", checked_head) and "--ref" in script.read_text(encoding="utf-8", errors="replace") else []
+    try:
+        takes_ref = "--ref" in script.read_text(encoding="utf-8", errors="replace")
+    except OSError:  # no readable script here: call it as before; its run below reports a real absence
+        takes_ref = False
+    ref = ["--ref", checked_head] if re.fullmatch(r"[0-9a-f]{40}", checked_head) and takes_ref else []
     notes = edge.run(["uv", "run", "--frozen", "--no-sync", "--no-build", "python",
                             "scripts/release_notes.py", tag, *ref], cwd=work, env=env,
                            capture_output=True, text=True, check=False)

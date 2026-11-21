@@ -183,7 +183,7 @@ def test_the_tick_retries_until_live(rt, gh, monkeypatch):
 def test_the_tick_runs_ios_after_live_and_stops_after_three_failures(rt, gh, monkeypatch):
     accepted(gh)
     monkeypatch.setattr(area.mini, "update", lambda w, version: Proof(live=True))
-    monkeypatch.setattr(area, "IOS", "release status")  # any existing command stands in for `sm release ios`
+    monkeypatch.setattr(area, "IOS", "release status")  # any existing command stands in for the iOS upload
     calls = []
 
     class Failed:
@@ -194,7 +194,7 @@ def test_the_tick_runs_ios_after_live_and_stops_after_three_failures(rt, gh, mon
 
     monkeypatch.setattr(area, "call", lambda cmd, **kwargs: calls.append(kwargs) or Failed())
     for _ in range(4):
-        out, tick = doc(rt, train_area.TrainTick, "daemon", "train")
+        _, tick = doc(rt, train_area.TrainTick, "daemon", "train")
     assert calls == [{"version": "0.9.54"}] * 3 and "failed 3 times" in tick.lines[-1]
 
 
@@ -209,7 +209,7 @@ def test_a_dry_tick_says_what_it_would_follow(rt, gh, monkeypatch):
     accepted(gh)
     monkeypatch.setattr(area.mini, "update", lambda w, version: pytest.fail("a dry tick updated the Mini"))
     _, tick = doc(rt, train_area.TrainTick, "daemon", "train", "--dry-run")
-    assert tick.lines == ["dry-run: would follow v0.9.54: sm mini update, sm release ios"]
+    assert tick.lines == ["dry-run: would follow v0.9.54: sm mini update, iOS upload"]
 
 
 def test_now_without_local_refuses(rt, gh):

@@ -3,8 +3,8 @@ status` reads its runs, and the release train's launchd tick only follows an acc
 
 Core's `release-chain.yml` owns the whole chain (cut, candidate, merge, tag, publish, PyPI, compose, acceptance, marker,
 Latest); it completes with the Mini switched off. The Mini follows: when a release with an accepted `acceptance.json`
-is Latest and the Mini has not followed it yet, the tick runs `sm mini update --minimum X` and then `sm release ios X`
-(when that command exists). The local step runner stays behind the hidden `--local` for one release.
+is Latest and the Mini has not followed it yet, the tick runs `sm mini update --minimum X` and then the iOS upload
+(the command at path IOS, once the iOS builder has added it). The local step runner stays behind the hidden `--local` for one release.
 
 Review unit of every command here: this file, `release.py` (the local fallback), `mini.py` (the follow step) and
 `release_lib/binding.py` (repository and state paths).
@@ -33,7 +33,7 @@ WORKFLOW = "release-chain.yml"
 EXACT = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
 POLL = 30
 FIND = 90  # seconds to find the run a dispatch created
-IOS = "release ios"
+IOS = "release ios"  # the iOS upload command; until it exists the follower reports the step as unavailable
 IOS_ATTEMPTS = 3
 
 
@@ -213,7 +213,7 @@ class Follow(Model):
 
     version: str = ""
     live: bool = False
-    ios: str = Field("", description="done, failed, unavailable (no `sm release ios` yet) or empty.")
+    ios: str = Field("", description="done, failed, unavailable (the iOS upload command does not exist yet) or empty.")
     exit: int = 0
     lines: list[str] = []
 
@@ -258,7 +258,7 @@ def follow(dry_run: bool) -> Follow:
     if state.get("live") and state.get("ios") == "done":
         return Follow(version=version, live=True, ios="done", lines=[f"follow: v{version} is live here and on TestFlight"])
     if dry_run:
-        todo = [step for step, done in (("sm mini update", state.get("live")), (f"sm {IOS}", state.get("ios") == "done")) if not done]
+        todo = [step for step, done in (("sm mini update", state.get("live")), ("iOS upload", state.get("ios") == "done")) if not done]
         return Follow(version=version, live=bool(state.get("live")), ios=str(state.get("ios", "")), lines=[f"dry-run: would follow v{version}: {', '.join(todo)}"])
     lines: list[str] = []
     if not state.get("live"):
@@ -271,16 +271,16 @@ def follow(dry_run: bool) -> Follow:
     cmd = next((c for c in runtime().commands() if getattr(c, "path", "") == IOS), None)
     if cmd is None:
         state["ios"] = "unavailable"
-        lines.append(f"follow: v{version} live; `sm {IOS}` does not exist yet, so no iOS build (the next tick looks again)")
+        lines.append(f"follow: v{version} live; the iOS upload command does not exist yet, so no iOS build (the next tick looks again)")
     elif int(state.get("ios_attempts") or 0) >= IOS_ATTEMPTS:
-        lines.append(f"follow: `sm {IOS} {version}` failed {IOS_ATTEMPTS} times; run it by hand after the fix")
+        lines.append(f"follow: the iOS upload of {version} failed {IOS_ATTEMPTS} times; run it by hand after the fix")
     else:
         state["ios_attempts"] = int(state.get("ios_attempts") or 0) + 1
         result = call(cmd, version=version)
         ok = int(getattr(result, "exit_code", 0) or 0) == 0
         state["ios"] = "done" if ok else "failed"
         lines += list(result.render()) if hasattr(result, "render") else []
-        lines.append(f"follow: sm {IOS} {version}: {'done' if ok else 'failed'}")
+        lines.append(f"follow: iOS upload of {version}: {'done' if ok else 'failed'}")
     store.save(FOLLOW_KIND, FOLLOW_KEY, state)
     return Follow(version=version, live=True, ios=str(state["ios"]), exit=0 if state["ios"] != "failed" else 1, lines=lines)
 
