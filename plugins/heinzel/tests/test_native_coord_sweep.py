@@ -116,7 +116,7 @@ def test_inventory_and_summary_do_not_probe_live(tmp_path, monkeypatch, extra):
         pytest.fail("Inventory or summary must not invoke live verification")
 
     monkeypatch.setattr(hs, "verified_live_version", forbidden)
-    done = invoke(app_runtime(tmp_path, world()), ["beads", "sweep", "--all", *extra])
+    done = invoke(app_runtime(tmp_path, world()), ["work", "sweep", "--all", *extra])
     assert done.exit_code == 0 and "bd close" not in done.stdout
     assert ("beads:" if "--summary" in extra else "not live verification") in done.stdout
 
@@ -124,17 +124,17 @@ def test_inventory_and_summary_do_not_probe_live(tmp_path, monkeypatch, extra):
 def test_the_command_in_text_and_json_and_its_refusals(tmp_path):
     c = world()
     rt = app_runtime(tmp_path, c)
-    done = invoke(rt, ["beads", "sweep", "--p0"])
+    done = invoke(rt, ["work", "sweep", "--p0"])
     lines = done.stdout.splitlines()
     assert lines[0] == "CLI inventory 0.9.34 (not live verification); 1 beads" and lines[2].startswith("| bead | P | days |")
     assert lines[4].startswith("| heinzel-management-qqq1 | 0 | ") and "#10 merged/noted in v0.9.30" in lines[4]
     assert ["bd", "list", "--status", "open,in_progress,blocked", "--json", "--limit", "0", "--priority", "0"] in c.calls
-    doc = hs.Sweep.model_validate(json.loads(invoke(rt, ["--format", "json", "beads", "sweep", "--all", "--prs", "10", "--stale-hours", "1"]).stdout))
+    doc = hs.Sweep.model_validate(json.loads(invoke(rt, ["--format", "json", "work", "sweep", "--all", "--prs", "10", "--stale-hours", "1"]).stdout))
     assert doc.rows[0].evidence[0].release == "v0.9.30" and doc.mode == "table"
     assert len([call for call in c.calls if call[:3] == ["gh", "pr", "list"]]) == 1  # the list is kept for ten minutes
-    assert invoke(rt, ["--format", "json", "beads", "sweep", "--all", "--prs", "999"]).stdout.count('"rows": []') == 1
-    assert invoke(rt, ["beads", "sweep"]).exit_code == 2 and invoke(rt, ["beads", "sweep", "--all", "--prs", "x"]).exit_code == 2
-    done = invoke(rt, ["beads", "sweep", "--all", "--propose-close"])  # no live verification on this branch: never a proposal
+    assert invoke(rt, ["--format", "json", "work", "sweep", "--all", "--prs", "999"]).stdout.count('"rows": []') == 1
+    assert invoke(rt, ["work", "sweep"]).exit_code == 2 and invoke(rt, ["work", "sweep", "--all", "--prs", "x"]).exit_code == 2
+    done = invoke(rt, ["work", "sweep", "--all", "--propose-close"])  # no live verification on this branch: never a proposal
     assert done.exit_code == 1 and "bd close" not in done.stdout
 
 

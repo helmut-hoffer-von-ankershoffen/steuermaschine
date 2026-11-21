@@ -34,6 +34,7 @@ from . import WAITING
 from .engine import Refuse, Wait
 from .helpdoc import H
 from .protocols import Providers
+from .surface import Default, Renamed, Surface, Verb  # the visible surface, declared next to Group and Alias
 
 F = TypeVar("F", bound=Callable[..., Any])
 
@@ -184,12 +185,14 @@ def native(path: str, *, help: str, writes: bool = False, tick: bool = False, re
 
 
 def collect(*modules: Any) -> list[Any]:
-    """Every `@native` function and every `Group` object in the given modules."""
+    """Every `@native` function and every `Group`, `Alias` and surface object (or list of renames) in the given modules."""
     out = []
     for module in modules:
         for value in vars(module).values():
-            if isinstance(value, Group | Alias):
+            if isinstance(value, Group | Alias | Surface | Verb | Renamed | Default):
                 out.append(value)
+            elif isinstance(value, list) and value and all(isinstance(v, Renamed | Verb) for v in value):
+                out += value
             elif getattr(value, "__sm_native__", None) is not None and getattr(value, "__module__", None) == module.__name__:
                 out.append(value.__sm_native__)
     return out

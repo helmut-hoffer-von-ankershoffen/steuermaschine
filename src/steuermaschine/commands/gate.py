@@ -125,10 +125,11 @@ GATE = Group("gate", H(
     "30 s or less) and do not queue behind heavy runs. A command that failed on this very tree (HEAD tree plus dirty state) is\n"
     "refused until the tree changes or --force-rerun REASON is given; the history line records tree, caller (SM_CALLER) and failure class.\n"
     "The project's policy may count some commands as light by themselves. A gated command started inside a gated command runs at once.\n"
-    "--exclusive (critical-path pushes, whose pre-push hook runs a timed test session): it queues ahead\n"
-    "of everything, starts only when no heavy command runs, and no other heavy command starts until it ends; never light.\n"
-    "A project's policy may make pushes exclusive by themselves (the push lane), set a start bar (no heavy start at or above\n"
-    "that load) and reserve a slot for the focus head (`sm focus add WORKTREE`; a command run inside it reaches that slot).\n"
+    "A project's policy may have a fast lane: a command without --full takes a fast slot (up to a few at once, fewer under load,\n"
+    "never a load bar, never exclusive) and so does a push. Only --full (a full local run, hidden; the coordinator's call) takes\n"
+    "the heavy lane: the start bar (no heavy start at or above that load), the reserved slot of the focus head (`sm focus add\n"
+    "WORKTREE`) and the push lane. --exclusive (implies --full; a push whose hook runs a timed test session) queues ahead of\n"
+    "everything, starts only when nothing runs, and nothing starts until it ends; never light.\n"
     "--bg starts the command detached and returns at once with a job id: SIGINT and SIGQUIT at their default (a `&` job of\n"
     "`nohup sh -c` has them ignored, and tests that stop children with SIGINT hang), output in a log file, the exit code\n"
     "through `sm gate wait ID`. Never start a test run as `nohup ... &`."))
@@ -140,6 +141,8 @@ def gate_run(command: list[str] = typer.Argument(..., metavar="COMMAND...", help
              hold_exempt: bool = typer.Option(False, "--hold-exempt", help="Start although a hold is set."),
              allow_full: bool = typer.Option(False, "--allow-full", help="Admit what the project's policy refuses unless it never admits it; logged."),
              exclusive: bool = typer.Option(False, "--exclusive", help="Wait for an idle machine and keep it: no other heavy command starts meanwhile."),
+             full: bool = typer.Option(False, "--full", hidden=True, help="A full local run: the heavy lane with its load bar and the push lane; "
+                                                                      "without it the fast lane takes the command at any load."),
              force_rerun: str = typer.Option("", "--force-rerun", metavar="REASON", help="Rerun a command that already failed on this very tree; the reason goes to the history."),
              bg: bool = typer.Option(False, "--bg", help="Start it in the background and return at once: default signals, a log file, `sm gate wait ID` for the exit code."),
              bg_job: str = typer.Option("", "--bg-job", metavar="ID", hidden=True, help="Internal: this process is the background run ID (set by --bg).")) -> GateRun:
@@ -150,14 +153,14 @@ def gate_run(command: list[str] = typer.Argument(..., metavar="COMMAND...", help
     if bg and not bg_job:
         options = [word for flag, value in (("--priority", priority), ("--max-wait", max_wait), ("--timeout", timeout), ("--force-rerun", force_rerun.strip()))
                    if value for word in (flag, str(value))]
-        options += [flag for flag, on in (("--light", light), ("--hold-exempt", hold_exempt), ("--allow-full", allow_full), ("--exclusive", exclusive)) if on]
+        options += [flag for flag, on in (("--light", light), ("--hold-exempt", hold_exempt), ("--allow-full", allow_full), ("--exclusive", exclusive), ("--full", full)) if on]
         job = background.start(background_directory(lock.p), launcher(options, list(command), str(getattr(rt.project, "root", "") or "")), list(command),
                                os.getcwd(), child_environment(), rt.providers.clock, spawn=SPAWN)
         return GateRun(status="started", command=list(command), code=0, job=job.id, pid=job.pid, log=job.log)
     if bg_job:
         background.reset_signals()  # whatever the starter had ignored: the command and its children get the defaults
     request = Request(argv=command, environ=child_environment(), timeout_seconds=timeout, priority=priority, max_wait_seconds=max_wait, light=light,
-                      hold_exempt=hold_exempt, cwd=os.getcwd(), exclusive=exclusive, force_rerun=force_rerun.strip())
+                      hold_exempt=hold_exempt, cwd=os.getcwd(), exclusive=exclusive, full=full, force_rerun=force_rerun.strip())
     if not bg_job:
         return execute(lock, request, rt.say)
     code = background.LOST

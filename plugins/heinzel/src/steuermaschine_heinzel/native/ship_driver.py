@@ -124,25 +124,74 @@ def _summary(worktree: str, report: Report, derived: list[str], pr: int | None, 
                       derived=derived, pr=pr, merged=merged, exit=report.exit_code, lines=lines)
 
 
+def queue_pr(number: str, live: bool, reason: str | None) -> ShipResult:
+    """`sm ship PR`: guard the diff and queue one open PR (the old `sm head ship PR`)."""
+    from . import ship as head
+
+    if not live:
+        raise Refuse(f"queueing PR #{number} writes the merge queue: add --live", f"sm ship {number} --live", code=2)
+    done = head.head_ship(pr=number, reason=reason or None, reviewed_head=None, fix_forward=False, fix_for=[], reviewed=None, dry_run=False)
+    return ShipResult(worktree=number, status=done.verdict, phase=f"PR #{number}: {done.verdict}", pr=int(number), exit=done.exit_code,
+                      next=f"sm why {number}", lines=[*done.lines, *done.errors])
+
+
+def other_repo(rt: Any, worktree: str) -> str | None:
+    """The `owner/name` of the worktree's origin when it is not the core repository, else None (also when unreadable)."""
+    from .release_lib.binding import core_repo
+
+    found = rt.providers.commands.run(["git", "-C", worktree, "remote", "get-url", "origin"], timeout=30)
+    url = str(found.out).strip() if found.rc == 0 else ""
+    name = re.sub(r"\.git$", "", re.sub(r"^.*github\.com[:/]", "", url))
+    return name if name and "/" in name and name.lower() != core_repo().lower() else None
+
+
+def open_elsewhere(rt: Any, worktree: str, repo: str, live: bool, given: dict[str, str]) -> ShipResult:
+    """Another repository: the old `sm head pr` (checks, one push, the PR, the queue entry)."""
+    from pathlib import Path
+
+    from . import ship as head
+
+    title = given.get("title") or ""
+    if not title:
+        found = rt.providers.commands.run(["git", "-C", worktree, "log", "-1", "--format=%s"], timeout=30)
+        title = str(found.out).strip() if found.rc == 0 else ""
+    if not title:
+        raise Refuse("no title: the last commit subject could not be read", f"sm ship {worktree} --set title=\"type(scope): title\"", code=2)
+    done = head.head_pr(bead=given.get("bead") or "none", title=title, body_file=Path(given["body"]) if given.get("body") else None,
+                        reason=given.get("reviewed") or None, worktree=Path(worktree), live=live)
+    number = next((int(m.group(1)) for line in done.lines if (m := re.search(r"PR #(\d+)", line))), None)
+    return ShipResult(worktree=worktree, status=done.verdict, phase=f"{repo}: {done.verdict}", pr=number, exit=done.exit_code,
+                      next=f"sm why {number}" if number else f"sm ship {worktree} --live", lines=[*done.lines, *done.errors])
+
+
 @native("ship", writes=True, help=H(
-    "Take one head from its worktree to a merged PR: `head admit` (local check, push, PR, queue), then wait for the merge.",
+    "Take one change from its worktree to a merged PR: check, push, open the PR, queue it; optionally wait for the merge.",
     "Use when a head is committed in its own worktree and should go out; type it again after every stop.",
-    "what `head admit` writes: state on this machine; with --live also one push, the PR and one queue entry. Waiting only reads.",
+    "state on this machine; with --live also one push, the PR and one queue entry. Waiting only reads.",
     "sm ship ~/Code/heinzel-fix --live --wait 45 --set bead=abc --set title=\"fix(web): short title\"",
     "the NEXT line it prints (a review stop names the digest and the brief); exit 75: the same command again",
+    "WORKTREE of the core repository: the core pipeline below. A worktree of another repository (its origin decides, for\n"
+    "example the plugins repository): checks, one push, the PR and the queue entry, with the title from --set title or the last\n"
+    "commit subject and the bead from --set bead. A PR number instead of a worktree: queue that open PR (with --live; a\n"
+    "flagged PR needs --set reviewed=\"review: FILE\").\n"
     "No packet, no plan slot: Core's CI runs the full matrix on every PR. One blocking stop is kept: a head that changes .github/, the\n"
     "release, publish, PyPI or acceptance scripts, quarantine.toml, the coverage config or a conftest.py stops with the digest of exactly\n"
     "those paths; a different agent records `sm review verdict DIGEST --approve`, then run this again with --approved DIGEST.\n"
     "The diff guard stays too: a flagged PR is queued only with --set reviewed=\"review: FILE\".\n"
     "--wait MINUTES, after the queue step: exit 0 when the PR merged, exit 1 with the reason when it was closed or the queue dropped it,\n"
     "exit 75 when the ceiling is reached (run it again to keep waiting)."))
-def ship(worktree: str = typer.Argument(..., metavar="WORKTREE", help="The clean worktree of the head, on its own work branch."),
+def ship(worktree: str = typer.Argument(..., metavar="WORKTREE", help="The clean worktree of the head, on its own work branch; or an open PR number."),
          live: bool = typer.Option(False, "--live", help="Also run the steps that write outside this machine (push and PR, queue)."),
          approved: str = typer.Option("", "--approved", metavar="SHA256", help="The digest a different agent approved at the protected-path stop."),
          author: str = typer.Option("", "--as", metavar="NAME", help="Who drives this run; the reviewer must be someone else."),
          set_: list[str] | None = typer.Option(None, "--set", metavar="NAME=VALUE", help="An input of `head admit` (remembered)."),
          wait: int | None = typer.Option(None, "--wait", min=1, metavar="MINUTES", help="After the queue step, wait up to MINUTES for the PR to merge.")) -> ShipResult:
     rt = runtime()
+    given = {pair.partition("=")[0]: pair.partition("=")[2] for pair in set_ or []}
+    if worktree.isdigit():
+        return queue_pr(worktree, live, given.get("reviewed"))
+    if (origin := other_repo(rt, worktree)) is not None:
+        return open_elsewhere(rt, worktree, origin, live, given)
     pl = pipeline()
     subject = identify(rt.providers, rt.settings, worktree)
     store = rt.providers.store

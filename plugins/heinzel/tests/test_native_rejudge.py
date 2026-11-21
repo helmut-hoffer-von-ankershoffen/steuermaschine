@@ -247,24 +247,24 @@ def test_sonar_close_apply_ends_with_the_rejudge_and_never_fails_the_closure(tmp
     monkeypatch.setattr(ci_ops, "closures_of", lambda edge, live: ([ci_ops.Closure(issue="K", file="f", rule="r", transition="falsepositive", reason="x", state="closed")], []))
     calls = []
     monkeypatch.setattr(rejudge, "rejudge", lambda pr: calls.append(pr) or rejudge.Rejudge(pr=pr, head=HEAD, ci_run="1", gate_run="2", found_by="x", state="running"))
-    out = invoke(rt, ["ci", "sonar-close", "--pull-request", "803", "--issue", "K", "--apply"])
+    out = invoke(rt, ["review", "sonar", "--pull-request", "803", "--issue", "K", "--apply"])
     assert out.exit_code == 0 and calls == [803] and "re-judge: GATE     PR 803" in out.stdout, out
 
     def refuse(pr):
         raise rejudge.Refuse("Sonar is not clean", "sm head sonar 803")
 
     monkeypatch.setattr(rejudge, "rejudge", refuse)
-    out = invoke(rt, ["ci", "sonar-close", "--pull-request", "803", "--issue", "K", "--apply"])
+    out = invoke(rt, ["review", "sonar", "--pull-request", "803", "--issue", "K", "--apply"])
     assert out.exit_code == 0 and "re-judge: not run: Sonar is not clean" in out.stdout and "re-judge: NEXT sm head sonar 803" in out.stdout
 
     def later(pr):
         raise rejudge.Wait("CI is running")
 
     monkeypatch.setattr(rejudge, "rejudge", later)
-    assert "re-judge: not yet: CI is running" in invoke(rt, ["ci", "sonar-close", "--pull-request", "803", "--issue", "K", "--apply"]).stdout
+    assert "re-judge: not yet: CI is running" in invoke(rt, ["review", "sonar", "--pull-request", "803", "--issue", "K", "--apply"]).stdout
     off = runtime_for(tmp_path, github(), ci_ops_sonar_closures_file=str(tmp_path / "closures.toml"), ci_ops_rejudge_after_close=False)
-    assert "re-judge: off" in invoke(off, ["ci", "sonar-close", "--pull-request", "803", "--issue", "K", "--apply"]).stdout
-    dry = invoke(rt, ["ci", "sonar-close", "--pull-request", "803", "--issue", "K"])
+    assert "re-judge: off" in invoke(off, ["review", "sonar", "--pull-request", "803", "--issue", "K", "--apply"]).stdout
+    dry = invoke(rt, ["review", "sonar", "--pull-request", "803", "--issue", "K"])
     assert "re-judge" not in dry.stdout and asked[-1] == (False, 803) and asked[0] == (True, 803)
 
 
@@ -307,10 +307,10 @@ def test_sonar_close_reports_the_closures_when_the_rejudge_breaks_and_exits_1(tm
         raise KeyError("head")
 
     monkeypatch.setattr(rejudge, "rejudge", broken)
-    out = invoke(rt, ["--format", "json", "ci", "sonar-close", "--pull-request", "803", "--issue", "K", "--apply"])
+    out = invoke(rt, ["--format", "json", "review", "sonar", "--pull-request", "803", "--issue", "K", "--apply"])
     assert out.exit_code == 1, out
     report = ci_ops.SonarClose.model_validate_json(out.stdout)
     assert report.rejudge_failed and [c.state for c in report.closures] == ["closed"]
     assert report.rejudge[0] == "re-judge: FAILED: KeyError: 'head'"
-    text = invoke(rt, ["ci", "sonar-close", "--pull-request", "803", "--issue", "K", "--apply"])
+    text = invoke(rt, ["review", "sonar", "--pull-request", "803", "--issue", "K", "--apply"])
     assert text.exit_code == 1 and "re-judge: FAILED" in text.stdout

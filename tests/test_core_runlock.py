@@ -3,9 +3,10 @@ commands excluding each other) is tested through the command that uses it."""
 
 import fcntl
 import json
+import os
 
 from steuermaschine.protocols import Result
-from steuermaschine.runlock import Policy, Refusal, Request, RunLock, stricter
+from steuermaschine.runlock import PUSH_COMMANDS, Policy, Refusal, Request, RunLock, stricter
 from steuermaschine.testing import FakeClock
 
 
@@ -342,7 +343,6 @@ def test_the_last_slot_is_reserved_for_the_focus_head_and_goes_by_its_own_bar(tm
 
 
 def test_a_push_is_exclusive_by_itself_gets_the_machine_alone_and_waits_for_a_quiet_one(tmp_path):
-    from steuermaschine.runlock import PUSH_COMMANDS
 
     seen = []
 
@@ -415,3 +415,156 @@ def test_status_names_who_holds_who_waits_and_why(tmp_path):
     assert status.busiest == ["pid 200 node 320 %", "pid 400 pytest worker 88 %", "pid 100 idle 12 %"] and "the load is made by: pid 200 node 320 %" in text
     after = rl.status()
     assert after.runs == [] and after.busiest == [] and "(open)" in "\n".join(after.render())  # the record goes with the run; below the bar nobody is named
+
+
+# ---- the fast lane: checks and pushes run beside each other at any load; only --full is heavy, exclusive and under the load bars
+
+def fast(tmp_path, load=5.0, **policy):
+    policy.setdefault("fast_slots", 3)
+    return lock(tmp_path, load=load, **policy)
+
+
+def test_a_fast_check_runs_at_any_load_in_the_fast_lane_with_a_share_of_the_workers(tmp_path):
+    rl, said = fast(tmp_path, load=75.0, start_load=10.0, max_load=40.0)
+    out = rl.run(Request(argv=["pytest", "tests/x.py"], environ={"WORKERS": "32"}, cwd="/w", timeout_seconds=120))
+    assert (out.status, out.lane, out.exit_code) == ("ran", "fast", 0) and "acquired after 0s" in said[0]
+    _argv, env, timeout = rl.commands.ran[0]
+    assert env["WORKERS"] == "8" and timeout == 120 and json.loads((tmp_path / "history.jsonl").read_text())["lane"] == "fast"
+    full = rl.run(Request(argv=["pytest", "tests/x.py"], full=True, max_wait_seconds=6))  # the same load stops a full run
+    assert (full.status, full.exit_code, full.lane) == ("gave_up", 75, "heavy") and "load 75 is at or above 40" in full.reason and "--full" in full.reason
+
+
+def test_a_push_is_exclusive_only_when_it_is_a_full_run(tmp_path):
+    rl, said = fast(tmp_path, exclusive_commands=PUSH_COMMANDS, start_load=10.0)
+    assert rl.run(Request(argv=["git", "push", "origin", "HEAD"])).lane == "fast" and "exclusive" not in said[0]
+    with rl.p.fast_slot_file(0).open("a+") as taken:  # a fast run beside it does not stop another fast push
+        fcntl.flock(taken, fcntl.LOCK_EX)
+        assert rl.run(Request(argv=["git", "push"])).lane == "fast"
+        out = rl.run(Request(argv=["git", "push"], full=True, max_wait_seconds=6))  # a full push waits for the machine to be idle
+        assert out.exit_code == 75 and "waits for the machine to be idle (1 heavy run(s) still going)" in out.reason
+    out = rl.run(Request(argv=["git", "push"], full=True))
+    assert (out.lane, "exclusive: no other heavy run starts" in said[-1]) == ("heavy", True)
+    old, said = lock(tmp_path, exclusive_commands=PUSH_COMMANDS)
+    # a policy without a fast lane keeps the push lane of every push
+    assert old.run(Request(argv=["git", "push"])).lane == "heavy" and "exclusive: no other heavy run starts" in said[0]
+
+
+def test_the_fast_cap_is_three_and_drops_with_the_load_and_the_waiter_is_told_why(tmp_path):
+    held = []
+    try:
+        for n in range(3):
+            handle = tmp_path.joinpath(f"runlock.fast.{n}.lock").open("a+")
+            fcntl.flock(handle, fcntl.LOCK_EX)
+            handle.write(f"{900 + n} /w pytest t{n}.py\n")
+            handle.flush()
+            held.append(handle)
+        rl, said = fast(tmp_path)
+        assert rl.fast_cap() == 3
+        out = rl.run(Request(argv=["pytest", "tests/a.py"], max_wait_seconds=61))
+        assert (out.exit_code, out.lane) == (75, "fast") and "all 3 fast slot(s) are taken" in out.reason and "Nothing ran" in out.reason
+        assert any("Fast checks run up to 3 at once at any load" in line for line in said)
+        status = rl.status()
+        assert (status.fast_slots, status.fast_slots_in_use, status.fast_cap) == (3, 3, 3)
+        assert "fast slots in use 3/3" in "\n".join(status.render())
+        held.pop().close()  # one frees up: the next fast run starts
+        assert rl.run(Request(argv=["pytest", "tests/a.py"], max_wait_seconds=6)).status == "ran"
+    finally:
+        for handle in held:
+            handle.close()
+    for load, cap in ((19.9, 3), (20.0, 2), (39.9, 2), (60.0, 1)):
+        assert fast(tmp_path, load=load)[0].fast_cap() == cap
+    busy, _ = fast(tmp_path, load=60.0)
+    with busy.p.fast_slot_file(0).open("a+") as one:  # at load 60 the cap is one: a second waits
+        fcntl.flock(one, fcntl.LOCK_EX)
+        assert "the cap is 1 of 3 at load 60" in busy.run(Request(argv=["pytest", "tests/a.py"], max_wait_seconds=3)).reason
+
+
+def test_a_fast_run_waits_for_a_full_run_that_holds_the_machine_and_for_a_hold(tmp_path):
+    rl, _ = fast(tmp_path)
+    seen = []
+
+    class Probe(Commands):
+        def passthrough(self, argv, cwd=None, env=None, timeout=None):
+            other, _ = fast(tmp_path)
+            seen.append(other.run(Request(argv=["pytest", "tests/a.py"], max_wait_seconds=3)))
+            return 0
+
+    full, _ = fast(tmp_path, commands=Probe())
+    assert full.run(Request(argv=["pytest", "tests/b.py"], full=True, exclusive=True)).status == "ran"
+    assert seen[0].exit_code == 75 and "a full run (--full, exclusive) holds the machine" in seen[0].reason
+    rl.p.hold.touch()
+    rl.clock.t = rl.p.hold.stat().st_mtime + 5
+    assert "a hold is set" in rl.run(Request(argv=["true"], max_wait_seconds=3)).reason
+    assert rl.run(Request(argv=["true"], hold_exempt=True)).lane == "fast"
+
+
+def test_a_command_inside_a_fast_run_runs_at_once(tmp_path):
+    class Inner(Commands):
+        def passthrough(self, argv, cwd=None, env=None, timeout=None):
+            inner, _ = fast(tmp_path, commands=Commands(), load=75.0)
+            inner.parent_pid = lambda: 4242
+            seen.append(inner.run(Request(argv=["pytest", "tests/b.py"], environ=env, max_wait_seconds=1)))
+            return 0
+
+    seen = []
+    rl, _ = fast(tmp_path, commands=Inner())
+    assert rl.run(Request(argv=["git", "push"])).lane == "fast"
+    assert [(o.status, o.lane) for o in seen] == [("ran", "nested")]
+
+
+def alive_lock(tmp_path, clock=None, load=5.0, **policy):
+    """A lock whose pid is this process's: the markers it writes name a live process."""
+    said = []
+    policy.setdefault("fast_slots", 3)
+    rl = RunLock(Policy(directory=tmp_path, history=tmp_path / "history.jsonl", **policy), Commands(), clock or FakeClock(), load=lambda: load, say=said.append,
+                 pid=os.getpid, parent_pid=lambda: 4000)
+    return rl, said
+
+
+def test_a_waiting_exclusive_run_holds_new_fast_runs_back_so_fast_runs_cannot_starve_it(tmp_path):
+    seen = []
+
+    class Clock(FakeClock):
+        def sleep(self, seconds):  # while the exclusive run waits for the running fast work to end
+            super().sleep(seconds)
+            other, _ = alive_lock(tmp_path, FakeClock())
+            seen.append((len(list(other.p.draining.iterdir())), other.run(Request(argv=["pytest", "tests/a.py"], max_wait_seconds=3)),
+                         other.run(Request(argv=["pytest", "tests/a.py"], max_wait_seconds=3, priority=2))))
+
+    with tmp_path.joinpath("runlock.fast.0.lock").open("a+") as running:  # one fast run is going
+        fcntl.flock(running, fcntl.LOCK_EX)
+        rl, _ = alive_lock(tmp_path, Clock())
+        out = rl.run(Request(argv=["git", "push"], full=True, exclusive=True, max_wait_seconds=6))
+    assert out.exit_code == 75 and "exclusive run waits for the machine to be idle (1 heavy run(s) still going)" in out.reason
+    waiting, normal, urgent = seen[0]
+    assert waiting == 1 and normal.exit_code == 75 and "no new fast check starts before it" in normal.reason  # the writer goes first
+    assert urgent.lane == "fast" and urgent.status == "ran"  # a priority run (the train's) is not held back
+    assert list(rl.p.draining.iterdir()) == [] and rl.run(Request(argv=["true"])).lane == "fast"  # gone with the request: fast runs start again
+
+
+def test_an_exclusive_run_that_waits_for_the_load_does_not_hold_fast_runs_back(tmp_path):
+    seen = []
+
+    class Clock(FakeClock):
+        def sleep(self, seconds):
+            super().sleep(seconds)
+            other, _ = alive_lock(tmp_path, FakeClock(), load=75.0)
+            seen.append(other.run(Request(argv=["pytest", "tests/a.py"], max_wait_seconds=3)))
+
+    rl, _ = alive_lock(tmp_path, Clock(), load=75.0, start_load=10.0)
+    assert "load 75" in rl.run(Request(argv=["git", "push"], full=True, exclusive=True, max_wait_seconds=6)).reason
+    assert seen and all(o.status == "ran" and o.lane == "fast" for o in seen)  # waiting for the load starves nobody
+
+
+def test_a_fast_run_with_a_priority_goes_ahead_of_those_without(tmp_path):
+    rl, _ = alive_lock(tmp_path)
+    rl.p.fast_waiting.mkdir(parents=True, exist_ok=True)
+    (rl.p.fast_waiting / f"2-{os.getppid()}").touch()  # a priority-2 request waits (the train's: --priority 2 --hold-exempt)
+    plain = rl.run(Request(argv=["pytest", "tests/a.py"], max_wait_seconds=3))
+    assert plain.exit_code == 75 and "a fast check with a higher priority goes first" in plain.reason
+    one = rl.run(Request(argv=["pytest", "tests/a.py"], max_wait_seconds=3, priority=1))
+    assert one.exit_code == 75  # priority 1 also waits for priority 2
+    assert rl.run(Request(argv=["pytest", "tests/a.py"], max_wait_seconds=3, priority=2, hold_exempt=True)).status == "ran"
+    (rl.p.fast_waiting / f"2-{os.getppid()}").unlink()
+    assert rl.run(Request(argv=["pytest", "tests/a.py"], max_wait_seconds=3)).status == "ran"
+    assert list(rl.p.fast_waiting.iterdir()) == []  # a request leaves no marker behind

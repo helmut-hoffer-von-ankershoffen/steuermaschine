@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  The sm release follower on the Mac mini. Every 5 minutes it looks at the latest GitHub release of steuermaschine and,
+  when that tag's commit carries the CI review verdict (`Gate review`) and descends from the live one, runs bin/promote
+  for exactly that commit in its own clone (~/Code/steuermaschine-follow, cloned on first run), then restarts the
+  launchd loops that run the stable sm. promote waits up to 30 minutes for running admission and release steps.
+  launchd starts no second run while one is still waiting. Install: copy it to ~/Library/LaunchAgents, replace USER,
+  `launchctl bootstrap gui/$(id -u) PATH`. It must not name the stable sm: the follower never restarts itself.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>io.github.helmut-hoffer-von-ankershoffen.sm-follow</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/python3</string>
+    <string>/Users/USER/Code/steuermaschine-follow/bin/release_ci.py</string>
+    <string>follow</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>/Users/USER/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>HOME</key><string>/Users/USER</string>
+  </dict>
+  <key>StartInterval</key><integer>300</integer>
+  <key>RunAtLoad</key><true/>
+  <key>StandardOutPath</key><string>/Users/USER/Library/Logs/sm-follow.log</string>
+  <key>StandardErrorPath</key><string>/Users/USER/Library/Logs/sm-follow.log</string>
+</dict>
+</plist>

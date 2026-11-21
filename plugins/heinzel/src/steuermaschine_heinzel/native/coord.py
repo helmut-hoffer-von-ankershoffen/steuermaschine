@@ -26,11 +26,11 @@ BEADS = Group("beads", H(
 
 
 @native("note", writes=True, replaces=("hz-note",), help=H(
-    "Append one dated line to the log at the end of the tracking document.",
+    "Append one dated line to the log of the day (research/log/YYYY-MM-DD.md); the tracking document is not touched.",
     "Use after every event another session must know: a merge, a decision, a state reset, a forced step.",
-    "appends one line to the tracking document (setting coord_document); nothing else. Not committed, not pushed.",
+    "appends one line to the log file of the day (setting coord_log_dir); nothing else. Not committed, not pushed.",
     'sm note "0.9.40 candidate dropped: web-2 e2e failed, PR 794 closed"',
-    "sm doc handoff   (commits and pushes the document)",
+    "sm status --write --live   (renders the state into the tracking document and pushes the handoff)",
     "Safe when several agents write at once. Spaces and line breaks in the text are squeezed to single spaces."))
 def note(text: list[str] = typer.Argument(..., metavar="TEXT", help="What happened, and the PR or file it concerns.")) -> journal.Noted:
     try:

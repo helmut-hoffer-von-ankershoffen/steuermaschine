@@ -78,6 +78,11 @@ class Specs:
         state directory). `sm self migrate-state` moves them in one pass; nothing moves at run time."""
 
     @hookspec
+    def sm_journal_migrate(self, providers: Any, settings: Any) -> list[str]:
+        """Bring the plugin's own state into the subject journals (`steuermaschine.subjects`); one line per change.
+        `sm self migrate-state` calls it after the moves, under the writers' lock."""
+
+    @hookspec
     def sm_alarms(self, providers: Any, settings: Any) -> list[Any]:
         """Read-only. `plugins.Alarm`s that hold now."""
 

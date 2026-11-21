@@ -232,5 +232,7 @@ class NoAdmission:
 
 def core_providers(home: Path, base_ref: str = "origin/main") -> Providers:
     commands = Subprocess()
-    return Providers(clock=SystemClock(), store=FileStore(home), notifier=StderrNotifier(), agents=BriefFiles(home / "briefs"),
+    from .subjects import JournalStore  # pipeline runs live in their subject journals
+
+    return Providers(clock=SystemClock(), store=JournalStore(home), notifier=StderrNotifier(), agents=BriefFiles(home / "briefs"),
                      vcs=GitVcs(commands, base_ref), commands=commands, admission=NoAdmission())

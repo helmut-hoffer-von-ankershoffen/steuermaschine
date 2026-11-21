@@ -3,6 +3,7 @@ the former note and stamp tests moved here; processes are the fakes' (no bd, no 
 
 import json
 import re
+import time
 
 import pytest
 from coord_kit import NOW, app_runtime, home, native_runtime, ok  # noqa: F401  (fixtures)
@@ -14,17 +15,21 @@ from steuermaschine_heinzel.native.coord_lib import journal as s
 from steuermaschine_heinzel.native.coord_lib.journal import note, stamp
 
 
-# ----------------------------------------------------------------------------- note
-def test_note_appends_one_dated_line_with_squeezed_spaces(tmp_path):
+# ----------------------------------------------------------------------------- note: the log of the day, never the tracking document
+def log_of(tmp_path):
+    files = sorted((tmp_path / "research" / "log").glob("*.md"))
+    assert len(files) == 1, files
+    return files[0]
+
+
+def test_note_appends_one_dated_line_with_squeezed_spaces_to_the_log_of_the_day(tmp_path):
     (tmp_path / "AGENTS.md").write_text("## 8. Log\n")
     rt = app_runtime(tmp_path)
     assert invoke(rt, ["note", "first   line", "of text"]).stdout == "noted\n"
     invoke(rt, ["note", "second"])
-    lines = (tmp_path / "AGENTS.md").read_text().splitlines()
-    assert lines[0] == "## 8. Log"
-    assert lines[1].endswith(" first line of text") and lines[1].startswith("- ")
-    assert re.fullmatch(r"- \d\d-\d\d \d\d:\d\d first line of text", lines[1])
-    assert lines[2].endswith(" second")
+    lines = log_of(tmp_path).read_text().splitlines()
+    assert re.fullmatch(r"- \d\d-\d\d \d\d:\d\d first line of text", lines[0]) and lines[1].endswith(" second")
+    assert (tmp_path / "AGENTS.md").read_text() == "## 8. Log\n"  # only `sm status --write` writes the tracking document
 
 
 def test_note_without_text_fails_with_usage(tmp_path):
@@ -32,29 +37,36 @@ def test_note_without_text_fails_with_usage(tmp_path):
     assert invoke(rt, ["note"]).exit_code == 2
     done = invoke(rt, ["note", "   "])
     assert done.exit_code == 2 and "sm note" in done.stderr
-    assert not (tmp_path / "AGENTS.md").exists()
+    assert not (tmp_path / "research").exists()
 
 
 def test_note_json_is_one_document_of_the_model(tmp_path):
     done = invoke(app_runtime(tmp_path), ["--format", "json", "note", "a", "b"])
     doc = s.Noted.model_validate(json.loads(done.stdout))
-    assert doc.line.endswith(" a b") and doc.document == str(tmp_path / "AGENTS.md")
+    assert doc.line.endswith(" a b") and doc.document == str(log_of(tmp_path))
 
 
 def test_the_function_note_writes_the_same_line_format_and_returns_it(tmp_path):
     with using(native_runtime(tmp_path)):
         got = note("queue: #12   merged")
     assert got.line == core_journal.line_of("queue: #12 merged", NOW)
-    assert (tmp_path / "AGENTS.md").read_text() == got.line + "\n"
+    assert log_of(tmp_path).read_text() == got.line + "\n" and log_of(tmp_path).name == time.strftime("%Y-%m-%d.md", time.localtime(NOW))
     with using(native_runtime(tmp_path)), pytest.raises(ValueError):
         note(" ")
 
 
-def test_a_document_without_a_final_newline_gets_one_before_the_line(tmp_path):
-    (tmp_path / "AGENTS.md").write_text("## 8. Log\n- old line")
-    with using(native_runtime(tmp_path)):
+def test_a_log_without_a_final_newline_gets_one_before_the_line(tmp_path):
+    folder = tmp_path / "logs"
+    folder.mkdir()
+    (folder / time.strftime("%Y-%m-%d.md", time.localtime(NOW))).write_text("- old line")
+    with using(native_runtime(tmp_path, coord_log_dir=str(folder))):
         note("new")
-    assert (tmp_path / "AGENTS.md").read_text().splitlines()[1:] == ["- old line", core_journal.line_of("new", NOW)]
+    assert next(folder.glob("*.md")).read_text().splitlines() == ["- old line", core_journal.line_of("new", NOW)]
+
+
+def test_without_a_tracker_note_refuses_as_a_usage_error(tmp_path):
+    done = invoke(app_runtime(tmp_path, coord_document=None, coord_tracker_dir=None), ["note", "x"])
+    assert done.exit_code == 2 and "coord_document" in done.stderr and not (tmp_path / "research").exists()
 
 
 def test_the_journal_lock_file_defaults_next_to_the_document(tmp_path):
@@ -208,11 +220,6 @@ def test_beads_stamp_released_command_in_text_and_json(tmp_path):
 
 
 # ----------------------------------------------------------------------------- configuration
-def test_without_a_configured_document_note_refuses_as_a_usage_error(tmp_path):
-    done = invoke(app_runtime(tmp_path, coord_document=None), ["note", "x"])
-    assert done.exit_code == 2 and "coord_document" in done.stderr and list(tmp_path.iterdir()) == []
-
-
 def test_lock_and_tracker_default_to_the_document_and_its_directory(tmp_path):
     from steuermaschine_heinzel.native.coord_lib import base
 

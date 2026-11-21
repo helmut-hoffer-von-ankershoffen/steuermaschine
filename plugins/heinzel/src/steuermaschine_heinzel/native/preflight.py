@@ -168,14 +168,15 @@ class Captured:
         return int(done.rc)
 
 
-def gated(allow_full: bool = False) -> Shell:
-    """One heavy command through the run lock, as (exit code, output). 75: no slot; 2: the lock refuses the command."""
+def gated(allow_full: bool = False, full: bool = True, timeout: int | None = None) -> Shell:
+    """One heavy command through the run lock, as (exit code, output). 75: no slot; 2: the lock refuses the command.
+    `full` False: a fast check (the fast lane: any load, never exclusive), stopped after `timeout` seconds (exit 124)."""
 
     def gate(cmd: Sequence[object], cwd: object = None, env: dict[str, str] | None = None) -> tuple[int, str]:
         gate_lock = lock_of(allow_full)
         runner = Captured(gate_lock.commands, str(cwd) if cwd else None)
         gate_lock.commands = runner
-        outcome = gate_lock.run(Request(argv=[str(word) for word in cmd], environ=child_environment() | (env or {}), cwd=str(cwd or "")))
+        outcome = gate_lock.run(Request(argv=[str(word) for word in cmd], environ=child_environment() | (env or {}), cwd=str(cwd or ""), full=full, timeout_seconds=timeout))
         if outcome.status != "ran":
             return outcome.exit_code, f"sm gate: {'refusing: ' if outcome.status == 'refused' else ''}{outcome.reason}"
         return outcome.exit_code, runner.output
@@ -221,12 +222,12 @@ def texts_check(rt: NativeRuntime, worktree: Path, *, title: str, body: str = ""
         raise Refuse(f"title and body were not checked, nothing may be published: {why}", "sm self config") from None
 
 
-def bound(rt: NativeRuntime, worktree: Path, allow_full: bool = False) -> head.Ctx:
+def bound(rt: NativeRuntime, worktree: Path, allow_full: bool = False, full: bool = True, timeout: int | None = None) -> head.Ctx:
     """The context of one preflight: the moved checks, bound to this call's providers and settings."""
     providers: Any = rt.providers
     repo, base = str(rt.settings.get("repo") or ""), str(setting(rt, "preflight_base"))
     head.bind(base)
-    sh, gate, gh = shell(providers.commands), gated(allow_full), Gh(providers.commands, repo=repo, clock=providers.clock)
+    sh, gate, gh = shell(providers.commands), gated(allow_full, full, timeout), Gh(providers.commands, repo=repo, clock=providers.clock)
 
     def read(args: list[str]) -> tuple[int, str]:
         done = gh.run(args)

@@ -99,7 +99,7 @@ def _through_tail(rel, monkeypatch, good: bool):
         if name == "tag":
             tagged["v"] = True
     monkeypatch.setattr(rel, "step", fake_step)
-    for name in ("pypi_step", "compose_step"):
+    for name in ("compose_beside_pypi", "pypi_step", "compose_step"):
         monkeypatch.setattr(rel, name, lambda *a: None)
     monkeypatch.setattr(rel, "acceptance_step", lambda *a: 7)
     monkeypatch.setattr(rel, "verdict", lambda run: (good, []))

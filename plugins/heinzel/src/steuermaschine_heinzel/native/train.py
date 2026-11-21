@@ -39,6 +39,7 @@ from steuermaschine.plugins import old_variable
 from steuermaschine.protocols import Busy
 
 from .. import environment
+from .journal_view import mirrored
 from .queue_lib import edge as base
 from .queue_lib import hzlib
 from .train_lib import edge, legacy, resume_ci
@@ -176,6 +177,7 @@ class TrainTick(Model):
     "`sm release resume X --live`, then `sm mini update --minimum X` every tick until the Mini proves it.\n"
     "--run X.Y.Z is the detached runner of one release (started by the tick; it takes that version's lock itself).\n"
     "Exit 0: done or nothing to do. 1: a step failed, the next tick resumes. 3: blocked or refused."))
+@mirrored  # it runs a program that writes the working files: the subject journals follow (journal_view.py)
 def daemon_train(dry_run: bool = typer.Option(False, "--dry-run", help="Say what the tick would do; start and write nothing."),
                  now: bool = typer.Option(False, "--now", help="Cut in this tick even with auto-cut off; skips the cadence floor. Every other condition still holds."),
                  run_version: str | None = typer.Option(None, "--run", metavar="X.Y.Z", help="Run one release under its own lock (what the tick starts detached).")) -> TrainTick:

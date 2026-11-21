@@ -28,6 +28,7 @@ from steuermaschine.plugins import old_variable
 
 from .. import environment
 from . import queue_hold
+from .journal_view import mirrored
 from .queue_lib import edge, main_plan
 
 GROUP = Group("queue", H(
@@ -283,9 +284,10 @@ def _changed(action: str, argv: list[str], prs: list[str], after: list[str] | No
     "adds entries to the queue's state file; with --reviewed it also writes a note. No merge happens here.",
     "sm queue add --reviewed \"review: research/review-pr801.md\" --reviewed-head e9c943810ea75cfad155a431a2f168b2a9559828 801",
     "sm queue list"))
+@mirrored  # it runs a program that writes the working files: the subject journals follow (journal_view.py)
 def queue_add(
     pr: list[str] = typer.Argument(..., metavar="PR...", help="PR numbers; `plugins 38` names a PR of another repository."),
-    after: list[str] = typer.Option([], "--after", metavar="PR", help="Merge only after this PR merged (repeatable)."),
+    after: list[str] = typer.Option([], "--after", metavar="PR[,PR...]", help="Merge only after this PR merged (repeatable)."),
     bead: str | None = typer.Option(None, "--bead", help="The bead this PR closes; recorded at the merge."),
     reviewed: str | None = typer.Option(None, "--reviewed", metavar="REASON", help="Queue a PR the diff guard flagged; the reason of the independent review."),
     reviewed_head: str | None = typer.Option(None, "--reviewed-head", metavar="SHA", help="Pin one core PR to its independently reviewed full SHA; needs --reviewed."),
@@ -327,6 +329,7 @@ def queue_add(
     "Use when a queued PR must not merge (wrong head, superseded).",
     "removes entries from the queue's state file; the PR itself is untouched.",
     "sm queue drop 795", "sm queue list"))
+@mirrored  # it runs a program that writes the working files: the subject journals follow (journal_view.py)
 def queue_drop(pr: list[str] = typer.Argument(..., metavar="PR...", help="PR numbers; `plugins 38` names a PR of another repository.")) -> QueueChanged:
     return _changed("drop", ["drop", *pr], list(pr))
 
@@ -427,6 +430,7 @@ def _program_words() -> int:
     "merges ready PRs onto protected main, may rerun main's KNOWN failed jobs once, writes queue state, log, notes, alarms; "
     "with the merge tier at main starts `sm queue main-proof` detached, once per green main commit (posts hz/main-proof).",
     "sm daemon queue --loop 1 --interval 300", "sm queue why"))
+@mirrored  # it runs a program that writes the working files: the subject journals follow (journal_view.py)
 def daemon_queue(
     interval: float = typer.Option(300.0, "--interval", metavar="SECONDS", help="Seconds between two ticks when nothing local changed."),
 ) -> QueueTick | None:

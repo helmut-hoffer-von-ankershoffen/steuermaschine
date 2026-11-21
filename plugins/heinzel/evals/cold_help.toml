@@ -1,0 +1,104 @@
+# Cold-help eval (HANDOVER A3): a model sees only `sm -h` and may call `sm X -h`; for each task in plain words it must
+# name the expected command. Pass: 18 of 20 correct within two help calls each. A model run comes later; today
+# plugins/heinzel/tests/test_native_surface.py checks that every expected command exists and is visible.
+# `expect` is the command path (without arguments); `example` is one full command line that must parse.
+
+[[case]]
+task = "my fix is ready, what do I run first"
+expect = "check"
+example = "sm check ~/Code/heinzel-fix"
+
+[[case]]
+task = "my fix is ready and checked, get it merged"
+expect = "ship"
+example = "sm ship ~/Code/heinzel-fix --live"
+
+[[case]]
+task = "why is PR 890 not merged"
+expect = "why"
+example = "sm why 890"
+
+[[case]]
+task = "what is live on the Mini"
+expect = "mini verify"
+example = "sm mini verify"
+
+[[case]]
+task = "close a Sonar false positive on PR 485"
+expect = "review sonar"
+example = "sm review sonar 485 --issue AZexample1"
+
+[[case]]
+task = "I just started, what should I do"
+expect = ""
+example = "sm"
+
+[[case]]
+task = "cut the next release"
+expect = "release"
+example = "sm release patch"
+
+[[case]]
+task = "release the audio plugin"
+expect = "release plugin"
+example = "sm release plugin audio"
+
+[[case]]
+task = "why did CI run 44934734258 fail"
+expect = "why"
+example = "sm why 44934734258"
+
+[[case]]
+task = "where does release 0.9.54 stand"
+expect = "why"
+example = "sm why 0.9.54"
+
+[[case]]
+task = "is main green"
+expect = "why"
+example = "sm why main"
+
+[[case]]
+task = "write the hourly update for the owner"
+expect = "status"
+example = "sm status --write"
+
+[[case]]
+task = "list every open pull request with its owner"
+expect = "status"
+example = "sm status"
+
+[[case]]
+task = "the owner asked for something new, record it"
+expect = "work add"
+example = "sm work add \"Logo is cut off on phones\""
+
+[[case]]
+task = "add a finding to bead lb7p"
+expect = "work note"
+example = "sm work note lb7p \"root cause found\""
+
+[[case]]
+task = "close bead lb7p, it is verified live"
+expect = "work done"
+example = "sm work done lb7p \"live in 0.9.54\""
+
+[[case]]
+task = "start a builder on the next bead"
+expect = "work brief"
+example = "sm work brief --help"
+
+[[case]]
+task = "is anything on fire right now"
+expect = "alarm list"
+example = "sm alarm list --check"
+
+[[case]]
+task = "log that the candidate was dropped"
+expect = "note"
+example = "sm note \"0.9.54 candidate dropped: web-2 failed\""
+
+[[case]]
+task = "approve the digest the reviewer brief names"
+expect = "review verdict"
+example = "sm review verdict --help"

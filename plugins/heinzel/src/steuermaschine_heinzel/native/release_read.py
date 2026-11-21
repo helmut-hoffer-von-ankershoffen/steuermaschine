@@ -289,7 +289,7 @@ SURFACES = ("pypi", "release", "app")
     "Prints PASS or FAIL per line; exit 1 on any FAIL. Without --surface the checks are pypi, release (vX.Y.Z in the core\n"
     "repository) and app (app-vX.Y.Z in the plugins repository). --mini adds the read-only check of the live service."))
 def release_verify(version: str | None = typer.Argument(None, metavar="[VERSION]", help="X.Y.Z; not needed for --site or --mini alone."),
-                   surface: list[str] = typer.Option([], "--surface", metavar="pypi|release|app", help="Check only these surfaces (repeatable)."),
+                   surface: list[str] = typer.Option([], "--surface", metavar="pypi|release|app[,...]", help="Check only these surfaces (repeatable)."),
                    package: str = typer.Option("heinzel", "--package", help="The PyPI project."),
                    homepage: str = typer.Option("", "--homepage", metavar="HOST", help="The PyPI project links must mention this host."),
                    latest: bool = typer.Option(False, "--latest", help="The app release must be the latest release of its repository."),
