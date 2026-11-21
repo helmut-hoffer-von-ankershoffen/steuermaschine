@@ -176,3 +176,40 @@ def test_real_runtime_probe_is_one_exact_post(tmp_path, monkeypatch):
     assert calls == [('gh', 'api', '-X', 'POST', 'repos/o/r/actions/runs/7/cancel')]
 
 
+
+
+def test_generator_excludes_run_changed_after_inventory(stuck):
+    rt, _, _, run, _ = stuck
+    original = rt.api
+    rt.api = lambda path: dict(run, head_sha='6' * 40) if path.endswith(f'/runs/{run["id"]}') else original(path)
+    output, excluded = s.stuck_queued_receipts(rt, set())
+    assert output['receipts'] == []
+    assert excluded == [{'id': run['id'], 'reason': 'active run changed during exact authentication'}]
+
+
+def test_generator_refuses_missing_run(stuck):
+    rt, _, _, run, _ = stuck
+    original = rt.api
+
+    def api(path):
+        if path.endswith(f'/runs/{run["id"]}'):
+            raise a.AdmissionError('run missing')
+        return original(path)
+
+    rt.api = api
+    with pytest.raises(a.AdmissionError, match='run missing'):
+        s.stuck_queued_receipts(rt, set())
+
+
+def test_the_nonconsumers_command_renders_the_receipts_for_review(monkeypatch, tmp_path):
+    from steuermaschine_heinzel.native import admission
+    from steuermaschine_heinzel.native.admission_lib import ops
+
+    found = ops.NonconsumerResult(receipts=[{"run": 7}], excluded=[{"id": 8, "reason": "touched"}])
+    monkeypatch.setattr(ops, "nonconsumer_receipts", lambda core: found)
+    assert admission.head_nonconsumers(core_repo=tmp_path) is found
+    assert '"run": 7' in found.render()[0] and "Independent review required" in found.render()[1]
+    monkeypatch.setattr(ops, "nonconsumer_receipts", lambda core: (_ for _ in ()).throw(a.AdmissionError("unreadable")))
+    from steuermaschine.engine import Refuse
+    with pytest.raises(Refuse, match="unreadable"):
+        admission.head_nonconsumers(core_repo=tmp_path)

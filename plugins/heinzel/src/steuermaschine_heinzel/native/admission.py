@@ -60,3 +60,18 @@ def head_hash(prepared: Path = typer.Argument(..., metavar="PREPARED", help="The
         return ops.hash_file(prepared)
     except ERRORS as error:
         _refuse(error)
+
+
+@native("head nonconsumers", writes=False, help=H(
+    "Generate candidate stuck-queued receipts for the current active run inventory.",
+    "Use when active runs block admission; independently review the JSON before using it.",
+    "nothing (read-only); no cancel probe is sent.",
+    "sm head nonconsumers --core-repo WORKTREE --format json",
+    "Review the receipts, then pass the JSON file to sm release admit prepare --nonconsumers FILE (or release cut --set nonconsumers=FILE)."))
+def head_nonconsumers(
+    core_repo: Path = typer.Option(..., "--core-repo", help="The owned Core checkout."),
+) -> ops.NonconsumerResult:
+    try:
+        return ops.nonconsumer_receipts(core_repo)
+    except ERRORS as error:
+        _refuse(error)

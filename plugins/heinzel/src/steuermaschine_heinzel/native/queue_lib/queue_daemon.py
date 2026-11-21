@@ -1120,7 +1120,7 @@ def record_merge(item: dict) -> None:
 
 def plan_guard(item: dict, earlier, refusal: list[str]):
     """The last check before a core merge: an earlier guard, then the main plan check of exactly this head on current
-    main (main_plan.gap). A refusal leaves its reason in `refusal`; train sees only False."""
+    the merge rule (main_plan.gap). A refusal leaves its reason in `refusal`; train sees only False."""
     def guard() -> bool:
         if earlier is not None and not earlier():
             return False
@@ -1231,7 +1231,7 @@ def tick(now: float | None = None) -> None:
         if item.get("reviewed_progress_main"):
             head_guard["pre_merge_guard"] = lambda item=item: progress_anchor_unchanged(item.get("progress_anchor"))
         plan_refusal: list[str] = []
-        if item["repo"] == hzlib.CORE:  # bead q9kh: never merge onto a main whose resulting tree has no focused plan
+        if item["repo"] == hzlib.CORE:  # the merge rule: checks green on the pinned head, main an ancestor of it, a verdict for protected paths
             head_guard["pre_merge_guard"] = plan_guard(item, head_guard.get("pre_merge_guard"), plan_refusal)
         merged, detail = merge.train(item["repo"], item["pr"], queue_core=item["repo"] == hzlib.CORE, **head_guard)
         if not merged and plan_refusal:
@@ -1559,10 +1559,6 @@ def add(args) -> int:
                 print(f"refused {key}: " + "; ".join(notes) + " (not bypassable by --reviewed; fix the PR body)", file=sys.stderr)
                 refused += 1
                 continue
-        if repo == hzlib.CORE and (reason := main_plan.gap(number, guarded_head)):  # the head this row pins, not a live read
-            print(f"refused {key}: {reason}", file=sys.stderr)
-            refused += 1
-            continue
         reviewed_head = ""
         if expected_head:
             reviewed_head = guarded_head

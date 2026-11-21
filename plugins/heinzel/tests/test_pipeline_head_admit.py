@@ -183,7 +183,8 @@ class DiffCommands(FakeGh):
 
 
 @pytest.mark.parametrize("path", [".github/workflows/ci.yml", "scripts/release.sh", "scripts/publish_pypi.py", "scripts/acceptance_run.py",
-                                  "quarantine.toml", "conftest.py", "tests/conftest.py", ".coveragerc"])
+                                  "quarantine.toml", "conftest.py", "tests/conftest.py", ".coveragerc", "Makefile", "uv.lock", ".pre-commit-config.yaml",
+                                  "sonar-project.properties", "scripts/merge_gate.py"])
 def test_a_protected_path_stops_for_a_digest_of_exactly_these_paths(tmp_path, path):
     rt = runtime(tmp_path, DiffCommands(["src/a.py", path]))
     ctx = context(rt, tmp_path / "wt")

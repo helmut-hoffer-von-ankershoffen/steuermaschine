@@ -15,10 +15,6 @@ reimplements one. The state is kept per head (the exact SHA); a new head is a ne
 
 from __future__ import annotations
 
-import fnmatch
-import hashlib
-import json
-import tomllib
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +24,7 @@ from steuermaschine.github import Gh
 from steuermaschine.native import unit
 
 from .. import state as statedir
+from ..native import protected
 from .common import need, ok, run
 
 VERB = "admit"
@@ -72,35 +69,9 @@ def check(ctx: Ctx) -> str:
 
 
 # ----------------------------------------------------------------------------- the blocking review of protected paths
-PROTECTED = (".github/*", "release.sh", "*/release.sh", "scripts/*release*", "scripts/*publish*", "scripts/*pypi*", "scripts/*acceptance*",
-             "quarantine.toml", "*/quarantine.toml", "conftest.py", "*/conftest.py", ".coveragerc", "*/.coveragerc", "scripts/*coverage*")
-
-
-TOOL_TABLES = ("coverage", "pytest")  # the coverage config and the pytest options: they can lower a floor, deselect tests or raise a timeout
-
-
-def _tables_at(ctx: Ctx, wt: str, rev: str) -> dict[str, Any]:
-    """The `tool.coverage` and `tool.pytest` tables of pyproject.toml at REV; ValueError when it cannot be read or parsed."""
-    done = ctx.providers.commands.run(["git", "-C", wt, "show", f"{rev}:pyproject.toml"], timeout=120)
-    if done.rc != 0:
-        raise ValueError(f"cannot read pyproject.toml at {rev}")
-    try:
-        tool = tomllib.loads(str(done.out)).get("tool", {})
-    except tomllib.TOMLDecodeError as exc:
-        raise ValueError(f"pyproject.toml at {rev} is not valid TOML: {exc}") from None
-    return {name: tool.get(name) for name in TOOL_TABLES}
-
-
-def _pyproject_weakens(ctx: Ctx, wt: str) -> bool:
-    """True when pyproject.toml changed in `tool.coverage` or `tool.pytest`, or when either side cannot be read or parsed
-    (fail closed). A dependency or version change alone is not protected."""
-    base = ctx.providers.commands.run(["git", "-C", wt, "merge-base", "origin/main", "HEAD"], timeout=120)
-    if base.rc != 0:
-        return True
-    try:
-        return _tables_at(ctx, wt, str(base.out).strip()) != _tables_at(ctx, wt, "HEAD")
-    except ValueError:
-        return True
+def _text_at(ctx: Ctx, wt: str, rev: str, path: str) -> str | None:
+    done = ctx.providers.commands.run(["git", "-C", wt, "show", f"{rev}:{path}"], timeout=120)
+    return str(done.out) if done.rc == 0 else None
 
 
 def protected_changes(ctx: Ctx) -> list[str]:
@@ -110,9 +81,11 @@ def protected_changes(ctx: Ctx) -> list[str]:
     if done.rc != 0:
         raise Refuse(f"cannot read the changed paths of {wt} against origin/main: {(done.err or done.out).strip()[:200]}", f"git -C {wt} fetch origin main")
     names = [n for n in str(done.out).split("\0") if n]
-    found = {n for n in names if any(fnmatch.fnmatchcase(n, pat) for pat in PROTECTED)}
-    if "pyproject.toml" in names and _pyproject_weakens(ctx, wt):
-        found.add("pyproject.toml")
+    found = protected.matches(names, protected.execution_inputs(_text_at(ctx, wt, "origin/main", "scripts/focused_plan.py")))
+    if "pyproject.toml" in names:
+        base = ctx.providers.commands.run(["git", "-C", wt, "merge-base", "origin/main", "HEAD"], timeout=120)
+        if base.rc != 0 or protected.pyproject_weakens(_text_at(ctx, wt, str(base.out).strip(), "pyproject.toml"), _text_at(ctx, wt, "HEAD", "pyproject.toml")):
+            found.add("pyproject.toml")
     return sorted(found)
 
 
@@ -121,8 +94,7 @@ def protected_review(ctx: Ctx) -> tuple[str, str, str]:
     if not changed:
         return "", "", ""  # nothing protected: no stop
     head, wt = ctx.subject.key, ctx.subject.facts["worktree"]
-    record = json.dumps({"head": head, "protected": changed}, indent=1, sort_keys=True) + "\n"
-    digest = hashlib.sha256(record.encode()).hexdigest()
+    digest, record = protected.record(head, changed)
     command = f"sm check {wt}"
     need_check(ctx.providers.store, digest, head, command)
     path = statedir.path(f"ship/protected/{head[:12]}.json")

@@ -212,6 +212,11 @@ def train(repo: str, pr: str, ignore_freeze: bool = False, queue_core: bool = Fa
         if status == "BEHIND" and not queue_core:
             update(repo, pr)
             continue
+        if status == "BEHIND" and not bad:  # a Core head behind main was not tested as the tree that merges: update it, CI runs again, requeue
+            update(repo, pr)
+            detail = "behind main: the branch was updated; its CI runs again, requeue once it is green"
+            print(f"#{pr} NOT merged, {detail}", flush=True)
+            return False, detail
         if status == "UNKNOWN":  # GitHub is still computing it after another merge
             time.sleep(60)
             continue
@@ -219,7 +224,7 @@ def train(repo: str, pr: str, ignore_freeze: bool = False, queue_core: bool = Fa
         absent = hzlib.tool_required_checks(repo) - passed
         if absent:
             print(f"#{pr} required by the tools, not passed: {', '.join(sorted(absent))}", flush=True)
-        elif (status in ("CLEAN", "UNSTABLE") or (queue_core and status == "BEHIND")) and not bad:
+        elif status in ("CLEAN", "UNSTABLE") and not bad:
             frozen_polls = 0
             while repo == CORE and not ignore_freeze and hzlib.merge_frozen(FREEZE):  # main's CI must finish before a release
                 frozen_polls += 1

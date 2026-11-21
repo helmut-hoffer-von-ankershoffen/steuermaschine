@@ -155,10 +155,11 @@ def test_train_merges_a_clean_pr_after_waiting_and_updating(monkeypatch):
     assert 45 in s.sleeps and 60 in s.sleeps
 
 
-def test_train_queue_core_does_not_update_and_merges_behind(monkeypatch):
+def test_train_queue_core_updates_a_behind_head_and_never_merges_it(monkeypatch):
     s = Script(monkeypatch, [open_pr(), {"statusCheckRollup": [OK]}, open_pr(mergeStateStatus="BEHIND")])
-    assert mt.train(mt.CORE, "1", queue_core=True) == (True, HEAD[:8])
-    assert not any(c[:2] == ("pr", "update-branch") for c in s.calls)
+    merged, detail = mt.train(mt.CORE, "1", queue_core=True)
+    assert merged is False and detail.startswith("behind main: the branch was updated") and not s.merged
+    assert any(c[:2] == ("pr", "update-branch") for c in s.calls)
 
 
 def test_train_queue_core_retries_when_checks_unsettled_then_gives_up(monkeypatch):

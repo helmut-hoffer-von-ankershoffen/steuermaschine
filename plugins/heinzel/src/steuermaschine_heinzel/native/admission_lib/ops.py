@@ -13,6 +13,7 @@ Nothing here writes outside this machine except `apply`, through `focused_slots.
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 from typing import Any
 
@@ -54,6 +55,15 @@ class BlockingRun(_Model):
 
 
 
+
+
+class NonconsumerResult(_Model):
+    receipts: list[dict[str, Any]]
+    excluded: list[dict[str, Any]]
+
+    def render(self) -> list[str]:
+        return [json.dumps(self.model_dump(), indent=1, sort_keys=True),
+                "Independent review required; prepare and apply revalidate these receipts."]
 
 
 class ApplyResult(_Model):
@@ -119,11 +129,7 @@ def stored_args(packet: Path) -> dict[str, Any]:
 # ----------------------------------------------------------------------------- batch: many reviewed pairs, one transaction
 
 
-
-
-
-
-
-
-
-
+def nonconsumer_receipts(core_repo: Path, *, runtime: Any = None) -> NonconsumerResult:
+    rt = runtime or s.Runtime(core_repo)
+    output, excluded = s.stuck_queued_receipts(rt, set())
+    return NonconsumerResult(receipts=output["receipts"], excluded=excluded)
