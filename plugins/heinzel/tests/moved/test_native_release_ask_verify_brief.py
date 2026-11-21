@@ -438,4 +438,4 @@ def test_merge_guard_refuses_when_main_moved_and_never_reads_the_candidate(rel, 
     monkeypatch.setattr(rel.release_candidate_policy, "verify_pr", lambda *a: pytest.fail("evidence read after a moved main"))
     with pytest.raises(rel.Stop, match="not merged"):
         rel.merge_release_pr("v0.9.12")
-    assert rel.world.pr["state"] != "MERGED"
+    assert "v0.9.12" not in rel.world.tags

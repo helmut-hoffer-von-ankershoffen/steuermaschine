@@ -71,6 +71,7 @@ from . import hzlib  # noqa: E402
 from . import known_main_infra  # noqa: E402
 from . import main_batch  # noqa: E402
 from . import main_checkpoint  # noqa: E402
+from . import main_lanes  # noqa: E402
 from . import release_candidate as rc  # noqa: E402
 from . import core_facts  # noqa: E402
 from . import main_plan  # noqa: E402
@@ -452,9 +453,11 @@ def main_state() -> str:
     runs = hzlib.resolve_main_runs(runs)
     if not isinstance(runs, list) or not runs:
         return "unknown"
-    if any(row.get("batch_unknown") for row in runs) or not all(valid_main_run(row) for row in runs):
+    runs, lane_runs = main_lanes.split_runs(runs)  # push runs judge main as ever; the macOS lane is read beside them
+    if any(row.get("batch_unknown") for row in runs) or not all(valid_main_run(row) for row in [*runs, *lane_runs]):
         return "unknown"
     done = [r for r in runs if r.get("status") == "completed"]
+    lane_done = [r for r in lane_runs if r.get("status") == "completed"]
     if not done:
         return "unknown"
     shas = load().get("batch", {}).get("shas", [])
@@ -462,8 +465,8 @@ def main_state() -> str:
             or any(member[1].startswith(s) for member in r.get("batch", {}).get("prs", [])) for s in shas)]
     result, failure = "green", None
     tier = MergeTier()  # Core ADR 0149: a replaced main run is not red, and a green rerun repairs a red one
-    for run in dict.fromkeys([done[0]["databaseId"]] + [r["databaseId"] for r in mine]):
-        found = next(r for r in done if r["databaseId"] == run)
+    for run in dict.fromkeys([done[0]["databaseId"]] + [r["databaseId"] for r in mine] + [r["databaseId"] for r in lane_done[:1]]):
+        found = next(r for r in [*done, *lane_done] if r["databaseId"] == run)
         if found.get("conclusion") == "success":
             continue
         if found.get("conclusion") == "failure" and hzlib.only_never_started_macos_jobs_failed(hzlib.CORE, run):
@@ -490,7 +493,10 @@ def main_state() -> str:
                 or not isinstance(fixes, list) or not all(isinstance(s, str) and re.fullmatch(r"[0-9a-f]{8,40}", s) for s in fixes)):
             return "unknown"
         repaired = any(r["databaseId"] == pinned["databaseId"] and r["conclusion"] == "success" for r in done) and tier()
-        if not repaired and not any(r["conclusion"] == "success" and any(r["headSha"].startswith(s) or any(member[1].startswith(s) for member in r.get("batch", {}).get("prs", [])) for s in fixes) for r in done):
+        if main_lanes.is_macos_lane(pinned):  # a macOS-lane failure is cleared only by a newer green lane run
+            if not (lane_done and lane_done[0]["conclusion"] == "success" and lane_done[0]["databaseId"] > pinned["databaseId"]):
+                result = "red"
+        elif not repaired and not any(r["conclusion"] == "success" and any(r["headSha"].startswith(s) or any(member[1].startswith(s) for member in r.get("batch", {}).get("prs", [])) for s in fixes) for r in done):
             result = "red"
     if failure and (not pinned or (fixes and (failure["databaseId"], failure["headSha"]) != (pinned["databaseId"], pinned["headSha"]))):
         update(main_failure=failure)  # source evidence, never a receipt written by hand
@@ -550,7 +556,8 @@ def full_pass(jobs: list[dict] | None, sha: str) -> bool:
     if policy is None:
         return False
     names = {j["name"] for j in jobs if j.get("conclusion") == "success"}
-    return {policy.aggregate, *policy.test_jobs}.issubset(names)
+    # a split main's push run dispatches the macOS lane: its macOS cells run there (main_lanes), never here
+    return main_lanes.required_names(jobs, {policy.aggregate, *policy.test_jobs}).issubset(names)
 
 
 def later_main_passes() -> bool:
@@ -560,18 +567,44 @@ def later_main_passes() -> bool:
         return False
     runs = hzlib.ghj("run", "list", "-R", hzlib.CORE, "--workflow", ci_workflow(), "--branch", "main", "-L", "10", "--json", "status,conclusion,databaseId,headSha,displayTitle,attempt")
     runs = hzlib.resolve_main_runs(runs, restoration_read=True)
-    if not isinstance(runs, list) or not runs or any(r.get("batch_unknown") for r in runs) or not all(valid_main_run(r) for r in runs):
+    if not isinstance(runs, list) or not runs:
         return False
+    runs, lane_runs = main_lanes.split_runs(runs)
+    if any(r.get("batch_unknown") for r in runs) or not all(valid_main_run(r) for r in [*runs, *lane_runs]):
+        return False
+    if main_lanes.is_macos_lane(pinned):  # a macOS-lane incident: only a first-attempt full lane pass at a descendant repairs it
+        return lane_repairs(pinned, [r for r in lane_runs if r["status"] == "completed"])
     done = [r for r in runs if r["status"] == "completed"]
-    if not done or done[0]["conclusion"] != "success" or done[0]["headSha"] == pinned.get("headSha"):
+    if not done or not runs or done[0]["conclusion"] != "success" or done[0]["headSha"] == pinned.get("headSha"):
         return False
     run = hzlib.ghj("api", f"repos/{hzlib.CORE}/actions/runs/{done[0]['databaseId']}", default={}) or {}
     if not isinstance(run, dict) or type(run.get("run_attempt")) is not int or run.get("run_attempt") != 1 or run.get("status") != "completed" or run.get("head_sha") != done[0]["headSha"] or run.get("conclusion") != "success":
         return False
-    if not full_pass(attempt_jobs(done[0]["databaseId"], 1), done[0]["headSha"]):
+    jobs = attempt_jobs(done[0]["databaseId"], 1)
+    if not full_pass(jobs, done[0]["headSha"]):
         return False
-    comparison = hzlib.ghj("api", f"repos/{hzlib.CORE}/compare/{pinned.get('headSha')}...{done[0]['headSha']}", default={}) or {}
-    return isinstance(comparison, dict) and comparison.get("status") == "ahead"
+    if main_lanes.is_split_push(jobs) and not main_lanes.macos_proof(done[0]["headSha"], lane_runs, compare_status):
+        return False  # Linux green at X needs a green macOS lane at X or a descendant of X
+    return compare_status(pinned.get("headSha"), done[0]["headSha"]) == "ahead"
+
+
+def compare_status(base: str, head: str) -> str:
+    """GitHub's compare status of base...head ("ahead", "identical", "diverged", "behind"); "" when unreadable."""
+    comparison = hzlib.ghj("api", f"repos/{hzlib.CORE}/compare/{base}...{head}", default={}) or {}
+    status = comparison.get("status") if isinstance(comparison, dict) else ""
+    return status if isinstance(status, str) else ""
+
+
+def lane_repairs(pinned: dict, lane_done: list[dict]) -> bool:
+    """The newest completed macOS-lane run is a first-attempt, all-green lane pass strictly ahead of the pinned lane failure."""
+    if not lane_done or lane_done[0]["conclusion"] != "success" or lane_done[0]["headSha"] == pinned.get("headSha"):
+        return False
+    rid = lane_done[0]["databaseId"]
+    run = hzlib.ghj("api", f"repos/{hzlib.CORE}/actions/runs/{rid}", default={}) or {}
+    if (not isinstance(run, dict) or run.get("run_attempt") != 1 or run.get("status") != "completed"
+            or run.get("head_sha") != lane_done[0]["headSha"] or run.get("conclusion") != "success"):
+        return False
+    return main_lanes.lane_pass(attempt_jobs(rid, 1), aggregate()) and compare_status(pinned.get("headSha"), lane_done[0]["headSha"]) == "ahead"
 
 
 # --- main-rerun and restored-by-rerun (policy 2026-11-07, options (iii)+(ii); MERGES ONLY, never releases) -----------
@@ -641,9 +674,12 @@ def main_rerun_plan() -> tuple[str, str, dict]:
     """Read-only: ('rerun', what, facts), ('none', why) when there is nothing to rerun, or ('refuse', why).
     Reruns only main's latest run, only attempt 1, only when every failing job is KNOWN in date and no release runs."""
     rows = hzlib.ghj("run", "list", "-R", hzlib.CORE, "--workflow", ci_workflow(), "--branch", "main", "-L", "10",
-                     "--json", "status,conclusion,databaseId,headSha,attempt", default=None)
+                     "--json", "status,conclusion,databaseId,headSha,attempt,displayTitle", default=None)
     if not isinstance(rows, list) or not rows or not all(valid_main_run(r) for r in rows):
         return "refuse", "main CI evidence is unknown", {}
+    rows, _ = main_lanes.split_runs(rows)  # reruns repair push runs only; a macOS-lane run is never rerun here
+    if not rows:
+        return "none", "main has no push run in view", {}
     newer = [r for r in rows if r["status"] != "completed"]
     done = next((r for r in rows if r["status"] == "completed"), None)
     if done is None:
@@ -749,7 +785,10 @@ def rerun_restoration() -> dict:
     every failing job of attempt 1 was KNOWN (in date). Lifts the red-main hold for MERGES only; {} otherwise."""
     runs = hzlib.ghj("run", "list", "-R", hzlib.CORE, "--workflow", ci_workflow(), "--branch", "main", "-L", "10", "--json", "status,conclusion,databaseId,headSha,displayTitle,attempt")
     runs = hzlib.resolve_main_runs(runs)
-    if not isinstance(runs, list) or not runs or any(r.get("batch_unknown") for r in runs) or not all(valid_main_run(r) for r in runs):
+    if not isinstance(runs, list) or not runs:
+        return {}
+    runs, _lane = main_lanes.split_runs(runs)  # the restored run is a push run; lane runs neither restore nor hide it
+    if any(r.get("batch_unknown") for r in runs) or not all(valid_main_run(r) for r in runs):
         return {}
     done = [r for r in runs if r["status"] == "completed"]
     if not done or done[0]["conclusion"] != "success" or done[0].get("attempt") != 2:
@@ -919,14 +958,18 @@ def main_red_jobs() -> dict:
     """The red main run that holds the queue and its failed jobs: the latest completed main run when it failed, else the
     pinned failure run. {"run": id, "sha": ..., "jobs": [names]} or {} when it cannot be proven."""
     runs = hzlib.ghj("run", "list", "-R", hzlib.CORE, "--workflow", ci_workflow(), "--branch", "main", "-L", "10",
-                     "--json", "status,conclusion,databaseId,headSha", default=None)
+                     "--json", "status,conclusion,databaseId,headSha,displayTitle", default=None)
     if not isinstance(runs, list) or not all(valid_main_run(r) for r in runs):
         return {}
+    runs, lane_runs = main_lanes.split_runs(runs)
     done = [r for r in runs if r["status"] == "completed"]
+    lane_done = [r for r in lane_runs if r["status"] == "completed"]
     if timeout := latest_required_timeout(runs):
         return timeout
     if done and done[0]["conclusion"] in {"failure", "timed_out", "startup_failure"}:
         run = done[0]
+    elif lane_done and lane_done[0]["conclusion"] in {"failure", "timed_out", "startup_failure"}:
+        run = lane_done[0]
     elif (pinned := load().get("main_failure")) and valid_main_run(pinned):
         run = pinned
     else:
