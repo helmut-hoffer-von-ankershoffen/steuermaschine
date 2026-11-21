@@ -55,7 +55,7 @@ CUT_STEPS: tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...] = (
     ("tag", ("has_tag",), ()),
     ("merge freeze lifted at tag", (), ("lift_freeze_at_tag",)),
     ("release published", ("release_published",), ()),
-    ("PyPI", ("pypi_has",), ("pypi_step",)),
+    ("PyPI", ("pypi_has",), ("compose_beside_pypi", "pypi_step")),
     ("compose", ("published_release",), ("compose_step",)),
     ("acceptance", (), ("pinned_snapshot", "acceptance_step")),
     ("verdict", ("verdict",), ("publish_acceptance", "promote_release", "remember")),

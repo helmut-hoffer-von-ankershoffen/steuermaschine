@@ -89,7 +89,7 @@ from . import rejection as release_rejection
 from . import snapshot as release_snapshot  # noqa: E402
 
 CORE, PLUGINS = hzlib.CORE, hzlib.PLUGINS
-POLL = 30
+POLL = 10  # one hand-off costs at most this much; four of them made 1.5 min per release at 30 s
 # PyPI lists a fresh upload a few moments after the publishing run ends: a successful run without the version on PyPI
 # is a failure only after this many seconds of polling (heinzel-resource 0.1.5, run 43442192106).
 PYPI_PROPAGATION = 300
@@ -1281,17 +1281,25 @@ def dispatch(repo: str, workflow: str, ref: str, key: str, **inputs) -> None:
         raise Stop(f"dispatching {workflow} failed")
 
 
+def pypi_dispatch(name: str, version: str, tag: str, timeout: float) -> None:
+    """Start the PyPI upload once the release producer is ready; waiting for PyPI is `pypi_step`'s."""
+    label = f"PyPI {name} {version}"
+    if ours(CORE, "pypi.yml", "pypi"):
+        return
+    deadline = time.time() + timeout
+    wait("release producer", lambda: release_producer_ready(tag), max(0, deadline - time.time()))
+    if time.time() > deadline:
+        raise Stop(f"{label}: timed out before dispatch")
+    dispatch(CORE, "pypi.yml", tag, "pypi")
+
+
 def pypi_step(name: str, version: str, tag: str, timeout: float) -> None:
     label = f"PyPI {name} {version}"
     if pypi_has(name, version):
         hzlib.say(f"ok   {label} (already)")
         return
     deadline = time.time() + timeout
-    if not ours(CORE, "pypi.yml", "pypi"):
-        wait("release producer", lambda: release_producer_ready(tag), max(0, deadline - time.time()))
-        if time.time() > deadline:
-            raise Stop(f"{label}: timed out before dispatch")
-        dispatch(CORE, "pypi.yml", tag, "pypi")
+    pypi_dispatch(name, version, tag, timeout)
 
     def check() -> None:
         run = ours(CORE, "pypi.yml", "pypi")
@@ -1300,6 +1308,17 @@ def pypi_step(name: str, version: str, tag: str, timeout: float) -> None:
 
     wait(label, lambda: pypi_has(name, version), max(0, deadline - time.time()), check)
     hzlib.say(f"ok   {label}")
+
+
+def compose_beside_pypi(version: str, tag: str, timeout: float) -> None:
+    """Start PyPI and compose side by side from the published release; `pypi_step` and `compose_step` then wait.
+
+    Compose builds from the release's own wheel asset, not from PyPI, so it no longer waits for the upload. A failed
+    upload still stops the tail before acceptance, and a held core's finalize still follows PyPI (`compose_step`).
+    """
+    if not pypi_has("heinzel", version):
+        pypi_dispatch("heinzel", version, tag, timeout)
+    compose_step(version, timeout, wait_for=False)
 
 
 def compose_busy() -> bool:
@@ -1314,7 +1333,7 @@ def published_release(repo: str, tag: str) -> dict | None:
     return release
 
 
-def compose_step(version: str, timeout: float) -> None:
+def compose_step(version: str, timeout: float, *, wait_for: bool = True) -> None:
     """Wait for the FINAL app-vX: acceptance checks the collection's latest app, which a held app is not.
 
     A held core (core ADR 0114) is composed only by an input-less compose run (plugins `select_held`, the app is
@@ -1383,6 +1402,11 @@ def compose_step(version: str, timeout: float) -> None:
                 and (r := published_release(PLUGINS, app)) and r.get("prerelease") is True):
             dispatch(PLUGINS, "compose.yml", "main", "compose_finalize")  # once; the schedule also finalizes
 
+    if not wait_for:
+        if not released():
+            act()  # compose builds from the release's own wheel asset, so it runs beside the PyPI upload
+            hzlib.say(f"go   compose {app} (beside PyPI)")
+        return
     step(f"compose {app}", released, act, timeout, check)
 
 
@@ -2236,6 +2260,7 @@ def release_core(request: str, intro: str, timeout: float, snapshot_acceptance: 
     lift_freeze_at_tag(owned_hold, freeze)
     # The tag exists before its release does; pypi.yml reads the published release, so dispatching on the tag alone races.
     step("release published", lambda: release_published(tag), None, timeout)
+    compose_beside_pypi(version, tag, timeout)
     pypi_step("heinzel", version, tag, timeout)
     compose_step(version, timeout)
     snapshot = pinned_snapshot(version) if snapshot_acceptance else None
@@ -2497,6 +2522,7 @@ def release_core_on_main(request: str, intro: str, timeout: float, snapshot_acce
     step("tag", tagged, lambda: dispatch_tag(version), timeout, lambda: tag_check(version))
     hand_off_tail()
     step("release published", lambda: release_published(tag), None, timeout)
+    compose_beside_pypi(version, tag, timeout)
     pypi_step("heinzel", version, tag, timeout)
     compose_step(version, timeout)
     snapshot = pinned_snapshot(version) if snapshot_acceptance else None

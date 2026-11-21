@@ -242,3 +242,73 @@ def test_altered_same_snapshot_intent_and_original_run_are_refused(proof):
     state["acceptance_identity"]["snapshot"]["wheel_sha256"] = "e" * 64
     with pytest.raises(capacity.remote.InvalidCapacity, match="snapshot changed"):
         capacity.validate_replacement(state, proof.run, runner.CORE, RUN + 1)
+
+
+def shard(proof, monkeypatch, *, starved=("update",), mac_verdict="failure"):
+    """Turn the fixture into Core's sharded acceptance run: pins, 4+4 shards, one reducer per OS (11 jobs)."""
+    def linux_job(job_id, name, steps):
+        return proof.linux | {"id": job_id, "name": name,
+                              "steps": [{"name": step, "status": "completed", "conclusion": "success"} for step in steps]}
+    jobs = [linux_job(210, capacity.PINS, ("Pin the release bytes once for every shard",))]
+    jobs += [linux_job(220 + i, name, ("Run the acceptance harness", "Upload the shard receipt"))
+             for i, name in enumerate(capacity.LINUX_SHARDS)]
+    jobs.append(linux_job(201, capacity.LINUX, ("Reduce the four shard receipts of this OS", "Upload the receipt")))
+    starved_jobs = []
+    for i, (name, part) in enumerate(zip(capacity.MAC_SHARDS, capacity.SHARDS, strict=True)):
+        if part in starved:
+            job = proof.mac | {"id": 230 + i, "name": name}
+            starved_jobs.append(job)
+        else:
+            job = proof.linux | {"id": 230 + i, "name": name, "labels": ["macos-latest"]}
+        jobs.append(job)
+    jobs.append(proof.mac | {"id": 202, "name": capacity.MAC, "conclusion": mac_verdict, "runner_id": 7,
+                             "runner_name": "GitHub Actions 9", "labels": ["ubuntu-24.04"]})
+    artifacts = [proof.artifact] + [{"id": 400 + i, "name": f"acceptance-shard-Linux-{part}"}
+                                    for i, part in enumerate(capacity.SHARDS)]
+    proof.jobs, proof.artifacts = jobs, artifacts
+    monkeypatch.setattr(capacity.remote, "paged", lambda _path, key: proof.jobs if key == "jobs" else proof.artifacts)
+    monkeypatch.setattr(capacity.remote, "annotations",
+                        lambda job: proof.notes if any(job is starved_job for starved_job in starved_jobs) else [])
+    return jobs
+
+
+def test_a_sharded_run_with_a_starved_mac_shard_is_recovered_from_its_linux_receipt(proof, monkeypatch):
+    shard(proof, monkeypatch)
+    plan = recover(proof)
+    assert plan["linux_artifact"] == 300 and plan["mac_job"] == 202
+    requested = recover(proof, plan["audit_sha256"])
+    assert requested["replacement_marker"] != MARKER
+
+
+@pytest.mark.parametrize(
+    ("change", "error"),
+    [
+        (lambda p: p.jobs.pop(), "incomplete or unexpected"),
+        (lambda p: p.jobs[1].update(conclusion="failure"), "Linux acceptance job"),
+        (lambda p: p.jobs[0].update(steps=[]), "never executed"),
+        (lambda p: p.artifacts.append({"id": 499, "name": "acceptance-result-macOS"}), "only shard receipts"),
+        (lambda p: p.artifacts.pop(0), "Linux receipt"),
+    ],
+)
+def test_a_sharded_run_refuses_anything_but_mac_capacity(proof, monkeypatch, change, error):
+    shard(proof, monkeypatch)
+    change(proof)
+    with pytest.raises(capacity.remote.InvalidCapacity, match=error):
+        recover(proof)
+    assert proof.calls == []
+
+
+def test_a_mac_shard_that_ran_and_failed_is_a_real_rejection(proof, monkeypatch):
+    jobs = shard(proof, monkeypatch)
+    ran = next(job for job in jobs if job["name"] == capacity.MAC_SHARDS[0])
+    ran["conclusion"] = "failure"
+    with pytest.raises(capacity.remote.InvalidCapacity, match="never-acquired"):
+        recover(proof)
+
+
+@pytest.mark.parametrize(("starved", "verdict", "error"), [((), "failure", "no Mac shard was starved"),
+                                                           (("update",), "success", "did not fail")])
+def test_a_sharded_run_needs_starvation_and_a_failed_mac_verdict(proof, monkeypatch, starved, verdict, error):
+    shard(proof, monkeypatch, starved=starved, mac_verdict=verdict)
+    with pytest.raises(capacity.remote.InvalidCapacity, match=error):
+        recover(proof)

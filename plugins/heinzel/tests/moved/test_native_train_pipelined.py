@@ -159,6 +159,7 @@ def _core(rel, monkeypatch, tagged_from_start: bool):
     def after_tag(*a, **kw):
         calls.append(("frozen at pypi", rel.hzlib.merge_frozen() or rel.paths()[0].exists()
                       or (bool(rel.state().get("freeze_token")) and rel.snapshot_hold_path().exists())))
+    monkeypatch.setattr(rel, "compose_beside_pypi", lambda *a: None)
     monkeypatch.setattr(rel, "pypi_step", after_tag)
     monkeypatch.setattr(rel, "compose_step", lambda *a: None)
     monkeypatch.setattr(rel, "pinned_snapshot", lambda v: None)
