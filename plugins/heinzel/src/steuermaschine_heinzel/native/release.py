@@ -32,6 +32,7 @@ from steuermaschine.protocols import Busy
 
 from . import mini
 from .go import world
+from .journal_view import mirrored
 from .queue_lib import hzlib
 from .release_lib.binding import moved
 from .release_lib.names import translate
@@ -193,6 +194,7 @@ def outcome(module, action: str, version: str, code: int, lines: list[str], erro
     "The candidate gate needs the candidate's first attempt green: never rerun a failed candidate job to pass it.\n"
     "A failed compose run is replaced once by a fresh compose (same inputs) when plugins main moved past it and a plugin\n"
     "version changed since is on PyPI; the receipt keeps the failed run under compose_replaced. Otherwise it stops."))
+@mirrored  # it runs a program that writes the working files: the subject journals follow (journal_view.py)
 def release_resume(
     version: str = typer.Argument(..., metavar="VERSION", help="X.Y.Z, `patch`, or `migrate-legacy`."),
     intro: str = typer.Option("", "--intro", help="What changed for users; needed only to open the release PR."),
@@ -437,8 +439,8 @@ def release_replan(version: str = typer.Argument(..., metavar="VERSION", help="E
                    main_ci: str = typer.Option(..., "--main-ci", help="Only full is supported."),
                    reason: str = typer.Option(..., "--reason", help="Why the pre-external cut must be replanned."),
                    live: bool = typer.Option(False, "--live/--dry-run", help="Archive and replace local cut state (default: prove only).")) -> ReleaseReplan:
-    from .release_lib import replan
     from .admission_lib.focused_admit import AdmissionError
+    from .release_lib import replan
 
     if not EXACT.fullmatch(version) or main_ci != "full":
         raise Refuse("replan needs an exact release version and --main-ci full")

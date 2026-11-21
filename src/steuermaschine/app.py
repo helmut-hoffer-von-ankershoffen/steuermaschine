@@ -487,7 +487,8 @@ def _self(rt: Runtime, app: typer.Typer) -> None:
         try:
             with _exclusive_writers(rt, wait):
                 done = statemove.back(moves, note) if back else statemove.forward(moves, note)
-                runs = subjects.unmigrate_runs(rt.project.home) if back else subjects.migrate_runs(rt.project.home)  # run state <-> subject journals
+                runs = subjects.unmigrate_runs(rt.project.home) if back else [*subjects.migrate_runs(rt.project.home), *subjects.migrate_singletons(rt.project.home),
+                                                                                      *(rt.plugin.journal_migrate(rt.providers, rt.settings) if rt.plugin else [])]  # run state <-> subject journals
                 for line in runs:
                     note(line)
                 done = [*done, *runs]

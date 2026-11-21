@@ -34,13 +34,6 @@ def _install_records_default():
 _install_records_default()
 
 
-@pytest.fixture(autouse=True)
-def old_names(monkeypatch):
-    """The tests of an old command call it by its old name: it runs, not its `Renamed` stub. test_native_surface.py turns
-    this off to test the stubs."""
-    monkeypatch.setenv("STEUERMASCHINE_OLD_NAMES", "1")
-
-
 @pytest.fixture
 def real_main_plan():
     """Opt out of the rule-holds default: the test drives main_plan itself."""

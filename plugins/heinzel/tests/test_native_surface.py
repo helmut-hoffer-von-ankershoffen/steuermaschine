@@ -7,7 +7,6 @@ from types import SimpleNamespace
 import tomllib
 from pathlib import Path
 
-import pytest
 from coord_kit import app_runtime
 
 from steuermaschine import PROG, helpdoc, surface
@@ -24,11 +23,6 @@ VERBS = ("check", "ship", "review", "release", "why", "status", "work", "mini", 
 CALLED = ("daemon queue", "daemon train", "daemon loadguard", "mini leakwatch sample", "guard git", "guard heavy", "guard uv", "gate run", "go",
           "release resume", "head ship", "queue add", "queue list", "ci defer", "ci deferred", "ci rerun", "release train resume-ci", "mini update",
           "release verify", "release train status", "alarm asks")
-
-
-@pytest.fixture(autouse=True)
-def stubs(monkeypatch):
-    monkeypatch.delenv("STEUERMASCHINE_OLD_NAMES", raising=False)
 
 
 def rows(tmp_path):

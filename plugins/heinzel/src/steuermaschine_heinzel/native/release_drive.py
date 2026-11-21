@@ -73,7 +73,7 @@ release_drive.__signature__ = inspect.signature(release_resume)  # type: ignore[
 release_drive.__annotations__ = dict(release_resume.__annotations__)
 release_drive = native("release drive", writes=True, help=H(
     "Release one version: the release driver of `sm release VERSION`, with a guard against a mistyped version.",
-    "Use as `sm release VERSION`; the release train calls `sm release resume`, which has no guard.",
+    "Use when you type `sm release VERSION`; the release train calls `sm release resume`, which has no guard.",
     "what `sm release resume` changes: the freeze, the release PR and its merge, the tag, PyPI, compose and acceptance.",
     "sm release 0.9.55 --live", "sm why 0.9.55",
     "VERSION must be X.Y.Z or `patch`, and the release in flight, the latest release or the next patch or minor after it;\n"

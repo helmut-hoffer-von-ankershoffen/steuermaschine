@@ -18,6 +18,7 @@ from steuermaschine.native import Group, native, runtime
 from steuermaschine.plugins import old_variable
 
 from . import branch_owner, queue_hold
+from .journal_view import mirrored
 from .queue_lib import hzlib
 from .ship_lib import deps, pr, push_gate, repos, ship
 from .ship_lib.deps import Done
@@ -111,6 +112,7 @@ def head_guard(pr: list[str] = typer.Argument(..., metavar="PR", help="A PR numb
     "Exit 0 queued or already cleared, 2 NEEDS_REVIEW (start an independent reviewer; ship again with its written reason),\n"
     "1 the queue refused (moved head, combine notes, `sm queue hold`). --fix-forward passes PR, REASON and every option to the queue's\n"
     "fix-forward lane, which refuses REASON and --reviewed-head there (exit 1, nothing queued)."))
+@mirrored  # it runs a program that writes the working files: the subject journals follow (journal_view.py)
 def head_ship(
     pr: str = typer.Argument(..., metavar="PR", help="The pull request number."),
     reason: str | None = typer.Argument(None, metavar="REASON", help="The written reason of an independent review: queue past a FLAG."),

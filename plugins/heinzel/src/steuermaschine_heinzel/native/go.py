@@ -100,7 +100,7 @@ def world_of(providers: Any, settings: Any) -> probes.World:
     rehearsal = providers.store.load(probes.REHEARSAL_KIND, probes.REHEARSAL_KEY)  # written by `sm release rehearse` and its daemon
     runs = [state for kind in probes.PIPELINE_KINDS for key in providers.store.keys(kind) if (state := providers.store.load(kind, key))]  # `sm head admit`, `sm release cut`
     return probes.World(commands=providers.commands, clock=providers.clock, focus_list=focus_list if isinstance(focus_list, dict) else None, acks=dict(acks),
-                        rehearsal=rehearsal, runs=runs,
+                        rehearsal=rehearsal, runs=runs, journals=getattr(providers.store, "journals", None),
                         state_dir=statedir.dashboard_dir(s),
                         core=str(Path(str(s["core_repo_dir"])).expanduser()) if s.get("core_repo_dir") else "", repo=str(s.get("repo") or ""), settings=dict(s))
 

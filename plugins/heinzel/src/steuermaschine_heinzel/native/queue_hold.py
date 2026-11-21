@@ -20,6 +20,8 @@ from steuermaschine.helpdoc import H
 from steuermaschine.models import Model
 from steuermaschine.native import native, runtime
 
+from .journal_view import mirrored
+
 KIND, KEY = "heinzel.queue-hold", "hold"
 
 
@@ -107,6 +109,7 @@ def refuse_while_held(what: str, rt: Any | None = None, pr: str = "", repo: str 
     "--except PR (repeatable; N is this project's repository, OWNER/REPO#N another) lets that PR through: `sm head ship PR` works, and a tick runs while the excepted PRs are the\n"
     "only queued ones (a tick merges every ready PR, so others queued keep it from running).\n"
     "A second hold replaces the first (it says which). The hold is separate from the release's merge freeze."))
+@mirrored  # it runs a program that writes the working files: the subject journals follow (journal_view.py)
 def queue_hold(reason: str = typer.Option(..., "--reason", metavar="TEXT", help="Why the queue is held; printed to everyone it stops."),
                excepted: list[str] = typer.Option([], "--except", metavar="PR[,PR...]", help="A PR that may still ship and merge: N (this project's repository) or OWNER/REPO#N; repeatable.")) -> QueueHoldChanged:
     if not reason.strip():
@@ -131,6 +134,7 @@ def queue_hold(reason: str = typer.Option(..., "--reason", metavar="TEXT", help=
     "Use when the critical head the hold was for has merged.",
     "the queue hold record in the state directory.",
     "sm queue unhold", "sm queue why"))
+@mirrored  # it runs a program that writes the working files: the subject journals follow (journal_view.py)
 def queue_unhold() -> QueueHoldChanged:
     rt = runtime()
     before = current(rt)

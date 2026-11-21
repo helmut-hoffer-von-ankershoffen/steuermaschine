@@ -97,6 +97,18 @@ def _rows(text: str) -> Iterator[dict[str, Any]]:
 
 # ----------------------------------------------------------------------------- pipeline runs in the journals
 RUN = "run"  # the event of a run's state; data: {"pipeline", "key", "state"}; state None: the run was deleted
+FOCUS = "focus"  # an entry of the declared focus list; data: {"key", "entry"}; entry None: taken off
+ACKS = "acks"  # the acknowledged alarm keys, in the journal of main
+MAIN = ("branch", "main")
+VERSION = re.compile(r"v?\d+\.\d+\.\d+")
+
+
+def focus_subject(key: str, entry: Any) -> tuple[str, str]:
+    """A focus entry's subject: a version, else the branch it names, else the worktree path."""
+    if VERSION.fullmatch(key):
+        return "version", key.removeprefix("v")
+    branch = entry.get("branch") if isinstance(entry, dict) else None
+    return "branch", str(branch or key)
 
 
 def subject_of(pipeline: str, key: str, state: dict[str, Any] | None) -> tuple[str, str]:
@@ -126,13 +138,49 @@ class JournalStore(FileStore):
                         out[str(data.get("key"))] = (kind, subject, data.get("state"))
         return out
 
+    # ------------------------------------------------------------------ the focus list and the alarm acks
+    def _focus(self) -> dict[str, Any]:
+        """The focus list from the focus events of every subject: key -> entry; an entry None was taken off."""
+        out: dict[str, Any] = {}
+        for kind in ("version", "branch"):
+            for _, rows in self.journals.all(kind):
+                for row in rows:
+                    if row.get("event") == FOCUS:
+                        data = row.get("data") or {}
+                        out[str(data.get("key"))] = (row.get("at") or 0.0, data.get("entry"))
+        return {k: entry for k, (_, entry) in sorted(out.items(), key=lambda kv: kv[1][0]) if entry is not None}
+
+    def _save_focus(self, entries: dict[str, Any]) -> None:
+        import time
+
+        now = time.time()
+        known = self._focus()
+        for key, entry in entries.items():
+            if known.get(key) != entry:
+                self.journals.append(*focus_subject(key, entry), FOCUS, {"key": key, "entry": entry}, now, repeat=True)
+        for key in set(known) - set(entries):
+            self.journals.append(*focus_subject(key, known[key]), FOCUS, {"key": key, "entry": None}, now, repeat=True)
+
     def load(self, kind: str, key: str) -> dict[str, Any] | None:
+        if (kind, key) == ("focus", "list"):
+            found = self._focus()
+            return found if found or self.journals.keys("branch") or self.journals.keys("version") else super().load(kind, key)
+        if (kind, key) == ("alarms", "acks"):
+            acks = self.journals.latest(*MAIN, ACKS)
+            return dict(acks) if acks is not None else super().load(kind, key)
         if not kind.startswith("runs."):
             return super().load(kind, key)
         found = self._runs(kind.removeprefix("runs.")).get(key)
         return dict(found[2]) if found and found[2] is not None else None
 
     def save(self, kind: str, key: str, data: dict[str, Any]) -> None:
+        if (kind, key) == ("focus", "list"):
+            return self._save_focus(dict(data))
+        if (kind, key) == ("alarms", "acks"):
+            import time
+
+            self.journals.append(*MAIN, ACKS, dict(data), time.time())
+            return None
         if not kind.startswith("runs."):
             return super().save(kind, key, data)
         pipeline = kind.removeprefix("runs.")
@@ -191,6 +239,23 @@ def migrate_runs(root: Path) -> list[str]:
     return done
 
 
+def migrate_singletons(root: Path) -> list[str]:
+    """Move the focus list and the alarm acks of an earlier release (state/focus/list.json, state/alarms/acks.json) into
+    the journals."""
+    store, done = JournalStore(root), []
+    for kind, key in (("focus", "list"), ("alarms", "acks")):
+        file = Path(root) / "state" / kind / f"{key}.json"
+        try:
+            data = json.loads(file.read_text())
+        except (OSError, ValueError):
+            continue
+        if isinstance(data, dict):
+            store.save(kind, key, data)
+            done.append(f"{kind}/{key}.json -> {DIR}")
+        file.unlink()
+    return done
+
+
 def unmigrate_runs(root: Path) -> list[str]:
     """For a rollback to a release that reads state files: write the newest state of every run back to
     `state/runs.<pipeline>/KEY.json`. The journals stay."""
@@ -203,4 +268,9 @@ def unmigrate_runs(root: Path) -> list[str]:
                 if state is not None:
                     FileStore.save(store, kind, key, state)
                     done.append(f"{DIR} -> state/{kind}/{key}.json")
+    for kind, key in (("focus", "list"), ("alarms", "acks")):
+        found = store.load(kind, key)
+        if found:
+            FileStore.save(store, kind, key, found)
+            done.append(f"{DIR} -> state/{kind}/{key}.json")
     return done

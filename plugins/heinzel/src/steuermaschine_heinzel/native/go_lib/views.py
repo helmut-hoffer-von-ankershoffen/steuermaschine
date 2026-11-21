@@ -264,7 +264,9 @@ def queue_items(w: probes.World, state: dict) -> list[dict]:
         running = True  # unknown is not "down"
     if not running:
         out.append(moved.item(3, "queue-down", "the merge queue loop is not running", "sm daemon queue --help (start it under launchd, never twice)"))
-    data = legacy.queue_state(w.state_dir)
+    from ..journal_view import source
+
+    data = source(w).queue_state()
     path = w.settings.get("go_pr_actions_file")
     try:
         actions = legacy.pr_actions(Path(str(path)).expanduser() if path else None)
@@ -382,7 +384,9 @@ def wait(w: probes.World, state: dict, go: Any) -> GoView:
     holds = []
     if legacy.incident_frozen(w.state_dir):
         holds.append("incident merge freeze")
-    holds += [f"release hold {h}" for h in legacy.release_holds(w.state_dir)]
+    from ..journal_view import source
+
+    holds += [f"release hold {h}" for h in source(w).release_holds()]
     runs = state.get("runs") if known(state.get("runs")) and isinstance(state.get("runs"), list) else []
     acceptance = next((f"run {r.get('databaseId')}" for r in runs if r.get("workflowName") == "Acceptance" and r.get("status") != "completed"), "")
     load = load_average()

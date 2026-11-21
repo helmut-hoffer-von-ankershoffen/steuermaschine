@@ -43,6 +43,7 @@ class World:
     acks: dict[str, Any] = field(default_factory=dict)  # alarm keys acknowledged with `sm alarm ack`
     rehearsal: dict[str, Any] | None = None  # the rehearsal document of the state store (None: never written, the old state file is adopted)
     runs: list[Any] = field(default_factory=list)  # the run states of the engine pipelines (sm head admit, sm release cut)
+    journals: Any = None  # steuermaschine.subjects.Journals: the queue, train, release and alarm state (journal_view.py)
     _ps: list[Any] | None = None
     _lock: threading.Lock = field(default_factory=threading.Lock)
 
@@ -181,8 +182,8 @@ def main_runs(w: World, limit: int = 5) -> list[dict]:
 
 
 def probe_queue(w: World) -> dict[str, Any]:
-    data = legacy.queue_state(w.state_dir)
-    frozen = legacy.merge_frozen(w.state_dir)
+    data = _source(w).queue_state()
+    frozen = _source(w).merge_frozen()
     queued = [str(i.get("key")) for i in data["items"] if i.get("status") == "queued"]
     added = {str(i.get("key")): i.get("added") for i in data["items"] if i.get("status") == "queued" and i.get("added")}
     return {"queued": queued, "freeze": frozen, "verdict": queue_verdict(data, frozen, queue_waits(data["items"], w.now())),
@@ -194,9 +195,9 @@ def probe_train(w: World) -> dict[str, Any]:
     """One line per active train and per release tail, from their state files; `running` from the process list."""
     running = {m[1] for _, _, cmd in _processes_or_none(w) if (m := re.search(r"-train run (\d+\.\d+\.\d+)", cmd))}
     trains = [f"train v{t['version']}: {t.get('phase')} ({'running' if t.get('version') in running else 'idle'}, attempts {t.get('attempts', 0)})"
-              + (f": {t['reason']}" if t.get("reason") else "") for t in legacy.active_trains(w.state_dir)]
+              + (f": {t['reason']}" if t.get("reason") else "") for t in _source(w).active_trains()]
     tails = []
-    for version, data in legacy.release_tails(w.state_dir):
+    for version, data in _source(w).release_tails():
         absorbed = f" (absorbed by {data['absorbed_by']})" if data.get("absorbed_by") else ""
         verdict = ("ACCEPTED" if data.get("accepted") else f"NOT ACCEPTED{absorbed}") if data.get("finished") else (
             "acceptance dispatched" if data.get("acceptance_requested") else "tail running")
@@ -212,13 +213,13 @@ def _processes_or_none(w: World) -> list[Any]:
 
 
 def probe_release(w: World) -> dict[str, Any]:
-    accepted = legacy.accepted_versions(w.state_dir)
-    return {"active": legacy.release_receipt(w.state_dir), "latest_accepted": max(accepted, key=legacy.version_key) if accepted else None,
-            "dropped": legacy.dropped_candidates(w.state_dir)}
+    accepted = _source(w).accepted_versions()
+    return {"active": _source(w).release_receipt(), "latest_accepted": max(accepted, key=legacy.version_key) if accepted else None,
+            "dropped": _source(w).dropped_candidates()}
 
 
 def probe_holds(w: World) -> dict[str, Any]:
-    files = legacy.hold_files(w.state_dir)
+    files = _source(w).hold_files()
     prs = {}
     actions = setting(w, "go_pr_actions_file", None)
     try:
@@ -230,7 +231,14 @@ def probe_holds(w: World) -> dict[str, Any]:
 
 
 def probe_alarms(w: World) -> dict[str, Any]:
-    return legacy.alarm_state(w.state_dir)
+    return _source(w).alarm_state()
+
+
+def _source(w: World) -> Any:
+    """Where the queue, train, release and alarm state is read: the subject journals (journal_view.py)."""
+    from ..journal_view import source
+
+    return source(w)
 
 
 REHEARSAL_KIND, REHEARSAL_KEY = "heinzel.rehearse.state", "rehearsal"  # where the native rehearsal keeps `current`, `last`, `last_green`
@@ -251,7 +259,7 @@ def probe_rehearse(w: World) -> dict[str, Any]:
 
 
 def probe_receipts(w: World) -> list[Any]:
-    return legacy.admission_receipt_heads(w.state_dir)
+    return []  # no admission any more: an admission receipt left by an older sm is history, never a NEXT
 
 
 PIPELINE_KINDS = ("runs.head.admit", "runs.release.cut")
@@ -529,12 +537,10 @@ def focus_head(w: World, worktree: str) -> dict[str, Any]:
 
 
 def declared_focus(w: World) -> list[dict]:
-    """The declared focus worktrees: the focus list of `sm focus` once it exists (entries that are paths), else the
-    old focus file, adopted read-only."""
-    if w.focus_list is not None:
-        return [{"worktree": key, "for": value.get("for") or "", "note": value.get("note") or "", "source": "focus-list"}
-                for key, value in w.focus_list.items() if isinstance(value, dict) and str(key).startswith(("/", "~"))]
-    return [{**entry, "source": "old-file"} for entry in legacy.focus_entries(w.state_dir)]
+    """The declared focus worktrees: the focus list of `sm focus` (entries that are paths). The focus file of the
+    scripted era is history and is not read: NEXT comes from GitHub and the journals only."""
+    return [{"worktree": key, "for": value.get("for") or "", "note": value.get("note") or "", "source": "focus-list"}
+            for key, value in (w.focus_list or {}).items() if isinstance(value, dict) and str(key).startswith(("/", "~"))]
 
 
 def probe_focus(w: World) -> list[Any]:
