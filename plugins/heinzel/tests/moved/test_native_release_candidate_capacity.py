@@ -233,6 +233,7 @@ def test_strict_verifier_rejects_original_capacity_failure():
 @pytest.fixture
 def coordinator(tool, home, monkeypatch):
     rel = tool('hz-release')
+    monkeypatch.setattr(rel, 'main_moved_refusal', lambda number, tag: None)
     monkeypatch.setattr(rel, 'now_iso', lambda offset=0: '2026-11-05T01:00:00Z')
     rel.remember(version=VERSION)
     rel.acquire_snapshot_freeze(VERSION)

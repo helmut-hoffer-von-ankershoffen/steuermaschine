@@ -493,6 +493,8 @@ def main_release_gate(tip: str = "") -> dict:
       red with every hard-failed job KNOWN in date          -> ok  (kind known: red-by-KNOWN)
       red with an UNKNOWN job, a green rerun of an UNKNOWN failure, unreadable evidence, no evidence -> refuse
     Returns {verdict, kind, why, run, sha, tip_finished}."""
+    from . import main_lanes
+
     rows = resolve_main_runs(ghj("run", "list", "-R", CORE, "--workflow", _ci_file(), "--branch", "main", "-L", str(TRAIN_GATE_RUNS),
                                  "--json", "status,conclusion,databaseId,headSha,displayTitle,attempt", default=None))
     result = {"verdict": "refuse", "kind": "unknown", "run": None, "sha": "", "tip_finished": False}
@@ -504,6 +506,8 @@ def main_release_gate(tip: str = "") -> dict:
         if row.get("status") != "completed" or row.get("batch_unknown"):
             continue
         rid, sha, attempt, conclusion = row["databaseId"], row.get("headSha", ""), row.get("attempt"), row.get("conclusion")
+        if main_lanes.is_macos_lane(row) and conclusion in ("success", "cancelled"):
+            continue  # the dispatched macOS lane is no proof that main's push run is green; a cancelled one was replaced
         if type(attempt) is not int or attempt < 1:
             return result | {"why": f"run {rid}: attempt unreadable", "run": rid, "sha": sha}
         where = f"run {rid} at {sha[:9]}"

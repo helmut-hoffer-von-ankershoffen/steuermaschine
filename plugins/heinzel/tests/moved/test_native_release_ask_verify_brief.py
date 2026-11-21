@@ -142,6 +142,8 @@ def rel(tool, lib, home, monkeypatch):
         world.tags.add("v0.9.12")
         return True, "ok"
 
+    r.real_main_moved_refusal = r.main_moved_refusal
+    monkeypatch.setattr(r, "main_moved_refusal", lambda number, tag: None)  # the check has its own tests at the end
     monkeypatch.setattr(r.release_candidate_policy, "verify_pr", lambda number, waiver=None: {"run_id": 900, "head": MAIN_COMMIT, "job_count": 64})
     monkeypatch.setattr(train, "train", merge)
     monkeypatch.setattr(lib, "load", lambda name: train)
@@ -392,3 +394,48 @@ def test_full_candidate_success_is_recorded_without_aliasing_checks_or_dispatchi
     assert rel.release_core("patch", "Plainer words.", 60) == 0
     assert rel.state()["candidate_ci"] == {"run_id": 900, "head": MAIN_COMMIT, "job_count": 64}
     assert not [call for call in rel.world.calls if call[:3] == ("workflow", "run", "ci.yml")]
+
+
+BASE = "a" * 40
+MOVED = "b" * 40
+PR_HEAD = "c" * 40
+
+
+def _fake_gh(monkeypatch, rel, tip, parents=BASE, head=PR_HEAD, code=0):
+    def gh(*a):
+        if a[1].endswith("/pulls/5"):
+            return 0, head + "\n"
+        if a[1].endswith("/commits/main"):
+            return code, tip + "\n"
+        if a[1].endswith(f"/commits/{head}"):
+            return 0, parents + "\n"
+        return 1, ""
+    monkeypatch.setattr(rel.hzlib, "gh", gh)
+
+
+def test_main_not_moved_since_the_candidate_base_allows_the_merge(rel, monkeypatch):
+    _fake_gh(monkeypatch, rel, BASE)
+    assert rel.real_main_moved_refusal(5, "v0.9.12") is None
+
+
+def test_main_moved_since_the_candidate_base_refuses_with_a_recovery_path(rel, monkeypatch):
+    _fake_gh(monkeypatch, rel, MOVED)
+    text = rel.real_main_moved_refusal(5, "v0.9.12")
+    assert BASE[:9] in text and MOVED[:9] in text and "Nothing was merged" in text
+    assert "--drop-candidate" in text and "cut again" in text
+
+
+@pytest.mark.parametrize("kwargs", [{"tip": "garbage"}, {"tip": BASE, "parents": BASE + " " + MOVED}, {"tip": BASE, "parents": ""},
+                                    {"tip": BASE, "code": 1}])
+def test_unreadable_or_ambiguous_base_fails_closed(rel, monkeypatch, kwargs):
+    _fake_gh(monkeypatch, rel, **kwargs)
+    assert "refused" in rel.real_main_moved_refusal(5, "v0.9.12")
+
+
+def test_merge_guard_refuses_when_main_moved_and_never_reads_the_candidate(rel, monkeypatch):
+    monkeypatch.setattr(rel, "main_moved_refusal", lambda number, tag: "main moved since the candidate base")
+    monkeypatch.setattr(rel, "release_pr", lambda tag: {"number": 5, "state": "OPEN"})
+    monkeypatch.setattr(rel.release_candidate_policy, "verify_pr", lambda *a: pytest.fail("evidence read after a moved main"))
+    with pytest.raises(rel.Stop, match="not merged"):
+        rel.merge_release_pr("v0.9.12")
+    assert "v0.9.12" not in rel.world.tags
