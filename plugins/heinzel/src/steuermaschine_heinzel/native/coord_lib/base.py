@@ -20,6 +20,8 @@ class CoordSettings(BaseModel):
 
     coord_document: Path | None = Field(None, description="The one tracking document: asks table, checkpoints, work instructions, and the log at its end. Required by what reads or writes it.")
     coord_journal_lock_file: Path | None = Field(None, description="Lock held for one journal append; none: <coord_document>.lock. Name the former note tool's lock file while that tool still runs.")
+    coord_log_dir: Path | None = Field(None, description="The log: one Markdown file per day (YYYY-MM-DD.md) that `sm note` appends to and "
+                                                         "`sm status --write` moves old text into; none: research/log in the tracker's repository.")
     coord_tracker_dir: Path | None = Field(None, description="The repository whose issue tracker (bd) holds the beads; none: the directory of coord_document.")
     coord_bead_prefix: str = Field("heinzel-management-", description="Prefix of a full bead id; a short id gets it prepended.")
     coord_tool_path: list[str] = Field([], description="Directories put in front of PATH for the child commands bd, gh and git. Empty: PATH as it is.")
@@ -45,6 +47,14 @@ def document(settings: Mapping[str, Any] | None) -> Path:
 
 def tracker_dir(settings: Mapping[str, Any] | None) -> Path:
     return optional_path(settings, "coord_tracker_dir") or document(settings).parent
+
+
+def log_file(settings: Mapping[str, Any] | None, now: float) -> Path:
+    """The log file of the day of `now` (local time): `sm note` lines and the text the size cap moved out."""
+    import time
+
+    folder = optional_path(settings, "coord_log_dir") or tracker_dir(settings) / "research" / "log"
+    return folder / f"{time.strftime('%Y-%m-%d', time.localtime(now))}.md"
 
 
 def journal_lock(settings: Mapping[str, Any] | None) -> Path:

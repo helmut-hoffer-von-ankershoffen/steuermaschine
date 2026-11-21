@@ -249,6 +249,9 @@ class Stack:
     def state_moves(self, settings: Any, home: Any) -> list[Any]:
         return [m for part in self._collect("sm_state_moves", settings=settings, home=home) for m in part or []]
 
+    def journal_migrate(self, providers: Any, settings: Any) -> list[str]:
+        return [line for part in self._collect("sm_journal_migrate", providers=providers, settings=settings) for line in part or []]
+
     def lint_rules(self) -> list[Any]:
         return [r for part in self._collect("sm_help_lint_rules") for r in part or []]
 

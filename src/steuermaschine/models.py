@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, RootModel
@@ -268,6 +269,7 @@ class TreeRow(Model):
 
     path: str
     group: bool
+    default: str = ""  # a group that runs this subcommand for a word that is none of its own (`sm release 1.2.3`)
     hidden: bool = False
     purpose: str = ""
     help: str = ""
@@ -283,6 +285,47 @@ class LintFindings(RootModel[list[str]]):
     """One line per help contract finding; empty when every command passes (`self lint`)."""
 
 
+class Markdown(RootModel[str]):
+    """A Markdown document (`self doc`)."""
+
+
+class Tokens(Model):
+    """The tokens of one session transcript (`self tokens`): summed over every usage block, per kind."""
+
+    answers: int = 0
+    input: int = 0
+    output: int = 0
+    cache_read: int = 0
+    cache_write: int = 0
+
+    @property
+    def total(self) -> int:
+        return self.input + self.output + self.cache_read + self.cache_write
+
+    def render(self) -> list[str]:
+        return [f"{self.answers} answers: {self.total} tokens (input {self.input}, output {self.output}, cache read {self.cache_read}, cache write {self.cache_write})"]
+
+    @classmethod
+    def count(cls, lines: list[str]) -> Tokens:
+        found = cls()
+        for line in lines:
+            try:
+                row = json.loads(line)
+            except ValueError:
+                continue
+            message = row.get("message") if isinstance(row, dict) else None
+            usage = message.get("usage") if isinstance(message, dict) else None
+            if not isinstance(usage, dict):
+                continue
+            found.answers += 1
+            for field, key in (("input", "input_tokens"), ("output", "output_tokens"), ("cache_read", "cache_read_input_tokens"),
+                               ("cache_write", "cache_creation_input_tokens")):
+                value = usage.get(key)
+                if isinstance(value, int) and not isinstance(value, bool):
+                    setattr(found, field, getattr(found, field) + value)
+        return found
+
+
 MODELS: dict[str, type[BaseModel]] = {m.__name__: m for m in (
     Error, Alarm, GoReport, RunReport, RunState, StepRow, ToolMapRow, ToolGaps, EffectiveConfig, PluginRow, HookRow, ReviewReach, Nothing, Verdict,
-    ReviewWait, FocusList, AlarmAcks, StateMigration, ModelNames, JsonSchema, GateRow, TreeRow, LintFindings)}
+    ReviewWait, FocusList, AlarmAcks, StateMigration, ModelNames, JsonSchema, GateRow, TreeRow, LintFindings, Markdown, Tokens)}

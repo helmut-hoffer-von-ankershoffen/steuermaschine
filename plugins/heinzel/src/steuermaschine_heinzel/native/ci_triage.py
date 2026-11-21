@@ -129,7 +129,7 @@ def triage_review(number: int = typer.Argument(..., metavar="NUMBER", help="The 
     "sm ci triage deadline --due 795 --due 801", "sm ci why NUMBER for a GENUINE row",
     "Fails closed: an incomplete inventory (more than 100 pull requests or checks, an unknown check state, a head that\n"
     "does not match its rollup) or an invalid registry prints nothing and exits 1."))
-def triage_deadline(due: list[int] = typer.Option([], "--due", metavar="N", help="A due pull request number; repeat for each."),
+def triage_deadline(due: list[int] = typer.Option([], "--due", metavar="N[,N...]", help="A due pull request number; repeat for each."),
                     limit: int = typer.Option(12, "--limit", metavar="N", help="Maximum detail rows, from 1 to 25.")) -> TriageDeadline:
     if not 1 <= limit <= 25 or any(number < 1 for number in due):
         raise Refuse("--limit must be 1 to 25 and --due numbers must be positive", "sm ci triage deadline --due 795")

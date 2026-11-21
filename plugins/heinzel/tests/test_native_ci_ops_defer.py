@@ -337,15 +337,15 @@ def test_every_command_of_the_area_has_contract_help_a_model_and_no_former_name(
     from steuermaschine.native import NativeCommand, collect
 
     found = collect(ci_ops)
-    assert sorted(c.path for c in found) == ["ci defer", "ci deferred", "ci quarantine", "ci quarantine flag", "ci quarantine list", "ci rerun", "ci sonar-close"]
+    assert sorted(c.path for c in found) == ["ci defer", "ci deferred", "ci quarantine", "ci quarantine flag", "ci quarantine list", "ci rerun", "ci sonar-close", "review sonar"]
     commands = [c for c in found if isinstance(c, NativeCommand)]
-    assert {c.path for c in commands if c.writes} == {"ci defer", "ci rerun", "ci quarantine flag", "ci sonar-close"}
+    assert {c.path for c in commands if c.writes} == {"ci defer", "ci rerun", "ci quarantine flag", "ci sonar-close", "review sonar"}
     for c in found:
         assert missing(c.help) == "" and "hz-" not in c.help and "hz_" not in c.help, c.path
     for c in commands:
         assert issubclass(c.model, Model) and c.replaces, c.path
     _, rt = env
-    for argv in (["ci", "defer", "--help"], ["ci", "rerun", "--help"], ["ci", "quarantine", "--help"], ["ci", "sonar-close", "--help"], ["ci", "deferred", "--help"]):
+    for argv in (["ci", "defer", "--help"], ["ci", "rerun", "--help"], ["ci", "quarantine", "--help"], ["review", "sonar", "--help"], ["ci", "deferred", "--help"]):
         shown = invoke(rt, argv)
         assert shown.exit_code == 0 and "hz-" not in shown.stdout, argv
     for name, info in ci_ops.CiOpsSettings.model_fields.items():
