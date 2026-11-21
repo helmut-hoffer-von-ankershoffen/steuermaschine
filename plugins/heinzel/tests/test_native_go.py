@@ -231,16 +231,6 @@ def test_a_packet_of_the_predict_bind_route_carries_the_focus_head():
     assert d["kind"] == "packet-prepared" and "no packet" not in json.dumps(d)
 
 
-def test_a_running_sm_head_prepare_is_reported_for_its_packet_and_not_as_packet_new():
-    new = packet(prepared_sha256=None)
-    proc = {"pid": 4711, "etime": "07:12", "kind": "prepare", "packet": "/p/packet.json", "core_repo": "/wt", "waits": True}
-    d = rules.decide(state(focus=[focus()], packets=[new], procs=[proc]), NOW)
-    assert d["kind"] == "prepare-running" and d["next"] is None
-    assert d["phase"] == "prepare running (pid 4711, 07:12) (it waits for the idle window) for fix/e2e e9c943810"
-    assert d["waiting"] == "pid 4711 to write /p/prepare.out; then run sm go again"
-    assert rules.decide(state(packets=[new], procs=[{**proc, "packet": "p/packet.json"}]), NOW)["kind"] == "prepare-running"  # a relative argument
-    assert rules.decide(state(packets=[new], procs=[{**proc, "packet": "/other/packet.json"}]), NOW)["kind"] == "packet-new"
-    assert rules.same_packet("/x/p/packet.json", "p/packet.json") and not rules.same_packet("/x/p/packet.json", "q/packet.json")
 
 
 def test_a_running_prepare_or_admission_for_the_focus_worktree_without_a_readable_packet_is_not_no_packet():

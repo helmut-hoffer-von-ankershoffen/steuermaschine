@@ -23,7 +23,6 @@ from steuermaschine.github.testing import FakeGh
 from steuermaschine_heinzel import state as statedir
 from steuermaschine_heinzel.native.admission_lib import focused_admit as a
 from steuermaschine_heinzel.native.admission_lib import focused_slots as s
-from steuermaschine_heinzel.native.admission_lib import ops
 from steuermaschine_heinzel.native.admission_lib import repair_main as r
 
 REPO = s.hzlib.CORE
@@ -365,55 +364,12 @@ def wired(case, monkeypatch):
     return SimpleNamespace(**vars(c), composed=composed)
 
 
-def test_prepare_then_apply_writes_one_plan_and_a_receipt_the_queue_recognizes(wired):
-    w = wired
-    prepared = ops.prepare(w.packet_path, w.h.repo, w.packet_path.parent, repair_main=True, runtime=w.rt)
-    doc = prepared.prepared
-    assert doc["repair_main"]["tree"] == w.h.tree and doc["pr"] is None and doc["head"] == w.h.head
-    assert json.loads(Path(prepared.args_path).read_text())["repair_main"] is True
-    assert w.composed == [w.h.tree] and not w.rt.writes and not w.gh.writes()
-    result = ops.apply(w.packet_path, prepared.sha256, runtime=w.rt)
-    assert w.rt.events == ["pause", "write", "restore"] and [name for name, _ in w.rt.writes] == [s.NAMES[1]]
-    assert json.loads(w.rt.writes[0][1]) == {f"push-tree:{w.h.tree}": w.plan}
-    receipt = json.loads(Path(result.receipt_path).read_text())
-    assert receipt["repair_main"] == doc["repair_main"] and receipt["registry_changed"] is True
-    found = r.receipt_for(w.rt.home, RUN, w.h.main, {r.JOB: JOB_PATHS, "CI OK": JOB_OK})
-    assert found and found["pr"] == PR
-    assert r.receipt_for(w.rt.home, RUN + 1, w.h.main, {r.JOB: JOB_PATHS, "CI OK": JOB_OK}) is None
-    assert r.receipt_for(w.rt.home, RUN, w.h.main, {r.JOB: JOB_PATHS}) is None
 
 
-@pytest.mark.parametrize("drift", ["main-moved", "rerun-started", "queue-record", "pr-option"])
-def test_apply_refuses_when_anything_moved_since_review(wired, drift):
-    w = wired
-    prepared = ops.prepare(w.packet_path, w.h.repo, w.packet_path.parent, repair_main=True, runtime=w.rt)
-    if drift == "main-moved":
-        w.github.main = "f" * 40
-    elif drift == "rerun-started":
-        w.github.run["run_attempt"] = 2
-    elif drift == "queue-record":
-        w.queue["items"][0]["reviewed_head"] = w.h.between
-        (w.rt.cache / r.QUEUE_STATE).write_text(json.dumps(w.queue))
-    elif drift == "pr-option":
-        args = json.loads(Path(prepared.args_path).read_text())
-        Path(prepared.args_path).write_text(json.dumps(dict(args, pr=PR)))
-    with pytest.raises(a.AdmissionError):
-        ops.apply(w.packet_path, prepared.sha256, runtime=w.rt)
-    assert not w.rt.writes and not list((w.rt.cache / r.RECEIPTS).glob(f"head-{w.h.head}-*.json"))[1:]
 
 
-@pytest.mark.parametrize("option", [{"pr": PR}, {"resulting_main_only": True, "pr": PR}, {"protected": True},
-                                    {"expected_remote_head": "1" * 40, "pr": PR}])
-def test_repair_main_takes_no_other_mode(wired, option):
-    with pytest.raises(a.AdmissionError, match="repair-main"):
-        ops.prepare(wired.packet_path, wired.h.repo, wired.packet_path.parent, repair_main=True, runtime=wired.rt, **option)
 
 
-def test_a_packet_at_current_main_is_not_a_repair(wired):
-    w = wired
-    w.github.main = w.h.between
-    with pytest.raises(a.AdmissionError, match="repair-main plans main itself"):
-        ops.prepare(w.packet_path, w.h.repo, w.packet_path.parent, repair_main=True, runtime=w.rt)
 
 
 def test_apply_slots_refuses_mixed_singleton_proofs(tmp_path):

@@ -16,12 +16,12 @@ import pytest
 from steuermaschine.app import Runtime
 from steuermaschine.config import Project
 from steuermaschine.engine import Ctx, Refuse, Subject, Wait
+from steuermaschine.hashing import canonical_sha256
 from steuermaschine.native import NativeRuntime, using
 from steuermaschine.plugins import stack_of
 from steuermaschine.testing import fake_providers
 from steuermaschine.testing.fakes import FakeVcs
 from steuermaschine_heinzel.native import release
-from steuermaschine_heinzel.native.admission_lib.ops import canonical_sha256
 from steuermaschine_heinzel.native.release import ReleaseRun
 from steuermaschine_heinzel.native.release_read import ReleaseVerify, SurfaceCheck
 from steuermaschine_heinzel.native.ship import HeadResult
@@ -248,7 +248,7 @@ def test_the_publish_plan_names_the_resume_flags(tmp_path):
     sha, brief, file = release_cut.publish_review(ctx)
     plan = json.loads(Path(file).read_text())
     assert plan["command"] == "sm release resume 0.9.41 --intro INTRO --candidate-gate"
-    assert plan["snapshot_acceptance"] is False and plan["candidate_gate"] is True and sha == canonical_sha256(plan)
+    assert plan["snapshot_acceptance"] is False and plan["candidate_gate"] is True and sha == canonical_sha256(json.dumps(plan))
     assert file == str(tmp_path / "review" / "release-v0.9.41" / "cut-plan.json") and "v0.9.41" in brief
 
 
