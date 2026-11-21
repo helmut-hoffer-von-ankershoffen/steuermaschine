@@ -95,6 +95,8 @@ def extra_tests(sel: Path | None) -> list[str]:
     "              plugins or documents changed\n"
     "  hook        Core's scripts/scoped_checks.py answered for the changed paths: which are web files and documents, their\n"
     "              steps and the early guards. A hook that is missing or fails is a failure, never a pass\n"
+    "  parity      what PR CI fails on that the hook leaves out, each when a path it reads changed: the lockfile\n"
+    "              (uv lock --check), the template (scripts/sync_template.py --check), the import contracts (lint-imports)\n"
     "  web         when web files changed: the hook's own web steps (lint, generated client, types) and the Vitest files\n"
     "              the selector names\n"
     "  docs        when documents, ADRs or the site's tooling changed: the hook's own document steps\n"

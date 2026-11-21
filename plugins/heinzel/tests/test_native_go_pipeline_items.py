@@ -75,6 +75,8 @@ def test_the_probe_keeps_unfinished_runs_with_their_process_and_worktree_facts(m
         {"pipeline": "head.admit", "key": "a" * 40, "arg": "/wt", "status": "running", "pid": os.getpid(), "steps": {"pr": {"status": "done"}}},
         {"pipeline": "head.admit", "key": "c" * 40, "arg": "/gone", "status": "waiting"},
         {"pipeline": "release.cut", "key": "0.9.52", "status": "running", "pid": 99999999},
+        {"pipeline": "head.admit", "key": "d" * 40, "status": "running", "running": "packet", "pid": 1},  # the deleted admission's steps
+        {"pipeline": "head.admit", "key": "e" * 40, "status": "waiting", "steps": {"prepare": {"status": "done"}}},
         "not a run",
     ]
     rows = probes.probe_pipelines(SimpleNamespace(runs=runs, sh=sh))

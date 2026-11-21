@@ -255,6 +255,13 @@ def probe_receipts(w: World) -> list[Any]:
 
 PIPELINE_KINDS = ("runs.head.admit", "runs.release.cut")
 OPEN = ("finished", "superseded")
+ADMIT_STEPS = ("check", "pr", "queue")  # the steps of `sm head admit` today; a run that names any other is state of the deleted admission
+
+
+def from_deleted_admission(state: dict) -> bool:
+    """A head.admit run saved by the old admission (packet, prepare, plan steps): not work, so never a NEXT."""
+    named = [*(state.get("steps") or {}), *([state["running"]] if state.get("running") else [])]
+    return state.get("pipeline") == "head.admit" and any(name not in ADMIT_STEPS for name in named)
 
 
 def probe_pipelines(w: World) -> list[Any]:
@@ -262,7 +269,7 @@ def probe_pipelines(w: World) -> list[Any]:
     and where is the worktree's head now (a head run whose worktree moved on is superseded by the next run)."""
     out = []
     for state in w.runs:
-        if not isinstance(state, dict) or state.get("status") in OPEN:
+        if not isinstance(state, dict) or state.get("status") in OPEN or from_deleted_admission(state):
             continue
         row = {k: state.get(k) for k in ("pipeline", "key", "label", "arg", "status", "phase", "next", "waiting_on", "trap", "running", "pid", "review", "fingerprint")}
         row["external_done"] = any(v.get("status") == "done" and k in ("apply", "pr", "queue", "admit apply", "resume") for k, v in (state.get("steps") or {}).items())

@@ -72,16 +72,16 @@ def _result(action: str, target: str, done: Done, verdicts: dict[int, str], defa
 
 
 @native("head push", replaces=("hz-push-gate",), help=H(
-    "Before a push that starts PR CI: OK, or WAIT while main CI is starved or a release candidate owns the runners.",
+    "Before a push that starts PR CI: always OK; info lines name a starved main CI or an active release candidate (PR CI queues behind them).",
     "Use before every `git push` to a PR branch; commit locally and batch commits into one push.",
     "nothing (read-only).",
-    "sm head push 801", "on OK: push once (`sm gate run -- git push`); on WAIT (exit 75): the same command later",
-    "Exit 0 push now, 75 wait, 1 fix the CI meta problems first. Without --gate-only the CI meta preflight runs first.\n"
-    "While a merge freeze is on (a release's hold or the incident freeze) only fix PRs (keep list) and release/*, bump/*, main pass."))
+    "sm head push 801", "push once (`sm gate run -- git push`)",
+    "Exit 0 push now, 1 fix the CI meta problems first. Without --gate-only the CI meta preflight runs first.\n"
+    "A release candidate and a merge freeze never refuse a push: they hold main merges."))
 def head_push(
     target: str = typer.Argument(..., metavar="PR|BRANCH", help="PR number, or a branch that has no PR yet."),
     gate_only: bool = typer.Option(False, "--gate-only", help="Only the push gate (main CI starvation, release hold); skip the CI meta preflight."),
-    minimum: int | None = typer.Option(None, "--min", metavar="MINUTES", help="Main CI queue age that triggers WAIT (default 15); giving it waives the release hold."),
+    minimum: int | None = typer.Option(None, "--min", metavar="MINUTES", help="Main CI queue age that triggers the info line (default 15)."),
 ) -> HeadResult:
     if gate_only or minimum is not None:
         code, lines = push_gate.check(target, minimum)

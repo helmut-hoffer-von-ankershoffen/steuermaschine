@@ -187,7 +187,7 @@ def test_ruff_and_tree_and_bound_steps(tmp_path):
 
 def test_the_checks_are_registered_in_their_order_and_reuse_the_preflights_type_and_standards_checks():
     registry = cheap.checks()
-    assert registry.names == cheap.STEPS == ("tree", "ruff", "types", "hook", "web", "docs", "standards", "tests", "coverage", "bound")
+    assert registry.names == cheap.STEPS == ("tree", "ruff", "types", "hook", "parity", "web", "docs", "standards", "tests", "coverage", "bound")
     by_name = {check.name: check.run for check in registry.checks}
     assert by_name["types"] is head.step_types and by_name["standards"] is head.step_standards
 
@@ -212,3 +212,23 @@ def test_the_hook_check_passes_with_what_the_hook_named_and_each_kind_runs_its_o
     assert cheap.hook_step("docs", "document(s)", "fix")(c).detail == "2 changed document(s): typos green" and calls == ["biome ci", "typos"]
     c.plan = cheap.Plan()
     assert cheap.hook_step("docs", "document(s)", "fix")(c).detail == "no document(s) changed"
+
+
+def test_parity_runs_the_lock_template_and_contract_checks_for_the_paths_each_reads(tmp_path):
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts/sync_template.py").write_text("")
+    word = {"lock": "lock --check", "template": "sync_template", "contracts": "lint-imports"}
+    for changed, ran in ((["README.md"], []), (["uv.lock"], ["lock"]), ([".github/workflows/ci.yml"], ["template"]), (["src/a.py"], ["contracts"]),
+                         (["pyproject.toml"], ["lock", "template", "contracts"]), ([".gitignore"], ["template"]),
+                         (["src/heinzel/bootstrap_pyyaml.py"], ["template", "contracts"]), (["plugins/x/pyproject.toml"], ["lock"])):
+        c, calls = context(tmp_path, {}, changed)
+        c.plan = cheap.Plan(changed=changed)
+        assert cheap.step_parity(c).status != "FAIL"
+        assert [next(n for n in word if word[n] in line) for line in calls] == ran, changed
+    c, _ = context(tmp_path, {"lock --check": (1, "stale")}, ["uv.lock"])
+    c.plan = cheap.Plan(changed=["uv.lock"])
+    assert cheap.step_parity(c).failures[0][0].startswith("lock failed (exit 1)")
+    (tmp_path / "scripts/sync_template.py").unlink()
+    c, calls = context(tmp_path, {}, [".github/workflows/ci.yml"])
+    c.plan = cheap.Plan(changed=[".github/workflows/ci.yml"])
+    assert cheap.step_parity(c).detail.startswith("no path changed") and calls == []

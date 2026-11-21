@@ -15,6 +15,8 @@ Checks, in the order they run (every one runs, so one pass names every finding):
   ruff        format and lint of the changed Python files
   types       the hook's type checks, when the change is not web, desktop, plugins or documents only
   hook        Core's hook answered for the changed paths; if it did not, its steps and guards are unknown and the run fails
+  parity      what PR CI fails on that the hook does not run: the lockfile (`uv lock --check`), the template
+              (scripts/sync_template.py --check) and the import contracts (`uv run lint-imports`), each when a path it reads changed
   web         the hook's web steps when web files changed: lint, generated client, types, the selected Vitest files
   docs        the hook's document steps when documents or the site's tooling changed
   standards   the repository-wide standards tests
@@ -25,6 +27,7 @@ Checks, in the order they run (every one runs, so one pass names every finding):
 from __future__ import annotations
 
 import json
+import re
 import shlex
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -34,7 +37,7 @@ from steuermaschine.preflight import FAIL, SKIP, Preflight, Step
 
 from ..preflight_lib import head
 
-STEPS = ("tree", "ruff", "types", "hook", "web", "docs", "standards", "tests", "coverage", "bound")
+STEPS = ("tree", "ruff", "types", "hook", "parity", "web", "docs", "standards", "tests", "coverage", "bound")
 NO_SLOT = "wait for load to drop and run sm check again; do not bypass the run lock"
 # Runs in the worktree's own interpreter: Core's hook answers for the changed paths; this code only asks.
 PROBE = """
@@ -221,6 +224,27 @@ def step_hook(c: Ctx) -> Step:
     return s
 
 
+PARITY = (  # (name, regex of the paths it reads, argv, the script it needs in the checkout, fix)
+    ("lock", r"(.*/)?(pyproject\.toml|uv\.lock)", ["uv", "lock", "--check"], "", "`uv lock` and commit the lockfile"),
+    ("template", r"Makefile|pyproject\.toml|\.github/workflows/ci\.yml|template/.*|\.gitignore|src/heinzel/bootstrap_pyyaml\.py|scripts/(sync_template\.py|template_.*)",
+     ["uv", "run", "--script", "scripts/sync_template.py", "--check"], "scripts/sync_template.py", "`make template-sync`; commit only the template lines of this change"),
+    ("contracts", r".*\.py|pyproject\.toml", ["uv", "run", "lint-imports"], "", "fix the import the contract names; never loosen the contract"),
+)
+
+
+def step_parity(c: Ctx) -> Step:
+    """The checks of the PR's lint job that Core's hook leaves out, for the paths each one reads."""
+    s = Step("parity")
+    ran = []
+    for name, reads, argv, script, fix in PARITY:
+        if (script and not (c.wt / script).is_file()) or not any(re.fullmatch(reads, f) for f in c.plan.changed):
+            continue
+        run_steps(c, s, [(name, argv)], fix)
+        ran.append(name)
+    s.detail = (f"{', '.join(ran)} green" if ran else "no path changed that the lock, template or contracts read") if s.status != FAIL else ""
+    return s
+
+
 def hook_step(name: str, files: str, fix: str) -> Any:
     """A check that runs the hook's own steps for one kind of changed file (`web`, `docs`); the hook says which files those are."""
 
@@ -295,7 +319,7 @@ def step_bound(c: Ctx) -> Step:
 
 
 def checks() -> Preflight:
-    table = {"tree": step_tree, "ruff": step_ruff, "types": head.step_types, "hook": step_hook,
+    table = {"tree": step_tree, "ruff": step_ruff, "types": head.step_types, "hook": step_hook, "parity": step_parity,
              "web": hook_step("web", "web file(s)", "fix the reported lint or type errors; a stale generated client: regenerate it as the step's message says"),
              "docs": hook_step("docs", "document(s)", "fix the document or regenerate the generated file the step names"),
              "standards": head.step_standards, "tests": step_tests, "coverage": step_coverage, "bound": step_bound}
