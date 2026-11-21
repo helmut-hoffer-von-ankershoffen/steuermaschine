@@ -47,12 +47,19 @@ def collect(w: World, now: float) -> list[dict]:
         return [{"name": j.get("name"), "conclusion": j.get("conclusion"), "status": j.get("status")} for j in jobs] if isinstance(jobs, list) else []
 
     def main_red():
-        runs = gh(["run", "list", "-R", repo, "--workflow", core_facts.ci_file(), "--branch", "main", "--status", "completed", "-L", "1", "--json", "databaseId,headSha,conclusion"])
-        if not isinstance(runs, list):
-            raise RuntimeError("main runs unreadable")
-        if not runs or (runs[0].get("conclusion") or "").lower() == "success":
-            return []
-        return [rules.main_red_alarm(runs[0], jobs_of(runs[0].get("databaseId")))]
+        """The newest completed CI run of main per trigger: a push run and the scheduled (nightly) full run. A red nightly
+        raises although a later push run is green (the push run does not cover what only the nightly runs)."""
+        found, seen = [], set()
+        for event in ("push", "schedule"):
+            runs = gh(["run", "list", "-R", repo, "--workflow", core_facts.ci_file(), "--branch", "main", "--event", event, "--status", "completed", "-L", "1",
+                       "--json", "databaseId,headSha,conclusion"])
+            if not isinstance(runs, list):
+                raise RuntimeError(f"main {event} runs unreadable")
+            if not runs or (runs[0].get("conclusion") or "").lower() == "success" or runs[0].get("databaseId") in seen:
+                continue
+            seen.add(runs[0].get("databaseId"))
+            found.append(rules.main_red_alarm(runs[0], jobs_of(runs[0].get("databaseId"))))
+        return found
 
     recent: dict = {}
 

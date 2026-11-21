@@ -39,39 +39,6 @@ def positive(value):
     return type(value) is int and value > 0
 
 
-def load_packet(path, review_root, pr):
-    """Load a separately reviewed main-only envelope with frozen original provenance."""
-    raw = a._stable_file(path, a.MAX_PACKET_BYTES)
-    packet = a._json_bytes(raw, 'resulting-main packet')
-    require(set(packet) == {'schema', 'mode', 'manifest', 'original', 'review'}
-            and type(packet['schema']) is int and packet['schema'] == 1 and packet['mode'] == MODE,
-            'invalid resulting-main-only packet')
-    plan, original, review = (packet[key] for key in ('manifest', 'original', 'review'))
-    require(isinstance(plan, dict) and plan.get('event') == 'push'
-            and plan.get('ref') == 'refs/heads/main' and 'head' not in plan and 'commit' not in plan,
-            'resulting-main admission requires one headless push-tree manifest')
-    require(isinstance(original, dict) and set(original) == ORIGINAL_FIELDS
-            and all(positive(original[k]) for k in ('pr', 'pr_id', 'repository_id', 'ci_run', 'judge_run'))
-            and original['pr'] == pr, 'invalid original PR identity')
-    for key in SOURCE_FIELDS:
-        a._sha(original[key], key)
-    a._sha(original['manifest_sha256'], 'original manifest digest', a.HEX)
-    a._sha(plan.get('base'), 'resulting-main base')
-    a._sha(plan.get('tree'), 'resulting-main tree')
-    require(isinstance(review, dict) and set(review) == {
-        'path', 'sha256', 'head', 'base', 'tree', 'manifest_sha256', 'original_sha256',
-    } and all(review[key] == expected for key, expected in {
-        'head': original['head'], 'base': plan['base'], 'tree': plan['tree'],
-        'manifest_sha256': digest(a.canonical(plan)), 'original_sha256': digest(a.canonical(original)),
-    }.items()), 'review differs from exact original evidence or resulting-main plan')
-    relative = review['path']
-    require(isinstance(relative, str) and relative and not Path(relative).is_absolute()
-            and '..' not in Path(relative).parts, 'unsafe resulting-main review path')
-    target = review_root / relative
-    require(target.resolve(strict=True).is_relative_to(review_root.resolve(strict=True))
-            and digest(a._stable_file(target, a.MAX_REVIEW_BYTES)) == review['sha256'],
-            'resulting-main review artifact changed')
-    return packet, raw
 
 
 def _policy(rt, base):

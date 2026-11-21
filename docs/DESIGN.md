@@ -384,13 +384,14 @@ Everything Heinzelmännchen-specific. The core has no word of it (`tests/test_co
 
 ```
 head admit:   check -> protected review (STOP, only for protected paths) -> pr* -> queue*
-release cut:  ci change -> notes -> publish review (STOP) -> resume* -> verify
+release cut:  ci change -> notes -> packet -> admit prepare -> admission review (STOP) -> admit apply* -> publish review (STOP)
+              -> resume* -> verify
 ```
 
-There is no admission: Core's CI runs the full matrix on every PR, so no packet, no plan slot, no hosted validation of a head.
+There is no head admission (the release path keeps `release admit` until the one-PR release replaces it): Core's CI runs the full matrix on every PR, so no packet, no plan slot, no hosted validation of a head.
 The one blocking STOP of `head admit` is for changes to `.github/`, the release, publish, PyPI and acceptance scripts, `quarantine.toml`,
 the coverage config and `conftest.py`; a different agent approves the digest of exactly those paths. Both are resumable and dry by default (section 3). A step is one native command (`check`, `head pr`, `queue add`;
-`release notes-audit`, `release resume`, `release verify`), looked up by name in the registry, never imported: a
+`release notes-audit`, `release admit prepare`, `release admit apply`, `release resume`, `release verify`), looked up by name in the registry, never imported: a
 change to that command voids that command's verdict, not the pipeline's. Tests replace a step through
 `pipelines.common.OVERRIDE`; an override never opens a shut gate. Inputs and their meaning: `sm head admit --help`,
 `sm release cut --help`; the release runbook is `docs/RUNBOOK-release-cut.md`.

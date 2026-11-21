@@ -1,0 +1,149 @@
+{
+  "main_manifest": {
+    "base": "38676849f2a6bee35c6663984a68afcc7b88892d",
+    "case_sha256": {
+      "python": "a2faaed9d595b395f482f96847fe846c72566803bebe524f3c3de18825fa2619",
+      "python312": "d5b3eea2baf9b170c204eb2a3c9df8114a769370abd8eb5c43f8e02db9a06475"
+    },
+    "changed": {
+      ".github/workflows/ci.yml": "M"
+    },
+    "config_blob": "82fdf4af528c42063863123c35031b03bcb587f7",
+    "diff_sha256": "3b1f547a7a18c9170631a2b6dd21a0d7fee258442a14f12b3f7043fc4dc0fb51",
+    "event": "push",
+    "execution": {
+      ".github/actions/setup-uv/action.yml": "d67b801a40bf31bbd0cad92a30622ea0096bda48",
+      ".github/actions/setup-uv/uv-manifest.json": "ac9143564027053899c9db6c2c3a6fd37017db89",
+      ".github/workflows/ci.yml": "a24e1c1f1d965bdff2b5a1b3eaaac193ca06ef9d",
+      "scripts/bootstrap-pyyaml.sh": "4fd84e883bfbb9779230984479dc8bd53a98d8d1",
+      "scripts/ci_workload.py": "2de93e9adc97f5974489b99f219903ac3d1b92f0",
+      "scripts/focused_coverage.py": "903c3560a5df610d06f0f58563164343adbcfb43",
+      "scripts/focused_coverage.py.lock": "661c3449f7d12cada9abac76219243365ffcd902",
+      "scripts/focused_job.py": "528f8e424eea98905c853c6e3e393d7bb9490db3",
+      "scripts/focused_plan.py": "c6fb857320e409b199bf4fbb9a31ef9f85fbf82c",
+      "scripts/pyyaml-build-requirements.txt": "1713dbaf1406b5a3b4b2c5eb91125fd180b22e37",
+      "scripts/release_candidate.py": "5c13ec2fc903b5cd7357fe648fbe81a65340928e",
+      "uv.lock": "ddbd130d64d3dd03309f2a5d769499097fc2fc12"
+    },
+    "mode": "python-coverage-not-applicable",
+    "production": {},
+    "ref": "refs/heads/main",
+    "schema": 1,
+    "selection": {
+      "python": [
+        "tests/unit/ci_test.py",
+        "tests/unit/ci_workload_test.py",
+        "tests/unit/ci_macos_arm_test.py",
+        "tests/unit/ci_node_test.py",
+        "tests/unit/ci_supervised_test.py",
+        "tests/unit/ci_uv_bootstrap_test.py",
+        "tests/unit/release_candidate_test.py",
+        "tests/unit/focused_job_test.py",
+        "tests/unit/focused_plan_test.py",
+        "tests/unit/focused_coverage_test.py",
+        "tests/unit/focused_gate_test.py",
+        "tests/unit/affected_test.py",
+        "tests/unit/scoped_checks_test.py",
+        "tests/unit/merge_gate_test.py",
+        "tests/unit/main_batch_test.py",
+        "tests/unit/release_channel_test.py",
+        "tests/unit/review_tier_test.py",
+        "tests/unit/ship_test.py",
+        "tests/unit/web_build_test.py",
+        "tests/unit/browser_runtime_setup_test.py",
+        "tests/unit/quarantine_test.py",
+        "tests/unit/confidentiality_test.py",
+        "tests/unit/standards_test.py",
+        "tests/unit/acceptance_test.py"
+      ],
+      "python312": [
+        "tests/unit/ci_test.py",
+        "tests/unit/ci_workload_test.py",
+        "tests/unit/release_candidate_test.py",
+        "tests/unit/focused_job_test.py",
+        "tests/unit/focused_plan_test.py",
+        "tests/unit/focused_coverage_test.py"
+      ]
+    },
+    "tree": "e9bb3781a3b2542d2815f55a68bf769c26286f61"
+  },
+  "manifest": {
+    "base": "38676849f2a6bee35c6663984a68afcc7b88892d",
+    "case_sha256": {
+      "python": "a2faaed9d595b395f482f96847fe846c72566803bebe524f3c3de18825fa2619",
+      "python312": "d5b3eea2baf9b170c204eb2a3c9df8114a769370abd8eb5c43f8e02db9a06475"
+    },
+    "changed": {
+      ".github/workflows/ci.yml": "M"
+    },
+    "config_blob": "82fdf4af528c42063863123c35031b03bcb587f7",
+    "diff_sha256": "3b1f547a7a18c9170631a2b6dd21a0d7fee258442a14f12b3f7043fc4dc0fb51",
+    "event": "pull_request",
+    "execution": {
+      ".github/actions/setup-uv/action.yml": "d67b801a40bf31bbd0cad92a30622ea0096bda48",
+      ".github/actions/setup-uv/uv-manifest.json": "ac9143564027053899c9db6c2c3a6fd37017db89",
+      ".github/workflows/ci.yml": "a24e1c1f1d965bdff2b5a1b3eaaac193ca06ef9d",
+      "scripts/bootstrap-pyyaml.sh": "4fd84e883bfbb9779230984479dc8bd53a98d8d1",
+      "scripts/ci_workload.py": "2de93e9adc97f5974489b99f219903ac3d1b92f0",
+      "scripts/focused_coverage.py": "903c3560a5df610d06f0f58563164343adbcfb43",
+      "scripts/focused_coverage.py.lock": "661c3449f7d12cada9abac76219243365ffcd902",
+      "scripts/focused_job.py": "528f8e424eea98905c853c6e3e393d7bb9490db3",
+      "scripts/focused_plan.py": "c6fb857320e409b199bf4fbb9a31ef9f85fbf82c",
+      "scripts/pyyaml-build-requirements.txt": "1713dbaf1406b5a3b4b2c5eb91125fd180b22e37",
+      "scripts/release_candidate.py": "5c13ec2fc903b5cd7357fe648fbe81a65340928e",
+      "uv.lock": "ddbd130d64d3dd03309f2a5d769499097fc2fc12"
+    },
+    "head": "1f53d8f7e2ea5ba5929096cb8dcfc849976886c3",
+    "mode": "python-coverage-not-applicable",
+    "production": {},
+    "ref": "refs/pull/*/merge",
+    "schema": 1,
+    "selection": {
+      "python": [
+        "tests/unit/ci_test.py",
+        "tests/unit/ci_workload_test.py",
+        "tests/unit/ci_macos_arm_test.py",
+        "tests/unit/ci_node_test.py",
+        "tests/unit/ci_supervised_test.py",
+        "tests/unit/ci_uv_bootstrap_test.py",
+        "tests/unit/release_candidate_test.py",
+        "tests/unit/focused_job_test.py",
+        "tests/unit/focused_plan_test.py",
+        "tests/unit/focused_coverage_test.py",
+        "tests/unit/focused_gate_test.py",
+        "tests/unit/affected_test.py",
+        "tests/unit/scoped_checks_test.py",
+        "tests/unit/merge_gate_test.py",
+        "tests/unit/main_batch_test.py",
+        "tests/unit/release_channel_test.py",
+        "tests/unit/review_tier_test.py",
+        "tests/unit/ship_test.py",
+        "tests/unit/web_build_test.py",
+        "tests/unit/browser_runtime_setup_test.py",
+        "tests/unit/quarantine_test.py",
+        "tests/unit/confidentiality_test.py",
+        "tests/unit/standards_test.py",
+        "tests/unit/acceptance_test.py"
+      ],
+      "python312": [
+        "tests/unit/ci_test.py",
+        "tests/unit/ci_workload_test.py",
+        "tests/unit/release_candidate_test.py",
+        "tests/unit/focused_job_test.py",
+        "tests/unit/focused_plan_test.py",
+        "tests/unit/focused_coverage_test.py"
+      ]
+    },
+    "tree": "e9bb3781a3b2542d2815f55a68bf769c26286f61"
+  },
+  "review": {
+    "base": "38676849f2a6bee35c6663984a68afcc7b88892d",
+    "head": "1f53d8f7e2ea5ba5929096cb8dcfc849976886c3",
+    "main_manifest_sha256": "2bcc201979c9d1d936b9377faa19f7bab6ac0fe22257173828f81c881dec4241",
+    "manifest_sha256": "0e6b8ed0f2d565ba8a385fb30e5847434f552031bc8cb9d937b0cc8a12a49f19",
+    "path": "consumer-pin/m-38676849/REVIEW.md",
+    "sha256": "61a5a01e59940126dc0f0ff33920bfa23353347e97cc8c4a3168af8b8ce2ba0f",
+    "tree": "e9bb3781a3b2542d2815f55a68bf769c26286f61"
+  },
+  "schema": 1
+}

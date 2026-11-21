@@ -119,14 +119,17 @@ def judge_path() -> str:
 
 def gate_check(role: str) -> str:
     """The name of the merge-gate workflow's check of `role` (coverage or sonar)."""
-    return at_main().gate_checks[role]
+    found = at_main().gate_checks.get(role)
+    if not found:
+        raise CandidateError(f"this Core's release policy has no {role} check (it posts no merge-gate checks)")
+    return found
 
 
 def api_checks() -> tuple[str, ...]:
     """The checks the merge-gate workflow posts (all required contexts but the aggregate): the Sonar gate, then the
     coverage floor."""
     gates = at_main().gate_checks
-    return (gates["sonar"], gates["coverage"])
+    return tuple(gates[role] for role in ("sonar", "coverage") if role in gates)
 
 
 def contexts() -> tuple[str, ...]:

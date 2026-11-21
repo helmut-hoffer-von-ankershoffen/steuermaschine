@@ -1,0 +1,163 @@
+{
+  "main_manifest": {
+    "base": "e60922e51853bd303a42c5a64385f7028d280520",
+    "case_sha256": {
+      "browser": "1cb07661091ab77184caaad1923c09516eea553afc1c53cd63a872745bf04e7f",
+      "python": "34e7af47171363d3cc7d0251f26b63c6b3059a77bd2fb32023964081e9dda3e2",
+      "web": "adf8009e9d6d874a01f776b0c49a2716d54dcb9b4734d038ebf08f7fdd38687d"
+    },
+    "changed": {
+      "web/e2e/chat-only-workshop.mjs": "M",
+      "web/e2e/chat-profile-color.mjs": "M",
+      "web/e2e/chat-ready.mjs": "M",
+      "web/e2e/connected-read.mjs": "M",
+      "web/e2e/durable-composer.mjs": "M",
+      "web/e2e/generic-agent-chat.mjs": "M",
+      "web/e2e/mobile-responsive.mjs": "M",
+      "web/e2e/read-set-approval.mjs": "M",
+      "web/e2e/scheduled-connected-read.mjs": "M",
+      "web/e2e/scheduled-notification-review.mjs": "M",
+      "web/e2e/source-suggestion.mjs": "M",
+      "web/e2e/template-scheduled.mjs": "M",
+      "web/src/chat/ConnectedReadSetReview.test.tsx": "M",
+      "web/src/chat/DurableSession.test.tsx": "M",
+      "web/src/chat/DurableSession.tsx": "M",
+      "web/src/heinzel/look.ts": "A",
+      "web/src/i18n.ts": "M",
+      "web/src/layout/ChatPanel.test.tsx": "M",
+      "web/src/layout/Shell.test.tsx": "M",
+      "web/src/layout/Shell.tsx": "M"
+    },
+    "config_blob": "82fdf4af528c42063863123c35031b03bcb587f7",
+    "diff_sha256": "c8a947398dfb67367637b5829987711608ffb9e17ee6b906533c7349786254fd",
+    "event": "push",
+    "execution": {
+      ".github/actions/setup-uv/action.yml": "d67b801a40bf31bbd0cad92a30622ea0096bda48",
+      ".github/actions/setup-uv/uv-manifest.json": "ac9143564027053899c9db6c2c3a6fd37017db89",
+      ".github/workflows/ci.yml": "14abefad2cc40302622a2eb3d26d38e32f0c1512",
+      "scripts/bootstrap-pyyaml.sh": "4fd84e883bfbb9779230984479dc8bd53a98d8d1",
+      "scripts/ci_workload.py": "2de93e9adc97f5974489b99f219903ac3d1b92f0",
+      "scripts/focused_coverage.py": "903c3560a5df610d06f0f58563164343adbcfb43",
+      "scripts/focused_coverage.py.lock": "661c3449f7d12cada9abac76219243365ffcd902",
+      "scripts/focused_job.py": "528f8e424eea98905c853c6e3e393d7bb9490db3",
+      "scripts/focused_plan.py": "c6fb857320e409b199bf4fbb9a31ef9f85fbf82c",
+      "scripts/pyyaml-build-requirements.txt": "1713dbaf1406b5a3b4b2c5eb91125fd180b22e37",
+      "scripts/release_candidate.py": "5c13ec2fc903b5cd7357fe648fbe81a65340928e",
+      "uv.lock": "ddbd130d64d3dd03309f2a5d769499097fc2fc12"
+    },
+    "mode": "python-coverage-not-applicable",
+    "production": {},
+    "ref": "refs/heads/main",
+    "schema": 1,
+    "selection": {
+      "browser": [
+        "tests/e2e/chat_only_workshop_test.py",
+        "tests/e2e/chat_profile_color_test.py",
+        "tests/e2e/generic_agent_chat_test.py",
+        "tests/e2e/read_set_approval_prototype_test.py",
+        "tests/e2e/scheduled_connected_test.py",
+        "tests/e2e/scheduled_notification_review_test.py",
+        "tests/e2e/source_suggestion_test.py",
+        "tests/e2e/template_scheduled_test.py",
+        "tests/e2e/web_durable_composer_test.py",
+        "tests/e2e/web_ui_test.py::test_mobile_touch_viewports_keep_navigation_settings_and_chat_reachable"
+      ],
+      "python": [
+        "tests/unit/branding_test.py",
+        "tests/unit/docs_style_test.py",
+        "tests/unit/e2e_browser_output_test.py",
+        "tests/unit/standards_test.py"
+      ],
+      "web": [
+        "web/ALL"
+      ]
+    },
+    "tree": "878a674f7db6ebd709fbcadd0d62d72a37119406"
+  },
+  "manifest": {
+    "base": "e60922e51853bd303a42c5a64385f7028d280520",
+    "case_sha256": {
+      "browser": "1cb07661091ab77184caaad1923c09516eea553afc1c53cd63a872745bf04e7f",
+      "python": "34e7af47171363d3cc7d0251f26b63c6b3059a77bd2fb32023964081e9dda3e2",
+      "web": "adf8009e9d6d874a01f776b0c49a2716d54dcb9b4734d038ebf08f7fdd38687d"
+    },
+    "changed": {
+      "web/e2e/chat-only-workshop.mjs": "M",
+      "web/e2e/chat-profile-color.mjs": "M",
+      "web/e2e/chat-ready.mjs": "M",
+      "web/e2e/connected-read.mjs": "M",
+      "web/e2e/durable-composer.mjs": "M",
+      "web/e2e/generic-agent-chat.mjs": "M",
+      "web/e2e/mobile-responsive.mjs": "M",
+      "web/e2e/read-set-approval.mjs": "M",
+      "web/e2e/scheduled-connected-read.mjs": "M",
+      "web/e2e/scheduled-notification-review.mjs": "M",
+      "web/e2e/source-suggestion.mjs": "M",
+      "web/e2e/template-scheduled.mjs": "M",
+      "web/src/chat/ConnectedReadSetReview.test.tsx": "M",
+      "web/src/chat/DurableSession.test.tsx": "M",
+      "web/src/chat/DurableSession.tsx": "M",
+      "web/src/heinzel/look.ts": "A",
+      "web/src/i18n.ts": "M",
+      "web/src/layout/ChatPanel.test.tsx": "M",
+      "web/src/layout/Shell.test.tsx": "M",
+      "web/src/layout/Shell.tsx": "M"
+    },
+    "config_blob": "82fdf4af528c42063863123c35031b03bcb587f7",
+    "diff_sha256": "c8a947398dfb67367637b5829987711608ffb9e17ee6b906533c7349786254fd",
+    "event": "pull_request",
+    "execution": {
+      ".github/actions/setup-uv/action.yml": "d67b801a40bf31bbd0cad92a30622ea0096bda48",
+      ".github/actions/setup-uv/uv-manifest.json": "ac9143564027053899c9db6c2c3a6fd37017db89",
+      ".github/workflows/ci.yml": "14abefad2cc40302622a2eb3d26d38e32f0c1512",
+      "scripts/bootstrap-pyyaml.sh": "4fd84e883bfbb9779230984479dc8bd53a98d8d1",
+      "scripts/ci_workload.py": "2de93e9adc97f5974489b99f219903ac3d1b92f0",
+      "scripts/focused_coverage.py": "903c3560a5df610d06f0f58563164343adbcfb43",
+      "scripts/focused_coverage.py.lock": "661c3449f7d12cada9abac76219243365ffcd902",
+      "scripts/focused_job.py": "528f8e424eea98905c853c6e3e393d7bb9490db3",
+      "scripts/focused_plan.py": "c6fb857320e409b199bf4fbb9a31ef9f85fbf82c",
+      "scripts/pyyaml-build-requirements.txt": "1713dbaf1406b5a3b4b2c5eb91125fd180b22e37",
+      "scripts/release_candidate.py": "5c13ec2fc903b5cd7357fe648fbe81a65340928e",
+      "uv.lock": "ddbd130d64d3dd03309f2a5d769499097fc2fc12"
+    },
+    "head": "2da1e00991e50bec16f3fadf87c5c60218ea3f0a",
+    "mode": "python-coverage-not-applicable",
+    "production": {},
+    "ref": "refs/pull/*/merge",
+    "schema": 1,
+    "selection": {
+      "browser": [
+        "tests/e2e/chat_only_workshop_test.py",
+        "tests/e2e/chat_profile_color_test.py",
+        "tests/e2e/generic_agent_chat_test.py",
+        "tests/e2e/read_set_approval_prototype_test.py",
+        "tests/e2e/scheduled_connected_test.py",
+        "tests/e2e/scheduled_notification_review_test.py",
+        "tests/e2e/source_suggestion_test.py",
+        "tests/e2e/template_scheduled_test.py",
+        "tests/e2e/web_durable_composer_test.py",
+        "tests/e2e/web_ui_test.py::test_mobile_touch_viewports_keep_navigation_settings_and_chat_reachable"
+      ],
+      "python": [
+        "tests/unit/branding_test.py",
+        "tests/unit/docs_style_test.py",
+        "tests/unit/e2e_browser_output_test.py",
+        "tests/unit/standards_test.py"
+      ],
+      "web": [
+        "web/ALL"
+      ]
+    },
+    "tree": "878a674f7db6ebd709fbcadd0d62d72a37119406"
+  },
+  "review": {
+    "base": "e60922e51853bd303a42c5a64385f7028d280520",
+    "head": "2da1e00991e50bec16f3fadf87c5c60218ea3f0a",
+    "main_manifest_sha256": "8bd303567242edae4753b76e507d5829d1aa5aa1ff0e4da391d468ca40692f48",
+    "manifest_sha256": "2a9f4a9bf457a19427e0ee129fd563638838a5c0aebd8478ee6e04f09c2fea03",
+    "path": "m-e60922e5/REVIEW.md",
+    "sha256": "4754e165404595d4192bc4a8af0b24ecd63549f8da226682caa8f318d8c60350",
+    "tree": "878a674f7db6ebd709fbcadd0d62d72a37119406"
+  },
+  "schema": 1
+}

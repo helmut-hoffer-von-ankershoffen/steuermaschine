@@ -105,6 +105,44 @@ def test_main_red_reads_jobs_and_flags_unreadable_runs(tmp_path):
     assert "blind:main-red" in keys(watch.collect(world(tmp_path, ok), NOW))
 
 
+def _by_event(push, schedule):
+    """A Gh that answers the newest completed run of main per trigger event."""
+    answers = {**QUIET, "api repos/o/r/actions/runs/9/jobs": {"jobs": []}, "api repos/o/r/actions/runs/4/jobs": {"jobs": []}}
+    gh = Gh(answers)
+    plain = gh.try_json
+
+    def try_json(args, timeout=0):
+        text = " ".join(args)
+        if text.startswith("run list -R o/r --workflow"):
+            assert "--branch main" in text and "--status completed" in text
+            return (push if "--event push" in text else schedule if "--event schedule" in text else []), None
+        return plain(args, timeout)
+
+    gh.try_json = try_json
+    return gh
+
+
+def _mains(tmp_path, push, schedule):
+    w = world(tmp_path, dict(QUIET))
+    w.gh = _by_event(push, schedule)
+    return [a["text"] for a in watch.collect(w, NOW) if a["key"] == "main-red"]
+
+
+def test_a_red_scheduled_run_of_main_raises_although_the_latest_push_run_is_green(tmp_path):
+    green = [{"databaseId": 4, "conclusion": "success"}]
+    red_nightly = [{"databaseId": 9, "conclusion": "failure"}]
+    assert _mains(tmp_path, green, red_nightly) == ["red 9 []"]  # the nightly alone
+    assert _mains(tmp_path, [{"databaseId": 4, "conclusion": "failure"}], red_nightly) == ["red 4 []", "red 9 []"]  # both are named
+    assert _mains(tmp_path, green, green) == [] and _mains(tmp_path, green, []) == []  # no nightly yet: only the push run counts
+    assert _mains(tmp_path, [{"databaseId": 9, "conclusion": "failure"}], red_nightly) == ["red 9 []"]  # one run is not named twice
+
+
+def test_an_unreadable_scheduled_read_blinds_the_main_check(tmp_path):
+    w = world(tmp_path, dict(QUIET))
+    w.gh = _by_event([{"databaseId": 4, "conclusion": "success"}], "boom")
+    assert "blind:main-red" in keys(watch.collect(w, NOW))
+
+
 def test_recent_runs_unreadable_blinds_candidate_and_admission(tmp_path, monkeypatch):
     bad = {**QUIET, "run list -R o/r -L 100": "boom"}
     found = keys(watch.collect(world(tmp_path, bad), NOW))

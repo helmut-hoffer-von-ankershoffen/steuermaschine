@@ -212,46 +212,6 @@ def plan_registry(legacy, slots):
     return args, path, source, observed
 
 
-@pytest.mark.parametrize('defect', ['none', 'prepared-drift', 'rule-after-prepare', 'old-manifest', 'stale-compose',
-                                    'postwrite-check', 'postwrite-readback', 'protected-producer', 'already-present'])
-def test_actual_cli_main_only_binds_original_and_one_reviewed_append(original, monkeypatch, capsys, defect):
-    f = original
-    rt = f.rt
-    args, packet_path, source, observed = prepare_cli(f, monkeypatch)
-    assert s.main(['prepare', *args]) == 0
-    prepared = json.loads(capsys.readouterr().out)
-    assert prepared['resulting_main']['original'] == f.packet['original']
-    assert 'pr_update' not in prepared and observed == ['compose', 'replay'] and not rt.writes
-    if defect == 'prepared-drift': prepared['resulting_main']['original_replay']['source'][kit.JUDGE] = '5' * 40
-    elif defect == 'rule-after-prepare': f.rule['parameters']['strict_required_status_checks_policy'] = True
-    elif defect == 'old-manifest': rt.values[s.NAMES[0]] = '{}'
-    elif defect == 'stale-compose':
-        monkeypatch.setattr(a, 'validate_canonical', lambda *args, **kwargs: (_ for _ in ()).throw(a.AdmissionError('composition changed')))
-    elif defect == 'postwrite-check':
-        write = rt.set_variable
-
-        def mutate(*args):
-            write(*args)
-            f.checks[1]['conclusion'] = 'failure'
-
-        rt.set_variable = mutate
-    elif defect == 'postwrite-readback': rt.defect = 'readback'
-    elif defect == 'protected-producer': args += ['--reviewed-protected-producer']
-    elif defect == 'already-present': monkeypatch.setattr(a, '_isolated_slot_append', lambda *args: {'result': None})
-    approval = rt.home / 'approved.json'
-    approval.write_bytes(a.canonical(prepared))
-    result = s.main(['apply', *args, '--prepared', str(approval), '--approved-sha256', r.digest(a.canonical(prepared))])
-    if defect == 'none':
-        assert result == 0 and observed == ['compose', 'replay', 'compose', 'replay']
-        assert rt.events == ['pause', 'write', 'restore'] and len(rt.writes) == 1
-        receipt = json.loads(Path(capsys.readouterr().out.strip()).read_bytes())
-        assert receipt['resulting_main'] == prepared['resulting_main'] and set(receipt['after']) == set(s.NAMES)
-        assert rt.values[s.NAMES[0]] == prepared['expected'][s.NAMES[0]] and rt.values[s.NAMES[4]] == ''
-    else:
-        assert result == 1
-        after = defect.startswith('postwrite-')
-        assert len(rt.writes) == after and rt.events == (['pause', 'write', 'restore'] if after else [])
-        assert not list(statedir.root().glob('focused-admission-receipts/*.json'))
 
 
 @pytest.mark.parametrize('defect', ['old-deleted', 'old-altered', 'extra-pr', 'wrong-tree', 'existing-key'])
@@ -274,23 +234,6 @@ def test_real_registry_witness_refuses_unapproved_decoded_changes(original, monk
         r.registry_proof(source, f.packet, before, after)
 
 
-@pytest.mark.parametrize('defect', ['mode', 'original', 'headful', 'producer-option', 'mixed-mode'])
-def test_main_only_packet_and_modes_are_distinct(original, monkeypatch, defect):
-    f = original
-    args, packet_path, _, _ = prepare_cli(f, monkeypatch)
-    if defect == 'producer-option':
-        assert s.main(['prepare', *args, '--reviewed-protected-producer']) == 1
-    elif defect == 'mixed-mode':
-        with pytest.raises(SystemExit) as error:
-            s.main(['prepare', *args, '--expected-remote-head', HEAD])
-        assert error.value.code == 2
-    else:
-        if defect == 'mode': f.packet['mode'] = 'unknown'
-        elif defect == 'original': f.packet['original']['tested_commit'] = TREE
-        elif defect == 'headful': f.packet['manifest']['head'] = HEAD
-        packet_path.write_bytes(a.canonical(f.packet))
-        assert s.main(['prepare', *args]) == 1
-    assert not f.rt.writes
 
 
 @pytest.mark.parametrize('defect', [

@@ -16,12 +16,12 @@ import pytest
 from steuermaschine.app import Runtime
 from steuermaschine.config import Project
 from steuermaschine.engine import Ctx, Refuse, Subject, Wait
-from steuermaschine.hashing import canonical_sha256
 from steuermaschine.native import NativeRuntime, using
 from steuermaschine.plugins import stack_of
 from steuermaschine.testing import fake_providers
 from steuermaschine.testing.fakes import FakeVcs
 from steuermaschine_heinzel.native import release
+from steuermaschine_heinzel.native.admission_lib.ops import canonical_sha256
 from steuermaschine_heinzel.native.release import ReleaseRun
 from steuermaschine_heinzel.native.release_read import ReleaseVerify, SurfaceCheck
 from steuermaschine_heinzel.native.ship import HeadResult
@@ -177,8 +177,12 @@ def test_a_remade_release_commit_is_judged_again(tmp_path, monkeypatch):
         assert "recorded" in release_cut.judged(ctx, HEAD)  # the same commit: not judged twice
         with pytest.raises(Refuse, match=f"no verdict is recorded for {other}"):
             release_cut.judged(ctx, other)
+        monkeypatch.setattr(release_cut, "_packet_head", lambda ctx: HEAD)
         monkeypatch.setattr(rt.providers.vcs, "head", lambda worktree: other)
-        for step in (release_cut._same_commit, release_cut.resume):
+        with pytest.raises(Refuse, match="moved to ffffffffffff since the packet named"):
+            release_cut._same_commit(ctx)
+        monkeypatch.setattr(release_cut, "_packet_head", lambda ctx: other)
+        for step in (release_cut._same_commit, release_cut.admit_prepare, release_cut.admit_apply, release_cut.resume):
             with pytest.raises(Refuse, match=f"no verdict is recorded for {other}"):
                 step(ctx)
 
@@ -227,10 +231,51 @@ def packet(tmp_path: Path, head: str = HEAD) -> Path:
     return path
 
 
+def test_a_prepared_admission_at_this_main_is_adopted(tmp_path):
+    rt, path = runtime(tmp_path), packet(tmp_path)
+    ctx = context(rt, {"packet": str(path)})
+    assert release_cut.prepare_probe(ctx) is None  # nothing prepared
+    other = {"head": HEAD, "main": OTHER_MAIN, "slot": "RELEASE_MAIN"}  # the transaction names its main; the arguments file does not
+    (path.parent / "prepare.out").write_text(json.dumps(other))
+    (path.parent / "prepare.args.json").write_text(json.dumps({"schema": 1, "sha256": canonical_sha256(other)}))
+    assert release_cut.prepare_probe(ctx) is None  # prepared at another main
+    doc = {"head": HEAD, "main": MAIN, "slot": "RELEASE_MAIN"}
+    (path.parent / "prepare.out").write_text(json.dumps(doc))
+    assert release_cut.prepare_probe(ctx) is None  # the arguments belong to the other transaction
+    (path.parent / "prepare.args.json").write_text(json.dumps({"schema": 1, "sha256": canonical_sha256(doc)}))
+    assert release_cut.prepare_probe(ctx) == f"prepared {canonical_sha256(doc)[:12]} at main {MAIN[:8]}"
 
 
+def test_admit_prepare_passes_the_reviewed_nonconsumers(tmp_path):
+    rt, path = runtime(tmp_path), packet(tmp_path)
+    seen: dict[str, Any] = {}
+
+    def prepare(**kw: Any) -> Any:
+        seen.update(kw)
+        return type("Prepared", (), {"sha256": "d" * 64, "exit_code": 0})()
+
+    common.OVERRIDE["release admit prepare"] = prepare
+    receipts = tmp_path / "stuck.json"
+    ctx = context(rt, {"packet": str(path), "clone": str(tmp_path / "clone"), "review_root": str(tmp_path / "review"), "nonconsumers": str(receipts)})
+    with native(rt):
+        assert release_cut.admit_prepare(ctx) == f"prepared {'d' * 12}"
+    assert seen == {"packet": path, "core_repo": tmp_path / "clone", "review_root": tmp_path / "review", "nonconsumers": receipts, "wait_": True}
 
 
+def test_an_unreadable_packet_has_no_head_and_no_receipt_is_adopted(tmp_path):
+    rt, path = runtime(tmp_path), packet(tmp_path)
+    ctx = context(rt, {"packet": str(path)})
+    with native(rt):
+        assert release_cut.apply_probe(ctx) is None  # a head, but no receipt for it
+    receipts = tmp_path / "state" / "focused-admission-receipts"
+    receipts.mkdir(parents=True)
+    (receipts / f"head-{HEAD}-1.json").write_text("{}")
+    with native(rt):
+        assert release_cut.apply_probe(ctx) == "a receipt for the release head exists"
+    path.write_text("{ not json")
+    assert release_cut._packet_head(ctx) == ""
+    with native(rt):
+        assert release_cut.apply_probe(ctx) is None
 
 
 # ----------------------------------------------------------------------------- publish
@@ -248,7 +293,7 @@ def test_the_publish_plan_names_the_resume_flags(tmp_path):
     sha, brief, file = release_cut.publish_review(ctx)
     plan = json.loads(Path(file).read_text())
     assert plan["command"] == "sm release resume 0.9.41 --intro INTRO --candidate-gate"
-    assert plan["snapshot_acceptance"] is False and plan["candidate_gate"] is True and sha == canonical_sha256(json.dumps(plan))
+    assert plan["snapshot_acceptance"] is False and plan["candidate_gate"] is True and sha == canonical_sha256(plan)
     assert file == str(tmp_path / "review" / "release-v0.9.41" / "cut-plan.json") and "v0.9.41" in brief
 
 
@@ -319,12 +364,14 @@ def test_a_step_that_is_not_a_command_of_this_build_is_refused():
 
 def test_run_without_an_override_calls_the_registered_command(tmp_path):
     rt = runtime(tmp_path)
+    doc = {"head": HEAD, "main": MAIN}
+    prepared = tmp_path / "prepare.out"
+    prepared.write_text(json.dumps(doc))
     with native(rt):
-        result = common.run("release verify", version="0.0.0", surface=[])
-    assert common.lines(result) == "; ".join(x for x in result.render() if x.strip())[:300]
+        result = common.run("head hash", prepared=prepared)
+    assert result.sha256 == canonical_sha256(doc) == common.prepared_digest(prepared)
+    assert common.lines(result) == "; ".join(x for x in result.render() if x.strip())[:300] and canonical_sha256(doc) in common.lines(result)
     assert common.lines(object()) == ""
-    with native(rt), pytest.raises(Refuse, match="not a command of this build"):
-        common.run("head packet preopen")  # the admission commands are gone: a pipeline step cannot reach one
 
 
 @pytest.mark.parametrize("exit_code, lines, kind, text, code", [
@@ -344,8 +391,3 @@ def test_ok_turns_an_exit_code_into_a_wait_or_a_refusal(tmp_path, exit_code, lin
 
 def test_slug_keeps_a_safe_name():
     assert common.slug("fix/update all!") == "fix-update-all" and common.slug("///") == "head"
-
-
-def test_the_cut_has_no_admission_steps_and_keeps_the_publish_review_and_resume():
-    names = [getattr(s, "name", "") for s in release_cut.pipeline().steps]
-    assert names == ["ci change", "notes", "publish review", "resume", "verify"]

@@ -12,6 +12,8 @@ from steuermaschine import USAGE, WAITING
 from steuermaschine.engine import Ctx, Refuse, Wait
 from steuermaschine.native import call, runtime
 
+from .. import state as statedir  # the plugin's state paths
+
 # Tests replace a native command's function here (path -> callable taking the same keyword arguments).
 OVERRIDE: dict[str, Callable[..., Any]] = {}
 SHA = re.compile(r"[0-9a-f]{40}")
@@ -84,6 +86,23 @@ def packet_sha(path: Path) -> str:
 def setting(name: str, default: Any = None) -> Any:
     value = runtime().settings.get(name)
     return default if value in (None, "") else value
+
+
+def receipt_heads() -> set[str]:
+    """Heads with an admission receipt on this machine (what `head apply` and `release admit apply` leave behind)."""
+    from ..native.go_lib import legacy
+
+    try:
+        return set(legacy.admission_receipt_heads(statedir.dashboard_dir({"legacy_state_dir": setting("legacy_state_dir", None)})))
+    except OSError:
+        return set()
+
+
+def prepared_digest(prepared: Path) -> str:
+    """THE digest of a prepared transaction a reviewer approves: canonical JSON, the same as `sm head hash`."""
+    from ..native.admission_lib import ops
+
+    return ops.hash_file(prepared).sha256
 
 
 def slug(text: str) -> str:

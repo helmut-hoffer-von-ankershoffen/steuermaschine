@@ -198,7 +198,7 @@ def slot_fill_alarm(sizes: dict[str, int] | None, percent: int = SLOT_FILL_PERCE
     over = [f"{n.replace('FOCUSED_CI_PLANS', 'PLANS')} {used}%" for used, n in full if used > percent]
     if not over:
         return None
-    return alarm("WARN", "registry-slot-fill", f"REGISTRY focused slot over {percent}%: {', '.join(over)}; sm head slots collect (a dry run) lists what can go")
+    return alarm("WARN", "registry-slot-fill", f"REGISTRY focused slot over {percent}%: {', '.join(over)}; the registry only grows and no command lists its entries any more")
 
 
 def release_alarm(receipt: dict | None, changed_at: float | None, active_release_runs: int, now: float, limit: int = RELEASE_MIN) -> dict | None:

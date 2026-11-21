@@ -38,6 +38,7 @@ KEYS = frozenset((
     "policy", "repository", "workflow", "recorder", "aggregate", "expected_jobs", "quarantine", "test_jobs",
     "lanes", "required_contexts", "focused_job", "not_ci", "judge_workflow", "gate_checks",
 ))
+OPTIONAL_KEYS = frozenset(("lanes", "focused_job", "gate_checks", "judge_workflow"))  # Core's focused-plan and merge-gate parts: a policy may drop them
 GATE_ROLES = frozenset(("coverage", "sonar"))  # what each check the merge-gate workflow posts judges
 QUARANTINE_KEYS = frozenset(("registry", "plan", "runs", "idle"))
 LANE_KEYS = frozenset(("runner", "python", "kind"))
@@ -86,8 +87,8 @@ class Policy:
     test_jobs: frozenset[str]
     lanes: dict[str, Lane]
     required_contexts: frozenset[str]
-    focused_job: str
-    gate_checks: dict[str, str]  # role (coverage, sonar) -> the check's name
+    focused_job: str  # "" when the policy has none
+    gate_checks: dict[str, str]  # role (coverage, sonar) -> the check's name; {} when the policy has no merge-gate checks
     not_ci: tuple[str, ...]
     ci_except: frozenset[str]
 
@@ -103,7 +104,7 @@ class Policy:
 
     @property
     def judge_file(self) -> str:
-        """The merge-gate workflow's file name."""
+        """The merge-gate workflow's file name; "" when the policy has none."""
         return self.judge_workflow.rsplit("/", 1)[-1]
 
     @property
@@ -177,7 +178,7 @@ def parse(raw: bytes, commit: str) -> Policy:
         raise CandidateError(f"release policy {PATH} at {commit} is not valid JSON") from exc
     require(isinstance(data, dict), "release policy is not an object")
     require(type(data.get("policy")) is int and data["policy"] == VERSION, f"unknown release policy version at {commit}")
-    require(set(data) == KEYS, f"release policy keys differ: {sorted(set(data) ^ KEYS)}")
+    require(set(data) <= KEYS and KEYS - OPTIONAL_KEYS <= set(data), f"release policy keys differ: {sorted(set(data) ^ KEYS)}")
     repository = _text(data["repository"], "repository")
     require(REPOSITORY.fullmatch(repository), "release policy repository malformed")
     workflow, recorder = _text(data["workflow"], "workflow"), _text(data["recorder"], "recorder")
@@ -186,8 +187,8 @@ def parse(raw: bytes, commit: str) -> Policy:
         and workflow.startswith(".github/workflows/"),
         "release policy pinned paths malformed",
     )
-    judge = _text(data["judge_workflow"], "judge workflow")
-    require(repo_path(judge) and judge.startswith(".github/workflows/") and judge not in (workflow, recorder),
+    judge = _text(data["judge_workflow"], "judge workflow") if "judge_workflow" in data else ""
+    require(not judge or (repo_path(judge) and judge.startswith(".github/workflows/") and judge not in (workflow, recorder)),
             "release policy judge workflow malformed")
     aggregate = _text(data["aggregate"], "aggregate")
     jobs = _jobs(data["expected_jobs"])
@@ -201,8 +202,8 @@ def parse(raw: bytes, commit: str) -> Policy:
     require(not lane_names & {name for job in jobs.values() for name in job}, "release policy quarantine job in inventory")
     test_jobs = frozenset(_names(data["test_jobs"], "test jobs"))
     require(aggregate not in test_jobs, "release policy test jobs name the aggregate")
-    lanes_raw = data["lanes"]
-    require(isinstance(lanes_raw, dict) and lanes_raw, "release policy lanes malformed")
+    lanes_raw = data.get("lanes", {})
+    require(isinstance(lanes_raw, dict) and ("lanes" not in data or lanes_raw), "release policy lanes malformed")
     lanes = {}
     for name, lane in lanes_raw.items():
         require(isinstance(name, str) and re.fullmatch(r"[a-z0-9][a-z0-9-]*", name), "release policy lane name malformed")
@@ -210,14 +211,20 @@ def parse(raw: bytes, commit: str) -> Policy:
         lanes[name] = Lane(_text(lane["runner"], "lane runner"), _text(lane["python"], "lane python"),
                            _text(lane["kind"], "lane kind"))
     contexts = frozenset(_names(data["required_contexts"], "required contexts"))
-    focused = _text(data["focused_job"], "focused job")
-    rest = focused.replace("{lane}", "")
-    require(focused.count("{lane}") == 1 and "{" not in rest and "}" not in rest,
-            "release policy focused job is not a {lane} template")
-    gates = data["gate_checks"]
-    require(isinstance(gates, dict) and set(gates) == GATE_ROLES and all(isinstance(v, str) and v for v in gates.values())
-            and len(set(gates.values())) == len(gates) and set(gates.values()) == contexts - {aggregate},
-            "release policy gate_checks do not name the merge-gate workflow's checks")
+    focused = ""
+    if "focused_job" in data:
+        focused = _text(data["focused_job"], "focused job")
+        rest = focused.replace("{lane}", "")
+        require(focused.count("{lane}") == 1 and "{" not in rest and "}" not in rest,
+                "release policy focused job is not a {lane} template")
+    gates: dict[str, str] = {}
+    if "gate_checks" in data:
+        gates = data["gate_checks"]
+        require(isinstance(gates, dict) and set(gates) == GATE_ROLES and all(isinstance(v, str) and v for v in gates.values())
+                and len(set(gates.values())) == len(gates) and set(gates.values()) == contexts - {aggregate},
+                "release policy gate_checks do not name the merge-gate workflow's checks")
+    else:  # no merge-gate checks: the aggregate is the one required context
+        require(aggregate in contexts, "release policy required contexts do not name the aggregate")
     raw_not_ci = data["not_ci"]
     require(isinstance(raw_not_ci, dict) and set(raw_not_ci) == NOT_CI_KEYS, "release policy not_ci malformed")
     not_ci = tuple(_names(raw_not_ci["match"], "not-CI globs"))

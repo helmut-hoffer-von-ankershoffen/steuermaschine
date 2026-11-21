@@ -1,4 +1,4 @@
-"""`sm ci one ...`, `sm head validate` and `sm ci window ...` through the whole command tree, on fakes: text and json,
+"""`sm ci one ...` through the whole command tree, on fakes: text and json,
 the review gate of the write commands, and the exact order of GitHub calls of one dispatch (a scripted transcript)."""
 
 import hashlib

@@ -648,7 +648,6 @@ def apply_slots(
     check_main_append: Callable[[dict[str, str], dict[str, str]], None] | None = None,
     pairs: int = 1,
     release_main: dict[str, Any] | None = None,
-    repair_main: dict[str, Any] | None = None,
 ) -> Path | dict[str, Any]:
     """One approved variable update; caller holds its queue/train/release exclusions.
 
@@ -660,11 +659,10 @@ def apply_slots(
     distinct push-tree keys, still appended by the one slot write below.
     """
     variables = ["FOCUSED_CI_PLANS", *(f"FOCUSED_CI_PLANS_V2_{i}" for i in range(4))]
-    if sum(proof is not None for proof in (release_main, resulting_main, repair_main)) > 1:
+    if sum(proof is not None for proof in (release_main, resulting_main)) > 1:
         raise AdmissionError("conflicting singleton admission proof types")
-    singleton = release_main if release_main is not None else repair_main if repair_main is not None else resulting_main
-    mode = ("release-main-only/v1" if release_main is not None else "repair-main/v1" if repair_main is not None
-            else "resulting-main-only/v1")
+    singleton = release_main if release_main is not None else resulting_main
+    mode = "release-main-only/v1" if release_main is not None else "resulting-main-only/v1"
     if type(pairs) is not int or pairs < 1 or (singleton is not None and pairs != 1):
         raise AdmissionError("slot admission pair count is invalid")
     if set(expected) != set(variables) or (singleton is None and len(plans) != 2 * pairs):

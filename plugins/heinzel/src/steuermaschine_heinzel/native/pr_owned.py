@@ -11,7 +11,6 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import Any
 
 from .. import state as statedir
 
@@ -34,12 +33,3 @@ def record(repo: str, pr: int, branch: str, head: str, how: str) -> Path:
     return path
 
 
-def owned(repo: str, pr: int, root: Path | None = None) -> dict[str, Any] | None:
-    """The record of PR `pr` of `repo`, or None: none written, unreadable, or naming another PR."""
-    try:
-        data = json.loads(record_path(repo, pr, root).read_text())
-    except (OSError, ValueError):
-        return None
-    if not isinstance(data, dict) or str(data.get("repo", "")).lower() != repo.lower() or data.get("pr") != int(pr):
-        return None
-    return data

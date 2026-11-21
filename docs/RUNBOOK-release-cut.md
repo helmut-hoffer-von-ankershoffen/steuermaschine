@@ -10,7 +10,7 @@ by hand is adopted. Without `--live` it stops before the first step that writes 
 every step and what it changes, and runs nothing.
 
 ```
-ci change -> notes -> publish review (STOP) -> resume* -> verify
+ci change -> notes -> packet -> admit prepare -> admission review (STOP) -> admit apply* -> publish review (STOP) -> resume* -> verify
 ```
 
 `*` writes outside this machine and runs only with `--live`. `STOP`: a different agent must approve a digest.
@@ -18,16 +18,18 @@ ci change -> notes -> publish review (STOP) -> resume* -> verify
 | # | What | Command |
 |---|---|---|
 | 1 | Where things stand (read-only) | `sm release status` |
-| 2 | Start the cut (dry) | `sm release cut VERSION --set clone=CLONE --set review_root=ROOT --set intro="WHAT CHANGED FOR USERS"` |
-| 3 | Continue with the approved digest (only after the digest of the CI change, if any, is approved) | `sm release cut VERSION --approved SHA256 --live` |
-| 4 | Publish review: the same, for the digest the cut names before publishing | `sm review verdict SHA256 --approve --reviewer NAME`, then `sm release cut VERSION --approved SHA256 --live` |
-| 5 | The cut resumes the release (`sm release resume`) and verifies it; run the same command again after a WAITING (exit 75) | `sm release cut VERSION --live` |
-| 6 | After ACCEPTED: the checklist, and the deferred CI of open PRs | `sm release after VERSION`, then `sm release train resume-ci --dry-run` |
+| 2 | Prepare the release commit and its pair packet in the hooked release clone (`release.sh`, then `sm head manifest`) | see `sm head manifest --help` |
+| 3 | Start the cut (dry) | `sm release cut VERSION --set packet=PACKET.json --set commit_log=LOG --set clone=CLONE --set review_root=ROOT --set intro="WHAT CHANGED FOR USERS"` |
+| 4 | Admission review: a different agent reviews the bytes the cut names and records its verdict | `sm review verdict SHA256 --approve --reviewer NAME --notes "..."` |
+| 5 | Continue with the approved digest | `sm release cut VERSION --approved SHA256 --live` |
+| 6 | Publish review: the same, for the digest the cut names before publishing | `sm review verdict SHA256 --approve --reviewer NAME`, then `sm release cut VERSION --approved SHA256 --live` |
+| 7 | The cut resumes the release (`sm release resume`) and verifies it; run the same command again after a WAITING (exit 75) | `sm release cut VERSION --live` |
+| 8 | After ACCEPTED: the checklist, and the deferred CI of open PRs | `sm release after VERSION`, then `sm release train resume-ci --dry-run` |
 
-Inputs of the cut (`--set NAME=VALUE`): `clone`, `review_root`
-and `intro` are required. `snapshot` defaults to `yes` (acceptance is
+Inputs of the cut (`--set NAME=VALUE`): `packet`, `commit_log` (its last line is `vX.Y.Z`), `clone`, `review_root`
+and `intro` are required. `release_review` defaults to `RELEASE-REVIEW.md`. `snapshot` defaults to `yes` (acceptance is
 pinned to the tag's public snapshot). `candidate_gate=yes` is the train path: main may be red with known failures, and
-the candidate is the gate.
+the candidate is the gate. `nonconsumers` is the reviewed stuck-queued receipts file, the same for prepare and apply.
 
 Rules:
 
@@ -56,6 +58,9 @@ The cut runs these commands itself; use them one by one only to repair a stuck s
 |---|---|
 | ci change | the release commit against the last published tag, by the not-CI paths of the tag's `scripts/release_policy.json`: a CI change needs `sm review verdict SHA --approve --kind ci_change --reviewer NAME --model M --notes "paths read"` on the exact release commit; no checksum stands in for that review |
 | notes | `sm release notes-audit --base origin/main`: every member of a combined PR is named in the notes |
+| admit prepare | `sm release admit prepare PACKET.json --core-repo WORKTREE --review-root ROOT [--nonconsumers FILE]` |
+| digest | `sm head hash PACKET_DIR/prepare.out` |
+| admit apply | `sm release admit apply PACKET.json --approved SHA256` |
 | resume | `sm release resume VERSION --intro "..."`; every step is checked first, so the same command continues |
 | verify | `sm release verify VERSION --homepage HOST --latest` |
 | receipts | `sm release repair-receipt`: moves plugin release stamps into their own file (one-time repair) |
