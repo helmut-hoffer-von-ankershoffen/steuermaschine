@@ -399,8 +399,45 @@ def test_known_registry_reads_env(monkeypatch, tmp_path):
     seen = []
     monkeypatch.setattr(kf, "load_known", lambda path: seen.append(path) or ["r"])
     monkeypatch.setenv("HZ_KNOWN_FAILURES", "/x/k.toml")
+    monkeypatch.setattr(hzlib, "flaky_bead_entries", lambda: [])
     assert hzlib._known_registry() == ["r"]
     assert seen == ["/x/k.toml"]
+
+
+def flaky_beads(monkeypatch, beads, code=0):
+    out = SimpleNamespace(returncode=code, stdout=json.dumps(beads))
+    calls = []
+    monkeypatch.setattr(hzlib.subprocess, "run", lambda cmd, **k: calls.append(cmd) or out)
+    return calls
+
+
+FLAKY = {"id": "heinzel-management-bbhe4", "status": "open", "title": "flaky: macOS timeouts on hosted runners",
+         "description": "tests/integration/startup_imports_test.py::test_boot_and_web TimeoutExpired", "notes": ""}
+
+
+def test_flaky_beads_make_known(monkeypatch):
+    from steuermaschine_heinzel.native.queue_lib import known_failures as kf
+    calls = flaky_beads(monkeypatch, [FLAKY, {**FLAKY, "id": "x-closed", "status": "closed"}])
+    reg = hzlib.flaky_bead_entries()
+    assert calls == [["bd", "list", "-l", "flaky", "--json"]]
+    assert {b for _, b, _ in reg} == {"bbhe4"}
+    assert kf.known_bead(["tests/integration/startup_imports_test.py::test_boot_and_web"], reg) == "bbhe4"
+    assert kf.known_bead(["test_boot_and_web"], reg) == "bbhe4"
+    assert kf.known_bead(["test_something_else_entirely"], reg) is None  # unknown stays unknown
+
+
+def test_flaky_beads_unreadable_is_empty(monkeypatch):
+    flaky_beads(monkeypatch, [FLAKY], code=1)
+    assert hzlib.flaky_bead_entries() == []
+    monkeypatch.setattr(hzlib.subprocess, "run", lambda *a, **k: SimpleNamespace(returncode=0, stdout="not json"))
+    assert hzlib.flaky_bead_entries() == []
+
+
+def test_known_registry_adds_flaky(monkeypatch):
+    from steuermaschine_heinzel.native.queue_lib import known_failures as kf
+    monkeypatch.setattr(kf, "load_known", lambda path: [("job a", "b1", "")])
+    flaky_beads(monkeypatch, [FLAKY])
+    assert {b for _, b, _ in hzlib._known_registry()} == {"b1", "bbhe4"}
 
 
 def gate(monkeypatch, rows, classify=None):

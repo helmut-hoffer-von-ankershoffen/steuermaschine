@@ -446,9 +446,37 @@ def _attempt_jobs(run_id: int, attempt: int) -> list[dict] | None:
     return jobs
 
 
+FLAKY_TEST_ID = re.compile(r"[\w./\-]+::[\w\[\]./\-]+")
+
+
+def flaky_bead_entries() -> list:
+    """Open beads labelled `flaky` as registry entries (lowercase match, bead id, note), deterministically: `bd list -l
+    flaky --json`; a bead matches a failing job or test by its title, by a test id (path::name) written in its title,
+    description or notes, or by that test id's function name. Any read problem -> [] (nothing becomes KNOWN)."""
+    try:
+        out = subprocess.run(["bd", "list", "-l", "flaky", "--json"], capture_output=True, text=True, timeout=30,
+                             cwd=str(edge.records_dir()), check=False)
+        beads = json.loads(out.stdout) if out.returncode == 0 else []
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return []
+    entries = []
+    for b in beads if isinstance(beads, list) else []:
+        if not isinstance(b, dict) or b.get("status") not in (None, "open", "in_progress") or not isinstance(b.get("id"), str):
+            continue
+        bead = b["id"].removeprefix("heinzel-management-")
+        title = str(b.get("title") or "").strip()
+        matches = [title] if len(title) >= 8 else []
+        for text in (title, str(b.get("description") or ""), str(b.get("notes") or "")):
+            for tid in FLAKY_TEST_ID.findall(text):
+                matches += [tid, tid.rsplit("::", 1)[-1]]
+        entries += [(m.lower(), bead, "flaky bead") for m in dict.fromkeys(matches) if len(m) >= 8]
+    return entries
+
+
 def _known_registry() -> list:
     from . import known_failures as hz_digest
-    return hz_digest.load_known(str(edge.setting("queue_known_failures_file") or edge.records_dir() / "research" / "known-failures.toml"))
+    registry = hz_digest.load_known(str(edge.setting("queue_known_failures_file") or edge.records_dir() / "research" / "known-failures.toml"))
+    return list(registry) + flaky_bead_entries()
 
 
 def classify_attempt(run_id: int, attempt: int) -> tuple[str, str]:
