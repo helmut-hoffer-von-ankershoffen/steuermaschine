@@ -249,6 +249,7 @@ def test_default_mode_remains_default_on_resume(tool, home, monkeypatch):
     monkeypatch.setattr(rel, "next_version", lambda request: ("0.9.16", "patch"))
     monkeypatch.setattr(rel, "has_tag", lambda repo, tag: False)  # no tag: a clear Not Found
     monkeypatch.setattr(rel, "step", lambda *a: None)
+    monkeypatch.setattr(rel, "compose_beside_pypi", lambda *a: None)
     monkeypatch.setattr(rel, "pypi_step", lambda *a: None)
     monkeypatch.setattr(rel, "compose_step", lambda *a: None)
     monkeypatch.setattr(rel, "acceptance_step", lambda *a: 7)

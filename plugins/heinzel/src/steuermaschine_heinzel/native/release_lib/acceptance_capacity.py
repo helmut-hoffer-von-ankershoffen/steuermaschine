@@ -20,6 +20,14 @@ LINUX = "Acceptance (ubuntu-24.04)"
 MAC = "Acceptance (macos-latest)"
 WORKFLOW = "acceptance.yml"
 SCHEMA = "published-acceptance-capacity/v1"
+# Core's sharded acceptance.yml: one pins job, four shards per OS, and one reducer per OS that keeps the job name and
+# the receipt artifact the release runner reads (LINUX, MAC, acceptance-result-<OS>).
+PINS = "Acceptance pins"
+SHARDS = ("public", "update", "plugins", "browser")
+LINUX_SHARDS = tuple(f"Acceptance shard (ubuntu-24.04, {name})" for name in SHARDS)
+MAC_SHARDS = tuple(f"Acceptance shard (macos-latest, {name})" for name in SHARDS)
+SHARDED_JOBS = {PINS, *LINUX_SHARDS, *MAC_SHARDS, LINUX, MAC}
+LINUX_RECEIPT = "acceptance-result-Linux"
 RUN_FIELDS = ("id", "run_attempt", "head_sha", "head_branch", "event", "path", "display_title",
               "status", "conclusion", "workflow_id", "check_suite_id", "created_at")
 
@@ -59,11 +67,22 @@ def validate_replacement(data: dict[str, Any], run: dict[str, Any], core: str, r
     exact_run(run, core, intent["identity"], intent["marker"], run_id, 1)
 
 
-def _original_linux_receipt(rel: Any, run: dict[str, Any], identity: dict[str, Any]) -> dict[str, Any]:
+def _receipt_artifact(rows: list[dict[str, Any]], sharded: bool) -> dict[str, Any]:
+    """The one Linux receipt artifact; a sharded run may also hold its shards' receipts, never a Mac verdict."""
+    if not sharded:
+        remote.require(len(rows) == 1, "expected only the original Linux receipt artifact")
+        return rows[0]
+    allowed = {LINUX_RECEIPT} | {f"acceptance-shard-{os_name}-{name}" for os_name in ("Linux", "macOS") for name in SHARDS}
+    names = [row.get("name") for row in rows]
+    remote.require(names.count(LINUX_RECEIPT) == 1 and set(names) <= allowed and len(set(names)) == len(names),
+                   "expected the Linux receipt and only shard receipts of the original run")
+    return next(row for row in rows if row.get("name") == LINUX_RECEIPT)
+
+
+def _original_linux_receipt(rel: Any, run: dict[str, Any], identity: dict[str, Any], sharded: bool = False) -> dict[str, Any]:
     run_id = run["id"]
     rows = remote.paged(f"actions/runs/{run_id}/artifacts", "artifacts")
-    remote.require(len(rows) == 1, "expected only the original Linux receipt artifact")
-    artifact = rows[0]
+    artifact = _receipt_artifact(rows, sharded)
     binding = artifact.get("workflow_run") or {}
     repo = run["repository"]["id"]
     remote.require(
@@ -89,6 +108,40 @@ def _original_linux_receipt(rel: Any, run: dict[str, Any], identity: dict[str, A
     return {"id": artifact["id"], "sha256": digest, "verdict": result["verdict"]}
 
 
+def _hosted_linux_success(job: dict[str, Any], steps: tuple[str, ...]) -> None:
+    """A Linux job of the original run that succeeded on a hosted runner and ran each named step once."""
+    remote.require(job.get("conclusion") == "success" and job.get("labels") == ["ubuntu-24.04"]
+                   and job.get("runner_group_id") == 0 and job.get("runner_group_name") == "GitHub Actions"
+                   and str(job.get("runner_name", "")).startswith("GitHub Actions "),
+                   "the original Linux acceptance job did not succeed on a hosted runner")
+    remote.executed(job)
+    for step in steps:
+        remote.require(sum(s.get("name") == step and s.get("conclusion") == "success" for s in job["steps"]) == 1,
+                       "the original Linux acceptance execution is incomplete")
+
+
+def _mac_capacity(by_name: dict[str, Any], head: str) -> list[dict[str, Any]]:
+    """Sharded: at least one Mac shard never acquired a runner; every other one succeeded; no Mac verdict passed.
+
+    A Mac shard that ran and failed is a real rejection, never capacity, so it refuses the recovery.
+    """
+    annotations, starved = [], 0
+    for name in MAC_SHARDS:
+        job = by_name[name]
+        if job.get("conclusion") == "success":
+            remote.require(job.get("labels") == ["macos-latest"], "a Mac shard ran outside the hosted Mac ARM label")
+            remote.executed(job)
+            continue
+        rows = remote.annotations(job)
+        remote.never_acquired(job, rows, head)
+        annotations += [row | {"job": job["id"]} for row in rows]
+        starved += 1
+    remote.require(starved > 0, "no Mac shard was starved of a hosted runner")
+    remote.require(by_name[MAC].get("conclusion") in ("failure", "cancelled", "skipped"),
+                   "the Mac verdict job did not fail; this is no capacity rejection")
+    return annotations
+
+
 def _evidence(rel: Any, identity: dict[str, Any], run_id: int, marker: str) -> dict[str, Any]:
     path = f"actions/runs/{run_id}"
     run = remote.get(f"{path}/attempts/1")
@@ -96,25 +149,27 @@ def _evidence(rel: Any, identity: dict[str, Any], run_id: int, marker: str) -> d
     remote.require(run.get("status") == "completed" and run.get("conclusion") in {"failure", "cancelled"},
                    "the bound attempt is not a completed rejection")
     jobs = remote.paged(f"{path}/attempts/1/jobs", "jobs")
-    remote.require(len(jobs) == 2 and {job.get("name") for job in jobs} == {LINUX, MAC},
+    names = {job.get("name") for job in jobs}
+    sharded = PINS in names
+    expected = SHARDED_JOBS if sharded else {LINUX, MAC}
+    remote.require(len(jobs) == len(expected) and names == expected,
                    "the original acceptance jobs are incomplete or unexpected")
     by_name = {job["name"]: job for job in jobs}
     for job in jobs:
         remote.job_shape(job, run_id, identity["commit"])
         remote.require(job["run_attempt"] == 1, "acceptance job is not from the original attempt")
-    linux = by_name[LINUX]
-    remote.require(linux.get("conclusion") == "success" and linux.get("labels") == ["ubuntu-24.04"]
-                   and linux.get("runner_group_id") == 0 and linux.get("runner_group_name") == "GitHub Actions"
-                   and str(linux.get("runner_name", "")).startswith("GitHub Actions "),
-                   "the original Linux acceptance job did not succeed on a hosted runner")
-    remote.executed(linux)
-    for step in ("Run the acceptance harness", "Upload the receipt"):
-        remote.require(sum(s.get("name") == step and s.get("conclusion") == "success" for s in linux["steps"]) == 1,
-                       "the original Linux acceptance execution is incomplete")
-    mac = by_name[MAC]
-    annotations = remote.annotations(mac)
-    remote.never_acquired(mac, annotations, identity["commit"])
-    linux_receipt = _original_linux_receipt(rel, run, identity)
+    if sharded:
+        for name, steps in ((PINS, ("Pin the release bytes once for every shard",)),
+                            *((name, ("Run the acceptance harness", "Upload the shard receipt")) for name in LINUX_SHARDS),
+                            (LINUX, ("Reduce the four shard receipts of this OS", "Upload the receipt"))):
+            _hosted_linux_success(by_name[name], steps)
+        annotations = _mac_capacity(by_name, identity["commit"])
+    else:
+        _hosted_linux_success(by_name[LINUX], ("Run the acceptance harness", "Upload the receipt"))
+        mac = by_name[MAC]
+        annotations = remote.annotations(mac)
+        remote.never_acquired(mac, annotations, identity["commit"])
+    linux_receipt = _original_linux_receipt(rel, run, identity, sharded)
     latest = remote.get(path)
     exact_run(latest, rel.CORE, identity, marker, run_id, 1)
     bound = {key: run.get(key) for key in RUN_FIELDS}

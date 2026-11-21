@@ -28,6 +28,15 @@ def active_train(train_dir=None):
     return min(found, key=lambda item: item[0])[1] if found else None
 
 
+def read_tail(version, tail_dir):
+    """The tail receipt of a version past its tag, or None when it has none (or it cannot be read)."""
+    try:
+        data = json.load(open(os.path.join(tail_dir, f"v{version}.json")))
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
 def counts(items):
     """items: dicts with status/conclusion -> {'ok','fail','run','skip'} counts."""
     c = {"ok": 0, "fail": 0, "run": 0, "skip": 0}
@@ -44,6 +53,42 @@ def counts(items):
         else:
             c["run"] += 1
     return c
+
+
+# (label, receipt key holding the ISO time the stage began, receipt keys whose presence says it is done)
+TAIL_STAGES = (("publish", "publish", ("publish_run_id",)), ("PyPI", "pypi", ("pypi_run_id",)),
+               ("compose", "compose", ("compose_run_id",)), ("acceptance", "acceptance", ("acceptance_run",)),
+               ("marker", "acceptance_marker_at", ("acceptance_marker",)), ("Mini", "mini", ("mini_run_id",)),
+               ("iOS", "ios", ("ios_run_id",)))
+
+
+def _age(iso, now):
+    import calendar
+    try:
+        minutes = int((now - calendar.timegm(time.strptime(str(iso), "%Y-%m-%dT%H:%M:%SZ"))) / 60)
+    except (TypeError, ValueError):
+        return "age unknown"
+    return f"{minutes // 60}h{minutes % 60:02d}m ago" if minutes >= 60 else f"{max(minutes, 0)}m ago"
+
+
+def tail_stages(receipt, now):
+    """The tail receipt (past the tag) as one line per stage: its state and, when the receipt recorded a start time, its age.
+    A stage the receipt does not mention reads `not started`; nothing is guessed."""
+    receipt = receipt or {}
+    lines = []
+    for label, at_key, done_keys in TAIL_STAGES:
+        done = [k for k in done_keys if receipt.get(k)]
+        started = receipt.get(at_key)
+        if label == "acceptance" and receipt.get("finished"):
+            state = "ACCEPTED" if receipt.get("accepted") else "NOT ACCEPTED"
+        elif done:
+            state = f"run {receipt[done[0]]}" if not isinstance(receipt[done[0]], (dict, list)) else "recorded"
+        elif started:
+            state = "running"
+        else:
+            state = "not started"
+        lines.append(f"  {label:<11}{state}" + (f", {_age(started, now)}" if isinstance(started, str) and started else ""))
+    return lines
 
 
 def summarize(train, pr, runs, jobs, frozen, now):
@@ -80,6 +125,9 @@ def summarize(train, pr, runs, jobs, frozen, now):
 def render(s):
     if not s.get("active"):
         return "no release in flight"
+    if s.get("tail") is not None:
+        return "\n".join([f"RELEASE v{s['version']}  tagged  train phase {s['phase']}  age {s['age_min']} min", "tail stages:",
+                          *s["tail"], f"freeze: {'ON (gate hold)' if s['frozen'] else 'off'}", "next: " + s["next"]])
     ck = s["checks"] or {}
     return "\n".join([
         f"RELEASE v{s['version']}  PR #{s['pr']}  train phase {s['phase']}  age {s['age_min']} min",

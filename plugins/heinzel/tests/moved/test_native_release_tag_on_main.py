@@ -143,6 +143,7 @@ def rel(tool, home, monkeypatch):
             raise r.Stop("previous release 1.2.3 NOT ACCEPTED (run 5): fix forward")
         return True
     monkeypatch.setattr(r, "previous_accepted", previous)
+    monkeypatch.setattr(r, "compose_beside_pypi", lambda *a: w.events.append(("beside",)))
     monkeypatch.setattr(r, "pypi_step", lambda *a: w.events.append(("pypi",)))
     monkeypatch.setattr(r, "compose_step", lambda *a: w.events.append(("compose",)))
     monkeypatch.setattr(r, "acceptance_step", lambda *a: w.events.append(("acceptance",)) or 7)
@@ -201,8 +202,8 @@ def test_flag_file_switches_new_versions(rel, monkeypatch, tmp_path):
 def test_happy_path_order_no_freeze_exact_tag_and_accepted_gate_before_the_tag(rel, monkeypatch):
     flag(monkeypatch)
     assert run(rel) == 0
-    assert kinds(rel) == ["release.sh", "ship", "verify", "previous accepted", "dispatch-tag", "published", "pypi",
-                          "compose", "acceptance", "marker"]
+    assert kinds(rel) == ["release.sh", "ship", "verify", "previous accepted", "dispatch-tag", "published", "beside",
+                          "pypi", "compose", "acceptance", "marker"]  # compose starts beside the PyPI upload
     assert rel.world.events[0] == ("release.sh", "patch", ("--on-main",))
     assert rel.world.events[2] == ("verify", SHA1) and rel.world.events[4] == ("dispatch-tag", SHA1)
     assert rel.world.tags[TAG] == SHA1
@@ -276,7 +277,7 @@ def test_previous_release_not_accepted_holds_the_tag_of_n_plus_1(rel, monkeypatc
     rel.world.previous_ok = True
     assert run(rel) == 0, "resumes once N is accepted or absorbed"
     assert kinds(rel).count("verify") == 1 and kinds(rel).count("dispatch-tag") == 1
-    assert kinds(rel)[-6:] == ["dispatch-tag", "published", "pypi", "compose", "acceptance", "marker"]
+    assert kinds(rel)[-7:] == ["dispatch-tag", "published", "beside", "pypi", "compose", "acceptance", "marker"]
 
 
 def test_the_pin_wins_over_a_hold_or_pause_shortcut(rel, monkeypatch):

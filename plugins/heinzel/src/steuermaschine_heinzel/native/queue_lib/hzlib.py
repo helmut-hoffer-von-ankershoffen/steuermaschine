@@ -446,6 +446,55 @@ def _attempt_jobs(run_id: int, attempt: int) -> list[dict] | None:
     return jobs
 
 
+FLAKY_NODE_ID = re.compile(r"[\w./\-]+\.py::[\w.]+(?:::[\w.]+)*(?:\[[^\]\s]*\])?")
+FLAKY_DAYS = 7  # like known-failures.toml: a flaky bead counts for 7 days after its last update, unless it carries `until`
+
+
+def _flaky_live(bead: dict, today) -> bool:
+    from datetime import date, datetime, timedelta
+    meta = bead.get("metadata") if isinstance(bead.get("metadata"), dict) else {}
+    until = bead.get("until") or meta.get("until")
+    if until:
+        try:
+            return today <= date.fromisoformat(str(until)[:10])
+        except ValueError:
+            return False
+    try:
+        updated = datetime.fromisoformat(str(bead.get("updated_at")).replace("Z", "+00:00")).date()
+    except ValueError:
+        return False  # no date at all: overdue, fail closed
+    return today <= updated + timedelta(days=FLAKY_DAYS)
+
+
+def flaky_node_ids() -> dict[str, str]:
+    """Full test node ids (path.py::name[::name][param]) written in open, live beads labelled `flaky` -> bead id.
+    Deterministic: `bd list -l flaky --json`. No title, bare function name or job name ever matches. Any read problem -> {}."""
+    from datetime import datetime, timezone
+    try:
+        out = subprocess.run(["bd", "list", "-l", "flaky", "--json"], capture_output=True, text=True, timeout=30,
+                             cwd=str(edge.records_dir()), check=False)
+        beads = json.loads(out.stdout) if out.returncode == 0 else []
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return {}
+    today = datetime.now(timezone.utc).date()
+    found: dict[str, str] = {}
+    for b in beads if isinstance(beads, list) else []:
+        if (not isinstance(b, dict) or b.get("status") not in (None, "open", "in_progress") or not isinstance(b.get("id"), str)
+                or not _flaky_live(b, today)):
+            continue
+        for text in (b.get("title"), b.get("description"), b.get("notes")):
+            for node in FLAKY_NODE_ID.findall(str(text or "")):
+                found.setdefault(node, b["id"].removeprefix("heinzel-management-"))
+    return found
+
+
+def flaky_bead(test: str, nodes: dict[str, str]) -> str | None:
+    """Bead whose node id equals `test` exactly; a bead id without [param] also covers `test` with any [param]."""
+    if test in nodes:
+        return nodes[test]
+    return nodes.get(test.split("[", 1)[0]) if test.endswith("]") and "[" in test else None
+
+
 def _known_registry() -> list:
     from . import known_failures as hz_digest
     return hz_digest.load_known(str(edge.setting("queue_known_failures_file") or edge.records_dir() / "research" / "known-failures.toml"))
@@ -474,7 +523,8 @@ def classify_attempt(run_id: int, attempt: int) -> tuple[str, str]:
             tests = list(dict.fromkeys(load("flakes_read").read_attempt(CORE, run_id, attempt).get("tests", [])))
         except Exception:  # noqa: BLE001 - unreadable log is UNKNOWN, never KNOWN
             tests = []
-        beads = [hz_digest.known_bead([t], known) for t in tests]
+        nodes = flaky_node_ids() if tests else {}
+        beads = [hz_digest.known_bead([t], known) or flaky_bead(t, nodes) for t in tests]
         if tests and all(beads):
             return "known", f"{hard[0]}=KNOWN({', '.join(dict.fromkeys(beads))}) via {len(tests)} failing test(s)"
     unknown = [n for n, b in by_name.items() if not b]

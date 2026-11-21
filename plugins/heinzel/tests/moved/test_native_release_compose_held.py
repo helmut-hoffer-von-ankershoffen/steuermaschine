@@ -76,3 +76,24 @@ def test_a_failed_finalize_run_stops(rel, monkeypatch):
     monkeypatch.setattr(rel, "ours", lambda repo, workflow, key: DONE if key == "compose" else failed)
     with pytest.raises(rel.Stop, match="compose run 8 ended failure"):
         rel.compose_step("1.2.4", 60)
+
+
+def test_compose_starts_beside_the_pypi_upload_and_never_twice(rel, monkeypatch):
+    """Speedup: compose is dispatched from the release's wheel asset right after PyPI, before PyPI has the version."""
+    seen = world(rel, monkeypatch, core_held=False, apps=[None], runs=[RUNNING])
+    order = []
+    monkeypatch.setattr(rel, "pypi_has", lambda *a: False)
+    monkeypatch.setattr(rel, "pypi_dispatch", lambda *a: order.append("pypi"))
+    rel.compose_beside_pypi("1.2.4", "v1.2.4", 60)
+    order += [key for key, _ in seen["dispatch"]]
+    assert order == ["pypi", "compose"]
+    rel.compose_step("1.2.4", 60, wait_for=False)  # a resume adopts the dispatched run instead of a second one
+    assert [key for key, _ in seen["dispatch"]] == ["compose"]
+
+
+def test_compose_beside_pypi_does_nothing_once_the_final_app_exists(rel, monkeypatch):
+    seen = world(rel, monkeypatch, core_held=False, apps=["final"], runs=[DONE])
+    monkeypatch.setattr(rel, "pypi_has", lambda *a: True)
+    monkeypatch.setattr(rel, "pypi_dispatch", lambda *a: pytest.fail("PyPI already has it"))
+    rel.compose_beside_pypi("1.2.4", "v1.2.4", 60)
+    assert seen["dispatch"] == []
