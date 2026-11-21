@@ -2,10 +2,9 @@
 NEXT a visible command that parses, the cold-help eval table, and the paths service jobs and hooks call still work."""
 
 import inspect
-import json
-from types import SimpleNamespace
 import tomllib
 from pathlib import Path
+from types import SimpleNamespace
 
 from coord_kit import app_runtime
 
@@ -119,7 +118,8 @@ def test_the_document_cap_moves_old_checkpoints_then_log_lines():
 
 def test_status_write_renders_the_state_section_and_caps_the_document(tmp_path, monkeypatch):
     from steuermaschine.native import NativeRuntime, using
-    from steuermaschine_heinzel.native import alarm, status as status_mod
+    from steuermaschine_heinzel.native import alarm
+    from steuermaschine_heinzel.native import status as status_mod
     from steuermaschine_heinzel.native.handoff_lib import hour
 
     doc = tmp_path / "AGENTS.md"

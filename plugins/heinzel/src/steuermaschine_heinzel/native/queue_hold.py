@@ -111,7 +111,8 @@ def refuse_while_held(what: str, rt: Any | None = None, pr: str = "", repo: str 
     "A second hold replaces the first (it says which). The hold is separate from the release's merge freeze."))
 @mirrored  # it runs a program that writes the working files: the subject journals follow (journal_view.py)
 def queue_hold(reason: str = typer.Option(..., "--reason", metavar="TEXT", help="Why the queue is held; printed to everyone it stops."),
-               excepted: list[str] = typer.Option([], "--except", metavar="PR[,PR...]", help="A PR that may still ship and merge: N (this project's repository) or OWNER/REPO#N; repeatable.")) -> QueueHoldChanged:
+               excepted: list[str] = typer.Option([], "--except", metavar="PR[,PR...]",
+                                                  help="A PR that may still ship and merge: N (this project's repository) or OWNER/REPO#N; repeatable.")) -> QueueHoldChanged:
     if not reason.strip():
         raise Refuse("--reason must say why the queue is held", "sm queue hold --help", code=2)
     rt = runtime()

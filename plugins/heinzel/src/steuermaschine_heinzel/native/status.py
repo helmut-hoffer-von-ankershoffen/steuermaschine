@@ -6,7 +6,6 @@ The gate is in status_lib/gate.py, the table in status_lib/table.py. The slot si
 
 from __future__ import annotations
 
-import os
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
@@ -214,7 +213,7 @@ def state_block(found: Status, now: float) -> str:
     def lines(read: Any) -> list[str]:
         try:
             return [line for line in read() if line.strip()]
-        except Exception as error:  # noqa: BLE001 - one read failing leaves the rest of the section
+        except Exception as error:
             return [f"unknown: {type(error).__name__}: {error}"[:200]]
 
     shown = found.model_copy(update={"view": "markdown", "check": False, "written": []})

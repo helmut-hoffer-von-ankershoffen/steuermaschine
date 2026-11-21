@@ -158,7 +158,7 @@ def mirrored(fn: Any) -> Any:
         finally:
             try:
                 mirror_now()
-            except Exception as error:  # noqa: BLE001 - the journals catch up on the next mirror
+            except Exception as error:
                 import sys
 
                 print(f"sm: the subject journals were not updated ({type(error).__name__}: {error})", file=sys.stderr)

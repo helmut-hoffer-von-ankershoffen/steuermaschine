@@ -26,8 +26,8 @@ from . import ci_evidence, ci_read, queue, rejudge, release_read
 from .ci_evidence import CiMain
 from .ci_read import CiWhy
 from .go import world
-from .queue_lib import core_facts
 from .queue import QueueWhy
+from .queue_lib import core_facts
 from .release_read import ReleaseStatus
 from .tasks_lib import beads
 from .tasks_lib.beads import TaskShown
