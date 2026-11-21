@@ -58,6 +58,7 @@ READERS = {"cat", "less", "more", "head", "tail", "sed", "awk", "grep", "egrep",
            "bat", "vim", "vi", "nano", "code", "open", "echo", "printf", "cd", "pushd", "readlink", "realpath", "which", "type", "find",
            "cp", "mv", "rm", "ln", "chmod", "touch", "shasum", "sha256sum", "md5", "jq", "sort", "uniq", "tee", "test", "["}
 WRAPPERS = {"env", "exec", "nohup", "time", "nice", "command", "builtin", "sudo", "xargs", "caffeinate", "timeout", "gtimeout"}
+INTERPRETERS = {"python", "python3", "uv", "bash", "sh", "zsh", "node"}
 SHELLS = {"sh", "bash", "zsh", "dash", "eval"}
 ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 SEGMENT = re.compile(r"&&|\|\||[;|&\n()`]|\$\(")
@@ -123,9 +124,10 @@ def old_tool_refusal(command: str) -> str | None:
     for words in segments(command):
         if base(words[0]) in READERS:
             continue
-        if any(OLD_DIR.search(w) or ("/" in w and OLD_PATH.search(w)) for w in words):
-            return OLD_TOOL_BLOCKED
-        if any(OLD_NAME.match(words[i]) for i in programs(words)):
+        ran = [words[i] for i in programs(words)]
+        if base(words[0]) in INTERPRETERS:  # `python3 PATH`, `uv run PATH`: the script is the first non-option words after it
+            ran += [w for w in words[1:] if not w.startswith("-")][:2]
+        if any(OLD_DIR.search(w) or ("/" in w and OLD_PATH.search(w)) or OLD_NAME.match(w) for w in ran):
             return OLD_TOOL_BLOCKED
     return None
 

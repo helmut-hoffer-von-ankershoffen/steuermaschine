@@ -81,6 +81,12 @@ def doc(out):
     return area.HeadResult.model_validate(json.loads(out.stdout))
 
 
+def held(gh):
+    """A release candidate CI run is queued: it owns the runners, PR CI queues behind it."""
+    gh.on("--status queued --limit 50", [{"databaseId": 77, "headBranch": "release/v0.9.40", "status": "queued", "createdAt": long_ago()}])
+    gh.on("--status in_progress --limit 50", [])
+
+
 def starved(gh):
     """Main CI has had a run queued for 40 minutes and no job of main is running."""
     gh.on("run list -R " + CORE + " --status queued --branch main", [{"createdAt": long_ago()}])
@@ -96,40 +102,22 @@ def test_push_gate_says_ok_when_main_ci_is_not_starved_and_reads_only(rt, gh):
     assert not gh.writes() and all(c[0] == "gh" for c in gh.calls)
 
 
-def test_push_gate_says_wait_with_exit_75_when_main_ci_is_starved_and_names_sm(rt, gh):
+def test_push_gate_says_ok_with_one_info_line_when_main_ci_is_starved(rt, gh):
     starved(gh)
     out = invoke(rt, ["--format", "json", "head", "push", "801", "--gate-only"])
     result = doc(out)
-    assert out.exit_code == 75 and result.verdict == "wait" and result.lines[0].startswith("WAIT: main CI has been queued 4")
-    assert "`sm go`" in result.lines[0] and "`sm head push 801`" in result.lines[0] and "hz-" not in out.stdout
+    assert out.exit_code == 0 and result.verdict != "wait" and result.lines[0].startswith("OK: main CI has been queued 4")
 
 
-def test_push_gate_holds_for_an_active_release_candidate_and_a_minimum_waives_it(rt, gh):
-    gh.on("--status queued --limit 50", [{"databaseId": 77, "headBranch": "release/v0.9.40", "status": "queued", "createdAt": long_ago()}])
-    gh.on("--status in_progress --limit 50", [])
-    held = invoke(rt, ["head", "push", "801", "--gate-only"])
-    assert held.exit_code == 75 and "release candidate CI run 77" in held.stdout
-    waived = invoke(rt, ["head", "push", "801", "--min", "15"])
-    assert waived.exit_code == 0 and "waiver" in waived.stdout
-
-
-def test_push_gate_waits_during_a_merge_freeze_except_for_fix_prs_and_the_waiver(rt, gh, tmp_path):
+def test_push_gate_never_refuses_for_a_release_candidate_a_merge_freeze_or_a_starved_main(rt, gh):
+    held(gh)
+    out = invoke(rt, ["head", "push", "801", "--gate-only"])
+    assert out.exit_code == 0 and "release candidate CI run 77 is active" in out.stdout and "WAIT" not in out.stdout
+    (statedir.root() / "merge-freeze").touch()  # the freeze protects main merges, not pushes
     assert invoke(rt, ["head", "push", "801", "--gate-only"]).exit_code == 0
-    (statedir.root() / "merge-freeze").touch()  # the incident freeze; a release's owned hold below
-    held = invoke(rt, ["head", "push", "801", "--gate-only"])
-    assert held.exit_code == 75 and "a merge freeze is on" in held.stdout and "PR #801 is not a fix PR" in held.stdout
-    (statedir.root() / "merge-freeze").unlink()
-    (statedir.root() / "release-holds").mkdir()
-    (statedir.root() / "release-holds" / "v0.9.41").write_text("owned\n")
-    assert invoke(rt, ["head", "push", "801", "--gate-only"]).exit_code == 75
-    assert invoke(rt, ["head", "push", "801", "--min", "15"]).exit_code == 0  # the coordinator's waiver
-    (rt.records / "research" / "known-failures.toml").write_text('note = "fix PR #801 for the red lint job"\n')
-    assert invoke(rt, ["head", "push", "801", "--gate-only"]).exit_code == 0  # a fix PR goes on
+    assert invoke(rt, ["head", "push", "801", "--min", "15"]).exit_code == 0
     with using(NativeRuntime(rt.providers, rt.settings, rt.project)):
-        assert push_gate.check("release/v0.9.41")[0] == push_gate.OK
-        gh.on("--head fix/y --state open --json number -q", "801\n").on("--head feat/z --state open --json number -q", "")
-        assert push_gate.is_fix("fix/y") and not push_gate.is_fix("feat/z")
-        assert push_gate.check("feat/z")[0] == push_gate.WAIT
+        assert push_gate.check("feat/z")[0] == push_gate.OK
 
 
 def test_printed_lines_are_passed_on_line_by_line():
@@ -140,8 +128,7 @@ def test_wait_reason_is_empty_for_ok_and_the_wait_line_otherwise(rt, gh):
     with using(NativeRuntime(rt.providers, rt.settings, rt.project)):
         assert push_gate.wait_reason("801") == ""
         starved(gh)
-        assert push_gate.wait_reason("801").startswith("WAIT: main CI has been queued")
-        assert push_gate.check("fix/x")[0] == push_gate.WAIT  # a branch without a PR is never on the keep list
+        assert push_gate.wait_reason("801") == ""  # a starved main queue never makes a push wait
     down = FakeGh().on("run list", Result(1, "", "gh: Bad Gateway (HTTP 502)"))
     with using(NativeRuntime(fake_providers(commands=down), rt.settings, rt.project)):
         assert push_gate.check("801") == (0, ["OK (unchecked): gh unavailable (CalledProcessError); push"])  # fails open
@@ -160,9 +147,8 @@ def test_push_runs_the_preflight_areas_ci_meta_first_without_quoting_a_text(rt, 
     assert bad.exit_code == 1 and seen == [(801, "", False)] and "commit 1 subject" in bad.stdout and "fix the CI meta problems above BEFORE pushing" in bad.stderr
     monkeypatch.setattr(deps, "ci_meta", lambda worktree, pr=None, ref="": [])
     assert invoke(rt, ["head", "push", "801"]).exit_code == 0
-    starved(gh)
-    wait = invoke(rt, ["head", "push", "801"])
-    assert wait.exit_code == 75 and "DO NOT PUSH #801 now" in wait.stderr and "retry: sm head push 801" in wait.stderr
+    held(gh)
+    assert invoke(rt, ["head", "push", "801"]).exit_code == 0  # an active candidate is an info line, not a refusal
 
 
 def test_push_of_a_branch_checks_that_branch_not_the_worktrees_head(rt, gh, monkeypatch):
@@ -542,9 +528,6 @@ def test_pr_refuses_a_long_title_an_empty_body_ci_meta_problems_and_a_push_gate_
     worktree.write_text("  \n")
     assert invoke(rt, ["head", "pr", "abc", "fix: x", "--body-file", str(worktree), "--live"]).exit_code == 2
     worktree.write_text("body\n")
-    starved(gh)
-    wait = invoke(rt, ["head", "pr", "abc", "fix: x", "--body-file", str(worktree), "--live"])
-    assert wait.exit_code == 75 and "DO NOT PUSH now" in wait.stderr
     monkeypatch.setattr(deps, "commit_meta", lambda worktree, pr=None, ref="": (["commit 1 subject (1 = newest): not conventional -> reword"], 1))
     meta = invoke(rt, ["head", "pr", "abc", "fix: x", "--body-file", str(worktree), "--live"])
     assert meta.exit_code == 1 and "fix the CI meta problems BEFORE pushing" in meta.stderr and "nothing was pushed or opened" in meta.stderr
