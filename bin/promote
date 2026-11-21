@@ -103,7 +103,7 @@ for d in "$empty" "$other"; do
   ok "$d" 0 "1. heinzel (base" -- self plugins
   ok "$d" 0 "sm_native" -- self hooks
   ok "$d" 0 "help contract: every command passes" -- self lint
-  ok "$d" 0 "tools" -- --help
+  ok "$d" 0 "Commands, in the order of a working day" -- --help
   ok "$d" 2 "No such command" -- nosuch
 done
 out="$(cd "$empty" && "$cand" tools gaps 2>&1)"; rc=$?
