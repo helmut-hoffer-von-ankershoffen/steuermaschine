@@ -121,7 +121,8 @@ def check(worktree: Path | None = typer.Argument(None, metavar="WORKTREE", help=
           sel: Path | None = typer.Option(None, "--sel", metavar="FILE", help='More tests to run and to measure coverage with: JSON {"python": [test files]}.'),
           skip: list[str] | None = typer.Option(None, "--skip", metavar="NAME", help="Leave one check out (repeatable); named in the verdict, and no receipt is written."),
           allow_full: bool = typer.Option(False, "--allow-full", help="Let the run lock run the whole unit suite when nothing narrows the change (the coordinator's call; logged)."),
-          full: bool = typer.Option(False, "--full", hidden=True, help="A full local run: the whole unit suite when nothing narrows the change, through the heavy lane (load bar, exclusive push lane); logged.")) -> HeadCheck:
+          full: bool = typer.Option(False, "--full", hidden=True, help="A full local run: the whole unit suite when nothing narrows the change, "
+                                                                      "through the heavy lane (load bar, exclusive push lane); logged.")) -> HeadCheck:
     rt, usage = runtime(), "sm check --help"
     providers: Any = rt.providers
     wt = _preflight.core_worktree(worktree or Path.cwd(), usage)

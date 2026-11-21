@@ -141,7 +141,8 @@ def gate_run(command: list[str] = typer.Argument(..., metavar="COMMAND...", help
              hold_exempt: bool = typer.Option(False, "--hold-exempt", help="Start although a hold is set."),
              allow_full: bool = typer.Option(False, "--allow-full", help="Admit what the project's policy refuses unless it never admits it; logged."),
              exclusive: bool = typer.Option(False, "--exclusive", help="Wait for an idle machine and keep it: no other heavy command starts meanwhile."),
-             full: bool = typer.Option(False, "--full", hidden=True, help="A full local run: the heavy lane with its load bar (and the push lane); without it the fast lane takes the command at any load."),
+             full: bool = typer.Option(False, "--full", hidden=True, help="A full local run: the heavy lane with its load bar and the push lane; "
+                                                                      "without it the fast lane takes the command at any load."),
              force_rerun: str = typer.Option("", "--force-rerun", metavar="REASON", help="Rerun a command that already failed on this very tree; the reason goes to the history."),
              bg: bool = typer.Option(False, "--bg", help="Start it in the background and return at once: default signals, a log file, `sm gate wait ID` for the exit code."),
              bg_job: str = typer.Option("", "--bg-job", metavar="ID", hidden=True, help="Internal: this process is the background run ID (set by --bg).")) -> GateRun:

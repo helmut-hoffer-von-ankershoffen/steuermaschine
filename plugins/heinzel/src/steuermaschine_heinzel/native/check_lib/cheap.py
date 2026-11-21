@@ -294,7 +294,8 @@ def step_tests(c: Ctx) -> Step:
         s.warn(f"e2e lanes the selector names are not run here: {', '.join(c.plan.lanes)}")
     s.data.update(tests=files, guards=len(c.plan.guards), selector=c.plan.selector, unit_suite=whole and c.full)
     where = "they run under coverage" if measured else f"{len(files)} selected test file(s)"
-    s.detail = f"{len(c.plan.guards)} early guard command(s), {'the whole unit suite, ' if whole and c.full else 'the whole unit suite left to PR CI, ' if whole else ''}{where}" if s.status != FAIL else ""
+    suite = "the whole unit suite, " if whole and c.full else "the whole unit suite left to PR CI, " if whole else ""
+    s.detail = f"{len(c.plan.guards)} early guard command(s), {suite}{where}" if s.status != FAIL else ""
     return s
 
 

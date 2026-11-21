@@ -3,6 +3,7 @@ commands excluding each other) is tested through the command that uses it."""
 
 import fcntl
 import json
+import os
 
 from steuermaschine.protocols import Result
 from steuermaschine.runlock import PUSH_COMMANDS, Policy, Refusal, Request, RunLock, stricter
@@ -509,3 +510,61 @@ def test_a_command_inside_a_fast_run_runs_at_once(tmp_path):
     rl, _ = fast(tmp_path, commands=Inner())
     assert rl.run(Request(argv=["git", "push"])).lane == "fast"
     assert [(o.status, o.lane) for o in seen] == [("ran", "nested")]
+
+
+def alive_lock(tmp_path, clock=None, load=5.0, **policy):
+    """A lock whose pid is this process's: the markers it writes name a live process."""
+    said = []
+    policy.setdefault("fast_slots", 3)
+    rl = RunLock(Policy(directory=tmp_path, history=tmp_path / "history.jsonl", **policy), Commands(), clock or FakeClock(), load=lambda: load, say=said.append,
+                 pid=os.getpid, parent_pid=lambda: 4000)
+    return rl, said
+
+
+def test_a_waiting_exclusive_run_holds_new_fast_runs_back_so_fast_runs_cannot_starve_it(tmp_path):
+    seen = []
+
+    class Clock(FakeClock):
+        def sleep(self, seconds):  # while the exclusive run waits for the running fast work to end
+            super().sleep(seconds)
+            other, _ = alive_lock(tmp_path, FakeClock())
+            seen.append((len(list(other.p.draining.iterdir())), other.run(Request(argv=["pytest", "tests/a.py"], max_wait_seconds=3)),
+                         other.run(Request(argv=["pytest", "tests/a.py"], max_wait_seconds=3, priority=2))))
+
+    with tmp_path.joinpath("runlock.fast.0.lock").open("a+") as running:  # one fast run is going
+        fcntl.flock(running, fcntl.LOCK_EX)
+        rl, _ = alive_lock(tmp_path, Clock())
+        out = rl.run(Request(argv=["git", "push"], full=True, exclusive=True, max_wait_seconds=6))
+    assert out.exit_code == 75 and "exclusive run waits for the machine to be idle (1 heavy run(s) still going)" in out.reason
+    waiting, normal, urgent = seen[0]
+    assert waiting == 1 and normal.exit_code == 75 and "no new fast check starts before it" in normal.reason  # the writer goes first
+    assert urgent.lane == "fast" and urgent.status == "ran"  # a priority run (the train's) is not held back
+    assert list(rl.p.draining.iterdir()) == [] and rl.run(Request(argv=["true"])).lane == "fast"  # gone with the request: fast runs start again
+
+
+def test_an_exclusive_run_that_waits_for_the_load_does_not_hold_fast_runs_back(tmp_path):
+    seen = []
+
+    class Clock(FakeClock):
+        def sleep(self, seconds):
+            super().sleep(seconds)
+            other, _ = alive_lock(tmp_path, FakeClock(), load=75.0)
+            seen.append(other.run(Request(argv=["pytest", "tests/a.py"], max_wait_seconds=3)))
+
+    rl, _ = alive_lock(tmp_path, Clock(), load=75.0, start_load=10.0)
+    assert "load 75" in rl.run(Request(argv=["git", "push"], full=True, exclusive=True, max_wait_seconds=6)).reason
+    assert seen and all(o.status == "ran" and o.lane == "fast" for o in seen)  # waiting for the load starves nobody
+
+
+def test_a_fast_run_with_a_priority_goes_ahead_of_those_without(tmp_path):
+    rl, _ = alive_lock(tmp_path)
+    rl.p.fast_waiting.mkdir(parents=True, exist_ok=True)
+    (rl.p.fast_waiting / f"2-{os.getppid()}").touch()  # a priority-2 request waits (the train's: --priority 2 --hold-exempt)
+    plain = rl.run(Request(argv=["pytest", "tests/a.py"], max_wait_seconds=3))
+    assert plain.exit_code == 75 and "a fast check with a higher priority goes first" in plain.reason
+    one = rl.run(Request(argv=["pytest", "tests/a.py"], max_wait_seconds=3, priority=1))
+    assert one.exit_code == 75  # priority 1 also waits for priority 2
+    assert rl.run(Request(argv=["pytest", "tests/a.py"], max_wait_seconds=3, priority=2, hold_exempt=True)).status == "ran"
+    (rl.p.fast_waiting / f"2-{os.getppid()}").unlink()
+    assert rl.run(Request(argv=["pytest", "tests/a.py"], max_wait_seconds=3)).status == "ran"
+    assert list(rl.p.fast_waiting.iterdir()) == []  # a request leaves no marker behind

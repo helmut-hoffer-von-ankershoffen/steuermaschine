@@ -295,3 +295,11 @@ def test_check_gates_its_commands_as_fast_runs_with_a_bound_and_a_preflight_as_f
     preflight.gated(False, False, check_lib.cheap.FAST_SECONDS)(["uv", "lock", "--check"], cwd=tmp_path)
     preflight.gated()(["make", "lint"], cwd=tmp_path)
     assert [(r.full, r.timeout_seconds) for r in seen] == [(False, 150), (True, None)]
+
+
+def test_a_release_gate_is_a_full_exclusive_run_and_the_train_keeps_its_priority():
+    from steuermaschine_heinzel.native.release_lib import edge as release_edge
+    from steuermaschine_heinzel.native.train_lib import edge as train_edge
+
+    assert release_edge.gate()[-4:] == ["run", "--full", "--exclusive", "--"]  # the release push and scripts/release.sh: never the fast lane
+    assert train_edge.gate()[-4:] == ["--priority", "2", "--hold-exempt", "--"] and "--full" not in train_edge.gate()

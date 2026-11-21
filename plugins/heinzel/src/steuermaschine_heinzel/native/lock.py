@@ -44,10 +44,13 @@ class LockSettings(BaseModel):
     lock_max_load: float = Field(40.0, description="No gated command starts at or above this 1-minute load.")
     lock_heavy_slots: int = Field(3, description="Heavy commands that may run at once.")
     lock_extra_slot_load: float = Field(20.0, description="A second heavy command starts only below this load; with lock_start_load set it is the start bar of a focus head.")
-    lock_start_load: float = Field(12.0, ge=0, description="No full local run (`--full`) starts at or above this 1-minute load (0: off); fast checks have no load bar. A focus head's full run goes by lock_extra_slot_load.")
+    lock_start_load: float = Field(12.0, ge=0, description="No full local run (`--full`) starts at or above this 1-minute load (0: off); fast checks have "
+                                 "no load bar. A focus head's full run goes by lock_extra_slot_load.")
     lock_reserved_slots: int = Field(1, ge=0, description="Heavy slots only a focus head (`sm focus add WORKTREE`) takes; one slot always stays open to everyone.")
-    lock_push_lane: bool = Field(True, description="A full push (`--full`) that is not documentation only is exclusive: it waits for an idle machine and no heavy command starts beside it. A normal push is a fast check.")
-    lock_fast_slots: int = Field(3, ge=0, description="Fast checks (everything without `--full`, pushes included) that may run at once, no load bar and never exclusive; one fewer from lock_extra_slot_load, one from lock_max_load (0: no fast lane).")
+    lock_push_lane: bool = Field(True, description="A full push (`--full`) that is not documentation only is exclusive: it waits for an idle machine and "
+                                "no heavy command starts beside it. A normal push is a fast check.")
+    lock_fast_slots: int = Field(3, ge=0, description="Fast checks (everything without `--full`, pushes included) that may run at once, no load bar and never "
+                                 "exclusive; one fewer from lock_extra_slot_load, one from lock_max_load (0: no fast lane).")
     lock_cpu_budget: int = Field(9, description="Test workers shared by all running heavy commands.")
     lock_light_slots: int = Field(4, description="Light commands that may run at once.")
     lock_history: Path | None = Field(None, description="One JSON line per gated command, either lane (times, exit, tree, caller, failure class); none: gate-history.jsonl in the state directory.")

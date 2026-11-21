@@ -350,20 +350,29 @@ def test_pr_body_changed_after_the_check_is_not_what_gh_reads(rt, gh, worktree):
     assert out.exit_code == 0 and bodies == ["What changed for users.\n"], out
 
 
-def test_pr_of_a_focus_head_or_a_release_branch_pushes_as_a_fast_check_never_exclusively(rt, gh, worktree):
+def test_pr_of_a_focus_head_goes_ahead_as_a_fast_check_and_a_release_branch_is_a_full_exclusive_run(rt, gh, worktree):
     live_pr(gh)
     out = invoke(rt, ["head", "pr", "abc", "fix(web): keep the draft", "--body-file", str(worktree), "--live"])
     push = [" ".join(c) for c in gh.calls if "git push" in " ".join(c)]
-    assert out.exit_code == 0 and "--exclusive" not in push[0]  # an ordinary head queues as usual
+    assert out.exit_code == 0 and "--exclusive" not in push[0] and "--priority" not in push[0]  # an ordinary head queues as usual
     rt.providers.store.save("focus", "list", {str(Path(".").resolve()): {"for": "0.9.41"}})
     gh.calls.clear()
     live_pr(gh)
     out = invoke(rt, ["head", "pr", "abc", "fix(web): keep the draft", "--body-file", str(worktree), "--live"])
     push = [" ".join(c) for c in gh.calls if "git push" in " ".join(c)]
     assert out.exit_code == 0, out
-    assert push[0].endswith(f"gate run --max-wait 1800 -- git push origin {HEAD}:refs/heads/fix/x") and "--exclusive" not in push[0] and "--full" not in push[0]
-    assert "exclusive" not in out.stdout + out.stderr
-    assert deps.gate(5, exclusive=True)[-6:] == ["5", "--priority", "2", "--full", "--exclusive", "--"]  # only an explicit full run is exclusive
+    assert push[0].endswith(f"gate run --max-wait 1800 --priority 2 -- git push origin {HEAD}:refs/heads/fix/x")  # ahead of the fast checks that wait
+    assert "--exclusive" not in push[0] and "--full" not in push[0] and "critical path: ahead of the other pushes" in out.stdout + out.stderr
+    assert deps.gate(5, exclusive=True)[-6:] == ["5", "--priority", "2", "--full", "--exclusive", "--"]  # only a full run is exclusive
+
+
+def test_pr_of_a_release_branch_pushes_as_a_full_exclusive_run(rt, gh, worktree):
+    """A release push keeps the machine to itself under the load bars: it never takes the fast lane."""
+    gh.on("rev-parse --abbrev-ref HEAD", "release/v0.9.54\n").on("ls-remote --heads origin refs/heads/release/v0.9.54", "")
+    gh.on("pr list -R " + CORE + " --head release/v0.9.54", [], [], [], [])
+    out = invoke(rt, ["head", "pr", "abc", "chore(release): v0.9.54", "--body-file", str(worktree)])
+    text = out.stdout + out.stderr
+    assert f"--priority 2 --full --exclusive -- git push origin {HEAD}:refs/heads/release/v0.9.54" in text, text
 
 
 def test_pr_refuses_when_head_moves_during_the_checks_and_pushes_nothing(rt, gh, worktree):
