@@ -1118,6 +1118,28 @@ def record_merge(item: dict) -> None:
         edge.stamp_merged(item["bead"], item["pr"])  # moved: the stamp is written here, no script is started
 
 
+def repin_after_update(item: dict, pinned: str) -> str:
+    """The head the diff guard read, or the head the queue's own update-branch made of it: a merge commit whose two parents are
+    the pinned head and a commit already on main adds main's content and nothing of the PR's own diff, so the guard's verdict
+    still holds. Anything else (a push by hand, a different parent) keeps the old pin and the train refuses the moved head."""
+    info = hzlib.ghj("pr", "view", item["pr"], "-R", hzlib.CORE, "--json", "headRefOid", default={}) or {}
+    current = info.get("headRefOid", "") if isinstance(info, dict) else ""
+    if len(current) != 40 or current == pinned:
+        return pinned
+    commit = hzlib.ghj("api", f"repos/{hzlib.CORE}/commits/{current}", default={}) or {}
+    parents = [p.get("sha", "") for p in commit.get("parents", [])] if isinstance(commit, dict) else []
+    if len(parents) != 2 or pinned not in parents:
+        return pinned
+    other = parents[1] if parents[0] == pinned else parents[0]
+    onto_main = hzlib.ghj("api", f"repos/{hzlib.CORE}/compare/{other}...main", default={}) or {}
+    if not isinstance(onto_main, dict) or onto_main.get("status") not in ("ahead", "identical"):
+        return pinned  # the second parent is not on main: this is not main merged into the branch
+    update(item["key"], guarded_head=current)
+    item["guarded_head"] = current
+    log(f"{item['key']}: re-pinned {pinned[:8]} -> {current[:8]} (main merged into the branch by the queue's update)")
+    return current
+
+
 def plan_guard(item: dict, earlier, refusal: list[str]):
     """The last check before a core merge: an earlier guard, then the main plan check of exactly this head on current
     the merge rule (main_plan.gap). A refusal leaves its reason in `refusal`; train sees only False."""
@@ -1227,6 +1249,8 @@ def tick(now: float | None = None) -> None:
         if not pinned:  # queued before the guard's verdict was bound to a head: nothing proves which diff it read
             stuck_or_merged(item, "needs work", "no guarded head recorded; ship it again so the diff guard reads the head that merges")
             continue
+        if item["repo"] == hzlib.CORE and not item.get("reviewed_head"):
+            pinned = repin_after_update(item, pinned)
         head_guard = {"expected_head": pinned}
         if item.get("reviewed_progress_main"):
             head_guard["pre_merge_guard"] = lambda item=item: progress_anchor_unchanged(item.get("progress_anchor"))

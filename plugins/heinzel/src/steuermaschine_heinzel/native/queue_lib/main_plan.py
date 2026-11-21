@@ -1,13 +1,13 @@
 """The merge rule for a Core PR, computed by sm alone (no plan registry, no reader of Core's).
 
 A Core PR merges only when all of these hold for the exact PINNED head:
-1. the required checks (the CI aggregate and the merge-gate checks, read from Core's release policy at main) are green on it;
+1. the status checks main's ruleset requires (read from GitHub, `rules/branches/main`) are green on it; an unreadable or empty ruleset refuses;
 2. main's tip is an ancestor of the head: the tree CI tested is the tree the squash produces, so a head BEHIND main is
    updated and tested again, never merged;
 3. when the head changes a protected path against main (`native/protected.py`: `.github/`, the release, publish, PyPI and
    acceptance scripts, the gate scripts, Makefile, uv.lock, the coverage and pytest config, quarantine.toml, conftest.py,
-   Core's own execution inputs), a protected-review verdict for exactly this head exists, recorded by a different agent
-   (`sm review verdict`, the digest `sm head admit` stops at).
+   Core's own execution inputs), a protected-review verdict exists, recorded by a different agent
+   of exactly those files' content (the digest `sm head admit` stops at, `sm review verdict`): an update of the branch that leaves them alone keeps it.
 
 `queue add` does not evaluate the rule: it queues, and the merge-time guard decides. Fail closed: any unreadable fact is a
 refusal that names it.
@@ -36,24 +36,50 @@ def core_repo() -> Path | None:
     return _core[0] if _core else None
 
 
-def _raw(path: str, ref: str) -> str | None:
-    """One file of Core at REF as text, or None when it is not there."""
+def _raw(path: str, ref: str) -> tuple[str | None, bool]:
+    """(text, absent) of one file of Core at REF: the text when it is there, absent=True on GitHub's not-found, else (None, False)."""
     code, out = hzlib.gh("api", "-H", "Accept: application/vnd.github.raw", f"repos/{hzlib.CORE}/contents/{path}?ref={ref}")
-    return out if code == 0 else None
+    if code == 0:
+        return out, False
+    return None, '"status":"404"' in out.replace(" ", "") or "Not Found" in out
 
 
-def _changed(pr: str) -> list[str] | None:
-    """The file names the PR changes (GitHub's own list, every page); None when it cannot be read."""
-    code, out = hzlib.gh("api", "--paginate", f"repos/{hzlib.CORE}/pulls/{pr}/files?per_page=100", "--jq", ".[].filename")
-    return [line for line in out.splitlines() if line] if code == 0 else None
+def _changed(pr: str) -> dict[str, str] | None:
+    """The files the PR changes, each with the id of its content at the head (`removed` when deleted): GitHub's own list, every
+    page. None when it cannot be read."""
+    code, out = hzlib.gh("api", "--paginate", f"repos/{hzlib.CORE}/pulls/{pr}/files?per_page=100", "--jq",
+                         '.[] | [.filename, .sha, .status] | @tsv')
+    if code != 0:
+        return None
+    found = {}
+    for line in out.splitlines():
+        name, _, rest = line.partition("\t")
+        blob, _, status = rest.partition("\t")
+        if name:
+            found[name] = "removed" if status == "removed" else blob
+    return found
 
 
-def _verdict(head: str, paths: list[str]) -> str:
-    """'' when a different agent approved exactly this head's protected paths, else the refusal text."""
+def required_checks() -> set[str] | None:
+    """The status checks main's ruleset requires (what GitHub enforces), or None
+    when the ruleset cannot be read or requires none: the rule then refuses."""
+    rules = hzlib.ghj("api", f"repos/{hzlib.CORE}/rules/branches/main")
+    if not isinstance(rules, list):
+        return None
+    try:
+        found = {c["context"] for rule in rules if rule.get("type") == "required_status_checks" for c in rule["parameters"]["required_status_checks"]}
+    except (KeyError, TypeError, AttributeError):
+        return None
+    return found or None
+
+
+def _verdict(head: str, blobs: dict[str, str]) -> str:
+    """'' when a different agent approved exactly the content of these protected files, else the refusal text."""
     from steuermaschine.engine import Refuse
 
     protected = importlib.import_module("steuermaschine_heinzel.native.protected")
-    digest, _record = protected.record(head, paths)
+    digest, _record = protected.record(blobs)
+    paths = sorted(blobs)
     try:
         native = importlib.import_module("steuermaschine.native")
         verdicts = importlib.import_module("steuermaschine.verdicts")
@@ -79,24 +105,29 @@ def gap(pr: str, head: str = "") -> str:
             return f"{PREFIX}: cannot check #{pr}: its head or main is unreadable"
         if current != head:
             return f"{PREFIX}: #{pr} is at {current[:8] or '?'}, not the pinned head {head[:8]}: ship it again"
-        facts = importlib.import_module("steuermaschine_heinzel.native.queue_lib.core_facts")
+        required = required_checks()
+        if required is None:
+            return f"{PREFIX}: cannot read the required status checks of main's ruleset (unreadable or none): nothing is merged on a guess"
         rollup = hzlib.latest_checks(info.get("statusCheckRollup") or [])
         green = {c.get("name") or c.get("context") for c in rollup if c.get("conclusion") == "SUCCESS" or c.get("state") == "SUCCESS"}
-        if missing := [name for name in facts.contexts() if name not in green]:
+        if missing := sorted(required - green):
             return f"{PREFIX}: #{pr} ({head[:8]}): required checks not green: {', '.join(missing)}"
         compare = hzlib.ghj("api", f"repos/{hzlib.CORE}/compare/{main}...{head}", default={}) or {}
         if compare.get("status") not in ("ahead", "identical"):
             return (f"{PREFIX}: #{pr} ({head[:8]}) is {compare.get('status') or 'unreadable'} against main {main[:8]}: "
                     "update the branch and let CI test it again")
-        names = _changed(pr)
-        if names is None:
+        changed = _changed(pr)
+        if changed is None:
             return f"{PREFIX}: cannot read the files #{pr} changes"
         protected = importlib.import_module("steuermaschine_heinzel.native.protected")
-        found = protected.matches(names, protected.execution_inputs(_raw("scripts/focused_plan.py", main)))
-        if "pyproject.toml" in names and protected.pyproject_weakens(_raw("pyproject.toml", main), _raw("pyproject.toml", head)):
+        plan, absent = _raw("scripts/focused_plan.py", main)
+        if plan is None and not absent:
+            return f"{PREFIX}: cannot read Core's scripts/focused_plan.py at main {main[:8]}: its protected files are unknown"
+        found = protected.matches(list(changed), protected.execution_inputs(plan))
+        if "pyproject.toml" in changed and protected.pyproject_weakens(_raw("pyproject.toml", main)[0], _raw("pyproject.toml", head)[0]):
             found.add("pyproject.toml")
     except Exception as error:  # noqa: BLE001 - fail closed: every error is a named refusal
         return f"{PREFIX}: cannot check #{pr}: {error}"
-    if found and (reason := _verdict(head, sorted(found))):
+    if found and (reason := _verdict(head, {name: changed[name] for name in found})):
         return f"{PREFIX}: #{pr} ({head[:8]}): {reason}"
     return ""

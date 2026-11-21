@@ -163,9 +163,9 @@ def test_check_adopts_a_green_receipt_and_refuses_a_red_run(tmp_path):
 class DiffCommands(FakeGh):
     """Answers the git calls of the protected review: the changed names, the merge-base and pyproject.toml at each side."""
 
-    def __init__(self, names: list[str], base_toml: str | None = None, head_toml: str | None = None):
+    def __init__(self, names: list[str], base_toml: str | None = None, head_toml: str | None = None, plan_text: str | None = None):
         super().__init__()
-        self.names, self.base_toml, self.head_toml = names, base_toml, head_toml
+        self.names, self.base_toml, self.head_toml, self.plan_text = names, base_toml, head_toml, plan_text
 
     def run(self, argv, **kw):
         from types import SimpleNamespace
@@ -176,6 +176,10 @@ class DiffCommands(FakeGh):
             return SimpleNamespace(rc=0, out="\0".join(self.names) + "\0", err="")
         if "merge-base" in argv:
             return SimpleNamespace(rc=0, out="b" * 40 + "\n", err="")
+        if "rev-parse" in argv:
+            return SimpleNamespace(rc=0, out=__import__("hashlib").sha1(argv[-1].encode()).hexdigest() + "\n", err="")
+        if "show" in argv and argv[-1].endswith("scripts/focused_plan.py"):
+            return SimpleNamespace(rc=0 if self.plan_text is not None else 128, out=self.plan_text or "", err="")
         if "show" in argv:
             text = self.head_toml if argv[-1] == "HEAD:pyproject.toml" else self.base_toml
             return SimpleNamespace(rc=0 if text is not None else 128, out=text or "", err="" if text is not None else "no such path")
@@ -194,16 +198,16 @@ def test_a_protected_path_stops_for_a_digest_of_exactly_these_paths(tmp_path, pa
     assert rt.providers.store.load(DIGEST_KIND, digest)["check"]["head"] == HEAD  # an approval needs the head's green check receipt
 
 
-def test_an_ordinary_head_has_no_stop_and_a_new_head_changes_the_digest(tmp_path):
+def test_an_ordinary_head_has_no_stop_and_other_protected_files_change_the_digest(tmp_path):
     rt = runtime(tmp_path, DiffCommands(["src/a.py", "docs/x.md"]))
     with native(rt):
         assert head_admit.protected_review(context(rt, tmp_path / "wt")) == ("", "", "")
     rt = runtime(tmp_path, DiffCommands(["conftest.py"]))
     with native(rt):
         first = head_admit.protected_review(context(rt, tmp_path / "wt"))[0]
-        other = context(rt, tmp_path / "wt")
-        other.subject.key = OTHER
-        assert head_admit.protected_review(other)[0] != first
+    rt = runtime(tmp_path, DiffCommands(["conftest.py", "Makefile"]))
+    with native(rt):
+        assert head_admit.protected_review(context(rt, tmp_path / "wt"))[0] != first
 
 
 CORE_TOML = """[project]
@@ -250,3 +254,25 @@ def test_an_unreadable_diff_refuses_never_passes(tmp_path):
 def test_the_pipeline_has_no_admission_steps():
     names = [getattr(s, "name", "") for s in head_admit.pipeline().steps]
     assert names == ["check", "protected review", "pr", "queue"]
+
+
+CORE_PLAN = 'PROTECTED_FILES = (\n    "scripts/bootstrap-pyyaml.sh",\n    "src/heinzel/bootstrap_pyyaml.py",\n    "uv.lock",\n)\n'
+
+
+def test_cores_own_protected_files_are_read_from_main_and_an_unparsable_list_refuses(tmp_path):
+    rt = runtime(tmp_path, DiffCommands(["src/heinzel/bootstrap_pyyaml.py", "src/a.py"], plan_text=CORE_PLAN))
+    assert head_admit.protected_changes(context(rt, tmp_path / "wt")) == ["src/heinzel/bootstrap_pyyaml.py"]
+    rt = runtime(tmp_path, DiffCommands(["src/heinzel/bootstrap_pyyaml.py"]))  # Core has no focused_plan.py any more: nothing extra
+    assert head_admit.protected_changes(context(rt, tmp_path / "wt")) == []
+    rt = runtime(tmp_path, DiffCommands(["src/a.py"], plan_text="PROTECTED_FILES = tuple(compute())\n"))
+    with pytest.raises(Refuse, match="PROTECTED_FILES"):
+        head_admit.protected_changes(context(rt, tmp_path / "wt"))
+
+
+def test_the_review_digest_follows_the_content_of_the_protected_files_not_the_head(tmp_path):
+    rt = runtime(tmp_path, DiffCommands(["uv.lock"]))
+    with native(rt):
+        first = head_admit.protected_review(context(rt, tmp_path / "wt"))[0]
+        other = context(rt, tmp_path / "wt")
+        other.subject.key = OTHER  # the branch was updated: a new head, the same file content
+        assert head_admit.protected_review(other)[0] == first

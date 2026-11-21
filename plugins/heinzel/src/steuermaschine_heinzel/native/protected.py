@@ -2,7 +2,7 @@
 
 Shared by `sm head admit` (it stops for the verdict) and the queue's merge rule (it refuses to merge without it), so both
 name the same paths and the same bytes. No plan registry and no copy of Core's own lists: the execution inputs Core names
-are read from Core at main by the caller, while Core still has them.
+are read from Core at main by the caller (its PROTECTED_FILES), while Core still has them.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ PROTECTED = (".github/*", "release.sh", "*/release.sh", "scripts/*release*", "sc
              "quarantine.toml", "*/quarantine.toml", "conftest.py", "*/conftest.py", ".coveragerc", "*/.coveragerc", "scripts/*coverage*",
              "Makefile", "uv.lock", ".pre-commit-config.yaml", "sonar-project.properties")
 TOOL_TABLES = ("coverage", "pytest")  # the coverage config and the pytest options: they lower a floor, deselect tests or raise a timeout
-EXECUTION_INPUTS = "FULL_EXECUTION_INPUTS"  # Core's own list of the files whose change alters what CI runs, in scripts/focused_plan.py
+EXECUTION_INPUTS = "PROTECTED_FILES"  # Core's own list of the files whose change alters what CI runs (scripts/focused_plan.py)
 
 
 def matches(names: list[str], extra: set[str] | frozenset[str] = frozenset()) -> set[str]:
@@ -28,17 +28,21 @@ def matches(names: list[str], extra: set[str] | frozenset[str] = frozenset()) ->
 
 
 def execution_inputs(plan_text: str | None) -> set[str]:
-    """The names of Core's FULL_EXECUTION_INPUTS in its focused_plan.py text; empty when the file or the name is not there."""
-    if not plan_text:
+    """Core's own list of the files whose change alters what CI runs: `PROTECTED_FILES`, a literal tuple in its
+    scripts/focused_plan.py at main. No file (Core dropped it): empty. A file whose list is missing or not a literal:
+    ValueError, so the caller refuses; an unreadable list never means "nothing protected"."""
+    if plan_text is None:
         return set()
     try:
         for node in ast.parse(plan_text).body:
             if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == EXECUTION_INPUTS for t in node.targets):
                 value: Any = ast.literal_eval(node.value)
-                return {str(v) for v in value if isinstance(v, str)}
+                if isinstance(value, (tuple, list)) and value and all(isinstance(v, str) for v in value):
+                    return set(value)
+                break
     except (SyntaxError, ValueError, TypeError):
-        return set()
-    return set()
+        pass
+    raise ValueError(f"scripts/focused_plan.py is there but its {EXECUTION_INPUTS} is missing or not a literal list of paths")
 
 
 def tool_tables(text: str) -> dict[str, Any]:
@@ -60,7 +64,8 @@ def pyproject_weakens(base_text: str | None, head_text: str | None) -> bool:
         return True
 
 
-def record(head: str, paths: list[str]) -> tuple[str, str]:
-    """(digest, text) of the review record: the head and the sorted protected paths. A new commit is a new digest."""
-    text = json.dumps({"head": head, "protected": sorted(paths)}, indent=1, sort_keys=True) + "\n"
+def record(blobs: dict[str, str]) -> tuple[str, str]:
+    """(digest, text) of the review record: each protected path with the id of its content at the head (`removed` when the head
+    deletes it). The verdict follows the content, not the commit: an update of the branch that leaves these files alone keeps it."""
+    text = json.dumps({"protected": dict(sorted(blobs.items()))}, indent=1, sort_keys=True) + "\n"
     return hashlib.sha256(text.encode()).hexdigest(), text

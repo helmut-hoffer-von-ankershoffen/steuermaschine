@@ -81,7 +81,10 @@ def protected_changes(ctx: Ctx) -> list[str]:
     if done.rc != 0:
         raise Refuse(f"cannot read the changed paths of {wt} against origin/main: {(done.err or done.out).strip()[:200]}", f"git -C {wt} fetch origin main")
     names = [n for n in str(done.out).split("\0") if n]
-    found = protected.matches(names, protected.execution_inputs(_text_at(ctx, wt, "origin/main", "scripts/focused_plan.py")))
+    try:
+        found = protected.matches(names, protected.execution_inputs(_text_at(ctx, wt, "origin/main", "scripts/focused_plan.py")))
+    except ValueError as exc:
+        raise Refuse(str(exc), f"git -C {wt} fetch origin main") from None
     if "pyproject.toml" in names:
         base = ctx.providers.commands.run(["git", "-C", wt, "merge-base", "origin/main", "HEAD"], timeout=120)
         if base.rc != 0 or protected.pyproject_weakens(_text_at(ctx, wt, str(base.out).strip(), "pyproject.toml"), _text_at(ctx, wt, "HEAD", "pyproject.toml")):
@@ -89,12 +92,22 @@ def protected_changes(ctx: Ctx) -> list[str]:
     return sorted(found)
 
 
+def protected_blobs(ctx: Ctx, paths: list[str]) -> dict[str, str]:
+    """Each protected path with the id of its content at HEAD (`removed` when HEAD deletes it)."""
+    wt = ctx.subject.facts["worktree"]
+    out = {}
+    for path in paths:
+        done = ctx.providers.commands.run(["git", "-C", wt, "rev-parse", f"HEAD:{path}"], timeout=120)
+        out[path] = str(done.out).strip() if done.rc == 0 and str(done.out).strip() else "removed"
+    return out
+
+
 def protected_review(ctx: Ctx) -> tuple[str, str, str]:
     changed = protected_changes(ctx)
     if not changed:
         return "", "", ""  # nothing protected: no stop
     head, wt = ctx.subject.key, ctx.subject.facts["worktree"]
-    digest, record = protected.record(head, changed)
+    digest, record = protected.record(protected_blobs(ctx, changed))
     command = f"sm check {wt}"
     need_check(ctx.providers.store, digest, head, command)
     path = statedir.path(f"ship/protected/{head[:12]}.json")
@@ -102,7 +115,7 @@ def protected_review(ctx: Ctx) -> tuple[str, str, str]:
     path.write_text(record)
     brief = (f"Review the protected paths changed by {ctx.subject.label} at {head[:12]}: {', '.join(changed)}.\n"
              f"Read the diff of exactly these paths (git -C {wt} diff origin/main...HEAD -- PATH). Approve the digest {digest[:12]}... only if they weaken no "
-             "gate, test, threshold or publish step. The digest is sha256 of the record: the head and the sorted protected paths.")
+             "gate, test, threshold or publish step. The digest is sha256 of the record: each protected file with the id of its content at this head; it follows the content, so an update of the branch that leaves these files alone keeps your verdict.")
     return digest, brief, str(path)
 
 

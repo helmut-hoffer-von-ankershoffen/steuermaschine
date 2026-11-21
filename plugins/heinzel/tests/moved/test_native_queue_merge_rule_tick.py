@@ -10,7 +10,7 @@ import pytest
 from test_native_queue_watch_queue import lib, queue  # noqa: F401  (fixtures)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from test_native_queue_merge_rule import GREEN, HEAD, World, approve  # noqa: E402
+from test_native_queue_merge_rule import GREEN, HEAD, MAIN, World, approve  # noqa: E402
 from test_pipeline_head_admit import native, runtime  # noqa: E402
 
 from steuermaschine_heinzel.native.queue_lib import hzlib  # noqa: E402
@@ -85,8 +85,8 @@ def test_a_pr_touching_ci_yml_waits_for_the_verdict_and_merges_with_it(merge):
     assert merged and not refusal and github.merges()
 
 
-def test_a_verdict_for_another_head_does_not_let_the_pr_merge(merge):
-    approve(merge.rt, ["uv.lock"], head="c" * 40)
+def test_a_verdict_for_other_content_does_not_let_the_pr_merge(merge):
+    approve(merge.rt, ["uv.lock"], version="2")
     github = Github(files=["uv.lock"])
     merged, _detail, refusal = merge(github)
     assert not merged and not github.merges() and "no verdict is recorded" in refusal[0]
@@ -100,7 +100,59 @@ def test_a_core_head_behind_main_is_updated_by_the_train_and_never_merged(merge)
     assert any(c[:2] == ("pr", "update-branch") for c in github.calls)
 
 
-def test_the_checks_the_rule_needs_are_those_of_the_policy(merge):
-    github = Github(rollup=[c for c in GREEN if c["name"] != "merge-gate"], merge_state="CLEAN")
+def test_the_checks_the_rule_needs_are_the_rulesets_not_the_legacy_ones(merge):
+    refused = Github(rollup=[GREEN[0]], merge_state="CLEAN")  # Sonar absent
+    merged, detail, refusal = merge(refused)
+    assert not merged and not refused.merges()
+
+
+def test_a_pr_with_the_legacy_checks_red_but_ci_ok_and_sonar_green_merges(merge):
+    from test_native_queue_merge_rule import LEGACY_RED
+
+    github = Github(rollup=[*GREEN, *LEGACY_RED])
     merged, detail, refusal = merge(github)
-    assert not merged and not github.merges()
+    assert merged and not refusal and github.merges()
+
+
+# ----------------------------------------------------------------------------- the queue's own update-branch
+PINNED, PARENT = "1" * 40, "2" * 40
+
+
+class Updated(Github):
+    """The PR whose branch the queue updated: HEAD is a commit with parents (PINNED, PARENT); PARENT is (not) on main."""
+
+    def __init__(self, parents, on_main=True, **kw):
+        super().__init__(**kw)
+        self.parents, self.on_main = parents, on_main
+
+    def __call__(self, *args):
+        text = " ".join(args)
+        if "/commits/" in text:
+            return 0, json.dumps({"parents": [{"sha": p} for p in self.parents]})
+        if "/compare/" in text and text.endswith("...main"):
+            return 0, json.dumps({"status": "ahead" if self.on_main else "diverged"})
+        return super().__call__(*args)
+
+
+@pytest.fixture
+def pinned_item(queue, lib, monkeypatch):  # noqa: F811
+    monkeypatch.setattr(lib, "gh", Github())
+    monkeypatch.setattr(queue, "main_state", lambda: "green")
+    assert queue.main(["add", "803"]) == 0
+    queue.update("803", guarded_head=PINNED)
+    return next(i for i in queue.load()["items"] if i["pr"] == "803")
+
+
+def test_a_head_that_is_main_merged_into_the_pinned_head_is_repinned_and_stays_queued(queue, lib, monkeypatch, pinned_item):  # noqa: F811
+    monkeypatch.setattr(lib, "gh", Updated([PINNED, PARENT]))
+    assert queue.repin_after_update(pinned_item, PINNED) == HEAD
+    assert pinned_item["guarded_head"] == HEAD and queue.load()["items"][0]["guarded_head"] == HEAD
+    assert queue.repin_after_update(pinned_item, HEAD) == HEAD  # already current: nothing to do
+
+
+@pytest.mark.parametrize("parents, on_main", [([PINNED], True), ([PARENT, "3" * 40], True), ([PINNED, PARENT, "3" * 40], True),
+                                              ([PINNED, PARENT], False)])
+def test_any_other_new_head_keeps_the_pin_so_the_train_refuses_it(queue, lib, monkeypatch, pinned_item, parents, on_main):  # noqa: F811
+    monkeypatch.setattr(lib, "gh", Updated(parents, on_main=on_main))
+    assert queue.repin_after_update(pinned_item, PINNED) == PINNED
+    assert pinned_item["guarded_head"] == PINNED
