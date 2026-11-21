@@ -1154,12 +1154,35 @@ def pending_waiver(version: str) -> dict | None:
     return {key: data.get(key) for key in ("job", "bead", "owner_quote")}
 
 
+def main_moved_refusal(number: int, tag: str) -> str | None:
+    """The release PR is one commit on the main base the candidate ran on; its squash merge carries everything that
+    reached main since (0.9.53 shipped #886 unproven). Returns the refusal text when main's tip is not that base, or
+    when either side cannot be read exactly (fail closed); None when main has not moved."""
+    pr_head = hzlib.gh("api", f"repos/{CORE}/pulls/{number}", "--jq", ".head.sha")[1].strip()
+    code, parents = hzlib.gh("api", f"repos/{CORE}/commits/{pr_head}", "--jq", ".parents[].sha") if pr_head else (1, "")
+    base = parents.split()
+    tip_code, tip = hzlib.gh("api", f"repos/{CORE}/commits/main", "--jq", ".sha")
+    tip = tip.strip()
+    sha = re.compile(r"[0-9a-f]{40}")
+    if code != 0 or tip_code != 0 or len(base) != 1 or not sha.fullmatch(base[0]) or not sha.fullmatch(tip):
+        return f"main moved check refused: cannot read the candidate base of PR #{number} or main's tip exactly; nothing was merged"
+    if base[0] == tip:
+        return None
+    return (f"main moved since the candidate base: PR #{number} ({pr_head[:9]}) was proven on {base[0][:9]}, main is now {tip[:9]}; "
+            "its squash merge would carry unproven commits into the release (0.9.53 shipped #886 this way). Nothing was merged. "
+            f"Recovery: `sm release resume {tag.removeprefix('v')} --drop-candidate --reason TEXT --close-pr`, then cut again so the "
+            "candidate runs on the new base (keep main frozen until the merge)")
+
+
 def merge_release_pr(tag: str, composite_run: int | None = None) -> None:
     pr = release_pr(tag)
     if not pr:
         raise Stop(f"no release PR for {tag}")
     waiver = None if composite_run else pending_waiver(tag.removeprefix("v"))
     def full_candidate_guard() -> bool:
+        if (moved := main_moved_refusal(pr["number"], tag)):
+            hzlib.say(moved)
+            return False
         try:
             evidence = (release_candidate_capacity.consume(ReleaseAdapter(), composite_run, pr["number"])
                         if composite_run else release_candidate_policy.verify_pr(pr["number"], waiver))
