@@ -471,6 +471,7 @@ def test_live_runs_the_mini_update_only_after_accepted_and_exits_on_its_proof(tm
     monkeypatch.setattr(mini, "update", lambda w, minimum=None: mini.MiniVerify(reason="the version served on port 8737 is 0.9.40, the installed one 0.9.41"))
     out = invoke(rt, ["release", "resume", "0.9.41", "--live"])
     assert out.exit_code == 1 and out.stdout.splitlines()[-2] == "NOT-LIVE: the version served on port 8737 is 0.9.40, the installed one 0.9.41"
+    assert tested == ["0.9.41", "0.9.41"]  # iOS publishing does not depend on the Mini: it runs at NOT-LIVE too
     receipt.update(accepted=False)  # NOT ACCEPTED, unfinished or stopped: the Mini is never touched
     monkeypatch.setattr(area, "run", lambda module, argv: (1, ["NOT ACCEPTED 0.9.41 (run 7)"], []))
     monkeypatch.setattr(mini, "update", lambda *a, **k: pytest.fail("the Mini was touched"))

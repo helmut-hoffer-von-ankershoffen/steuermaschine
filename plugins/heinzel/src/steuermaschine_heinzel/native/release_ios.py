@@ -6,6 +6,7 @@ update. A failure is NOT-CLEAN and an alarm; it never touches the published rele
 
 from __future__ import annotations
 
+import contextlib
 from pathlib import Path
 
 import typer
@@ -77,8 +78,12 @@ def release_ios(version: str = typer.Argument(..., metavar="VERSION", help="The 
 
 
 def after_accepted(w: probes.World, version: str) -> list[str]:
-    """The hook of `sm release resume X --live`: the lines of this step; a refusal (no repository set) is NOT-CLEAN too."""
+    """The hook of `sm release resume X --live`: the lines of this step. It never raises: a refusal (no repository set)
+    or any other error is NOT-CLEAN with its reason, written to the receipt so that the alarm `ios:VERSION` holds."""
     try:
         return run(w, version).lines
-    except Refuse as exc:
-        return [f"IOS NOT-CLEAN {version}: {exc}"]
+    except Exception as exc:  # the published release and the Mini proof must survive any failure here
+        failed = ios.IosResult(version=version, reason=f"{type(exc).__name__}: {str(exc)[:200]}")
+        with contextlib.suppress(OSError):
+            ios.write_receipt(w.state_dir, failed, w.now())
+        return failed.lines()

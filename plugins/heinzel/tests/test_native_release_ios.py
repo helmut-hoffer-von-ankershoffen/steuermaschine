@@ -221,7 +221,8 @@ def test_without_a_core_repository_it_refuses_and_the_hook_says_not_clean(tmp_pa
     assert invoke(rt, ["release", "ios", "0.9.53"]).exit_code == 2
     with using(NativeRuntime(rt.providers, rt.settings, rt.project)):
         lines = release_ios.after_accepted(world(), "0.9.53")
-    assert lines[0].startswith("IOS NOT-CLEAN 0.9.53: `sm release ios` checks out the release tag")
+    assert lines[-1].startswith("IOS NOT-CLEAN 0.9.53: Refuse: `sm release ios` checks out the release tag")
+    assert rules.ios_alarm(ios.latest_receipt(m.state), 0)["key"] == "ios:0.9.53"
 
 
 def test_summary_and_latest_receipt(tmp_path):
@@ -274,3 +275,18 @@ def test_a_running_receipt_is_written_first(tmp_path):
     m.commands.on(["git", "-C", str(tmp_path / "core"), "rev-parse"], lambda argv: seen.append(m.receipt()) or Result(0, SHA + "\n"))
     assert m.run().exit_code == 0
     assert seen[0]["running"] is True and seen[0]["clean"] is False
+
+
+def test_the_hook_never_raises_and_records_any_error(tmp_path, monkeypatch):
+    from steuermaschine.native import NativeRuntime, using
+    from steuermaschine_heinzel.native.go import world
+    m = Mini(tmp_path)
+
+    def broken(*args, **kwargs):
+        raise RuntimeError("xcodebuild vanished")
+    monkeypatch.setattr(ios, "publish", broken)
+    with using(NativeRuntime(m.rt.providers, m.rt.settings, m.rt.project)):
+        lines = release_ios.after_accepted(world(), "0.9.53")
+    assert lines == ["IOS NOT-CLEAN 0.9.53: RuntimeError: xcodebuild vanished"]
+    assert m.receipt()["clean"] is False and "xcodebuild vanished" in m.receipt()["reason"]
+    assert rules.ios_alarm(ios.latest_receipt(m.state), 0)["cls"] == "ALERT"
