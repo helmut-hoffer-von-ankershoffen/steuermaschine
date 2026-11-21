@@ -157,8 +157,8 @@ def test_in_sm_words_no_line_names_an_old_tool_and_the_information_is_the_same()
     assert report.kind == doc["decision"]["kind"] == "apply-running" and report.next == ""
     assert report.waiting_on == doc["decision"]["waiting"].replace("hz-go", "sm go")
     assert report.facts == doc["decision"]["facts"] and report.aside == doc["decision"]["side"]
-    assert [a.phase for a in report.also][1:] == ["backlog: PR #690 (fix/cgdn-prerelease-hold cb15803c6) every check green but BLOCKED -> sm queue why 690",
-                                                 "backlog: PR #784 (feat/py-bundle-0912b 45654064e) red: Focused tests (python), CI OK, coverage-floor -> sm ci faillog 784"]
+    assert [a.phase for a in report.also][1:] == ["backlog: PR #690 (fix/cgdn-prerelease-hold cb15803c6) every check green but BLOCKED -> sm why 690",
+                                                 "backlog: PR #784 (feat/py-bundle-0912b 45654064e) red: Focused tests (python), CI OK, coverage-floor -> sm why 784"]
 
 
 # ------------------------------------------------------------------ pure decisions
@@ -337,7 +337,7 @@ def test_go_in_text_through_the_command_tree(tmp_path):
     assert out.exit_code == 0, out
     lines = out.stdout.splitlines()
     assert lines[0] == "ALERT    STALL #801 BLOCKED; sm queue why  (silence: sm alarm ack stall:801)"
-    assert lines[1] == f"PHASE    main {MAIN[:8]} green, 3 commits since v0.9.39, no candidate" and lines[2] == "NEXT     sm release cut 0.9.40"
+    assert lines[1] == f"PHASE    main {MAIN[:8]} green, 3 commits since v0.9.39, no candidate" and lines[2] == "NEXT     sm release 0.9.40"
     assert "         focused slots: PLANS 9%" in lines and lines[-1].endswith("s, read-only)") and not OLD.search(out.stdout)
     assert not [argv for argv in commands.calls if argv[0] not in ("git", "gh", "ps", "hz")]
 

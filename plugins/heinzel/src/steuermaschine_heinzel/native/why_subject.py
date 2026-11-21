@@ -26,6 +26,7 @@ from . import ci_evidence, ci_read, queue, rejudge, release_read
 from .ci_evidence import CiMain
 from .ci_read import CiWhy
 from .go import world
+from .queue_lib import core_facts
 from .queue import QueueWhy
 from .release_read import ReleaseStatus
 from .tasks_lib import beads
@@ -34,7 +35,6 @@ from .why import PullRequestWhy, explain
 
 RUN_IDS = 100000  # a number at or above this is a run id, below it a pull request
 VERSION = re.compile(r"v?(\d+\.\d+\.\d+)")
-MERGE_GATE = "merge-gate"
 
 
 class WhyNow(Model):
@@ -86,7 +86,7 @@ def pull_request(number: int) -> PullRequestWhy:
             more += ["CI"] + [f"  {line}" for line in ci_read.explain_ci(w, number).render()]
         except Exception as error:
             more.append(f"CI       unknown: {type(error).__name__}: {error}")
-    if MERGE_GATE in red:
+    if red & set(core_facts.API_CHECKS):  # the merge gate's checks (Core's release policy)
         try:
             more += ["SONAR"] + [f"  {line}" for line in rejudge.sonar_head(number).render()]
         except Exception as error:

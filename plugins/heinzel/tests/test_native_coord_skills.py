@@ -15,11 +15,11 @@ GOOD = """---
 name: coordinate
 description: Run the loop. Use when a tick starts or before an agent is messaged.
 ---
-At every tick run bare `sm`, then `sm note "what happened"` and `sm doc asks`.
+At every tick run bare `sm`, then `sm note "what happened"` and `sm alarm list`.
 
 ```
-sm beads sweep --all --propose-close
-sm --format json doc asks
+sm work sweep --all --propose-close
+sm --format json alarm list
 ```
 """
 
@@ -41,10 +41,10 @@ def test_generate_writes_the_help_of_named_commands_and_the_index_once(tmp_path)
     assert done.stdout.splitlines() == ["wrote coordinate/references/tools.md", "wrote INDEX.md", "generated: 2 file(s) changed"]
     reference = (root / "coordinate/references/tools.md").read_text()
     assert reference.startswith("# Commands for coordinate (generated from the sm command tree; do not edit)\n")
-    assert [line for line in reference.splitlines() if line.startswith("## ")] == ["## sm beads sweep", "## sm doc asks", "## sm note"]
+    assert [line for line in reference.splitlines() if line.startswith("## ")] == ["## sm alarm list", "## sm note", "## sm work sweep"]
     assert "Append one dated line to the log at the end of the tracking document." in reference and "Options: --all" in reference
     index = (root / "INDEX.md").read_text()
-    assert "| sm note | writes | coordinate |" in index and "| sm doc asks | read-only | coordinate |" in index and "| sm doc section | read-only |  |" in index
+    assert "| sm note | writes | coordinate |" in index and "| sm alarm list | read-only | coordinate |" in index and "| sm why | read-only |  |" in index
     assert run(tmp_path, "generate").stdout == "generated: 0 file(s) changed\n"
     assert "hz-" not in reference and "hz-" not in index
 
@@ -61,7 +61,7 @@ def test_check_passes_after_generate_when_every_other_command_is_exempt(tmp_path
 
 def test_check_lists_every_kind_of_drift(tmp_path):
     bad = GOOD.replace("name: coordinate", "name: other").replace("Use when a tick starts or before an agent is messaged.", "x" * 1030)
-    bad += "Type `sm queue fly 12`, `sm nope`, `sm doc`, and never `hz-queue add` or `hz-builder`.\n" + "line\n" * 150
+    bad += "Type `sm work fly 12`, `sm nope`, `sm doc`, and never `hz-queue add` or `hz-builder`.\n" + "line\n" * 150
     root = skills_of(tmp_path, bad)
     (root / "plain").mkdir()
     (root / "plain" / "SKILL.md").write_text("no front matter\n")
@@ -69,9 +69,9 @@ def test_check_lists_every_kind_of_drift(tmp_path):
     doc = mod.SkillCheck.model_validate(json.loads(invoke(app_runtime(tmp_path, skills_dir=str(root)), ["--format", "json", "doc", "skills", "check"]).stdout))
     text = "\n".join(doc.problems)
     for want in ("coordinate: frontmatter name 'other' != directory", "coordinate: description missing or over 1024 chars",
-                 "coordinate: description must say when to use it", "coordinate: SKILL.md over 150 lines", "coordinate: names `sm queue fly`, which is no command",
+                 "coordinate: description must say when to use it", "coordinate: SKILL.md over 150 lines", "coordinate: names `sm work fly`, which is no command",
                  "coordinate: names `sm nope`, which is no command", "coordinate/SKILL.md: names the old tool hz-queue (now: sm queue list)", "plain: no frontmatter",
-                 "no skill names `sm doc section`", "stale generated file: INDEX.md"):
+                 "no skill names `sm why`", "stale generated file: INDEX.md"):
         assert want in text, want
     assert "hz-builder" not in text and "no skill names `sm self lint`" not in text and "no skill names `sm note`" not in text
     assert doc.exit_code == 1 and doc.render()[-1].endswith("problem(s)")

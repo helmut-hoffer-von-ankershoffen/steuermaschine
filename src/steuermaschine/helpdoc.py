@@ -97,7 +97,7 @@ def tree(root: Any, prog: str, writes: dict[str, bool] | None = None) -> list[di
         text = (command.help or "").replace("\b", "").strip()
         opts = sorted(o for p in command.params for o in getattr(p, "opts", []) if o.startswith("--"))
         args = [p.name for p in command.params if not any(o.startswith("-") for o in getattr(p, "opts", []))]
-        rows.append({"path": path, "group": is_group, "hidden": path in hidden, "purpose": text.splitlines()[0] if text else "",
+        rows.append({"path": path, "group": is_group, "default": str(getattr(command, "sm_default", "") or ""), "hidden": path in hidden, "purpose": text.splitlines()[0] if text else "",
                      "help": text, "options": opts, "arguments": args, "declared": path in writes,
                      "read_only": (not writes[path]) if path in writes and not is_group else bool(READ_ONLY.search(text)),
                      "missing": "" if getattr(command, "sm_surface", False) else missing(text) + disorder(text, prog) + ("A" if undocumented(command) else ""),

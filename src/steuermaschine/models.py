@@ -269,6 +269,7 @@ class TreeRow(Model):
 
     path: str
     group: bool
+    default: str = ""  # a group that runs this subcommand for a word that is none of its own (`sm release 1.2.3`)
     hidden: bool = False
     purpose: str = ""
     help: str = ""

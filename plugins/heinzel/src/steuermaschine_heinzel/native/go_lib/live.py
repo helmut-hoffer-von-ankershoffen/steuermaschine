@@ -20,6 +20,9 @@ MISSING = "missing: `{command}` is not a visible command; nothing to run for it 
 def checker(rows: list[dict]) -> Callable[[str], str]:
     """A function that returns its text unchanged when every `sm` command in it is live, else the missing line."""
     leaves = {tuple(str(r["path"]).split()[1:]): set(r.get("options") or []) for r in rows if not r.get("group") and not r.get("hidden")}
+    options = {str(r["path"]): set(r.get("options") or []) for r in rows}
+    leaves |= {tuple(str(r["path"]).split()[1:]): options.get(f"{r['path']} {r['default']}", set())  # `sm release 0.9.55 --live`
+               for r in rows if r.get("default") and not r.get("hidden")}
 
     def check(text: str) -> str:
         if not text:

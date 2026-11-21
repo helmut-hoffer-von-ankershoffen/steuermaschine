@@ -13,7 +13,8 @@ visible, and give every group the unknown-command resolver. Nothing is deleted: 
 because service jobs and hooks call it.
 
 A stub for a read-only old name runs the new command with the same arguments and prints `Renamed: sm NEW (was: sm
-OLD)` on stderr. A stub for a writing old name prints that line and exits 2 (usage); it runs nothing. A `Renamed`
+OLD)` on stderr. A stub for a writing old name prints that line and exits 2 (usage); it runs nothing. With
+STEUERMASCHINE_OLD_NAMES=1 an old name runs its old command (the tests of that command; an escape hatch). A `Renamed`
 with `stub=False` keeps the old command as it is (an internal caller still runs it) and only translates the old name
 in texts such as NEXT (`translate`).
 
@@ -34,6 +35,7 @@ from typing import Any
 
 import typer
 
+from .config import environment
 from .helpdoc import READ_ONLY, H
 
 JARGON = ("admission", "receipt", "pin", "packet", "plan", "window", "train", "candidate")
@@ -260,8 +262,9 @@ def apply(root: Any, items: Iterable[Any], writes: dict[str, bool], fail: Callab
         twin = copy.copy(target)
         twin.name, twin.hidden = name, False
         _group(root, parents).commands[name] = twin
+    old_names = (environment().steuermaschine_old_names or "") == "1"  # the old commands run as before (their own tests)
     for rename in renames:  # 2. stubs at the old paths
-        if not rename.stub or (old := find(root, rename.old)) is None:
+        if not rename.stub or old_names or (old := find(root, rename.old)) is None:
             continue
         path, fixed = split_new(rename.new, root)
         target = find(root, path)

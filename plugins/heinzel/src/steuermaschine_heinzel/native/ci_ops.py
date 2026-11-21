@@ -627,7 +627,7 @@ def ci_sonar_close(config: Path | None = typer.Option(None, "--config", metavar=
                       closures=rows, calls=calls, lines=lines, rejudge=judged, rejudge_failed=failed)
 
 
-@native("review sonar", writes=True, help=H(
+@native("review sonar", writes=True, replaces=("hz-sonar-close",), help=H(
     "Close reviewed Sonar findings of one pull request with their written reason (bugs and vulnerabilities only).",
     "Use after a finding of the PR was reviewed as a false positive or accepted and its row is in the reviewed manifest.",
     "nothing without --apply (a preview); with --apply it comments the reason on each planned issue and transitions it in Sonar.",

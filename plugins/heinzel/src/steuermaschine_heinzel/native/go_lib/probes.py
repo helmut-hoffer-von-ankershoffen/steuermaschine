@@ -272,9 +272,10 @@ def probe_pipelines(w: World) -> list[Any]:
     from steuermaschine.go import is_history
 
     out = []
-    days = float(w.settings.get("go_history_days") or HISTORY_DAYS)
+    days = float((getattr(w, "settings", None) or {}).get("go_history_days") or HISTORY_DAYS)
+    now = w.now() if hasattr(w, "now") else None
     for state in w.runs:
-        if not isinstance(state, dict) or state.get("status") in OPEN or from_deleted_admission(state) or is_history(state, w.now(), days):
+        if not isinstance(state, dict) or state.get("status") in OPEN or from_deleted_admission(state) or (now is not None and is_history(state, now, days)):
             continue
         row = {k: state.get(k) for k in ("pipeline", "key", "label", "arg", "status", "phase", "next", "waiting_on", "trap", "running", "pid", "review", "fingerprint")}
         row["external_done"] = any(v.get("status") == "done" and k in ("apply", "pr", "queue", "admit apply", "resume") for k, v in (state.get("steps") or {}).items())
