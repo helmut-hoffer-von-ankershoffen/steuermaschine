@@ -226,7 +226,7 @@ def step_hook(c: Ctx) -> Step:
 
 PARITY = (  # (name, regex of the paths it reads, argv, the script it needs in the checkout, fix)
     ("lock", r"(.*/)?(pyproject\.toml|uv\.lock)", ["uv", "lock", "--check"], "", "`uv lock` and commit the lockfile"),
-    ("template", r"Makefile|pyproject\.toml|\.github/workflows/ci\.yml|template/.*|scripts/(sync_template\.py|template_.*)",
+    ("template", r"Makefile|pyproject\.toml|\.github/workflows/ci\.yml|template/.*|\.gitignore|src/heinzel/bootstrap_pyyaml\.py|scripts/(sync_template\.py|template_.*)",
      ["uv", "run", "--script", "scripts/sync_template.py", "--check"], "scripts/sync_template.py", "`make template-sync`; commit only the template lines of this change"),
     ("contracts", r".*\.py|pyproject\.toml", ["uv", "run", "lint-imports"], "", "fix the import the contract names; never loosen the contract"),
 )

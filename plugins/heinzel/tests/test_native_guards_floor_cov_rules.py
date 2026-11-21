@@ -60,12 +60,19 @@ def test_the_git_rule_allows_a_forced_commit_and_plain_pushes(command):
     f"python3 ~/Code/heinzel-management/tools/{OLD_TOOL}",
     "uv run /x/hz_" + "status.py",
     f"sm gate run -- {OLD_TOOL}",
+    f"uv run python ~/Code/heinzel-management/tools/{OLD_TOOL}",
+    "uv run python /x/hz_" + "status.py",
+    "env python3 /x/hz_" + "status.py",
+    "time python3 /x/hz_" + "status.py",
+    "nohup bash /x/hz_" + "status.py",
+    "sm gate run -- python3 /x/hz_" + "status.py",
 ])
 def test_the_old_tool_rule_finds_a_retired_script_wherever_it_runs(command):
     assert floor.old_tool_refusal(command) == floor.OLD_TOOL_BLOCKED
 
 
-@pytest.mark.parametrize("command", [f"cat ~/.local/bin/{OLD_TOOL}", f"grep {OLD_TOOL} notes.md", f"echo {OLD_TOOL}", "sm tools map"])
+@pytest.mark.parametrize("command", [f"cat ~/.local/bin/{OLD_TOOL}", f"grep {OLD_TOOL} notes.md", f"echo {OLD_TOOL}", "sm tools map",
+                                     f"git add ~/Code/x/{OLD_TOOL}", f"rm ~/Code/x/{OLD_TOOL}", f"python3 notes.py ~/.local/bin/{OLD_TOOL}"])
 def test_the_old_tool_rule_lets_readers_and_mentions_pass(command):
     assert floor.old_tool_refusal(command) is None
 

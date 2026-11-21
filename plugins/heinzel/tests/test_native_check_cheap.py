@@ -219,7 +219,8 @@ def test_parity_runs_the_lock_template_and_contract_checks_for_the_paths_each_re
     (tmp_path / "scripts/sync_template.py").write_text("")
     word = {"lock": "lock --check", "template": "sync_template", "contracts": "lint-imports"}
     for changed, ran in ((["README.md"], []), (["uv.lock"], ["lock"]), ([".github/workflows/ci.yml"], ["template"]), (["src/a.py"], ["contracts"]),
-                         (["pyproject.toml"], ["lock", "template", "contracts"]), (["plugins/x/pyproject.toml"], ["lock"])):
+                         (["pyproject.toml"], ["lock", "template", "contracts"]), ([".gitignore"], ["template"]),
+                         (["src/heinzel/bootstrap_pyyaml.py"], ["template", "contracts"]), (["plugins/x/pyproject.toml"], ["lock"])):
         c, calls = context(tmp_path, {}, changed)
         c.plan = cheap.Plan(changed=changed)
         assert cheap.step_parity(c).status != "FAIL"

@@ -124,9 +124,11 @@ def old_tool_refusal(command: str) -> str | None:
     for words in segments(command):
         if base(words[0]) in READERS:
             continue
-        ran = [words[i] for i in programs(words)]
-        if base(words[0]) in INTERPRETERS:  # `python3 PATH`, `uv run PATH`: the script is the first non-option words after it
-            ran += [w for w in words[1:] if not w.startswith("-")][:2]
+        ran = []
+        for i in programs(words):
+            ran.append(words[i])
+            if base(words[i]) in INTERPRETERS:  # `python3 PATH`, `uv run python PATH`: the script is the first word that is no option, `run` or interpreter
+                ran += [w for w in words[i + 1:] if not w.startswith("-") and w != "run" and base(w) not in INTERPRETERS][:1]
         if any(OLD_DIR.search(w) or ("/" in w and OLD_PATH.search(w)) or OLD_NAME.match(w) for w in ran):
             return OLD_TOOL_BLOCKED
     return None
