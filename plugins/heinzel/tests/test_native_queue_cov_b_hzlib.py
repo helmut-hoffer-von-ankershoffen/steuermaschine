@@ -403,6 +403,81 @@ def test_known_registry_reads_env(monkeypatch, tmp_path):
     assert seen == ["/x/k.toml"]
 
 
+def flaky_beads(monkeypatch, beads, code=0):
+    out = SimpleNamespace(returncode=code, stdout=json.dumps(beads))
+    calls = []
+    monkeypatch.setattr(hzlib.subprocess, "run", lambda cmd, **k: calls.append(cmd) or out)
+    return calls
+
+
+def fresh():
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).isoformat()
+
+
+NODE = "tests/integration/startup_imports_test.py::test_boot_and_web"
+FLAKY = {"id": "heinzel-management-bbhe4", "status": "open", "updated_at": None,
+         "title": "flaky: macos-latest timeouts test_update", "description": NODE + " TimeoutExpired", "notes": ""}
+
+
+def test_flaky_bead_matches_only_the_exact_node_id(monkeypatch):
+    calls = flaky_beads(monkeypatch, [FLAKY | {"updated_at": fresh()}, FLAKY | {"id": "x-closed", "status": "closed", "updated_at": fresh()}])
+    nodes = hzlib.flaky_node_ids()
+    assert calls == [["bd", "list", "-l", "flaky", "--json"]]
+    assert nodes == {NODE: "bbhe4"}
+    assert hzlib.flaky_bead(NODE, nodes) == "bbhe4"
+    assert hzlib.flaky_bead(NODE + "[a-1]", nodes) == "bbhe4"  # a param suffix on the failing id
+    assert hzlib.flaky_bead("test_boot_and_web", nodes) is None  # no bare function name
+    assert hzlib.flaky_bead(NODE + "_regression", nodes) is None  # no prefix match
+    assert hzlib.flaky_bead("tests/other_test.py::test_boot_and_web", nodes) is None
+    assert hzlib.flaky_bead("macos-latest", nodes) is None  # no title or job name
+    assert hzlib.flaky_bead("test_update", nodes) is None
+    assert hzlib.flaky_bead("tests/x_test.py::test_update_replaces_bundle_regression", {"tests/x_test.py::test_update": "b"}) is None
+
+
+def test_flaky_bead_with_param_matches_that_param_only(monkeypatch):
+    flaky_beads(monkeypatch, [FLAKY | {"description": NODE + "[mac]", "updated_at": fresh()}])
+    nodes = hzlib.flaky_node_ids()
+    assert hzlib.flaky_bead(NODE + "[mac]", nodes) == "bbhe4"
+    assert hzlib.flaky_bead(NODE + "[linux]", nodes) is None and hzlib.flaky_bead(NODE, nodes) is None
+
+
+def test_flaky_beads_expire(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    old = (datetime.now(timezone.utc) - timedelta(days=9)).isoformat()
+    flaky_beads(monkeypatch, [FLAKY | {"updated_at": old}])
+    assert hzlib.flaky_node_ids() == {}
+    flaky_beads(monkeypatch, [FLAKY | {"updated_at": None}])
+    assert hzlib.flaky_node_ids() == {}  # no date: fail closed
+    tomorrow = (datetime.now(timezone.utc) + timedelta(days=1)).date().isoformat()
+    yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).date().isoformat()
+    flaky_beads(monkeypatch, [FLAKY | {"updated_at": old, "until": tomorrow}])
+    assert hzlib.flaky_node_ids() == {NODE: "bbhe4"}  # until overrides the 7 days
+    flaky_beads(monkeypatch, [FLAKY | {"updated_at": fresh(), "metadata": {"until": yesterday}}])
+    assert hzlib.flaky_node_ids() == {}
+
+
+def test_flaky_beads_unreadable_is_empty(monkeypatch):
+    flaky_beads(monkeypatch, [FLAKY], code=1)
+    assert hzlib.flaky_node_ids() == {}
+    monkeypatch.setattr(hzlib.subprocess, "run", lambda *a, **k: SimpleNamespace(returncode=0, stdout="not json"))
+    assert hzlib.flaky_node_ids() == {}
+
+
+def test_classify_attempt_uses_flaky_node_ids_for_tests_only(monkeypatch):
+    attempt_jobs(monkeypatch, {(5, 1): [job("macos-latest", "failure")]})
+    monkeypatch.setattr(hzlib, "_known_registry", lambda: [])
+    monkeypatch.setattr(hzlib, "flaky_node_ids", lambda: {NODE: "bbhe4"})
+    monkeypatch.setattr(hzlib, "load", lambda n: SimpleNamespace(read_attempt=lambda *a: {"tests": [NODE]}))
+    kind, why = hzlib.classify_attempt(5, 1)
+    assert kind == "known" and "bbhe4" in why
+    monkeypatch.setattr(hzlib, "load", lambda n: SimpleNamespace(read_attempt=lambda *a: {"tests": [NODE, "tests/y_test.py::test_new"]}))
+    assert hzlib.classify_attempt(5, 1)[0] == "unknown"  # one unknown test keeps the refusal
+    attempt_jobs(monkeypatch, {(6, 1): [job("macos-latest", "failure")]})
+    monkeypatch.setattr(hzlib, "load", lambda n: SimpleNamespace(read_attempt=lambda *a: {"tests": []}))
+    assert hzlib.classify_attempt(6, 1)[0] == "unknown"  # a job name alone is never KNOWN via a bead
+
+
 def gate(monkeypatch, rows, classify=None):
     monkeypatch.setattr(hzlib, "ghj", lambda *a, **k: rows)
     monkeypatch.setattr(hzlib, "resolve_main_runs", lambda r: r)
