@@ -150,8 +150,11 @@ class Context:
     def run(self, argv: list[str], timeout: float, what: str, cwd: Path | None = None) -> str:
         res = self.w.commands.run(argv, cwd=str(cwd or self.checkout), timeout=timeout, env=self.env)
         if res.rc:
-            tail = [line for line in (res.err or res.out or "").strip().splitlines() if line.strip()][-1:] or [""]
-            raise IosFailed(f"{what} exited {res.rc}: {tail[0][:200]}")
+            text = (res.err or res.out or "").strip()
+            lines = [line for line in text.splitlines() if line.strip()]
+            # The last line, unless the tool ended with a multi-line JSON error: then the whole error on one line.
+            shown = " ".join(text.split())[-240:] if lines and lines[-1].strip() in ("}", "]") else (lines[-1][:200] if lines else "")
+            raise IosFailed(f"{what} exited {res.rc}: {shown}")
         return res.out or ""
 
     def testflight(self, *args: str, timeout: float = 120) -> str:

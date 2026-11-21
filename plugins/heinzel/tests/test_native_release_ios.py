@@ -170,6 +170,7 @@ def test_assigns_a_valid_build_outside_the_group(tmp_path):
     (lambda m: setattr(m, "beta", ["MISSING_EXPORT_COMPLIANCE"]), "build 32 beta state is MISSING_EXPORT_COMPLIANCE"),
     (lambda m: setattr(m, "release_notes", Result(1, "", "not found")), "the release notes of v0.9.53 are unreadable (gh release view exited 1)"),
     (lambda m: m.fail.update(notes=Result(2, "", "invalid choice: 'notes'")), "testflight notes exited 2"),
+    (lambda m: m.fail.update(notes=Result(1, "", 'PATCH x: HTTP 409 {\n  "detail" : "invalid text"\n}\n')), 'testflight notes exited 1: PATCH x: HTTP 409 { "detail" : "invalid text" }'),
 ])
 def test_a_failure_is_not_clean_with_its_reason_and_an_alarm(tmp_path, change, reason):
     m = Mini(tmp_path)
