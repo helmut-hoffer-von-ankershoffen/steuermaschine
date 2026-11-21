@@ -17,8 +17,14 @@ Entries are generated from [Conventional Commits](https://www.conventionalcommit
 - `sm why SUBJECT` for a PR, a version, a run id, `main`, a branch or a bead; bare `sm why` for the queue and the release.
 - `sm review sonar PR`, `sm ship PR`, `sm ship` for worktrees of other repositories, `sm release VERSION`,
   `sm status --write` (caps the tracking document), `sm alarm list --check` (absorbs `tick` and the asks).
-- Trusted call counts (`sm self stats --calls`), `sm self doc`, `sm self tokens`, `sm self tree --all`,
-  `sm self migrate-state --journal`; runs that are history never produce a NEXT.
+- Trusted call counts (`sm self stats --calls`), `sm self doc`, `sm self tokens`, `sm self tree --all`.
+- One journal per subject (PR, version, branch, bead) under `journals/`: pipeline runs, the focus list and the alarm
+  acknowledgements live there; the commands that run the queue, the train and the release driver mirror their working
+  files into them, and `sm` computes NEXT from GitHub and the journals only. `sm self migrate-state` moves today's
+  state files in (`--back` writes them out again). Runs that are history never produce a NEXT.
+- `sm note` writes the log of the day (`research/log/YYYY-MM-DD.md`); `sm status --write` renders the state section of
+  the tracking document and caps its size.
+- `sm release VERSION` refuses a mistyped version and one that is neither in flight, the latest nor the next.
 - MIT license.
 - PyPI metadata like heinzel's: a PyPI README, keywords, classifiers (Python 3.15, macOS and Linux, typed) and
   project links.

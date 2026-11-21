@@ -44,6 +44,8 @@ class Noted(Model):
 def note(line: str, rt: Any = None) -> Noted:
     """Append one dated line to the log (the file of the day in coord_log_dir), never to the tracking document: only
     `sm status --write` writes state there. Safe when several agents write at once."""
+    if not line.strip():
+        raise ValueError("no text")
     rt = rt or runtime()
     now = rt.providers.clock.now()
     target = log_file(rt.settings, now)

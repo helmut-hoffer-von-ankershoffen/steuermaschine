@@ -170,8 +170,8 @@ class JournalStore(FileStore):
             return dict(acks) if acks is not None else super().load(kind, key)
         if not kind.startswith("runs."):
             return super().load(kind, key)
-        found = self._runs(kind.removeprefix("runs.")).get(key)
-        return dict(found[2]) if found and found[2] is not None else None
+        run = self._runs(kind.removeprefix("runs.")).get(key)
+        return dict(run[2]) if run and run[2] is not None else None
 
     def save(self, kind: str, key: str, data: dict[str, Any]) -> None:
         if (kind, key) == ("focus", "list"):

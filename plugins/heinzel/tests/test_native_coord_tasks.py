@@ -99,6 +99,11 @@ def failing_at(prefix):
     return c
 
 
+def verb(args):
+    """The visible verb where there is one (`sm work add|note|done|show`); claim, pr and due-set have none yet."""
+    return ["work", "list" if args[0] == "ls" else args[0], *args[1:]] if args[0] in ("add", "note", "done", "show", "ls") else ["beads", "tasks", *args]
+
+
 def test_every_write_refuses_with_the_trackers_message_when_bd_fails_and_writes_nothing_after_it(tmp_path):
     (tmp_path / "AGENTS.md").write_text(TABLE)
     cases = [
@@ -118,7 +123,7 @@ def test_every_write_refuses_with_the_trackers_message_when_bd_fails_and_writes_
     ]
     for prefix, args in cases:
         c = failing_at(prefix)
-        done = invoke(app_runtime(tmp_path, c), ["beads", "tasks", *args])
+        done = invoke(app_runtime(tmp_path, c), verb(args))
         assert done.exit_code == 1 and done.stdout == "", (prefix, args)
         assert 'Error: no issue found matching "nope"' in done.stderr and "exit 1" in done.stderr, (prefix, args)
         failed = next(i for i, call in enumerate(c.calls) if call[:len(prefix)] == prefix)
@@ -151,7 +156,7 @@ def test_ids_that_are_not_of_the_projects_form_are_refused_before_bd_runs(tmp_pa
     for bad in ("", "ab", "heinzel-management-", "ABC", "abc def", "abc;rm", "heinzel-management-abc.x", "a" * 13):
         for args in (["note", bad, "x"], ["claim", bad, "a"], ["due-set", bad, "10:00"], ["pr", bad, "1"], ["done", bad, "evidence"], ["show", bad]):
             c = world()
-            done = invoke(app_runtime(tmp_path, c), ["beads", "tasks", *args])
+            done = invoke(app_runtime(tmp_path, c), verb(args))
             assert done.exit_code == 2 and "not a bead id" in done.stderr and not c.calls, (bad, args)
     c = world()
     assert invoke(app_runtime(tmp_path, c), ["work", "note", "heinzel-management-uz3c.3", "x"]).exit_code == 0

@@ -29,7 +29,7 @@ DELIBERATE = {
 
 def tree(tmp_path) -> dict[str, bool]:
     rows = json.loads(invoke(app_runtime(tmp_path), ["--format", "json", "self", "tree", "--all"]).stdout)
-    return {row["path"].removeprefix("sm").strip(): row["group"] for row in rows}
+    return {row["path"].removeprefix("sm").strip(): row["group"] and not row.get("default") for row in rows}  # `sm release 0.9.55` runs its default
 
 
 def unresolved(paths: dict[str, bool], words: list[str]) -> str:

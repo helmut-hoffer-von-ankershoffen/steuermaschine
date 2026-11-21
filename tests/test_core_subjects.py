@@ -76,3 +76,27 @@ def test_migrate_state_moves_the_run_files(tmp_path, monkeypatch):
     assert out.exit_code == 0 and "runs.box.run/1.0.0.json -> journals/branch/1.0.0.jsonl" in out.stdout
     back = invoke(rt, ["self", "migrate-state", "--back"])
     assert back.exit_code == 0 and "state/runs.box.run/1.0.0.json" in back.stdout
+
+
+def test_the_focus_list_and_the_alarm_acks_live_in_the_journals(tmp_path):
+    store = subjects.JournalStore(tmp_path)
+    assert store.load("focus", "list") is None and store.load("alarms", "acks") is None
+    store.save("focus", "list", {"/wt/a": {"for": "0.9.55", "branch": "fix/a"}, "0.9.55": {"note": "n"}})
+    assert store.load("focus", "list") == {"/wt/a": {"for": "0.9.55", "branch": "fix/a"}, "0.9.55": {"note": "n"}}
+    store.save("focus", "list", {"0.9.55": {"note": "n"}})
+    assert store.load("focus", "list") == {"0.9.55": {"note": "n"}}
+    assert [e["data"]["entry"] for e in store.journals.events("branch", "fix/a")] == [{"for": "0.9.55", "branch": "fix/a"}, None]
+    store.save("alarms", "acks", {"stall:801": 1.0})
+    assert store.load("alarms", "acks") == {"stall:801": 1.0} and store.journals.latest("branch", "main", "acks") == {"stall:801": 1.0}
+    assert subjects.focus_subject("v0.9.55", None) == ("version", "0.9.55") and subjects.focus_subject("/wt/b", None) == ("branch", "/wt/b")
+
+
+def test_the_focus_list_and_the_acks_are_migrated_and_back(tmp_path):
+    old = FileStore(tmp_path)
+    old.save("focus", "list", {"/wt/a": {"for": "1.0.0"}})
+    old.save("alarms", "acks", {"k": 1})
+    (tmp_path / "state" / "focus" / "broken.json").write_text("{")
+    assert subjects.migrate_singletons(tmp_path) == ["focus/list.json -> journals", "alarms/acks.json -> journals"]
+    assert not (tmp_path / "state" / "focus" / "list.json").exists() and subjects.migrate_singletons(tmp_path) == []
+    back = subjects.unmigrate_runs(tmp_path)
+    assert "journals -> state/focus/list.json" in back and json.loads((tmp_path / "state" / "alarms" / "acks.json").read_text()) == {"k": 1}

@@ -20,7 +20,29 @@ from typing import Any, NoReturn
 import typer
 from pydantic import BaseModel, RootModel
 
-from . import ALARM, API_VERSION, INTERNAL, OK, PROG, REFUSED, USAGE, WAITING, dispatch, helpdoc, listopts, models, plugins, reviewgraph, statemove, statsreport, subjects, surface, toolmap, usagelog, verdicts
+from . import (
+    ALARM,
+    API_VERSION,
+    INTERNAL,
+    OK,
+    PROG,
+    REFUSED,
+    USAGE,
+    WAITING,
+    dispatch,
+    helpdoc,
+    listopts,
+    models,
+    plugins,
+    reviewgraph,
+    statemove,
+    statsreport,
+    subjects,
+    surface,
+    toolmap,
+    usagelog,
+    verdicts,
+)
 from . import config as config_mod
 from . import go as go_mod
 from . import native as native_mod

@@ -91,7 +91,7 @@ def test_brief_refuses_when_full_and_force_goes_ahead_and_logs(tmp_path):
     assert not (tmp_path / "Code/heinzel-logo").exists() and not [call for call in c.calls if call[0] == "git"]
     done = invoke(rt, ["work", "brief", "logo", "feat/logo", "--task", "Bigger logo.", "--force", "owner asked"])
     assert done.exit_code == 0 and (tmp_path / "Code/heinzel-logo").exists() and "Bigger logo." in done.stdout
-    logged = (tmp_path / "AGENTS.md").read_text()
+    logged = "".join(p.read_text() for p in (tmp_path / "research" / "log").glob("*.md"))  # `sm note` writes the log of the day
     assert "owner asked" in logged and "forced" in logged and "hz-" not in logged
 
 

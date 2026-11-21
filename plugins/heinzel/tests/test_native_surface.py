@@ -92,7 +92,7 @@ def test_the_cold_help_table_names_visible_commands(tmp_path):
 
 def test_the_resolver_answers_an_old_name(tmp_path):
     out = invoke(app_runtime(tmp_path), ["sonar-close"])
-    assert out.exit_code == 2 and "Did you mean: sm review sonar PR" in out.stderr
+    assert out.exit_code == 2 and "Did you mean: sm review sonar [PR]" in out.stderr
     out = invoke(app_runtime(tmp_path), ["ci", "sonar-close", "--pull-request", "1"])
     assert out.exit_code == 2 and "Renamed: sm review sonar (was: sm ci sonar-close)" in out.stderr and out.stdout == ""
     out = invoke(app_runtime(tmp_path), ["beads", "tasks", "add", "a title"])

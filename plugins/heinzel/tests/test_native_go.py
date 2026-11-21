@@ -360,11 +360,11 @@ def test_a_failing_probe_degrades_to_unknown_and_go_still_answers(tmp_path):
 
 
 # ------------------------------------------------------------------ focus and acknowledgements come from the core commands
-def test_the_focus_list_of_sm_focus_replaces_the_old_focus_file_once_it_exists(tmp_path):
+def test_the_old_focus_file_is_history_and_the_focus_list_of_sm_focus_is_read(tmp_path):
     w = make_world(tmp_path)
     (tmp_path / "state").mkdir()
     (tmp_path / "state" / "go-focus.json").write_text(json.dumps({"entries": [{"worktree": "/old", "for": "0.9.40", "note": "n"}]}))
-    assert probes.declared_focus(w) == [{"worktree": "/old", "for": "0.9.40", "note": "n", "source": "old-file"}]
+    assert probes.declared_focus(w) == []  # NEXT comes from GitHub and the journals only
     w.focus_list = {"/new": {"for": "0.9.41", "note": ""}, "1.4.0": {"for": ""}}
     assert probes.declared_focus(w) == [{"worktree": "/new", "for": "0.9.41", "note": "", "source": "focus-list"}]
     w.focus_list = {}

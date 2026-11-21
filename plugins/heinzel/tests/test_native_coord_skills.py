@@ -42,7 +42,7 @@ def test_generate_writes_the_help_of_named_commands_and_the_index_once(tmp_path)
     reference = (root / "coordinate/references/tools.md").read_text()
     assert reference.startswith("# Commands for coordinate (generated from the sm command tree; do not edit)\n")
     assert [line for line in reference.splitlines() if line.startswith("## ")] == ["## sm alarm list", "## sm note", "## sm work sweep"]
-    assert "Append one dated line to the log at the end of the tracking document." in reference and "Options: --all" in reference
+    assert "Append one dated line to the log of the day (research/log/YYYY-MM-DD.md); the tracking document is not touched." in reference and "Options: --all" in reference
     index = (root / "INDEX.md").read_text()
     assert "| sm note | writes | coordinate |" in index and "| sm alarm list | read-only | coordinate |" in index and "| sm why | read-only |  |" in index
     assert run(tmp_path, "generate").stdout == "generated: 0 file(s) changed\n"

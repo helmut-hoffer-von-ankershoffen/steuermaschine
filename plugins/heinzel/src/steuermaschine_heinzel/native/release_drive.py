@@ -1,7 +1,8 @@
 """`sm release VERSION`: the release driver behind the visible verb. It takes every option of `sm release resume`
 (the same function runs) and refuses first what is surely a typo: a VERSION that is no version, or one that is neither
 the release in flight, the latest release, nor the next patch or minor after it. The release train calls
-`sm release resume` itself, so its runs never pass this guard."""
+`sm release resume` itself, so its runs never pass this guard; its `daemon train` tick brings the journals up to date.
+After a run the subject journals follow the working files (journal_view.mirrored)."""
 
 from __future__ import annotations
 
@@ -14,6 +15,7 @@ from steuermaschine.helpdoc import H
 from steuermaschine.native import native
 
 from .go import world
+from .journal_view import mirrored
 from .release import ReleaseRun, release_resume
 
 VERSION = re.compile(r"(\d+)\.(\d+)\.(\d+)")
@@ -69,12 +71,12 @@ def release_drive(**options: Any) -> ReleaseRun:
     return release_resume(**options)
 
 
-release_drive.__signature__ = inspect.signature(release_resume)  # type: ignore[attr-defined]  # every option of `release resume`
-release_drive.__annotations__ = dict(release_resume.__annotations__)
+release_drive.__signature__ = inspect.signature(release_resume, eval_str=True)  # type: ignore[attr-defined]  # every option of `release resume`
+release_drive.__annotations__ = {name: p.annotation for name, p in release_drive.__signature__.parameters.items()} | {"return": ReleaseRun}
 release_drive = native("release drive", writes=True, help=H(
     "Release one version: the release driver of `sm release VERSION`, with a guard against a mistyped version.",
     "Use when you type `sm release VERSION`; the release train calls `sm release resume`, which has no guard.",
     "what `sm release resume` changes: the freeze, the release PR and its merge, the tag, PyPI, compose and acceptance.",
     "sm release 0.9.55 --live", "sm why 0.9.55",
     "VERSION must be X.Y.Z or `patch`, and the release in flight, the latest release or the next patch or minor after it;\n"
-    "anything else refuses with exit 2 before anything runs. Every option of `sm release resume` works here."))(release_drive)
+    "anything else refuses with exit 2 before anything runs. Every option of `sm release resume` works here."))(mirrored(release_drive))

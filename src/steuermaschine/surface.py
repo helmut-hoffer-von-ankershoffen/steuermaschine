@@ -142,8 +142,12 @@ def usage_of(root: Any, new: str, prog: str) -> str:
     """`sm review sonar PR`: the new command with the metavars of its required arguments."""
     path, fixed = split_new(new, root)
     command = find(root, path)
-    args = [str(p.metavar or p.name).upper() for p in getattr(command, "params", []) if not getattr(p, "opts", [""])[0].startswith("-")
-            and getattr(p, "required", False)]
+    args = []
+    for p in getattr(command, "params", []):
+        if getattr(p, "opts", [""])[0].startswith("-") or getattr(p, "nargs", 1) == -1:
+            continue
+        name = str(p.metavar or p.name)
+        args.append(name.upper() if getattr(p, "required", False) else name if name.startswith("[") else f"[{name.upper()}]")
     return " ".join([prog, path, *fixed, *([] if fixed else args)]).strip()
 
 
@@ -261,7 +265,7 @@ def apply(root: Any, items: Iterable[Any], writes: dict[str, bool], fail: Callab
         twin.name, twin.hidden = name, False
         _group(root, parents).commands[name] = twin
     for rename in renames:  # 2. stubs at the old paths
-        if not rename.stub or (old := find(root, rename.old)) is None:
+        if not rename.stub or (old := find(root, rename.old)) is None or getattr(old, "sm_stub", False):  # an alias shares the stub
             continue
         path, fixed = split_new(rename.new, root)
         target = find(root, path)
@@ -270,6 +274,7 @@ def apply(root: Any, items: Iterable[Any], writes: dict[str, bool], fail: Callab
         *parents, name = rename.old.split()
         read_only = (not writes[f"{prog} {rename.old}"]) if f"{prog} {rename.old}" in writes else bool(READ_ONLY.search(old.help or ""))
         stub = read_stub(target, name, rename.new, fixed, prog, rename.old, echo) if read_only else write_stub(name, rename.new, prog, rename.old, fail, context)
+        stub.sm_stub = True
         _group(root, parents).commands[name] = stub
     for default in defaults:  # 3. a group that runs a default subcommand
         if (group := find(root, default.group)) is not None:

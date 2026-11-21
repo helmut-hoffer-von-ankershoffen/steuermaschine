@@ -204,8 +204,12 @@ END = "<!-- sm status --write: end -->"
 def state_block(found: Status, now: float) -> str:
     """The state section of the tracking document: release in flight, open pull requests with their action, alarms
     and what waits for the owner, from the same reads as `sm status`, `sm why` and `sm alarm list`."""
+    from steuermaschine.native import call
+
     from . import alarm
-    from .release_read import release_status
+
+    def release_status(line: bool = False) -> Any:  # through the registry of the runtime: an import would widen the reach of every writer
+        return call(next(c for c in runtime().commands() if getattr(c, "path", "") == "release status"), line=line)
 
     def lines(read: Any) -> list[str]:
         try:

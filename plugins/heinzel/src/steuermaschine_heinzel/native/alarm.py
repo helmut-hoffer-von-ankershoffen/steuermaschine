@@ -129,10 +129,13 @@ def owner_asks() -> list[str]:
 
 
 def deadlines() -> list[str]:
-    from .tick import tick
+    """The deadline watch (`tick`), found in the registry of the runtime: importing it would put the whole plugin into
+    the reach of every command that imports this module."""
+    from steuermaschine.native import call, runtime
 
     try:
-        lines = tick(raw=False).render()
+        watch = next(c for c in runtime().commands() if getattr(c, "path", "") == "tick")
+        lines = call(watch, raw=False).render()
     except Exception as error:
         return [f"unknown: {type(error).__name__}: {error}"[:200]]
     return [line for line in lines if line.strip() and not line.startswith("OK")]
