@@ -1,6 +1,6 @@
 name: Release
 # Automatic: every merge to main whose CI is green and whose pull request carries the independent review verdict
-# (commit status `Gate review`, bin/release_ci.py) is released: version, PyPI, tag and GitHub release. No manual dispatch.
+# (`Gate review`: the Gate review workflow's check, or a status by an allowlisted login; bin/release_ci.py) is released: version, PyPI, tag and GitHub release. No manual dispatch.
 on:
   workflow_run:
     workflows: [CI]
@@ -19,6 +19,7 @@ jobs:
       contents: read
       pull-requests: read
       statuses: read
+      checks: read
     outputs:
       release: ${{ steps.gate.outputs.release }}
       version: ${{ steps.gate.outputs.version }}
@@ -37,6 +38,7 @@ jobs:
         id: gate
         env:
           GH_TOKEN: ${{ github.token }}
+          SM_GATE_CREATORS: ${{ vars.GATE_REVIEW_CREATORS }}
         run: |
           git fetch --tags --force origin
           python3 bin/release_ci.py gate --sha "${{ github.event.workflow_run.head_sha }}"
@@ -68,8 +70,6 @@ jobs:
           name: dist
           path: dist/
       - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
-        with:
-          skip-existing: true
 
   github-release:
     needs: [build, pypi]

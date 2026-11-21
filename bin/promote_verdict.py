@@ -27,7 +27,7 @@ $STEUERMASCHINE_AGENT is set and is not --reviewer: the agent that records is th
 
 `record-ci` is for the Mini follower (bin/release_ci.py follow): the CI of a release already holds the independent
 verdict (the `Gate review` status on the merged pull request's head; the release exists only because it was present).
-The follower looks it up and records it here, with an extra line `source: ci TAG URL`. Such a receipt is checked exactly
+The follower looks it up and records it here (record-ci and every later `check` re-verify it live through release_ci.verify: verdict, tree equal to the reviewed head, API errors refuse), with an extra line `source: ci TAG URL`. Such a receipt is checked exactly
 like any other (commit, base = the live release, reviewer none of the authors) except that `recorded-by` is `ci-follower`
 instead of the reviewer.
 
@@ -162,6 +162,8 @@ def check(stable: Path, repo: Path, commit: str) -> dict[str, str]:
     if by not in ("unset", fields["reviewer"]) and not ci:
         raise Refused(f"the verdict was recorded by {by}, not by its reviewer {fields['reviewer']}: the agent that records is the reviewer")
     independent(repo, fields["base"], commit, fields["reviewer"])
+    if ci:
+        _ci_verify(repo, commit, fields["reviewer"])
     return fields
 
 
@@ -192,6 +194,25 @@ def record(stable: Path, repo: Path, commit: str, reviewer: str, base: str, note
     return path
 
 
+def _ci_verify(repo: Path, commit: str, reviewer: str) -> None:
+    """Re-verify live, through release_ci.verify (verdict, tree, independence); any error, API or git, refuses."""
+    try:
+        mod = sys.modules.get("release_ci")
+        if mod is None:
+            import importlib.util
+            spec = importlib.util.spec_from_file_location("release_ci", Path(__file__).resolve().with_name("release_ci.py"))
+            if spec is None or spec.loader is None:
+                raise Refused("release_ci.py cannot be loaded")
+            mod = importlib.util.module_from_spec(spec)
+            sys.modules["release_ci"] = mod
+            spec.loader.exec_module(mod)
+        _, _, who = mod.verify(repo, commit)
+    except Exception as exc:  # noqa: BLE001  (every failure refuses: a receipt alone is never trusted)
+        raise Refused(f"the CI verdict of {commit[:12]} cannot be verified live: {exc}") from None
+    if who.strip() != reviewer.strip():
+        raise Refused(f"the live CI verdict is by {who}, the receipt names {reviewer}")
+
+
 def record_ci(stable: Path, repo: Path, commit: str, reviewer: str, source: str, now: str) -> Path:
     """A receipt for the verdict the release's CI recorded (`source` is `ci TAG URL`); base is the live release."""
     full = full_sha(repo, commit)
@@ -201,6 +222,7 @@ def record_ci(stable: Path, repo: Path, commit: str, reviewer: str, source: str,
         raise Refused("--reviewer must be a name on one line and --source one line starting with `ci `")
     base = promoted_base(stable, repo)
     independent(repo, base, full, reviewer)
+    _ci_verify(repo, full, reviewer)
     lines = [f"commit: {full}", f"base: {base}", f"reviewer: {reviewer.strip()}", f"recorded-by: {CI_RECORDER}", f"at: {now}", f"source: {source.strip()}"]
     path = receipt_path(stable, full)
     path.parent.mkdir(parents=True, exist_ok=True)
