@@ -411,8 +411,8 @@ def flaky_beads(monkeypatch, beads, code=0):
 
 
 def fresh():
-    from datetime import datetime, timezone
-    return datetime.now(timezone.utc).isoformat()
+    from datetime import UTC, datetime
+    return datetime.now(UTC).isoformat()
 
 
 NODE = "tests/integration/startup_imports_test.py::test_boot_and_web"
@@ -443,17 +443,23 @@ def test_flaky_bead_with_param_matches_that_param_only(monkeypatch):
 
 
 def test_flaky_beads_expire(monkeypatch):
-    from datetime import datetime, timedelta, timezone
-    old = (datetime.now(timezone.utc) - timedelta(days=9)).isoformat()
+    from datetime import UTC, datetime, timedelta
+    old = (datetime.now(UTC) - timedelta(days=9)).isoformat()
     flaky_beads(monkeypatch, [FLAKY | {"updated_at": old}])
     assert hzlib.flaky_node_ids() == {}
     flaky_beads(monkeypatch, [FLAKY | {"updated_at": None}])
     assert hzlib.flaky_node_ids() == {}  # no date: fail closed
-    tomorrow = (datetime.now(timezone.utc) + timedelta(days=1)).date().isoformat()
-    yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).date().isoformat()
+    tomorrow = (datetime.now(UTC) + timedelta(days=1)).date().isoformat()
+    yesterday = (datetime.now(UTC) - timedelta(days=1)).date().isoformat()
     flaky_beads(monkeypatch, [FLAKY | {"updated_at": old, "until": tomorrow}])
     assert hzlib.flaky_node_ids() == {NODE: "bbhe4"}  # until overrides the 7 days
     flaky_beads(monkeypatch, [FLAKY | {"updated_at": fresh(), "metadata": {"until": yesterday}}])
+    assert hzlib.flaky_node_ids() == {}
+    flaky_beads(monkeypatch, [FLAKY | {"updated_at": fresh(), "until": "soon"}])
+    assert hzlib.flaky_node_ids() == {}  # an unreadable until fails closed
+    flaky_beads(monkeypatch, [FLAKY | {"updated_at": fresh()}, "junk", {"id": 5}, {**FLAKY, "id": "heinzel-management-n2", "updated_at": fresh(), "description": NODE}])
+    assert hzlib.flaky_node_ids() == {NODE: "bbhe4"}  # first bead keeps the id; junk rows are skipped
+    flaky_beads(monkeypatch, {"not": "a list"})
     assert hzlib.flaky_node_ids() == {}
 
 

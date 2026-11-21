@@ -102,6 +102,22 @@ def test_status_line_is_one_line(rt, gh):
                                        "train merges when checks are green; verify tag, publish, sm release verify --mini"]
 
 
+def test_status_after_the_tag_shows_the_tail_stages_not_pr_none(rt, gh, monkeypatch):
+    in_flight(rt, gh)
+    gh.on("pr list", [])  # the release PR is merged and gone
+    tails = rt.home / "release"
+    tails.mkdir()
+    (tails / "v0.9.36.json").write_text(json.dumps({"pypi": "2026-11-12T18:00:00Z", "pypi_run_id": 11}))
+    real = area.statedir.path
+    monkeypatch.setattr(area.statedir, "path", lambda *names: tails if names == ("release",) else real(*names))
+    text = invoke(rt, ["release", "status"]).stdout
+    assert "PR #None" not in text and "ok ?" not in text and "tail stages:" in text and "PyPI" in text and "run 11" in text
+    line = invoke(rt, ["release", "status", "--line"]).stdout
+    assert line.startswith("RELEASE v0.9.36 tagged 30m: tail publish not started, PyPI run 11") and "PR #" not in line
+    doc_out, status = doc(rt, area.ReleaseStatus, "release", "status")
+    assert status.active and status.pull_request is None and any("PyPI" in ln for ln in status.lines)
+
+
 # ----------------------------------------------------------------------------- candidate
 def run_row(run_id=77, attempt=1, status="completed", conclusion="failure"):
     return {"id": run_id, "name": "CI", "status": status, "conclusion": conclusion, "run_attempt": attempt, "head_branch": "release/v0.9.40",
