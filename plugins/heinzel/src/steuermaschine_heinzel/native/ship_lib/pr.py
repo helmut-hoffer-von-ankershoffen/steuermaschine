@@ -66,8 +66,8 @@ def open_pr(worktree: Path, bead: str, title: str, body_file: Path | None, reaso
     the checks have passed, and a problem line names where a text is, never the text. The head is resolved once,
     before the checks; what is pushed is that commit (`SHA:refs/heads/BRANCH`), the PR body is the checked text
     (a private copy written after the check), and the PR is shipped only when it is this repository's, on that
-    branch, at that commit, into main. `critical`: the head is a declared focus head; a release/* branch is critical too.
-    A critical push runs exclusively under the run lock: its pre-push hook's timed session gets the idle machine."""
+    branch, at that commit, into main. `critical`: the head is a declared focus head (kept for callers).
+    Every push is a fast check under the run lock (beside others, at any load); none is exclusive."""
     lines: list[str] = []
     worktree = Path(worktree).expanduser().resolve()
 
@@ -150,8 +150,7 @@ def open_pr(worktree: Path, bead: str, title: str, body_file: Path | None, reaso
             lines.extend(gate)
             if code:
                 raise Stop(code, f"DO NOT PUSH now. Commit locally, batch commits into ONE push, retry: sm head pr {bead} \"{title}\"")
-            critical = critical or branch.startswith("release/")
-            push = [*deps.gate(max_wait, exclusive=critical), "git", "push", "origin", f"{head}:refs/heads/{branch}"]
+            push = [*deps.gate(max_wait), "git", "push", "origin", f"{head}:refs/heads/{branch}"]
             planned = forge.create_pr(branch, title, str(body_copy), live=False)
             if str(planned.state).startswith("unknown"):
                 raise Stop(1, f"cannot tell whether {branch} has a pull request: {planned.state}; nothing was pushed")
@@ -161,7 +160,7 @@ def open_pr(worktree: Path, bead: str, title: str, body_file: Path | None, reaso
                 say("  " + (planned.would_run if planned.state == "dry_run" else f"adopt the open PR #{planned.pr.number} of the branch, if it is this repository's at {head[:8]}"))
                 say("  the ship step: guard, then queue" + (f" as reviewed, pinned to {head[:8]}" if reason else ""))
                 return Done(0, "".join(f"{line}\n" for line in lines))
-            say(f"one push of {head[:8]} under the run lock (waits at most {max_wait}s" + ("; critical path: exclusive, on an idle machine)" if critical else ")"))
+            say(f"one push of {head[:8]} under the run lock (waits at most {max_wait}s" + (")"))
             pushed = commands.run(push, cwd=str(worktree), timeout=max_wait + 3600)
             lines.extend((pushed.out + pushed.err).strip().splitlines())
             if pushed.rc == GAVE_UP:

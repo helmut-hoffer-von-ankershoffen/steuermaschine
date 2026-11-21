@@ -350,7 +350,7 @@ def test_pr_body_changed_after_the_check_is_not_what_gh_reads(rt, gh, worktree):
     assert out.exit_code == 0 and bodies == ["What changed for users.\n"], out
 
 
-def test_pr_of_a_focus_head_or_a_release_branch_pushes_exclusively(rt, gh, worktree):
+def test_pr_of_a_focus_head_or_a_release_branch_pushes_as_a_fast_check_never_exclusively(rt, gh, worktree):
     live_pr(gh)
     out = invoke(rt, ["head", "pr", "abc", "fix(web): keep the draft", "--body-file", str(worktree), "--live"])
     push = [" ".join(c) for c in gh.calls if "git push" in " ".join(c)]
@@ -361,9 +361,9 @@ def test_pr_of_a_focus_head_or_a_release_branch_pushes_exclusively(rt, gh, workt
     out = invoke(rt, ["head", "pr", "abc", "fix(web): keep the draft", "--body-file", str(worktree), "--live"])
     push = [" ".join(c) for c in gh.calls if "git push" in " ".join(c)]
     assert out.exit_code == 0, out
-    assert push[0].endswith(f"gate run --max-wait 1800 --priority 2 --exclusive -- git push origin {HEAD}:refs/heads/fix/x")
-    assert "critical path: exclusive, on an idle machine" in out.stdout + out.stderr
-    assert deps.gate(5, exclusive=True)[-5:] == ["5", "--priority", "2", "--exclusive", "--"]
+    assert push[0].endswith(f"gate run --max-wait 1800 -- git push origin {HEAD}:refs/heads/fix/x") and "--exclusive" not in push[0] and "--full" not in push[0]
+    assert "exclusive" not in out.stdout + out.stderr
+    assert deps.gate(5, exclusive=True)[-6:] == ["5", "--priority", "2", "--full", "--exclusive", "--"]  # only an explicit full run is exclusive
 
 
 def test_pr_refuses_when_head_moves_during_the_checks_and_pushes_nothing(rt, gh, worktree):

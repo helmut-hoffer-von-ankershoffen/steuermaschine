@@ -97,7 +97,7 @@ def head_junit(worktree: Path = typer.Argument(..., metavar="WORKTREE", help="Th
     configured = lock.setting(rt.settings, "lock_allow_full_log")
     log = Path(os.path.expanduser(str(configured))) if configured is not None else statedir.path(lock.DEFAULT_FILES["lock_allow_full_log"])
     lock.log_allow_full(log, [*argv, f"# {waived}"], rt.providers.clock, str(wt))
-    done = gated(Request(argv=argv, environ=child_environment(), cwd=str(wt / "web")))
+    done = gated(Request(argv=argv, environ=child_environment(), cwd=str(wt / "web"), full=True))
     if done.status == "gave_up":
         raise Wait(f"the run lock did not admit the full Vitest run: {done.reason}", "the run lock (sm gate status)")
     if done.status == "refused":

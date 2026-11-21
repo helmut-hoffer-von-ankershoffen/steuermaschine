@@ -5,9 +5,10 @@ vitest run without a file filter. Allowed: pytest tests/..., vitest run src/...,
 import os
 import shlex
 
-ROUTE = ("Allowed route: `sm head pr BEAD TITLE` (checks and prints what it would run), then the same with `--live`; focused tests (`sm gate run -- pytest tests/path_test.py`, "
-         "`sm gate run -- pnpm ... vitest run src/file.test.ts`, `sm gate run -- make check-fast`); hosted CI is the full gate. "
-         "Override only with --allow-full (coordinator's call; never for make pr).")
+ROUTE = ("Allowed route: `sm head pr BEAD TITLE` (checks and prints what it would run), then the same with `--live`; `sm check` (lint, types, parity and the focused unit tests of the change, "
+         "about 2 minutes, at any load); focused tests (`sm gate run -- pytest tests/path_test.py`, `sm gate run -- pnpm ... vitest run src/file.test.ts`, "
+         "`sm gate run -- make check-fast`); hosted PR CI is the full gate. "
+         "Override only with --allow-full (coordinator's call; never for make pr); a full local run also needs --full and waits for an idle machine.")
 NEVER_MAKE_PR = "`make pr` is never run on this machine (with or without NO_PREFLIGHT=1)"
 FULL_MAKE = {"pr", "preflight", "check", "coverage"}
 PATHLESS_OPTS_WITH_VALUE = {"-n", "-k", "-m", "-p", "-c", "--maxfail", "--timeout", "-o", "--cov", "--cov-report", "--durations",

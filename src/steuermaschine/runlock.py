@@ -7,6 +7,10 @@ load passes the number of CPUs several times over and whatever else the machine 
     RunLock(policy, commands, clock).run(Request(argv=["pytest", "tests/unit/test_x.py"], environ=dict(os.environ)))
 
 Mechanics (all of it is `flock` on files in `policy.directory`, so it holds across processes and users of one account):
+- fast lane (`policy.fast_slots` > 0): a request that does not ask for `full` takes a fast slot: up to `fast_slots` at once
+  (one fewer from `extra_slot_load`, one from `max_load`), no load bar, no exclusive push lane. Only a full request
+  (`Request.full`, `sm gate run --full`) uses the heavy lane below, with its load bars and its exclusive push lane;
+  an exclusive request is a full request. Without `fast_slots` every request is heavy, as before
 - heavy slots: slot 0 always; further slots only while the 1-minute load is below `extra_slot_load`
 - no admission at or above `max_load`, at any priority
 - start bar (`start_load`, when set): no heavy command starts at or above it. The load a running gate makes is part of
@@ -209,12 +213,16 @@ class Policy:
     reserved_slots: int = 0  # heavy slots only a focus head takes; slot 0 is never reserved
     focus: Callable[[str], str] | None = None  # the focus head a directory belongs to, "" for none
     exclusive_commands: Sequence[str] = ()  # whole-argv patterns of commands that are exclusive by themselves (the push lane)
+    fast_slots: int = 0  # fast lane: at most this many small checks at once, no load bar (the cap drops with the load); 0: no fast lane, every command is heavy
 
     def slot_file(self, number: int) -> Path:
         return self.directory / (f"{self.prefix}.lock" if number == 0 else f"{self.prefix}.heavy.{number}.lock")
 
     def light_slot_file(self, number: int) -> Path:
         return self.directory / f"{self.prefix}.light.{number}.lock"
+
+    def fast_slot_file(self, number: int) -> Path:
+        return self.directory / f"{self.prefix}.fast.{number}.lock"
 
     @property
     def waiting(self) -> Path:
@@ -253,14 +261,15 @@ class Request:
     hold_exempt: bool = False
     cwd: str = ""
     force_rerun: str = ""  # the reason to rerun a command that failed on this very tree
-    exclusive: bool = False  # start only on an idle machine (no heavy slot in use) and admit no other heavy run meanwhile
+    exclusive: bool = False  # start only on an idle machine (no heavy slot in use) and admit no other heavy run meanwhile; implies full
+    full: bool = False  # the caller asked for a full local run: the heavy lane with its load bar (and the push lane); else the fast lane when the policy has one
 
 
 @dataclass(frozen=True)
 class Outcome:
     status: str  # ran | refused | gave_up
     exit_code: int
-    lane: str = ""  # heavy | light | nested
+    lane: str = ""  # heavy | fast | light | nested
     waited_seconds: float = 0.0
     ran_seconds: float = 0.0
     reason: str = ""
@@ -271,7 +280,7 @@ class Run(Model):
 
     pid: int
     state: str  # waiting | running
-    kind: str  # heavy | push lane | focus
+    kind: str  # heavy | fast | push lane | focus
     cwd: str = ""
     command: str = ""
     since: float = 0.0  # when it began to wait, or to run
@@ -303,6 +312,10 @@ class Status(Model):
     light_slots_in_use: int = 0
     light_slots: int = 0
     light_holders: list[str] = []
+    fast_slots_in_use: int = 0
+    fast_slots: int = 0
+    fast_cap: int = 0  # the fast runs that may start now: fewer when the load is high
+    fast_holders: list[str] = []
     start_load: float = 0.0
     reserved_slots: int = 0
     runs: list[Run] = []  # heavy requests, running and waiting, each with its kind and, when it waits, the reason
@@ -327,12 +340,16 @@ class Status(Model):
             lines.append(f"  held by {holder}" + (f" [{run.kind}, {run.seconds:.0f}s]" if run else ""))
         lines += [f"  waiting: {run.line()}" for run in self.runs if run.state == "waiting"]
         lines += [f"  background: {job}" for job in self.background]
+        if self.fast_slots:
+            lines.append(f"fast slots in use {self.fast_slots_in_use}/{self.fast_slots} (checks and pushes: up to {self.fast_cap} at once at load {self.load:.0f}, "
+                         "no load bar; `--full` asks for the heavy lane)")
+            lines += [f"  fast: {holder}" for holder in self.fast_holders]
         lines.append(f"light slots in use {self.light_slots_in_use}/{self.light_slots} (short commands: no heavy slot, no load bar)")
         lines += [f"  light: {holder}" for holder in self.light_holders]
         if self.hold:
             lines.append("  a hold is set: only hold-exempt commands start")
         if self.exclusive:
-            lines.append("  an exclusive run (a critical-path push) holds the machine: no other heavy command starts")
+            lines.append("  an exclusive run (--full) holds the machine: no other heavy or fast command starts")
         if self.waiting_priority or self.waiting_urgent:
             lines.append(f"  waiting ahead of the normal queue: {self.waiting_urgent} urgent, {self.waiting_priority} priority")
         return lines
@@ -418,6 +435,8 @@ class RunLock:
                       holders=self._holders(), waiting_priority=self._count_waiting(self.p.waiting), waiting_urgent=self._count_waiting(self.p.urgent),
                       exclusive=self.exclusive_held(), light_slots_in_use=sum(1 for n in range(self.p.light_slots) if self._locked(self.p.light_slot_file(n))),
                       light_slots=self.p.light_slots, light_holders=self._light_holders(), start_load=self.p.start_load,
+                      fast_slots=self.p.fast_slots, fast_slots_in_use=sum(1 for n in range(self.p.fast_slots) if self._locked(self.p.fast_slot_file(n))),
+                      fast_cap=self.fast_cap() if self.p.fast_slots else 0, fast_holders=self._fast_holders(),
                       reserved_slots=self.p.heavy_slots - self.p.general_slots, runs=self.runs(), busiest=self._busiest())
 
     def runs(self) -> list[Run]:
@@ -476,8 +495,28 @@ class RunLock:
         return False
 
     def busy_slots(self) -> int:
-        """Heavy slots locked right now, including those an older configuration may still hold."""
-        return sum(1 for number in range(max(self.p.heavy_slots, self.p.heavy_slot_limit)) if self._locked(self.p.slot_file(number)))
+        """Heavy and fast slots locked right now, including the heavy ones an older configuration may still hold."""
+        return (sum(1 for number in range(max(self.p.heavy_slots, self.p.heavy_slot_limit)) if self._locked(self.p.slot_file(number)))
+                + sum(1 for number in range(self.p.fast_slots) if self._locked(self.p.fast_slot_file(number))))
+
+    def fast_cap(self) -> int:
+        """How many fast runs may be going at once: all of `fast_slots` below `extra_slot_load`, one fewer below `max_load`, then one."""
+        load = self.load()
+        if load < self.p.extra_slot_load:
+            return self.p.fast_slots
+        return max(1, self.p.fast_slots - 1) if load < self.p.max_load else 1
+
+    def _fast_holders(self) -> list[str]:
+        out = []
+        for number in range(self.p.fast_slots):
+            path = self.p.fast_slot_file(number)
+            try:
+                text = path.read_text().strip()
+            except OSError:
+                continue
+            if text and self._owns_locked_slot(path, text.split(maxsplit=1)[0]):
+                out.append(text[:160])
+        return out
 
     @staticmethod
     def _locked(path: Path) -> bool:
@@ -534,6 +573,8 @@ class RunLock:
             return None
         if any(self._owns_locked_slot(self.p.slot_file(number), held) for number in range(max(self.p.heavy_slots, self.p.heavy_slot_limit))):
             return "heavy"
+        if any(self._owns_locked_slot(self.p.fast_slot_file(number), held) for number in range(self.p.fast_slots)):
+            return "fast"
         if any(self._owns_locked_slot(self.p.light_slot_file(number), held) for number in range(self.p.light_slots)):
             return "light"
         return None
@@ -560,8 +601,9 @@ class RunLock:
         if self.on_hold(request.hold_exempt):
             return f"a hold is set ({self.p.hold})"
         load = self.load()
+        full = " (a full local run, --full, goes by the load bar; the fast lane has none)" if self.p.fast_slots else ""
         if load >= self.p.max_load:
-            return f"load {load:.0f} is at or above {self.p.max_load:.0f}"
+            return f"load {load:.0f} is at or above {self.p.max_load:.0f}{full}"
         if request.exclusive and (busy := self.busy_slots()):
             return f"an exclusive run waits for the machine to be idle ({busy} heavy run(s) still going)"
         focus = self._focus(request)
@@ -598,6 +640,8 @@ class RunLock:
         return max(self.p.start_load, self.p.extra_slot_load) if focus and not request.exclusive else self.p.start_load
 
     def _kind(self, request: Request, focus: str) -> str:
+        if self._is_fast(request):
+            return "fast"
         return "push lane" if request.exclusive else "focus" if focus else "heavy"
 
     def _note(self, request: Request, state: str, since: float, why: str = "") -> None:
@@ -614,6 +658,42 @@ class RunLock:
     def _forget(self) -> None:
         with contextlib.suppress(OSError):
             (self.p.runs / f"{self.pid()}.json").unlink(missing_ok=True)
+
+    def _is_fast(self, request: Request) -> bool:
+        """Whether the request goes to the fast lane: the policy has one and nobody asked for a full run."""
+        return self.p.fast_slots > 0 and not request.full and not request.exclusive
+
+    def _why_fast_waits(self, request: Request) -> str:
+        if self.on_hold(request.hold_exempt):
+            return f"a hold is set ({self.p.hold})"
+        if self.exclusive_held():
+            return "a full run (--full, exclusive) holds the machine for its timed session"
+        cap = self.fast_cap()
+        return (f"all {cap} fast slot(s) are taken" + (f" (the cap is {cap} of {self.p.fast_slots} at load {self.load():.0f})" if cap < self.p.fast_slots else "")
+                + f": {'; '.join(self._fast_holders())[:200] or 'held by other checks'}")
+
+    def _fast_slot(self, request: Request, start: float) -> tuple[IO[str] | None, str]:
+        """A locked fast slot, or (None, why) after `max_wait_seconds`. No load bar: only the cap shrinks with the load."""
+        limit, told, noted = request.max_wait_seconds, -1.0, None
+        while True:
+            waited = self.clock.now() - start
+            if limit and waited >= limit:
+                return None, (f"gave up after {waited:.0f}s (max wait {limit}s): {self._why_fast_waits(request)}. Nothing ran; run it "
+                              f"again later (`{self.p.status_hint}` shows who holds the slots).")
+            if not self.on_hold(request.hold_exempt) and not self.exclusive_held():
+                for number in range(self.fast_cap()):
+                    handle = _try_lock(self.p.fast_slot_file(number))
+                    if handle is not None:
+                        return handle, ""
+            why = self._why_fast_waits(request)
+            if why != noted:
+                noted = why
+                self._note(request, "waiting", start, why)
+            if told < 0 or waited - told >= 60:
+                told = waited
+                self.say(f"{self.p.label}: waiting {waited:.0f}s: {why}. Fast checks run up to {self.p.fast_slots} at once at any load; "
+                         "this starts by itself when a slot is free.")
+            self.clock.sleep(max(0.0, min(2.0, limit - waited)) if limit else 2.0)
 
     def _light_slot(self, request: Request, start: float) -> IO[str] | None:
         limit = request.max_wait_seconds
@@ -784,10 +864,12 @@ class RunLock:
         if why:
             return Outcome("refused", USAGE, reason=why)
         ancestor = self.holder_lane(request.environ)
+        if request.exclusive and not request.full:
+            request = replace(request, full=True)  # an exclusive run is a full run
         light = not request.exclusive and (request.light or bool(self.p.is_light and self.p.is_light(argv)) or self.is_light_command(argv, request.cwd, request.environ))
-        if not light and not request.exclusive and any(re.fullmatch(pattern, shlex.join(argv)) for pattern in self.p.exclusive_commands):
+        if not light and not request.exclusive and (request.full or not self.p.fast_slots) and any(re.fullmatch(pattern, shlex.join(argv)) for pattern in self.p.exclusive_commands):
             request = replace(request, exclusive=True)  # the push lane: a push is exclusive without the caller saying so
-        if ancestor == "heavy" or (ancestor == "light" and light):
+        if ancestor in ("heavy", "fast") or (ancestor == "light" and light):
             began = self.clock.now()
             code = self._child(request, env)
             return Outcome("ran", code, "nested", 0.0, self.clock.now() - began)
@@ -807,20 +889,21 @@ class RunLock:
                 self._log(request, "light", waited, ran, code, tree)
                 return Outcome("ran", code, "light", waited, ran)
         self._exclusive_handle = None
+        fast = self._is_fast(request)
         try:
-            held, why = self._heavy_slot(request, start)
+            held, why = self._fast_slot(request, start) if fast else self._heavy_slot(request, start)
         except BaseException:
             self._forget()
             raise
         if held is None:
             self._forget()
-            return Outcome("gave_up", WAITING, "heavy", self.clock.now() - start, reason=why)
+            return Outcome("gave_up", WAITING, "fast" if fast else "heavy", self.clock.now() - start, reason=why)
         with held, (self._exclusive_handle or contextlib.nullcontext()), contextlib.ExitStack() as after:
             after.callback(self._forget)
             waited = self.clock.now() - start
             self.say(f"{self.p.label}: acquired after {waited:.0f}s" + (" (exclusive: no other heavy run starts until this ends)" if request.exclusive else ""))
             # Shrink the worker caps to this run's share of the CPU budget (held is locked, so it counts as running).
-            share = self.p.cpu_budget // max(1, self.slots_in_use())
+            share = self.p.cpu_budget // max(1, self.busy_slots() if fast else self.slots_in_use())
             for name, cap in self.p.worker_caps.items():
                 env[name] = str(stricter(env[name], min(cap, share)))
             self._record_holder(held, env, f" {request.cwd} {' '.join(argv)}")
@@ -828,6 +911,7 @@ class RunLock:
             self._note(request, "running", began)
             code = self._child(request, env)
             ran = self.clock.now() - began
-            self._log(request, "heavy", waited, ran, code, tree)
-            return Outcome("ran", code, "heavy", waited, ran)
+            lane = "fast" if fast else "heavy"
+            self._log(request, lane, waited, ran, code, tree)
+            return Outcome("ran", code, lane, waited, ran)
 

@@ -26,12 +26,15 @@ def env_of(home, load="5", **settings):
     return {"HOME": str(home), "PATH": "/usr/bin:/bin", "LOCK_TEST": json.dumps({"load": float(load), "settings": table})}
 
 
-def gate(*args, home, load="5", timeout=30, extra=None, **settings):
+def gate(*args, home, load="5", timeout=30, extra=None, fast=False, **settings):
+    """The gate as a process. Since 0.9.54 a command without --full goes to the fast lane; most of these tests are about the heavy
+    lane, so they ask for it (`fast=True`: no --full)."""
+    args = ("run", "--full", *args[1:]) if args[:1] == ("run",) and not fast else args
     return subprocess.run([*ENTRY, *args], capture_output=True, text=True, timeout=timeout, cwd=home, env={**env_of(home, load, **settings), **(extra or {})})
 
 
 def holder(home, seconds="12", load="5", **settings):
-    proc = subprocess.Popen([*ENTRY, "run", "--", "sleep", seconds], cwd=home, env=env_of(home, load, **settings), stderr=subprocess.DEVNULL)
+    proc = subprocess.Popen([*ENTRY, "run", "--full", "--", "sleep", seconds], cwd=home, env=env_of(home, load, **settings), stderr=subprocess.DEVNULL)
     lock = home / ".cache/gate.lock"
     while not lock.exists() or f"sleep {seconds}" not in lock.read_text():
         pass
@@ -158,7 +161,7 @@ def test_the_last_slot_is_kept_for_the_focus_head(home):
         done = gate("run", "--max-wait", "1", "--", "echo", "ran", home=home, heavy_slots=2)
         assert done.returncode == 75 and "ran" not in done.stdout and "1 more slot(s) are reserved for a focus head" in done.stderr
         assert gate("run", "--", "true", home=home, heavy_slots=2, reserved_slots=0).returncode == 0
-        waiting = subprocess.Popen([*ENTRY, "run", "--", "true"], cwd=home, env=env_of(home, heavy_slots=2), stderr=subprocess.DEVNULL)
+        waiting = subprocess.Popen([*ENTRY, "run", "--full", "--", "true"], cwd=home, env=env_of(home, heavy_slots=2), stderr=subprocess.DEVNULL)
         try:
             runs = home / ".cache/gate.runs"
             while not (runs / f"{waiting.pid}.json").exists():
@@ -189,6 +192,27 @@ def test_a_push_takes_the_push_lane_unless_the_setting_turns_it_off(home):
         first.kill()
     loud = gate("run", "--max-wait", "1", "--", "git", "push", home=home, extra=path, load="12")
     assert loud.returncode == 75 and "load 12 is at or above 12" in loud.stderr
+
+
+def test_a_push_and_a_check_are_fast_by_default_at_any_load_and_never_exclusive(home):
+    (home / "bin").mkdir()
+    (home / "bin/git").write_text("#!/bin/sh\necho pushed \"$@\"\n")
+    (home / "bin/git").chmod(0o755)
+    path = {"PATH": f"{home / 'bin'}:/usr/bin:/bin"}
+    first = holder(home)  # a full run is going and the machine is far above every bar
+    try:
+        pushed = gate("run", "--", "git", "push", "origin", "HEAD:refs/heads/fix/x", home=home, extra=path, load="75", fast=True)
+        assert pushed.returncode == 0 and "pushed push origin" in pushed.stdout and "exclusive" not in pushed.stderr
+        checked = gate("run", "--", "sh", "-c", "echo fast; cat $HOME/.cache/gate.fast.0.lock", home=home, load="75", fast=True)
+        assert checked.returncode == 0 and "fast" in checked.stdout and "sh -c echo fast" in checked.stdout
+    finally:
+        first.kill()
+    full = gate("run", "--max-wait", "1", "--", "true", home=home, load="75")  # --full goes by the load bars
+    assert full.returncode == 75 and "load 75 is at or above 40" in full.stderr and "--full" in full.stderr
+    status = gate("status", home=home, load="75").stdout
+    assert "fast slots in use 0/3" in status and "up to 1 at once at load 75" in status
+    off = gate("run", "--max-wait", "1", "--", "true", home=home, load="75", fast=True, fast_slots=0)  # no fast lane: every command is heavy again
+    assert off.returncode == 75 and "load 75 is at or above 40" in off.stderr
 
 
 def runtime(tmp_path):
@@ -242,5 +266,32 @@ def test_exclusive_reaches_the_run_lock_as_an_exclusive_request(tmp_path, monkey
     rt = runtime(tmp_path)
     assert invoke(rt, ["gate", "run", "--exclusive", "--priority", "2", "--", "git", "push"]).exit_code == 0
     assert invoke(rt, ["gate", "run", "--", "true"]).exit_code == 0
-    assert [(r.exclusive, r.priority) for r in seen] == [(True, 2), (False, 0)]
-    assert "--exclusive" in invoke(rt, ["gate", "run", "--help"]).stdout
+    assert invoke(rt, ["gate", "run", "--full", "--", "true"]).exit_code == 0
+    assert [(r.exclusive, r.priority, r.full) for r in seen] == [(True, 2, False), (False, 0, False), (False, 0, True)]
+    helped = invoke(rt, ["gate", "run", "--help"]).stdout
+    assert "--exclusive" in helped and "--full" not in helped.split("Options")[-1]  # --full is hidden from the options
+    assert "fast lane" in helped
+
+
+def test_check_gates_its_commands_as_fast_runs_with_a_bound_and_a_preflight_as_full_runs(tmp_path, monkeypatch):
+    from steuermaschine.runlock import Outcome
+    from steuermaschine_heinzel.native import check_lib, preflight
+
+    seen = []
+
+    class Fake:
+        commands = None
+
+        def run(self, request):
+            seen.append(request)
+            return Outcome("ran", 0, "fast")
+
+    class Runner:
+        def __init__(self, *args):
+            self.output = ""
+
+    monkeypatch.setattr(preflight, "lock_of", lambda allow_full=False: type("L", (Fake,), {"commands": object()})())
+    monkeypatch.setattr(preflight, "Captured", Runner)
+    preflight.gated(False, False, check_lib.cheap.FAST_SECONDS)(["uv", "lock", "--check"], cwd=tmp_path)
+    preflight.gated()(["make", "lint"], cwd=tmp_path)
+    assert [(r.full, r.timeout_seconds) for r in seen] == [(False, 150), (True, None)]

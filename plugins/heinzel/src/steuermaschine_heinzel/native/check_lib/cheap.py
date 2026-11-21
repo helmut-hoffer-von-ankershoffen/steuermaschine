@@ -38,7 +38,8 @@ from steuermaschine.preflight import FAIL, SKIP, Preflight, Step
 from ..preflight_lib import head
 
 STEPS = ("tree", "ruff", "types", "hook", "parity", "web", "docs", "standards", "tests", "coverage", "bound")
-NO_SLOT = "wait for load to drop and run sm check again; do not bypass the run lock"
+FAST_SECONDS = 150  # every command of a fast check is stopped after this long: about two minutes, and a little margin
+NO_SLOT = "a fast slot is free in a moment (`sm gate status` shows who holds them); run sm check again; do not bypass the run lock"
 # Runs in the worktree's own interpreter: Core's hook answers for the changed paths; this code only asks.
 PROBE = """
 import importlib.util, json, sys
@@ -95,6 +96,7 @@ class Plan:
 class Ctx(head.Ctx):
     plan: Plan = field(default_factory=Plan)
     dirty: str = ""  # `git status --porcelain` as the tree check saw it
+    full: bool = False  # the hidden --full: the whole unit suite may run here, through the heavy lane
 
 
 def steps_of(lines: list[str]) -> list[tuple[str, list[str]]]:
@@ -274,21 +276,25 @@ def step_tests(c: Ctx) -> Step:
     whole = c.plan.pytest is None
     measured = bool(production(c)) and not whole
     files = [] if measured else selected_tests(c)  # with src/ changed they run once, under coverage
-    if whole:  # nothing narrows the change: the unit suite runs, as the push hook runs it; it is never skipped
+    if whole and not c.full:  # nothing narrows the change: the whole suite is PR CI's job, never run on this machine without --full
+        s.warn(f"{c.plan.narrowed}: the whole unit suite runs on PR CI, not here (a full local run is the coordinator's call: sm check --full)")
+    elif whole:
         rc, out = c.gate(head.UNIT_SUITE, cwd=c.wt)
         if rc != 0:
             outcome = "got no slot (exit 75 = WAIT)" if rc == 75 else f"was refused or failed (exit {rc})"
             s.fail(f"{c.plan.narrowed}; it {outcome}\n{head.tail(out)}",
                    "fix the failing tests; when the run lock refuses the whole suite on this machine, the coordinator runs `sm check WORKTREE --allow-full`")
-    if c.plan.narrowed:
-        s.warn(c.plan.narrowed + ("" if whole else "; integration tests of the change run on CI"))
+    if c.plan.narrowed and not whole:
+        s.warn(c.plan.narrowed + "; integration tests of the change run on CI")
+    elif c.plan.narrowed and c.full:
+        s.warn(c.plan.narrowed)
     if files:
         head.run_tests(c, s, "selected", files)
     if c.plan.lanes:
         s.warn(f"e2e lanes the selector names are not run here: {', '.join(c.plan.lanes)}")
-    s.data.update(tests=files, guards=len(c.plan.guards), selector=c.plan.selector, unit_suite=whole)
+    s.data.update(tests=files, guards=len(c.plan.guards), selector=c.plan.selector, unit_suite=whole and c.full)
     where = "they run under coverage" if measured else f"{len(files)} selected test file(s)"
-    s.detail = f"{len(c.plan.guards)} early guard command(s), {'the whole unit suite, ' if whole else ''}{where}" if s.status != FAIL else ""
+    s.detail = f"{len(c.plan.guards)} early guard command(s), {'the whole unit suite, ' if whole and c.full else 'the whole unit suite left to PR CI, ' if whole else ''}{where}" if s.status != FAIL else ""
     return s
 
 

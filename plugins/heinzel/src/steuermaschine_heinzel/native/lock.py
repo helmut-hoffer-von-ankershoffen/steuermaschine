@@ -6,7 +6,10 @@ The policy is the former lock's: at most three heavy runs, none at or above load
 nine workers shared by the running gates, four light runs, and the refusal of full local suites. On top of it, the
 scheduling of 2026-11-14 (all three are settings): no heavy start at or above load 12 (`lock_start_load`; the load
 that made the timed pre-push session fail), the last heavy slot reserved for the focus head (`lock_reserved_slots`),
-and the push lane (`lock_push_lane`): a push that is not documentation only is exclusive by itself. It adopts the
+and the push lane (`lock_push_lane`): a push that is not documentation only is exclusive by itself.
+Since 0.9.54 all of that is the lane of a full local run (`sm gate run --full`, hidden): what `sm check` and a push run
+is fast (`lock_fast_slots`, three at once, fewer under load, no load bar, never exclusive), because hosted PR CI runs the
+full suites anyway. It adopts the
 former lock's files (settings `lock_directory`, `lock_prefix`), so a run started the old way and one started here
 exclude each other for as long as both exist.
 """
@@ -41,9 +44,10 @@ class LockSettings(BaseModel):
     lock_max_load: float = Field(40.0, description="No gated command starts at or above this 1-minute load.")
     lock_heavy_slots: int = Field(3, description="Heavy commands that may run at once.")
     lock_extra_slot_load: float = Field(20.0, description="A second heavy command starts only below this load; with lock_start_load set it is the start bar of a focus head.")
-    lock_start_load: float = Field(12.0, ge=0, description="No heavy command starts at or above this 1-minute load (0: off). A focus head's test run goes by lock_extra_slot_load.")
+    lock_start_load: float = Field(12.0, ge=0, description="No full local run (`--full`) starts at or above this 1-minute load (0: off); fast checks have no load bar. A focus head's full run goes by lock_extra_slot_load.")
     lock_reserved_slots: int = Field(1, ge=0, description="Heavy slots only a focus head (`sm focus add WORKTREE`) takes; one slot always stays open to everyone.")
-    lock_push_lane: bool = Field(True, description="A push that is not documentation only is exclusive: it waits for an idle machine and no heavy command starts beside it.")
+    lock_push_lane: bool = Field(True, description="A full push (`--full`) that is not documentation only is exclusive: it waits for an idle machine and no heavy command starts beside it. A normal push is a fast check.")
+    lock_fast_slots: int = Field(3, ge=0, description="Fast checks (everything without `--full`, pushes included) that may run at once, no load bar and never exclusive; one fewer from lock_extra_slot_load, one from lock_max_load (0: no fast lane).")
     lock_cpu_budget: int = Field(9, description="Test workers shared by all running heavy commands.")
     lock_light_slots: int = Field(4, description="Light commands that may run at once.")
     lock_history: Path | None = Field(None, description="One JSON line per gated command, either lane (times, exit, tree, caller, failure class); none: gate-history.jsonl in the state directory.")
@@ -94,6 +98,7 @@ def policy(settings: Mapping, commands, clock, allow_full: bool = False, cwd: st
                   heavy_slot_limit=HEAVY_SLOTS, extra_slot_load=float(setting(settings, "lock_extra_slot_load")),
                   cpu_budget=int(setting(settings, "lock_cpu_budget")), worker_caps=WORKER_CAPS, light_slots=int(setting(settings, "lock_light_slots")),
                   start_load=min(MAX_LOAD, max(0.0, float(setting(settings, "lock_start_load")))), reserved_slots=max(0, int(setting(settings, "lock_reserved_slots"))),
+                  fast_slots=max(0, min(HEAVY_SLOTS, int(setting(settings, "lock_fast_slots")))),
                   exclusive_commands=PUSH_COMMANDS if setting(settings, "lock_push_lane") else (),
                   held_env="HZ_GATE_HELD", history=expand("lock_history"), refusals=(full_suite,),
                   is_light=lambda argv: docs_only_push(commands, argv), tree_state=git_tree_state(commands))

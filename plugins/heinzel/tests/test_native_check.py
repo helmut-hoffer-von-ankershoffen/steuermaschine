@@ -148,15 +148,14 @@ def test_no_receipt_for_a_dirty_tree_a_skipped_check_or_a_head_that_moved(core, 
     assert moved.providers.store.get_receipt(verdicts.CHECKS, HEAD) is None and moved.providers.store.get_receipt(verdicts.CHECKS, "c" * 40) is None
 
 
-def test_a_change_nothing_narrows_runs_the_whole_unit_suite_or_fails_and_never_gets_a_receipt_on_a_warning(core, rt, tmp_path):  # noqa: F811
-    """B1 (the reviewer's probe): the selector says everything and Core's import graph says ALL. The unit suite runs,
-    as the preflight runs it; where the run lock refuses the whole suite the run is red and writes no receipt."""
+def test_a_change_nothing_narrows_leaves_the_whole_unit_suite_to_pr_ci_unless_a_full_run_is_asked_for(core, rt, tmp_path):  # noqa: F811
+    """The selector says everything and Core's import graph says ALL. A fast check never runs the whole unit suite (PR CI does): it
+    says so and stays READY. Only --allow-full (or the hidden --full) runs it, through the heavy lane; where the lock refuses it the run is red."""
     machine = checkout(core).on("git diff --name-only", "pyproject.toml").on("scripts/related_tests.py", "ALL\n")
     runtime = rt(machine)
     found = report(invoke(runtime, ["--format", "json", "check", str(core)]))
-    assert not found.ready and not found.receipt and [f.step for f in found.failures] == ["tests"]
-    assert "both select everything: the whole unit suite runs; it was refused or failed (exit 2)" in found.failures[0].message and "--allow-full" in found.failures[0].fix
-    assert not machine.ran("unit and not perf") and runtime.providers.store.get_receipt(verdicts.CHECKS, HEAD) is None  # the lock refused it: nothing ran
+    assert found.ready and not found.failures and step(found, "tests").data["unit_suite"] is False
+    assert any("runs on PR CI, not here" in w for w in step(found, "tests").data["warnings"]) and not machine.ran("unit and not perf")  # nothing ran locally
     allowed = rt(machine)
     found = report(invoke(allowed, ["--format", "json", "check", str(core), "--allow-full"]))
     assert found.ready and found.receipt and step(found, "tests").data["unit_suite"] is True

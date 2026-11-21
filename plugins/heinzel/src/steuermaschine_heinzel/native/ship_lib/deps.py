@@ -40,10 +40,10 @@ def configure() -> dict:
 
 def gate(max_wait: int = 0, exclusive: bool = False) -> list[str]:
     """The argv prefix that runs a command under the run lock: this program's own `gate run`. `max_wait` (seconds,
-    0: as long as it takes): give up with exit 75 and nothing run. `exclusive`: a critical-path push; it waits for an
-    idle machine and keeps it, so its pre-push hook's timed test session is not starved by other gated runs."""
+    0: as long as it takes): give up with exit 75 and nothing run. `exclusive`: an explicit full local run (`--full`); it
+    waits for an idle machine and keeps it. A normal push is a fast check: it runs beside others at any load."""
     return [sys.executable, "-m", "steuermaschine.app", "gate", "run", *(["--max-wait", str(max_wait)] if max_wait else []),
-            *(["--priority", "2", "--exclusive"] if exclusive else []), "--"]
+            *(["--priority", "2", "--full", "--exclusive"] if exclusive else []), "--"]
 
 
 def captured(fn, *args, **kwargs) -> Done:

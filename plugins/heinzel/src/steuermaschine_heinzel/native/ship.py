@@ -155,9 +155,8 @@ def is_focus(worktree: Path) -> bool:
     "commit-message rule and the confidential terms before anything is pushed or opened; nothing you wrote is printed\n"
     "before that. It pushes the checked commit (SHA:refs/heads/BRANCH) and ships only this repository's PR at that SHA.\n"
     "Exit 75: the push check says WAIT, or the run lock was not free within head_pr_lock_max_wait_seconds.\n"
-    "The push takes the run lock's push lane (setting lock_push_lane; a focus head or a release/* branch asks for it itself with\n"
-    "`sm gate run --exclusive`): its pre-push hook's timed session starts only on an idle machine below the start bar, and no other\n"
-    "heavy command starts until the push ends.\n"
+    "The push takes a fast slot of the run lock (up to three at once, fewer under load, no load bar, never exclusive): its pre-push\n"
+    "hook runs the fast checks. Full suites run on hosted PR CI.\n"
     "Exit 2 after the PR is open: the guard answered NEEDS_REVIEW. It does not run the repository's `make pr`.\n"
     "While `sm queue hold` holds the queue, --live refuses with the hold's reason (exit 1, nothing pushed)."))
 def head_pr(
