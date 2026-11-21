@@ -95,11 +95,8 @@ class Words:
     def apply_head(self) -> list[str]:
         return ["sm", "head", "apply"]
 
-    def prepare(self, packet: str, core_repo: str, review_root: str, out_file: str) -> str:
-        return f"sm head prepare {q(packet)} --core-repo {q(core_repo)} --review-root {q(review_root)} --wait --out {q(out_file)}"
-
     def preopen_help(self) -> str:
-        return "sm head packet preopen --help"
+        return "sm ship --help"
 
     def focus(self, verb: str, worktree: object = None, entry: dict | None = None) -> str:
         """`sm focus list|done`. An entry that only the old focus file holds cannot be taken off with `done`: the
@@ -109,7 +106,7 @@ class Words:
         return f"sm focus {verb}" + (f" {q(worktree)}" if worktree is not None else "")
 
     def rehearse(self, rest: str, typed: bool = True) -> str:
-        return f"sm release rehearse {rest}"
+        return "sm release cut --help"  # no rehearsal any more
 
     def cut(self, version: str = "") -> str:
         """The cut of the next version: `sm release cut VERSION` (the pipeline needs the exact version)."""

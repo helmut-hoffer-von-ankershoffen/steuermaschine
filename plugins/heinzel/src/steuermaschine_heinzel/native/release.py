@@ -30,6 +30,8 @@ from steuermaschine.models import Model
 from steuermaschine.native import native, runtime
 from steuermaschine.protocols import Busy
 
+from . import mini
+from .go import world
 from .queue_lib import hzlib
 from .release_lib.binding import moved
 from .release_lib.names import translate
@@ -144,9 +146,10 @@ class ReleaseRun(Model):
     accepted: bool | None = Field(None, description="The verdict of a finished release; None while it is unfinished.")
     acceptance_run: int | None = None
     lines: list[str] = []
+    live: list[str] = Field([], description="With --live: the lines of `sm mini update` after ACCEPTED; the last is LIVE-OK X.Y.Z or NOT-LIVE: reason.")
 
     def render(self) -> list[str]:
-        return closing(self.lines, self.stopped)
+        return closing(self.lines, self.stopped) + self.live
 
     @property
     def exit_code(self) -> int:
@@ -185,6 +188,7 @@ def outcome(module, action: str, version: str, code: int, lines: list[str], erro
     "Steps: freeze, main gate, release PR open, previous release accepted, release PR merged, tag, freeze lifted, release\n"
     "published, PyPI, compose, acceptance, verdict. Exit 0: ACCEPTED. Exit 1: stopped (the line says why) or NOT ACCEPTED.\n"
     "VERSION is X.Y.Z, `patch` (the unfinished release, else the next patch) or `migrate-legacy`.\n"
+    "--live: after ACCEPTED, `sm mini update --minimum VERSION` too; exit 0 only at LIVE-OK (the release train's runs use it).\n"
     "One action besides resuming at a time: --pause, --prepare-only, --absorb, --reject-release, --candidate-capacity.\n"
     "The candidate gate needs the candidate's first attempt green: never rerun a failed candidate job to pass it.\n"
     "A failed compose run is replaced once by a fresh compose (same inputs) when plugins main moved past it and a plugin\n"
@@ -217,6 +221,7 @@ def release_resume(
     failed_compose_attempt: int | None = typer.Option(None, "--failed-compose-attempt", metavar="N", help="With --reject-release: its attempt."),
     expected_compose_head: str | None = typer.Option(None, "--expected-compose-head", metavar="SHA", help="With --reject-release: the compose head."),
     expected_core_source: str | None = typer.Option(None, "--expected-core-source", metavar="SHA", help="With --reject-release: the core source commit."),
+    live: bool = typer.Option(False, "--live", help="After ACCEPTED: update the Mini and prove it (sm mini update); exit 0 only at LIVE-OK."),
 ) -> ReleaseRun:
     if absorb:  # the runner takes the version as the value of --absorb, and nothing but --reason besides
         argv, action = ["--absorb", version], "absorb"
@@ -234,9 +239,15 @@ def release_resume(
                         ("--expected-compose-head", expected_compose_head), ("--expected-core-source", expected_core_source)):
         if value is not None:
             argv += [flag, str(value)]
+    if live and (action != "resume" or not EXACT.fullmatch(version)):
+        raise Refuse("--live goes with resuming an exact X.Y.Z only", "sm release resume 0.9.53 --live", code=2)
     module = runner()
     code, lines, errors = run(module, argv)
-    return outcome(module, action, version, code, lines, errors)
+    done = outcome(module, action, version, code, lines, errors)
+    if live and done.exit == 0 and done.finished and done.accepted:
+        proof = mini.update(world(), done.version)
+        done.live, done.exit = proof.render(), proof.exit_code
+    return done
 
 
 class AcceptanceCapacity(Model):

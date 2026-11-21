@@ -347,9 +347,6 @@ def decide(s: dict, now: float, w: Words | None = None, stall_minutes: int = 15)
                               f"an independent reviewer (different model) to end {p['dir']}/APPLY-REVIEW.md with "
                               f"`VERDICT: APPROVE sha256={p['prepared_sha256']}`"))
             items[-1]["then"] = (f"after the verdict, in an idle window: {apply_command(p, w)}" + (f"  ({gap})" if (gap := apply_unknown(p)) else ""))
-        elif state == "packet-new":
-            items.append(item("packet-new", f"packet built, not prepared: {label}",
-                              w.prepare(p["packet"], p["core_repo"], p["review_root"], p["dir"] + "/prepare.out"), "truncated"))
 
     stale = [b for b in dict.fromkeys(stale) if b not in live_branches and b not in old and not re.fullmatch(r"[0-9a-f]{40}", b)]
     if stale:
@@ -402,10 +399,6 @@ def decide(s: dict, now: float, w: Words | None = None, stall_minutes: int = 15)
     # 7. nothing in flight
     busy = [i for i in items if i["kind"] in RANK and not i.get("backlog")]
     since = get("since_tag", {}).get("count")
-    rehearse = get("rehearse", {})
-    last = rehearse.get("last") if isinstance(rehearse.get("last"), dict) else {}
-    current = rehearse.get("current") if isinstance(rehearse.get("current"), dict) else None
-    start_rehearsal = w.rehearse("start --consumers")
     if focus_open:  # never a rehearsal or a cut while a declared focus head for the next release is unmerged
         if not [i for i in items if i["kind"] in RANK]:
             f = focus_open[0]
@@ -413,21 +406,7 @@ def decide(s: dict, now: float, w: Words | None = None, stall_minutes: int = 15)
                               "(see ASIDE)", None, "focus", f"the focus head to merge; no rehearsal and no cut before ({w.focus('done', f.get('worktree'), f)} lifts it)"))
     elif not busy and ci["state"] == "green" and since:
         ready = f"main {main_sha[:8]} green, {since} commits since v{latest}, no candidate"
-        if last.get("verdict") == "red":  # blocks the cut until a later rehearsal replaces the verdict
-            failed = "; ".join(str(f) for f in last.get("failures") or []) or f"failures unreadable: {w.rehearse('status --json', typed=False)}"
-            same = str(last.get("main")) == main_sha
-            items.append(item("rehearsal-red", f"{ready}, but the last rehearsal (main {str(last.get('main'))[:8]}) is RED: {failed}",
-                              None if current else w.rehearse("status --json") if same else start_rehearsal, "rehearsal",
-                              f"the open rehearsal: {w.rehearse('step', typed=False)}" if current else None))
-            if same and not current:
-                items[-1]["then"] = f"after the fix is on main: {start_rehearsal}"
-        elif current:
-            items.append(item("rehearsal-running", f"{ready}, rehearsal of main {str(current.get('main'))[:8]} running", None, "rehearsal",
-                              f"the open rehearsal ({w.rehearse('step')} reads it; launchd ticks it)"))
-        elif get("tools", {}).get("rehearse") and not (last.get("verdict") == "green" and str(last.get("main")) == main_sha):
-            items.append(item("cut-ready", ready, start_rehearsal, "consumer"))
-        else:
-            items.append(item("cut-ready", ready + (", rehearsal green" if last.get("verdict") == "green" else ""), w.cut(next_patch(latest)), "consumer"))
+        items.append(item("cut-ready", ready, w.cut(next_patch(latest)), "consumer"))
     elif not [i for i in items if i["kind"] in RANK]:
         why = "main CI state unknown" if ci["state"] in ("unknown", "none") else "nothing to ship"
         items.append(item("idle", f"idle: {why}", None, None, "new work: nothing is in the ship pipeline"))

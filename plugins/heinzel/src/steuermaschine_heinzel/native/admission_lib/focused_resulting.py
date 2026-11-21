@@ -4,18 +4,14 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from pathlib import Path
 import re
-import shutil
 import subprocess
 import sys
 from urllib.parse import quote
 
 from . import focused_admit as a
-from . import focused_update as git
 from ..queue_lib import core_policy
 from ..queue_lib.release_candidate import CandidateError
-from steuermaschine.config import search_path
 
 MODE = 'resulting-main-only/v1'
 APP = 15368
@@ -39,39 +35,6 @@ def positive(value):
     return type(value) is int and value > 0
 
 
-def load_packet(path, review_root, pr):
-    """Load a separately reviewed main-only envelope with frozen original provenance."""
-    raw = a._stable_file(path, a.MAX_PACKET_BYTES)
-    packet = a._json_bytes(raw, 'resulting-main packet')
-    require(set(packet) == {'schema', 'mode', 'manifest', 'original', 'review'}
-            and type(packet['schema']) is int and packet['schema'] == 1 and packet['mode'] == MODE,
-            'invalid resulting-main-only packet')
-    plan, original, review = (packet[key] for key in ('manifest', 'original', 'review'))
-    require(isinstance(plan, dict) and plan.get('event') == 'push'
-            and plan.get('ref') == 'refs/heads/main' and 'head' not in plan and 'commit' not in plan,
-            'resulting-main admission requires one headless push-tree manifest')
-    require(isinstance(original, dict) and set(original) == ORIGINAL_FIELDS
-            and all(positive(original[k]) for k in ('pr', 'pr_id', 'repository_id', 'ci_run', 'judge_run'))
-            and original['pr'] == pr, 'invalid original PR identity')
-    for key in SOURCE_FIELDS:
-        a._sha(original[key], key)
-    a._sha(original['manifest_sha256'], 'original manifest digest', a.HEX)
-    a._sha(plan.get('base'), 'resulting-main base')
-    a._sha(plan.get('tree'), 'resulting-main tree')
-    require(isinstance(review, dict) and set(review) == {
-        'path', 'sha256', 'head', 'base', 'tree', 'manifest_sha256', 'original_sha256',
-    } and all(review[key] == expected for key, expected in {
-        'head': original['head'], 'base': plan['base'], 'tree': plan['tree'],
-        'manifest_sha256': digest(a.canonical(plan)), 'original_sha256': digest(a.canonical(original)),
-    }.items()), 'review differs from exact original evidence or resulting-main plan')
-    relative = review['path']
-    require(isinstance(relative, str) and relative and not Path(relative).is_absolute()
-            and '..' not in Path(relative).parts, 'unsafe resulting-main review path')
-    target = review_root / relative
-    require(target.resolve(strict=True).is_relative_to(review_root.resolve(strict=True))
-            and digest(a._stable_file(target, a.MAX_REVIEW_BYTES)) == review['sha256'],
-            'resulting-main review artifact changed')
-    return packet, raw
 
 
 def _policy(rt, base):
@@ -313,40 +276,3 @@ def release_registry_proof(source, main, before, after, required):
                              main_key=a.registry_key(main), main=main))['old_entries']
 
 
-def replay_original(rt, packet, snapshot, original_plan, live):
-    """Use the actual protected judge's archived reader to replay original artifacts."""
-    original, base = packet['original'], packet['manifest']['base']
-    policy = _policy(rt, base)
-    judge_workflow, gate_checks = policy.judge_workflow, sorted(policy.api_checks)
-    git._official_origin(snapshot, rt.repo)
-    git._plain_history(rt.core)
-    git._plain_history(snapshot)
-    for commit in (original['tested_base'], original['judge_source']):
-        require(git._git(snapshot, 'cat-file', '-t', commit).stdout.strip() == b'commit'
-                and git._git(snapshot, 'merge-base', '--is-ancestor', commit, base, check=False).returncode == 0,
-                'original tested base or judge source is outside protected main history')
-    paths = judgment_steps(rt, packet, live)
-    source, _, repo, _, _ = a._canonical_source(snapshot, original['judge_source'])
-    try:
-        require(repo == rt.repo, 'historical protected reader repository changed')
-        bindings = {path: git._git(snapshot, 'rev-parse', f"{original['judge_source']}:{path}").stdout.decode().strip()
-                    for path in (judge_workflow, 'scripts')}
-        driver = source / 'resulting-main-replay.py'
-        driver.write_bytes(Path(__file__).with_name('focused_replay.py').read_bytes())
-        driver.with_suffix('.py.lock').write_bytes((source / 'scripts/focused_gate.py.lock').read_bytes())
-        token = rt.run('gh', 'auth', 'token', '--hostname', 'github.com').stdout.decode().strip()
-        require(token and '\n' not in token, 'GitHub evidence authentication unavailable')
-        request = dict(token=token, repository=rt.repo, original=original, plan=original_plan, live=live, paths=paths,
-                       gate_checks=gate_checks)
-        environment = {'PATH': search_path(), 'HOME': str(rt.home), 'GIT_NO_REPLACE_OBJECTS': '1',
-                       'GIT_CONFIG_NOSYSTEM': '1', 'UV_PYTHON': '3.14.8'}
-        result = subprocess.run(['uv', 'run', '--no-build', '--frozen', '--script', str(driver)],
-                                cwd=snapshot, env=environment, input=a.canonical(request),
-                                capture_output=True, timeout=240)
-        require(result.returncode == 0, 'archived protected original judgment or workload replay refused')
-        proof = a._json_bytes(result.stdout, 'original protected replay')
-        require(proof.get('tested_commit') == original['tested_commit']
-                and proof.get('artifacts') == live['artifacts'], 'replayed original source or artifacts changed')
-        return dict(source=bindings, evidence=proof)
-    finally:
-        shutil.rmtree(source, ignore_errors=True)

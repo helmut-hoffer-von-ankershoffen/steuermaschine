@@ -66,7 +66,8 @@ def run_of(w: Reader, run_id: str) -> dict[str, Any] | None:
 
 
 def is_gate_run(run: dict[str, Any]) -> bool:
-    return run.get("name") == GATE_WORKFLOW or str(run.get("path") or "").endswith(core_facts.judge_file())
+    judge = core_facts.judge_file()
+    return run.get("name") == GATE_WORKFLOW or bool(judge) and str(run.get("path") or "").endswith(judge)
 
 
 def trace(w: Reader, urls: list[str], head: str = "") -> tuple[dict[str, Any] | None, str]:
@@ -78,6 +79,8 @@ def trace(w: Reader, urls: list[str], head: str = "") -> tuple[dict[str, Any] | 
             return run, "the check's details URL"
     if not head:
         return None, "the check's details URL names no Merge gate run and the head is unknown"
+    if not core_facts.judge_file():
+        return None, "this Core's release policy has no merge-gate workflow"
     data, why = w.gh.api(f"actions/workflows/{core_facts.judge_file()}/runs", {"head_sha": head, "per_page": 20})
     if why:
         return None, f"the Merge gate runs of the head cannot be read: {why}"

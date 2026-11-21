@@ -35,7 +35,7 @@ def test_plan_guard_checks_the_pinned_head(monkeypatch, row, pinned):
     assert seen == [("7", pinned)] and refusal == []
 
 
-def test_queue_add_checks_the_plan_of_the_guarded_head(monkeypatch):
+def test_queue_add_pins_the_guarded_head_and_does_not_evaluate_the_merge_rule(monkeypatch):
     seen = []
     heads = iter([PIN, PIN])
     monkeypatch.setattr(qd, "pr_head", lambda repo, number: next(heads))
@@ -44,7 +44,7 @@ def test_queue_add_checks_the_plan_of_the_guarded_head(monkeypatch):
     monkeypatch.setattr(main_plan, "gap", lambda pr, head="": seen.append((pr, head)) or "")
     args = SimpleNamespace(pr=[["7"]], after=[])
     assert qd.add(args) == 0
-    assert seen == [("7", PIN)]
+    assert seen == []  # the merge-time guard decides, not `queue add`
     row = qd.load()["items"][0]
     assert row["guarded_head"] == PIN
 

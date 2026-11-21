@@ -37,7 +37,7 @@ def _refuse(error: Exception) -> NoReturn:
     "sm release admit prepare PACKET.json --core-repo WORKTREE --review-root ROOT",
     "sm head hash PACKET_DIR/prepare.out, then an independent review of that file",
     "The release-window lock (release_window_minutes, default 60, renewed by every prepare and apply): while it holds,\n"
-    "`sm head validate` waits (exit 75) and starts no hosted run that would stand in the way of the cut."))
+    "nothing starts a hosted run that would stand in the way of the cut."))
 def release_admit_prepare(
     packet: Path = typer.Argument(..., metavar="PACKET", help="The reviewed release packet."),
     core_repo: Path = typer.Option(..., "--core-repo", help="The owned Core checkout at the release head."),
@@ -47,7 +47,7 @@ def release_admit_prepare(
 ) -> release_ops.ReleasePrepareResult:
     rt = runtime()
     try:
-        # Order: the release-window lock first (the whole prepare-to-apply stretch: `sm head validate` waits while it holds), the
+        # Order: the release-window lock first (the whole prepare-to-apply stretch: a validation run waits while it holds), the
         # admission hold inside it (atomic in the validation line: a validation that passed the lock check a moment ago still cannot start).
         with release_window.held(rt, "prepare", str(packet), give_back_on_success=False), admission_hold(rt, f"release admit prepare {packet}"):
             def once() -> release_ops.ReleasePrepareResult:
@@ -78,7 +78,7 @@ def release_admit_apply(
     rt = runtime()
     try:
         _admission.require_verdict(approved)  # before the window lock and the hold: a missing verdict never holds either
-        # Order: the release-window lock first (the whole prepare-to-apply stretch: `sm head validate` waits while it holds), the
+        # Order: the release-window lock first (the whole prepare-to-apply stretch: a validation run waits while it holds), the
         # admission hold inside it (atomic in the validation line: a validation that passed the lock check a moment ago still cannot start).
         with release_window.held(rt, "apply", str(packet), give_back_on_success=True), admission_hold(rt, f"release admit apply {packet}"):
             def once() -> admission.ApplyResult:

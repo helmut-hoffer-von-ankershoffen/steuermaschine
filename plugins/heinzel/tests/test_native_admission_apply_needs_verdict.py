@@ -29,10 +29,7 @@ def nothing_real(tmp_path, monkeypatch):
     monkeypatch.setattr(subprocess, "run", lambda argv, *a, **k: pytest.fail(f"a real process was started: {argv}"))
     monkeypatch.setattr(subprocess, "Popen", lambda argv, *a, **k: pytest.fail(f"a real process was started: {argv}"))
     applied = []
-    monkeypatch.setattr(ops, "apply", lambda packet, sha: applied.append(("head", sha)) or ops.ApplyResult(receipt_path="r", sha256=sha, head="b" * 40))
     monkeypatch.setattr(release_ops, "apply", lambda packet, sha: applied.append(("release", sha)) or ops.ApplyResult(receipt_path="r", sha256=sha, head="b" * 40))
-    monkeypatch.setattr(ops, "prepare", lambda *a, **k: ops.PrepareResult(sha256=SHA, head="b" * 40, main="c" * 40, slot="PLANS", pr=None,
-                                                                          prepared_path="p", args_path="a", prepared={}))
     monkeypatch.setattr(release_ops, "prepare", lambda *a, **k: release_ops.ReleasePrepareResult(
         sha256=SHA, version="1.0.0", head="b" * 40, main="c" * 40, slot="PLANS", recovery=False, prepared_path="p", args_path="a", prepared={}))
     return applied
@@ -65,7 +62,7 @@ def verdict(rt, reviewer, *flags):
     return invoke(rt, ["review", "verdict", SHA, *(flags or ("--approve",)), "--reviewer", reviewer])
 
 
-@pytest.mark.parametrize("which", ["head", "release"])
+@pytest.mark.parametrize("which", ["release"])
 def test_apply_refuses_without_a_recorded_verdict(applied, which):
     rt = runtime()
     prepare(rt, which)
@@ -74,7 +71,7 @@ def test_apply_refuses_without_a_recorded_verdict(applied, which):
     assert applied == []
 
 
-@pytest.mark.parametrize("which", ["head", "release"])
+@pytest.mark.parametrize("which", ["release"])
 def test_apply_refuses_a_rejecting_verdict(applied, which):
     rt = runtime()
     prepare(rt, which)
@@ -84,7 +81,7 @@ def test_apply_refuses_a_rejecting_verdict(applied, which):
     assert applied == []
 
 
-@pytest.mark.parametrize("which", ["head", "release"])
+@pytest.mark.parametrize("which", ["release"])
 def test_apply_refuses_a_verdict_by_the_author(applied, which):
     rt = runtime()
     prepare(rt, which)
@@ -94,7 +91,7 @@ def test_apply_refuses_a_verdict_by_the_author(applied, which):
     assert applied == []
 
 
-@pytest.mark.parametrize("which", ["head", "release"])
+@pytest.mark.parametrize("which", ["release"])
 def test_apply_goes_ahead_with_an_independent_approval_recorded_without_a_run(applied, which):
     rt = runtime()
     prepare(rt, which)  # no run is waiting: the prepare registered the digest
@@ -105,7 +102,7 @@ def test_apply_goes_ahead_with_an_independent_approval_recorded_without_a_run(ap
 
 def test_verdict_by_the_preparing_agent_is_refused():
     rt = runtime()
-    prepare(rt, "head")
+    prepare(rt, "release")
     done = verdict(rt, "builder-1")
     assert done.exit_code == 1 and "different agent" in done.stderr
     assert rt.providers.store.get_receipt("verdicts", SHA) is None
@@ -118,19 +115,18 @@ def test_verdict_for_an_unknown_digest_is_still_refused():
 
 def test_verdict_json_for_a_prepared_digest(applied):
     rt = runtime()
-    prepare(rt, "head")
+    prepare(rt, "release")
     done = invoke(rt, ["--format", "json", "review", "verdict", SHA, "--approve", "--reviewer", "reviewer-1"])
     assert done.exit_code == 0 and json.loads(done.stdout)["reviewer"] == "reviewer-1"
 
 
-@pytest.mark.parametrize("which", ["head", "release"])
+@pytest.mark.parametrize("which", ["release"])
 def test_a_missing_verdict_refuses_before_any_lock_or_hold(applied, monkeypatch, which):
-    from steuermaschine_heinzel.native import admission, release_admit, release_window
+    from steuermaschine_heinzel.native import release_admit, release_window
 
     def taken(*args, **kwargs):
         pytest.fail("the window lock or the admission hold was taken before the verdict was checked")
 
-    monkeypatch.setattr(admission, "admission_hold", taken)
     monkeypatch.setattr(release_admit, "admission_hold", taken)
     monkeypatch.setattr(release_window, "held", taken)
     done = apply_(runtime(), which)

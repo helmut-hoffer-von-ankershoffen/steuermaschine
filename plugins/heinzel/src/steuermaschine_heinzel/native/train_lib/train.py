@@ -51,8 +51,13 @@ the tip ONLY when the candidate's base is that tip and the run has not started (
 done, no runner); a main run in progress is never cancelled. Both go to hz-note and the state (`freed`). During the
 candidate window (until hz-release prints its `tag` step, or the tag exists) it keeps ~/.cache/hz-gate.hold fresh so builders' heavy gates wait; it writes
 and removes only a hold file it created (content `hz-train <token>`), and never touches a hold file somebody else
-made. After ACCEPTED it proves the running build with `hz-verify-mini --minimum X.Y.Z`, notifies the owner once,
-and resumes deferred CI. A proof miss waits without consuming attempts or mutating the Mini.
+made. The release runs with `--live`: after ACCEPTED it updates the Mini and proves it (`sm mini update --minimum
+X.Y.Z`); the mini phase runs the same command every tick until LIVE-OK (it changes the Mini only while the proof
+fails), then notifies the owner once and resumes deferred CI. An accepted release that is not live yet waits in the
+mini phase without consuming attempts.
+
+Auto-cut is off by default (setting release_train_auto_cut): a tick then drives the active trains only, and
+`sm daemon train --now` is the one command that cuts (every other condition still holds).
 
 State: one file per version, ~/.cache/hz-train/vX.Y.Z.json (atomic; phase release, mini, finish, blocked, then done or
 cleared), plus ~/.cache/hz-train/train.json for the cadence (last_start, last_version, red_noted); one log per release,
@@ -101,6 +106,7 @@ RECEIPT = statedir.path("release.json")
 TAIL_DIR = statedir.path("release")  # hz-release hands the receipt off here at the tag (vX.Y.Z.json)
 CHECKOUT = Path(edge.setting("release_train_checkout") or HOME / "Code/heinzel-release-train")
 EVERY = int(edge.setting("release_train_every_minutes") or 0)  # 0: self-pacing (candidate ~40 min); opt-in floor in minutes
+AUTO_CUT = bool(edge.setting("release_train_auto_cut"))  # off: only `--now` cuts; ticks drive the active trains
 VERSION = re.compile(r"\d+\.\d+\.\d+")
 PREVIOUS_NOT_ACCEPTED = re.compile(r"previous release (\d+\.\d+\.\d+) NOT ACCEPTED")
 MAX_ATTEMPTS = 3
@@ -281,6 +287,15 @@ class file_lock:
             self.stream = None
 
 
+def accepted(w, version: str) -> bool:
+    """The release has its finished ACCEPTED verdict (its tail receipt, else the legacy global one): what is left is the Mini."""
+    try:
+        data = dict(w.tail_receipts()).get(version) or w.receipt()
+    except (OSError, ValueError):
+        return False  # unreadable is not accepted: the failure path below decides
+    return data.get("version") == version and data.get("finished") is True and data.get("accepted") is True
+
+
 def lock_busy(w, name: str) -> bool:
     with w.lock(name) as got:
         return not got
@@ -454,7 +469,7 @@ class Real:
 
     def run_release(self, version: str, intro: str, hold: GateHold, on_candidate=None) -> tuple[int, str]:
         log = STATE_DIR / f"v{version}.log"
-        cmd = [*edge.sm(), "release", "resume", version, "--intro", intro, "--snapshot-acceptance", "--candidate-gate"]  # moved: no script
+        cmd = [*edge.sm(), "release", "resume", version, "--intro", intro, "--snapshot-acceptance", "--candidate-gate", "--live"]  # moved: no script
         stop = threading.Event()
 
         def keep_hold() -> None:  # candidate window: hold until the tag exists, refresh well inside hz-gate's 900 s
@@ -506,10 +521,10 @@ class Real:
         return str(data.get("acceptance_run", "?")) if data.get("version") == version else "?"
 
     def verify_mini(self, version: str) -> str:
-        verifier = [*edge.sm(), "release", "verify", "--mini"]  # moved: the read-only Mini check, no script
+        verifier = [*edge.sm(), "mini", "update"]  # the proof; it updates and restarts the Mini only while the proof fails
         try:
             done = edge.run([*verifier, "--minimum", version], capture_output=True, text=True,
-                                  timeout=90, check=False)
+                                  timeout=1500, check=False)
         except (OSError, ValueError, subprocess.TimeoutExpired):
             return "NOT-LIVE: verifier unavailable"
         line = (done.stdout.strip().splitlines() or [""])[-1]
@@ -704,6 +719,9 @@ def cut(w, dry: bool, now_flag: bool) -> int:
     if not releasable:
         w.say(f"skip: nothing releasable on main since {tag} ({len(subjects)} commits)")
         return 0
+    if not AUTO_CUT and not now_flag:
+        w.say(f"skip: auto-cut is off ({len(releasable)} releasable commits since {tag}); cut with `sm daemon train --now`")
+        return 0
     since = max(tag_time, st.get("last_start", 0))
     wait_min = EVERY - (w.now() - since) / 60
     if wait_min > 0 and not now_flag:
@@ -781,7 +799,7 @@ def resume(w, st: dict, dry: bool) -> int:
             if wait_for_incident(w):
                 return 0
             code, tail = 1, f"STOPPED: {exc}"
-        if code != 0:
+        if code != 0 and not accepted(w, version):
             if "another release command is running" in tail or re.search(r"tail of v\S+ is running", tail):
                 w.say("skip: another release command is running")
                 return 0
@@ -947,7 +965,8 @@ def gate(kind, sha, why, verdict="ok", finished=True):
 
 
 def self_test() -> int:
-    global STATE_DIR
+    global STATE_DIR, AUTO_CUT
+    AUTO_CUT = True  # the cut rules; auto-cut off is tested by the plugin's tests
     failures = []
 
     def check(name, cond):

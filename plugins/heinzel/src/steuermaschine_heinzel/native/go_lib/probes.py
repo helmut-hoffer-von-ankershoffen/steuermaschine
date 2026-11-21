@@ -6,7 +6,6 @@ A `World` carries the providers (the runtime of a native call does not cross int
 
 from __future__ import annotations
 
-import glob
 import os
 import re
 import threading
@@ -247,8 +246,7 @@ def rehearsal_state(w: World) -> dict | None:
 
 
 def probe_rehearse(w: World) -> dict[str, Any]:
-    data = rehearsal_state(w)
-    return {} if data is None else {"current": data.get("current"), "last": data.get("last"), "last_green": data.get("last_green")}
+    return {}  # `sm release rehearse` is gone: a rehearsal state left on disk by an older sm is not read
 
 
 def probe_receipts(w: World) -> list[Any]:
@@ -290,8 +288,8 @@ def _alive(pid: int) -> bool:
 
 
 def probe_tools(w: World) -> dict[str, Any]:
-    """What the command tree offers: rehearsal before a cut, and dropping a candidate."""
-    return {"rehearse": True, "drop_candidate": True}
+    """What the command tree offers: dropping a candidate (rehearsal is gone)."""
+    return {"rehearse": False, "drop_candidate": True}
 
 
 def probe_mini(w: World, live: bool = False) -> dict[str, Any]:
@@ -367,22 +365,8 @@ DEFAULT_PACKET_GLOBS: list[str] = []  # a machine's packet directories are its s
 
 
 def probe_packets(w: World, extra: list[str] | None = None) -> list[Any]:
-    """Admission packets by convention (there is no registry of packets): `m-<main8>/` of the direct route and
-    `predict/bound-<main12>/` of the predict -> bind route, plus any packet a running prepare names. Recent ones
-    only, newest first."""
-    horizon = w.now() - float(setting(w, "go_packet_hours", 30)) * 3600
-    names = {name for pattern in packet_globs(w) for name in glob.glob(pattern)}
-    named = {str(Path(p).parent / "wave.json") for p in extra or [] if p and p.startswith("/") and (Path(p).parent / "wave.json").exists()}
-    out = []
-    for name in sorted(names | named, key=os.path.getmtime, reverse=True):
-        path = Path(name)
-        if path.stat().st_mtime < horizon and name not in named:
-            continue
-        try:
-            out.append(read_packet(w, path))
-        except (OSError, ValueError, KeyError) as exc:
-            out.append({"branch": f"unreadable {path}", "head": "", "main": "", "error": str(exc)[:80]})
-    return out
+    """No admission, no packets: `sm head admit` builds none any more, so there is none to list."""
+    return []
 
 
 def read_packet(w: World, wave: Path) -> dict[str, Any]:

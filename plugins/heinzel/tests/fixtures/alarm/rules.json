@@ -193,65 +193,6 @@
   "result": null
  },
  {
-  "case": 26,
-  "function": "rehearsal_alarms",
-  "result": [
-   {
-    "cls": "WARN",
-    "key": "rehearsal:open",
-    "text": "REHEARSAL of main f19a378223 open for 300 min: hz-rehearse step, or hz-rehearse cancel"
-   },
-   {
-    "cls": "ALERT",
-    "key": "rehearsal:da13623068",
-    "text": "REHEARSAL RED main da13623068: web-2 run 5, consumer google run 6 | merges since last green (2): #790 fix a; #791 fix b; hz-rehearse status --json"
-   }
-  ]
- },
- {
-  "case": 27,
-  "function": "rehearsal_alarms",
-  "result": [
-   {
-    "cls": "ALERT",
-    "key": "rehearsal:da13623068",
-    "text": "REHEARSAL RED main da13623068: failures unreadable | no earlier green rehearsal to compare with; hz-rehearse status --json"
-   }
-  ]
- },
- {
-  "case": 28,
-  "function": "rehearsal_alarms",
-  "result": [
-   {
-    "cls": "INFO",
-    "key": "rehearsal:da13623068",
-    "text": "REHEARSAL INCOMPLETE main da13623068: yielded to PR 801; proves nothing, the next tick retries when main moves"
-   }
-  ]
- },
- {
-  "case": 29,
-  "function": "rehearsal_alarms",
-  "result": [
-   {
-    "cls": "WARN",
-    "key": "rehearsal:da13623068",
-    "text": "REHEARSAL INCOMPLETE main da13623068: not every lane ran; proves nothing, the next tick retries when main moves"
-   }
-  ]
- },
- {
-  "case": 30,
-  "function": "rehearsal_alarms",
-  "result": []
- },
- {
-  "case": 31,
-  "function": "rehearsal_alarms",
-  "result": []
- },
- {
   "case": 32,
   "function": "required_contexts",
   "result": [

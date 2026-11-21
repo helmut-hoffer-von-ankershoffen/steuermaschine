@@ -167,20 +167,8 @@ def counting(rt):
     rt.api = logged
 
 
-def test_pr_apply_runs_the_full_proof_once_directly_before_the_write(stuck):
-    rt, prepared, packet, _, proofs = stuck
-    counting(rt)
-    s.apply_prepared(rt, prepared, packet, rt.core, proofs, s.digest(a.canonical(prepared)))
-    events = [e for e in rt.events if e in ('run', 'jobs', 'probe', 'write')]
-    assert events == ['run', 'jobs', 'probe', 'write'] and len(rt.writes) == 1
 
 
-def test_pr_apply_pre_write_proof_catches_jobs_the_timestamps_hide(stuck):
-    rt, prepared, packet, _, proofs = stuck
-    rt.jobs.update(total_count=1, jobs=[{'id': 1}])  # untouched list row, yet a job exists
-    with pytest.raises(a.AdmissionError, match='run has jobs'):
-        s.apply_prepared(rt, prepared, packet, rt.core, proofs, s.digest(a.canonical(prepared)))
-    assert not rt.writes and rt.probes == [] and rt.events[-1] == 'restore'
 
 
 def test_pr_prepare_guard_is_list_only(stuck):

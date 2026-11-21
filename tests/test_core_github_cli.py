@@ -70,9 +70,8 @@ def test_the_models_are_published_as_schemas():
 
 def test_help_contract_and_read_only_marks():
     rows = {row["path"]: row for row in helpdoc.tree(command_tree(rt()), "sm")}
-    mine = [p for p in rows if p.startswith(("sm ci", "sm pr")) and not p.startswith("sm ci window")]  # `ci window status`: commands/window.py
+    mine = [p for p in rows if p.startswith(("sm ci", "sm pr"))]
     assert sorted(mine) == ["sm ci", "sm ci active", "sm ci cancel", "sm ci failed", "sm ci runs", "sm pr", "sm pr checks", "sm pr list", "sm pr sonar", "sm pr status", "sm pr why"]
-    assert rows["sm ci window status"]["read_only"] and not rows["sm ci window status"]["missing"]
     assert not [p for p in mine if rows[p]["missing"]]
     assert [p for p in mine if not rows[p]["read_only"]] == ["sm ci", "sm ci cancel"]  # never offered as a tool without confirmation
     assert "--live" in rows["sm ci cancel"]["options"]

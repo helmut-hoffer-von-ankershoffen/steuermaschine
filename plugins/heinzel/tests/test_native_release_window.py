@@ -1,26 +1,34 @@
-"""The release-window lock: `sm release admit prepare` takes it and leaves it for the review and the apply, a successful
-`sm release admit apply` gives it back, and `sm head validate` waits (exit 75) while it holds, pushing nothing."""
+"""The release-window lock `release admit prepare|apply` takes: kept after a prepare, kept after a failed apply, given back only by its
+own apply, ended by its minutes, and the minutes come from the setting."""
 
 import json
+from pathlib import Path
 
-from test_native_dispatch import lanes, remote, rt  # noqa: F401 - fixtures
+import pytest
 
-from steuermaschine.testing import invoke
-from steuermaschine_heinzel.native import release_admit, release_window, window
+from steuermaschine.app import Runtime
+from steuermaschine.config import Project
+from steuermaschine.plugins import stack_of
+from steuermaschine.testing import fake_providers, invoke
+from steuermaschine_heinzel.native import release_admit, release_window
 from steuermaschine_heinzel.native.release_admit_lib import release_ops
+from steuermaschine_heinzel.plugin import plugin
 
 
-def test_validate_waits_while_a_release_holds_the_window_and_runs_when_it_is_given_back(rt, lanes):  # noqa: F811
-    runtime = rt(commands=remote())
-    hold = release_window.take(runtime, "prepare", "/r/packet.json")
-    held = invoke(runtime, ["head", "validate", "."])
-    assert held.exit_code == 75 and "a release prepare holds the release window (/r/packet.json" in held.stderr and "Nothing was pushed" in held.stderr
-    assert runtime.providers.commands.git == [] and lanes["started"] == [] and window.the_window(runtime).status().waiting == []
-    release_window.give_back(runtime, hold)
-    assert invoke(runtime, ["head", "validate", "."]).exit_code == 0
+@pytest.fixture
+def rt(tmp_path):
+    def build():
+        stack = stack_of(plugin)
+        settings, _ = stack.validate({"heinzel": {"repo": "o/core", "core_repo_dir": str(tmp_path / "clone"), "lock_directory": str(tmp_path / "locks"),
+                                                  "lock_history": str(tmp_path / "history.jsonl")}}, tmp_path)
+        (tmp_path / "locks").mkdir(exist_ok=True)
+        providers = stack.providers(settings, fake_providers())
+        return Runtime(Project(name="t", plugin="heinzel", root=Path("."), plugins=["heinzel"], allow_unreviewed=True), stack, settings, _providers=providers)
+
+    return build
 
 
-def test_the_hold_ends_by_itself_after_its_minutes(rt):  # noqa: F811
+def test_the_hold_ends_by_itself_after_its_minutes(rt):
     runtime = rt()
     hold = release_window.take(runtime, "apply", "p")
     assert hold.until - hold.since == 60 * 60 and release_window.holder(runtime) == hold
@@ -29,7 +37,7 @@ def test_the_hold_ends_by_itself_after_its_minutes(rt):  # noqa: F811
     assert release_window.holder(rt()) is None  # nothing recorded
 
 
-def test_prepare_keeps_the_hold_and_a_successful_apply_gives_it_back(rt, monkeypatch, tmp_path):  # noqa: F811
+def test_prepare_keeps_the_hold_and_a_successful_apply_gives_it_back(rt, monkeypatch, tmp_path):
     runtime = rt()
     runtime.providers.store.put_receipt("verdicts", "a" * 64, {"verdict": "approve", "reviewer": "reviewer-1"})  # apply needs a recorded verdict
 
@@ -50,7 +58,7 @@ def test_prepare_keeps_the_hold_and_a_successful_apply_gives_it_back(rt, monkeyp
     assert done.exit_code == 0 and json.loads(done.stdout)["receipt_path"] == "r.json" and release_window.holder(runtime) is None
 
 
-def test_a_failed_apply_keeps_the_hold(rt, monkeypatch):  # noqa: F811
+def test_a_failed_apply_keeps_the_hold(rt, monkeypatch):
     runtime = rt()
     runtime.providers.store.put_receipt("verdicts", "a" * 64, {"verdict": "approve", "reviewer": "reviewer-1"})  # apply needs a recorded verdict
 
@@ -62,14 +70,14 @@ def test_a_failed_apply_keeps_the_hold(rt, monkeypatch):  # noqa: F811
     assert release_window.holder(runtime).step == "apply"
 
 
-def test_the_minutes_come_from_the_setting(rt):  # noqa: F811
+def test_the_minutes_come_from_the_setting(rt):
     runtime = rt()
     runtime.settings["release_window_minutes"] = 5
     hold = release_window.take(runtime, "prepare", "p")
     assert hold.until - hold.since == 300 and "until" in hold.describe()
 
 
-def test_apply_gives_back_only_its_own_hold(rt, monkeypatch, tmp_path):  # noqa: F811
+def test_apply_gives_back_only_its_own_hold(rt, monkeypatch, tmp_path):
     """S13: the apply of packet A neither clears a later prepare's hold of packet B nor one written while it ran."""
     runtime = rt()
     runtime.providers.store.put_receipt("verdicts", "a" * 64, {"verdict": "approve", "reviewer": "reviewer-1"})  # apply needs a recorded verdict

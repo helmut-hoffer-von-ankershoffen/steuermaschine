@@ -71,7 +71,7 @@ def test_every_command_a_help_or_hint_names_exists(tmp_path):
                 for words in references(node.value, False):
                     if (bad := unresolved(paths, words)) and (where, bad) not in DELIBERATE:
                         missing.append((f"{where}:{node.lineno}", bad))
-    assert missing == []
+    assert missing == [], missing
 
 
 def test_the_walk_resolves_commands_groups_and_arguments():

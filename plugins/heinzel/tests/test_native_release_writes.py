@@ -444,3 +444,30 @@ def test_the_steps_exposed_for_a_pipeline_are_the_runners_steps_in_its_order(tmp
     assert places == sorted(places) and len(places) == len(area.CUT_STEPS)
     for function in ("acquire_global_lock", "route_to_tail", "free_global_lock", "free_tail_lock", "tail_receipt", "state", "remember"):
         assert callable(getattr(module, function))
+
+
+def test_live_runs_the_mini_update_only_after_accepted_and_exits_on_its_proof(tmp_path, monkeypatch):
+    from steuermaschine_heinzel.native import mini
+
+    rt = make(tmp_path, monkeypatch, FakeGh())
+    asked = []
+
+    def proof(w, minimum=None):
+        asked.append(minimum)
+        return mini.MiniVerify(live=minimum == "0.9.41", version=minimum or "", reason="installed v0.9.40 does not satisfy minimum", updated=["kickstarted web"])
+    monkeypatch.setattr(mini, "update", proof)
+    receipt: dict = {}
+    monkeypatch.setattr(area, "receipt_of", lambda module, version: ("tail", receipt))
+    monkeypatch.setattr(area, "run", lambda module, argv: (0, ["ACCEPTED 0.9.41 (run 7)"], []))
+    receipt.update(version="0.9.41", finished=True, accepted=True, acceptance_run=7)
+    out = invoke(rt, ["release", "resume", "0.9.41", "--live"])
+    assert out.exit_code == 0 and out.stdout.splitlines() == ["ACCEPTED 0.9.41 (run 7)", "update: kickstarted web", "plugins: ", "LIVE-OK 0.9.41"] and asked == ["0.9.41"]
+    monkeypatch.setattr(mini, "update", lambda w, minimum=None: mini.MiniVerify(reason="the version served on port 8737 is 0.9.40, the installed one 0.9.41"))
+    out = invoke(rt, ["release", "resume", "0.9.41", "--live"])
+    assert out.exit_code == 1 and out.stdout.splitlines()[-1] == "NOT-LIVE: the version served on port 8737 is 0.9.40, the installed one 0.9.41"
+    receipt.update(accepted=False)  # NOT ACCEPTED, unfinished or stopped: the Mini is never touched
+    monkeypatch.setattr(area, "run", lambda module, argv: (1, ["NOT ACCEPTED 0.9.41 (run 7)"], []))
+    monkeypatch.setattr(mini, "update", lambda *a, **k: pytest.fail("the Mini was touched"))
+    assert invoke(rt, ["release", "resume", "0.9.41", "--live"]).exit_code == 1
+    assert invoke(rt, ["release", "resume", "patch", "--live"]).exit_code == 2
+    assert invoke(rt, ["release", "resume", "0.9.41", "--pause", "--live"]).exit_code == 2

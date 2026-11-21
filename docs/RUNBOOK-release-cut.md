@@ -18,14 +18,13 @@ ci change -> notes -> packet -> admit prepare -> admission review (STOP) -> admi
 | # | What | Command |
 |---|---|---|
 | 1 | Where things stand (read-only) | `sm release status` |
-| 2 | Optional: rehearse the candidate's e2e lanes and plugin Consumer checks against main's tip | `sm release rehearse start --consumers` |
-| 3 | Prepare the release commit and its pair packet in the hooked release clone (`release.sh`, then `sm head manifest`) | see `sm head manifest --help` |
-| 4 | Start the cut (dry) | `sm release cut VERSION --set packet=PACKET.json --set commit_log=LOG --set clone=CLONE --set review_root=ROOT --set intro="WHAT CHANGED FOR USERS"` |
-| 5 | Admission review: a different agent reviews the bytes the cut names and records its verdict | `sm review verdict SHA256 --approve --reviewer NAME --notes "..."` |
-| 6 | Continue with the approved digest | `sm release cut VERSION --approved SHA256 --live` |
-| 7 | Publish review: the same, for the digest the cut names before publishing | `sm review verdict SHA256 --approve --reviewer NAME`, then `sm release cut VERSION --approved SHA256 --live` |
-| 8 | The cut resumes the release (`sm release resume`) and verifies it; run the same command again after a WAITING (exit 75) | `sm release cut VERSION --live` |
-| 9 | After ACCEPTED: the checklist, and the deferred CI of open PRs | `sm release after VERSION`, then `sm release train resume-ci --dry-run` |
+| 2 | Prepare the release commit and its pair packet in the hooked release clone (`release.sh`, then `sm head manifest`) | see `sm head manifest --help` |
+| 3 | Start the cut (dry) | `sm release cut VERSION --set packet=PACKET.json --set commit_log=LOG --set clone=CLONE --set review_root=ROOT --set intro="WHAT CHANGED FOR USERS"` |
+| 4 | Admission review: a different agent reviews the bytes the cut names and records its verdict | `sm review verdict SHA256 --approve --reviewer NAME --notes "..."` |
+| 5 | Continue with the approved digest | `sm release cut VERSION --approved SHA256 --live` |
+| 6 | Publish review: the same, for the digest the cut names before publishing | `sm review verdict SHA256 --approve --reviewer NAME`, then `sm release cut VERSION --approved SHA256 --live` |
+| 7 | The cut resumes the release (`sm release resume`) and verifies it; run the same command again after a WAITING (exit 75) | `sm release cut VERSION --live` |
+| 8 | After ACCEPTED: the checklist, and the deferred CI of open PRs | `sm release after VERSION`, then `sm release train resume-ci --dry-run` |
 
 Inputs of the cut (`--set NAME=VALUE`): `packet`, `commit_log` (its last line is `vX.Y.Z`), `clone`, `review_root`
 and `intro` are required. `release_review` defaults to `RELEASE-REVIEW.md`. `snapshot` defaults to `yes` (acceptance is

@@ -188,11 +188,13 @@ def test_behind_is_updated_again_and_unknown_is_waited_out(tool, monkeypatch, ca
     assert ("sleep", 60) in fake.calls
 
 
-def test_queued_behind_core_merges_only_at_the_checked_head_without_update(tool, monkeypatch):
+def test_queued_behind_core_is_updated_and_never_merged(tool, monkeypatch, capsys):
+    """The tree CI tested must be the tree the squash produces: a Core head behind main is updated, its CI runs again, it is requeued."""
     fake = FakeGh([green(status="BEHIND")])
     train(tool, monkeypatch, fake, queue_core=True)
-    assert not [c for c in fake.calls if c[:2] == ("pr", "update-branch")]
-    assert merged_calls(fake) == [("pr", "merge", "7", "-R", CORE, "--squash", "--match-head-commit", "abcdef123456")]
+    assert len([c for c in fake.calls if c[:2] == ("pr", "update-branch")]) == 1
+    assert not merged_calls(fake)
+    assert "behind main: the branch was updated" in capsys.readouterr().out
 
 
 def test_queued_core_does_not_merge_red_or_conflicted_prs(tool, monkeypatch):
@@ -204,7 +206,7 @@ def test_queued_core_does_not_merge_red_or_conflicted_prs(tool, monkeypatch):
 
 
 def test_queued_core_does_not_retry_a_changed_head_after_merge_rejection(tool, monkeypatch):
-    fake = FakeGh([green(status="BEHIND")], merge_ok=False)
+    fake = FakeGh([green()], merge_ok=False)
     train(tool, monkeypatch, fake, queue_core=True)
     assert len(merged_calls(fake)) == 1
     assert "--match-head-commit" in merged_calls(fake)[0]

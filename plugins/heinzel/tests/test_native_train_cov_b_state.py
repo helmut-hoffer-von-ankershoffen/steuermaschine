@@ -19,6 +19,7 @@ def isolated(tmp_path, monkeypatch):
     monkeypatch.setattr(train, "RECEIPT", tmp_path / "receipt.json")
     monkeypatch.setattr(train, "TAIL_DIR", tmp_path / "tails")
     monkeypatch.setattr(train, "CHECKOUT", tmp_path / "checkout")
+    monkeypatch.setattr(train, "AUTO_CUT", True)
     monkeypatch.setattr(train.edge, "note", lambda text: None)
     return tmp_path
 
