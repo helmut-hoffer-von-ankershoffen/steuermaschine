@@ -31,7 +31,8 @@ def active_train(train_dir=None):
 def read_tail(version, tail_dir):
     """The tail receipt of a version past its tag, or None when it has none (or it cannot be read)."""
     try:
-        data = json.load(open(os.path.join(tail_dir, f"v{version}.json")))
+        with open(os.path.join(tail_dir, f"v{version}.json")) as handle:
+            data = json.load(handle)
     except (OSError, ValueError):
         return None
     return data if isinstance(data, dict) else None
