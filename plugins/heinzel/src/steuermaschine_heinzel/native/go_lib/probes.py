@@ -6,6 +6,7 @@ A `World` carries the providers (the runtime of a native call does not cross int
 
 from __future__ import annotations
 
+import contextlib
 import os
 import re
 import threading
@@ -255,6 +256,7 @@ def probe_receipts(w: World) -> list[Any]:
 
 PIPELINE_KINDS = ("runs.head.admit", "runs.release.cut")
 OPEN = ("finished", "superseded")
+HISTORY_DAYS = 2.0  # a run not updated for this long is history (setting go_history_days): `sm self migrate-state --journal` moves it
 ADMIT_STEPS = ("check", "pr", "queue")  # the steps of `sm head admit` today; a run that names any other is state of the deleted admission
 
 
@@ -267,9 +269,13 @@ def from_deleted_admission(state: dict) -> bool:
 def probe_pipelines(w: World) -> list[Any]:
     """The unfinished pipeline runs, each with what `go` needs to judge it: is the process of a running step alive,
     and where is the worktree's head now (a head run whose worktree moved on is superseded by the next run)."""
+    from steuermaschine.go import is_history
+
     out = []
+    days = float((getattr(w, "settings", None) or {}).get("go_history_days") or HISTORY_DAYS)
+    now = w.now() if hasattr(w, "now") else None
     for state in w.runs:
-        if not isinstance(state, dict) or state.get("status") in OPEN or from_deleted_admission(state):
+        if not isinstance(state, dict) or state.get("status") in OPEN or from_deleted_admission(state) or (now is not None and is_history(state, now, days)):
             continue
         row = {k: state.get(k) for k in ("pipeline", "key", "label", "arg", "status", "phase", "next", "waiting_on", "trap", "running", "pid", "review", "fingerprint")}
         row["external_done"] = any(v.get("status") == "done" and k in ("apply", "pr", "queue", "admit apply", "resume") for k, v in (state.get("steps") or {}).items())
@@ -408,10 +414,8 @@ def read_packet(w: World, wave: Path) -> dict[str, Any]:
                 p["apply_refused"] = None if event.get("result") == "success" else str(event.get("reason") or event.get("result"))
     p.update(prepare_arguments(d, p))
     if p["worktree"]:
-        try:
+        with contextlib.suppress(RuntimeError):
             p["subject"] = w.sh(["git", "-C", p["worktree"], "log", "-1", "--format=%s", p["head"]], timeout=5).strip()[:72] or None
-        except RuntimeError:
-            pass
     return p
 
 
@@ -473,10 +477,8 @@ def prepare_arguments(d: Path, p: dict) -> dict[str, Any]:
     else:
         argv = []
     prepared = None
-    try:
+    with contextlib.suppress(OSError, ValueError):
         prepared = json.loads((d / "prepare.out").read_text())
-    except (OSError, ValueError):
-        pass
     if isinstance(prepared, dict) and "members" in prepared:
         out["unknown_args"].append("--packets/--core-repos/--prs: prepare.out is a batch transaction, which cannot be rebuilt from one packet")
         return out
@@ -491,8 +493,7 @@ def prepare_arguments(d: Path, p: dict) -> dict[str, Any]:
             else:
                 out["unknown_args"].append("--expected-remote-head: prepare.out has a pr_update without its old SHA")
     named = [Path(str(recorded.get("cwd") or d)) / argv[i + 1] for i, a in enumerate(argv[:-1]) if a == "--nonconsumers"]
-    texts = _loop_scripts(d, p.get("review_root") or "") + [d / "prepare.err"] + sorted(
-        list(d.glob("*.md")) + list(d.glob("*.log")) + list(d.glob("*.sh")) + list(d.glob("*.cmd")))
+    texts = [*_loop_scripts(d, p.get("review_root") or ""), d / "prepare.err", *sorted(list(d.glob("*.md")) + list(d.glob("*.log")) + list(d.glob("*.sh")) + list(d.glob("*.cmd")))]
     for extra in texts:
         try:
             named += _named_nonconsumers(extra.read_text(errors="replace"), d)

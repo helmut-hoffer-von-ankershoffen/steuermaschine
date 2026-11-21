@@ -9,7 +9,8 @@ Every command and group starts its help with five lines, in this order:
 Strict: every argument and option says what it is (its own help text); the lint names the ones that do not (letter A).
 The lines come in the order above (letter O; a long line may wrap onto the next), and the example types the program,
 or feeds it from a pipe (`... | sm ...`) (letter X).
-Hidden commands follow the contract too. The lint walks the built command tree (it never runs a command). Output format is not part of a command's help:
+Hidden commands follow the contract too; the root of a declared surface has the `sm -h` contract instead (surface.py).
+The lint walks the built command tree (it never runs a command). Output format is not part of a command's help:
 the root option --format text|json applies to every command.
 """
 
@@ -77,19 +78,30 @@ def walk(command: Any, path: str) -> Any:
         yield from walk(child, f"{path} {name}")
 
 
+def hidden_paths(command: Any, path: str, below: bool = False) -> set[str]:
+    """The paths that are hidden themselves or sit below a hidden group."""
+    hidden = below or bool(getattr(command, "hidden", False))
+    out = {path} if hidden else set()
+    for name, child in (getattr(command, "commands", None) or {}).items():
+        out |= hidden_paths(child, f"{path} {name}", hidden)
+    return out
+
+
 def tree(root: Any, prog: str, writes: dict[str, bool] | None = None) -> list[dict[str, Any]]:
     """The command tree as data: the one source for help lint, and later for MCP tools and generated skills.
     `writes` (path -> bool) is what a command declares (`writes=` of a native command, a pipeline, a core writer); it
     decides `read_only`. A command that declares nothing is read-only when its Changes line says nothing (read-only)."""
     rows, writes = [], writes or {}
+    hidden = hidden_paths(root, prog)
     for path, command, is_group in walk(root, prog):
         text = (command.help or "").replace("\b", "").strip()
         opts = sorted(o for p in command.params for o in getattr(p, "opts", []) if o.startswith("--"))
         args = [p.name for p in command.params if not any(o.startswith("-") for o in getattr(p, "opts", []))]
-        rows.append({"path": path, "group": is_group, "hidden": bool(getattr(command, "hidden", False)), "purpose": text.splitlines()[0] if text else "",
+        rows.append({"path": path, "group": is_group, "default": str(getattr(command, "sm_default", "") or ""), "hidden": path in hidden, "purpose": text.splitlines()[0] if text else "",
                      "help": text, "options": opts, "arguments": args, "declared": path in writes,
                      "read_only": (not writes[path]) if path in writes and not is_group else bool(READ_ONLY.search(text)),
-                     "missing": missing(text) + disorder(text, prog) + ("A" if (bare := undocumented(command)) else ""), "undocumented": bare})
+                     "missing": "" if getattr(command, "sm_surface", False) else missing(text) + disorder(text, prog) + ("A" if undocumented(command) else ""),
+                     "undocumented": undocumented(command)})
     return rows
 
 
@@ -116,3 +128,16 @@ def disagrees(row: dict[str, Any]) -> str:
 
 def lint(root: Any, prog: str) -> list[str]:
     return [line for row in tree(root, prog) if (line := finding(row))]
+
+
+def markdown(rows: list[dict[str, Any]], prog: str) -> str:
+    """A Markdown command reference from `tree` rows: one section per command with its purpose and the Use, Changes and
+    Example lines of its help. Groups are headings of their own; the order is the tree's."""
+    out = [f"# `{prog}` command reference", "", f"Generated from the command tree by `{prog} self doc`; do not edit by hand.", ""]
+    for row in rows:
+        depth = len(row["path"].split())
+        lines = [ln.strip() for ln in row["help"].splitlines() if ln.strip()]
+        keep = [ln for ln in lines[1:6] if WHEN.match(ln) or ln.startswith(("Changes:", "Example:"))]
+        out += [f"{'#' * min(depth + 1, 4)} `{row['path']}`" + (" (writes)" if not row["read_only"] and not row["group"] else ""), "", row["purpose"], ""]
+        out += [f"- {ln}" for ln in keep] + ([""] if keep else [])
+    return "\n".join(out).rstrip() + "\n"

@@ -11,7 +11,6 @@ from steuermaschine.native import Group, native, runtime
 
 from .tasks_lib import beads
 
-
 TASKS = Group("beads tasks", H(
     "beads tasks: create, note, claim, schedule, close and list beads with this project's conventions.",
     "Use for every owner message that is an ask (add --ask), and whenever a bead's state, owner or pull request changes.",
@@ -31,7 +30,7 @@ ID = typer.Argument(..., metavar="ID", help="The bead id, full or the short suff
     "due-YYYYMMDD-HHMM in local time."))
 def beads_tasks_add(title: str = typer.Argument(..., metavar="TITLE", help="The bead title, one line."), priority: str = typer.Option("2", "-p", "--priority", metavar="N", help="0 (highest) to 4."),
                     agent: str = typer.Option("", "-a", "--assignee", metavar="AGENT", help="Who works on it."),
-                    labels: str = typer.Option("", "-l", "--labels", metavar="A,B", help="Labels, comma-separated."),
+                    labels: list[str] | None = typer.Option(None, "-l", "--labels", metavar="LABEL", help="A label."),
                     due: str | None = typer.Option(None, "--due", metavar="WHEN", help="HH:MM today, or YYYY-MM-DD HH:MM."),
                     description: str = typer.Option("", "-d", "--description", metavar="TEXT", help="The owner's words."),
                     kind: str = typer.Option("task", "--type", metavar="TYPE", help="task, bug, feature, ..."),
@@ -39,7 +38,7 @@ def beads_tasks_add(title: str = typer.Argument(..., metavar="TITLE", help="The 
     if not title.strip():
         raise Refuse("give a title", 'sm beads tasks add "title"', code=USAGE)
     try:
-        return beads.Tracker(runtime()).add(title, priority, agent, labels, due, description, kind, ask)
+        return beads.Tracker(runtime()).add(title, priority, agent, ",".join(labels or []), due, description, kind, ask)
     except LookupError as exc:
         raise Refuse(f"the bead exists, but the tracking document has no asks table (no line starts with '{exc.args[0]}'): add the row by hand", "sm doc ask TEXT") from None
 

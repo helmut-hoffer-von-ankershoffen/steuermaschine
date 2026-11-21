@@ -177,3 +177,59 @@ def top_friction(commands: list[CommandStat], repeated: list[ReasonStat], gate: 
         found.append(Friction(item=f"the gate made commands wait {gate.wait_hours} h in {gate.runs} runs", minutes=round(gate.wait_hours * 60, 1),
                               bead="sm: cut the gate wait (fewer heavy commands in parallel or a shorter hold)"))
     return sorted(found, key=lambda f: (-f.minutes, f.item))[:3]
+
+
+# ----------------------------------------------------------------------------- trusted call counts (the deletion clock)
+class CallCount(Model):
+    command: str
+    calls: int
+    last: str = ""  # the last day with a call, YYYY-MM-DD
+    hidden: bool = False
+
+
+class CallsReport(Model):
+    """`sm self stats --calls`: calls per command over the window, every command of the tree listed (zero too).
+    Trusted only when the counts cover the whole window: a command with 0 calls in a trusted report is unused."""
+
+    days: int
+    since: str  # the first day of the window
+    covered_from: str  # the first day the counts hold; "" when there are none
+    trusted: bool
+    calls: int
+    commands: list[CallCount]
+
+    def render(self) -> list[str]:
+        head = (f"calls in the last {self.days} days (since {self.since}): {self.calls}; "
+                + ("TRUSTED: the counts cover the whole window" if self.trusted else
+                   f"NOT TRUSTED: the counts start {self.covered_from or 'nowhere'}, after the window starts"))
+        return [head, *[f"  {c.calls:>6}  {c.command}{'  (hidden)' if c.hidden else ''}{'  last ' + c.last if c.last else ''}" for c in self.commands]]
+
+
+def read_calls(folder: Path) -> list[tuple[str, str]]:
+    """(day, command) of every counted call in the calls files of `folder`; broken lines are skipped."""
+    out: list[tuple[str, str]] = []
+    for path in sorted(folder.glob("*.tsv")) if folder.is_dir() else []:
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        for line in text.splitlines():
+            parts = line.split("\t")
+            if len(parts) >= 2 and len(parts[0]) == 10:
+                out.append((parts[0], parts[1]))
+    return out
+
+
+def calls(rows: list[tuple[str, str]], tree: dict[str, bool], days: int = 30, now: datetime | None = None) -> CallsReport:
+    """`tree`: command path (without the program name) -> hidden; every one of them is listed."""
+    since = ((now or datetime.now(UTC)) - timedelta(days=days)).strftime("%Y-%m-%d")
+    covered = min((day for day, _ in rows), default="")
+    window = [(day, command) for day, command in rows if day >= since]
+    count = Counter(command for _, command in window)
+    last: dict[str, str] = {}
+    for day, command in window:
+        last[command] = max(day, last.get(command, ""))
+    names = sorted(set(tree) | set(count))
+    found = [CallCount(command=n, calls=count.get(n, 0), last=last.get(n, ""), hidden=tree.get(n, False)) for n in names]
+    return CallsReport(days=days, since=since, covered_from=covered, trusted=bool(covered) and covered <= since, calls=len(window),
+                       commands=sorted(found, key=lambda c: (-c.calls, c.command)))

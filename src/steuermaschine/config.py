@@ -95,6 +95,8 @@ class Environment(BaseSettings):
     steuermaschine_agent: str | None = _var("STEUERMASCHINE_AGENT", "Default of --as: who drives a pipeline run.")
     sm_caller: str | None = _var("SM_CALLER", "Who runs the command (a coordinator or an agent id), written to the invocation log; unset: unknown.")
     pytest_current_test: str | None = _var("PYTEST_CURRENT_TEST", "Set by pytest: the real process runner then refuses pushes and GitHub writes.")
+    steuermaschine_old_names: str | None = _var("STEUERMASCHINE_OLD_NAMES", "1: a renamed old name runs its old command instead of the stub (the tests of that"
+                                                " command; an escape hatch for a job that still calls one). The name stays hidden.")
     sm_test_allow_local_push: str | None = _var("SM_TEST_ALLOW_LOCAL_PUSH", "Tests only: the one command (first two words) the runner may run anyway.")
 
 
