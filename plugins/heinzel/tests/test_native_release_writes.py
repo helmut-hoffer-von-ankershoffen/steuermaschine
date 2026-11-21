@@ -456,18 +456,25 @@ def test_live_runs_the_mini_update_only_after_accepted_and_exits_on_its_proof(tm
         asked.append(minimum)
         return mini.MiniVerify(live=minimum == "0.9.41", version=minimum or "", reason="installed v0.9.40 does not satisfy minimum", updated=["kickstarted web"])
     monkeypatch.setattr(mini, "update", proof)
+    from steuermaschine_heinzel.native import release_ios
+
+    tested = []
+    monkeypatch.setattr(release_ios, "after_accepted", lambda w, version: tested.append(version) or [f"IOS NOT-CLEAN {version}: testflight upload exited 70"])
     receipt: dict = {}
     monkeypatch.setattr(area, "receipt_of", lambda module, version: ("tail", receipt))
     monkeypatch.setattr(area, "run", lambda module, argv: (0, ["ACCEPTED 0.9.41 (run 7)"], []))
     receipt.update(version="0.9.41", finished=True, accepted=True, acceptance_run=7)
     out = invoke(rt, ["release", "resume", "0.9.41", "--live"])
-    assert out.exit_code == 0 and out.stdout.splitlines() == ["ACCEPTED 0.9.41 (run 7)", "update: kickstarted web", "plugins: ", "LIVE-OK 0.9.41"] and asked == ["0.9.41"]
+    # A TestFlight failure is reported beside LIVE-OK and leaves the exit code alone (its alarm is the signal).
+    assert out.exit_code == 0 and out.stdout.splitlines() == ["ACCEPTED 0.9.41 (run 7)", "update: kickstarted web", "plugins: ", "LIVE-OK 0.9.41",
+                                                              "IOS NOT-CLEAN 0.9.41: testflight upload exited 70"] and asked == ["0.9.41"] == tested
     monkeypatch.setattr(mini, "update", lambda w, minimum=None: mini.MiniVerify(reason="the version served on port 8737 is 0.9.40, the installed one 0.9.41"))
     out = invoke(rt, ["release", "resume", "0.9.41", "--live"])
-    assert out.exit_code == 1 and out.stdout.splitlines()[-1] == "NOT-LIVE: the version served on port 8737 is 0.9.40, the installed one 0.9.41"
+    assert out.exit_code == 1 and out.stdout.splitlines()[-2] == "NOT-LIVE: the version served on port 8737 is 0.9.40, the installed one 0.9.41"
     receipt.update(accepted=False)  # NOT ACCEPTED, unfinished or stopped: the Mini is never touched
     monkeypatch.setattr(area, "run", lambda module, argv: (1, ["NOT ACCEPTED 0.9.41 (run 7)"], []))
     monkeypatch.setattr(mini, "update", lambda *a, **k: pytest.fail("the Mini was touched"))
+    monkeypatch.setattr(release_ios, "after_accepted", lambda *a, **k: pytest.fail("TestFlight was touched"))
     assert invoke(rt, ["release", "resume", "0.9.41", "--live"]).exit_code == 1
     assert invoke(rt, ["release", "resume", "patch", "--live"]).exit_code == 2
     assert invoke(rt, ["release", "resume", "0.9.41", "--pause", "--live"]).exit_code == 2

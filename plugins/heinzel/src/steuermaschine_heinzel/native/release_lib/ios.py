@@ -251,7 +251,7 @@ def publish(w: Any, version: str, core_repo: Path, work_root: Path, wait_seconds
         fresh_checkout(w, core_repo, checkout, result.revision)
         work.mkdir(parents=True, exist_ok=True)
         developer = w.settings.get("ios_developer_dir")
-        env = child_environment(**({"DEVELOPER_DIR": str(Path(str(developer)).expanduser())} if developer else {}))
+        env = child_environment(DEVELOPER_DIR=str(Path(str(developer)).expanduser())) if developer else child_environment()
         ctx = Context(w=w, version=version, checkout=checkout, work=work, env=env, result=result)
         marketing, options = tag_facts(ctx)
         rows = ctx.rows()
