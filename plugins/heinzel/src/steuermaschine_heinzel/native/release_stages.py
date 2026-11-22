@@ -184,16 +184,23 @@ def window_path(home: Path | None = None) -> Path:
     return (home or Path.home()) / ".cache" / "sm-core-release-window"
 
 
-def open_window(version: str, now: float, home: Path | None = None) -> None:
+def open_window(version: str, now: float, home: Path | None = None) -> bool:
+    """Open the window of VERSION; True when this call wrote it (a resume of the same release keeps the earlier one)."""
     path = window_path(home)
-    with contextlib.suppress(OSError):
+    wrote = False
+    with contextlib.suppress(OSError, ValueError):  # a corrupt window file never stops a release resume: it is rewritten
         path.parent.mkdir(parents=True, exist_ok=True)
         stamp = datetime.fromtimestamp(now, UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-        saved = json.loads(path.read_text()) if path.is_file() else {}
-        if saved.get("version") != version:  # a resume of the same release keeps the time of its cut
+        try:
+            saved = json.loads(path.read_text()) if path.is_file() else {}
+        except ValueError:
+            saved = {}  # unreadable: start the window of this release afresh
+        if not isinstance(saved, dict) or saved.get("version") != version:  # a resume of the same release keeps the time of its cut
             partial = path.with_suffix(".partial")
             partial.write_text(json.dumps({"version": version, "opened": stamp}) + "\n")
             partial.replace(path)
+            wrote = True
+    return wrote
 
 
 def close_window(version: str, home: Path | None = None) -> None:

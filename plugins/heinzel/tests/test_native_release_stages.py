@@ -97,3 +97,13 @@ def test_the_driver_holds_the_window_from_an_unfinished_resume_to_live_ok(monkey
     done.accepted = False
     release.release_resume("0.9.56", **options, live=False)
     assert seen == ["close 0.9.56"]  # finished without an acceptance: no LIVE-OK will come
+
+
+def test_a_corrupt_window_file_is_rewritten_and_never_stops_a_resume(tmp_path):
+    path = st.window_path(tmp_path)
+    path.parent.mkdir(parents=True)
+    for junk in ("{not json", "[1, 2]", ""):
+        path.write_text(junk)
+        assert st.open_window("0.9.60", 1_000_000.0, tmp_path) is True
+        assert json.loads(path.read_text())["version"] == "0.9.60"
+    assert st.open_window("0.9.60", 2_000_000.0, tmp_path) is False  # a resume of the same release keeps its time

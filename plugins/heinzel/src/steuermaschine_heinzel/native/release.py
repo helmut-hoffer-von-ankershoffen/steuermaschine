@@ -245,9 +245,15 @@ def release_resume(
         raise Refuse("--live goes with resuming an exact X.Y.Z only", "sm release resume 0.9.53 --live", code=2)
     module = runner()
     exact = action == "resume" and bool(EXACT.fullmatch(version))
-    if exact and not receipt_of(module, version)[1].get("finished"):
-        release_stages.open_window(version, world().now())  # the sm follower swaps no `sm` until LIVE-OK
-    code, lines, errors = run(module, argv)
+    opened = exact and not receipt_of(module, version)[1].get("finished") and release_stages.open_window(version, world().now())  # the sm follower swaps no `sm` until LIVE-OK
+    try:
+        code, lines, errors = run(module, argv)
+    except BaseException:  # a refused combination ran nothing: it leaves no window behind
+        if opened:
+            release_stages.close_window(version)
+        raise
+    if opened and code == 2:
+        release_stages.close_window(version)
     done = outcome(module, action, version, code, lines, errors)
     if exact and done.finished and not done.accepted:
         release_stages.close_window(version)
