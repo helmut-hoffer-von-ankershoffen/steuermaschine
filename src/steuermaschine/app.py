@@ -346,7 +346,7 @@ def _review(rt: Runtime, app: typer.Typer, hidden: bool = False) -> None:
     @review.command("verdict", context_settings=CTX, short_help="Record your verdict on one digest. For the reviewer, never the author.", help=H(
         "Record your verdict on one digest. For the reviewer, never the author.",
         "Use after you reviewed the exact bytes named in a reviewer brief.",
-        "writes one verdict receipt on this machine; it cannot be changed afterwards.",
+        "writes one verdict on this machine; it cannot be changed afterwards (with --head: once per reviewer and head, and a reject blocks the digest at every head).",
         f"{PROG} review verdict 3f2a...64 --approve --reviewer reviewer-1 --notes \"digest recomputed; scope matches\"",
         "tell the coordinator; they run the pipeline command with --approved SHA256"))
     def verdict(digest: str = typer.Argument(..., metavar="SHA256", help="The digest named in the reviewer brief."),
@@ -355,6 +355,8 @@ def _review(rt: Runtime, app: typer.Typer, hidden: bool = False) -> None:
                 reviewer: str = typer.Option(..., "--reviewer", metavar="NAME", help="Who reviewed; must differ from the run's author."),
                 model: str = typer.Option("", "--model", help="The reviewer's model, recorded as evidence."),
                 notes: str = typer.Option("", "--notes", help="What was checked and what was not."),
+                head: str = typer.Option("", "--head", metavar="SHA", help="The commit this verdict is for (the brief names it): only a verdict for exactly the head being admitted "
+                                         "counts, a reviewer records once per head, and a rejection blocks the digest at every head until the protected bytes change."),
                 kind: str = typer.Option("", "--kind", metavar="KIND", help="ci_change: a strong review of a commit whose CI paths changed since the last "
                                          "release (the release gate asks for it; needs --model and --notes naming the paths)."),
                 as_json: bool = JSON) -> None:
@@ -375,6 +377,13 @@ def _review(rt: Runtime, app: typer.Typer, hidden: bool = False) -> None:
         data = {"digest": digest, "verdict": "approve" if approve else "reject", "reviewer": reviewer, "model": model, "notes": notes, "at": rt.providers.clock.now()}
         if kind:
             data["kind"] = kind
+        if head:
+            try:
+                verdicts.record_head_verdict(store, digest, head, data)
+            except FileExistsError:
+                fail(f"{reviewer} already recorded a verdict for {digest[:12]} at {head[:12]} and it cannot be changed")
+            emit(as_json, data, [f"recorded: {data['verdict']} {digest} at {head[:12]} by {reviewer}"], models.Verdict)
+            return
         try:
             store.put_receipt("verdicts", digest, data)
         except FileExistsError:

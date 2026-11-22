@@ -66,6 +66,6 @@ def pyproject_weakens(base_text: str | None, head_text: str | None) -> bool:
 
 def record(blobs: dict[str, str]) -> tuple[str, str]:
     """(digest, text) of the review record: each protected path with the id of its content at the head (`removed` when the head
-    deletes it). The verdict follows the content, not the commit: an update of the branch that leaves these files alone keeps it."""
+    deletes it). The digest follows the content; the verdict is recorded for the commit (`sm review verdict --head`): a new head needs a new verdict."""
     text = json.dumps({"protected": dict(sorted(blobs.items()))}, indent=1, sort_keys=True) + "\n"
     return hashlib.sha256(text.encode()).hexdigest(), text

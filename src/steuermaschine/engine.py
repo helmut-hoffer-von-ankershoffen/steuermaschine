@@ -74,6 +74,33 @@ class Step:
     gates: tuple[str, ...] = ()  # names of gates that must hold before `run`
 
 
+VERDICT_LEDGER = "review.verdicts"  # state: the verdicts of one digest at one head, per reviewer (`sm review verdict --head`)
+REJECT_LEDGER = "review.rejects"  # state: every reject of a digest at any head; it blocks until the protected content (the digest) changes
+
+
+def record_head_verdict(store: Any, digest: str, head: str, data: dict[str, Any]) -> None:
+    """Add a verdict for (digest, head). Write-once per (digest, head, reviewer): FileExistsError when that reviewer has one
+    there already, so a reject can never be overwritten. A reject also blocks the digest at every head."""
+    with store.lock(f"{VERDICT_LEDGER}.{digest}"):
+        entries = (store.load(VERDICT_LEDGER, f"{digest}.{head}") or {}).get("entries", [])
+        if any(e.get("reviewer") == data.get("reviewer") for e in entries):
+            raise FileExistsError(f"{data.get('reviewer')} already has a verdict for {digest[:12]} at {head[:12]}")
+        store.save(VERDICT_LEDGER, f"{digest}.{head}", {"entries": [*entries, dict(data, head=head)]})
+        if data.get("verdict") != "approve":
+            rejects = (store.load(REJECT_LEDGER, digest) or {}).get("entries", [])
+            store.save(REJECT_LEDGER, digest, {"entries": [*rejects, dict(data, head=head)]})
+
+
+def head_verdict(store: Any, digest: str, head: str) -> dict[str, Any] | None:
+    """The verdict that counts for (digest, head): a reject of the digest at ANY head blocks (until the protected content, so the
+    digest, changes); else the newest approval recorded for exactly this head. An approval for another head never counts."""
+    rejects = (store.load(REJECT_LEDGER, digest) or {}).get("entries", [])
+    if rejects:
+        return dict(rejects[0])
+    entries = (store.load(VERDICT_LEDGER, f"{digest}.{head}") or {}).get("entries", [])
+    return dict(max(enumerate(entries), key=lambda ie: (str(ie[1].get("at", "")), ie[0]))[1]) if entries else None
+
+
 DIGEST_KIND = "review.digests"  # state: what is known about a digest under review (its authors; "check": the receipt an approval of it needs)
 CHECKS = "checks"  # receipts, one per commit: the cheap checks of that commit were green (written once, by a plugin's check command)
 
@@ -158,6 +185,7 @@ class ReviewStop:
     trap: str = "The digest alone is not a review: a different agent must record the verdict."
     external: bool = False
     gates: tuple[str, ...] = ()
+    head: Callable[[Ctx], str] | None = None  # the commit the verdict is for: only a verdict recorded for exactly it counts
 
 
 @dataclass
@@ -392,6 +420,7 @@ class Engine:
             try:
                 if isinstance(step, ReviewStop):
                     digest, brief, *rest = step.subject(ctx)
+                    for_head = step.head(ctx) if step.head else ""
                     under_review = str(rest[0]) if rest and rest[0] else ""
                     rec = steps.get(step.name, {})
                     if rec.get("status") == "done" and (rec.get("digest") == digest or frozen):
@@ -404,13 +433,13 @@ class Engine:
                         say(f"{tag} done: nothing to review")
                         save()
                         continue
-                    record = f"{PROG} review verdict {digest} --approve --reviewer NAME"
+                    record = f"{PROG} review verdict {digest} --approve --reviewer NAME" + (f" --head {for_head}" if for_head else "")
                     spent = {r.get("digest") for n, r in steps.items() if n != step.name and r.get("status") == "done"}
                     approved = "" if opts.approved in spent else opts.approved  # a digest an earlier stop consumed is not this stop's
                     if not approved:
                         head = f"File under review: {under_review}\nsha256 (canonical): {digest}\n\n" if under_review else f"sha256: {digest}\n\n"
                         where = self.p.agents.brief("reviewer", f"{pipeline.id}-{step.name.replace(' ', '-')}-{subject.key[:12]}",
-                                                    head + brief + _verdict_lines(digest, ctx.author))
+                                                    head + brief + _verdict_lines(digest, ctx.author, for_head))
                         steps[step.name] = {"status": "waiting", "detail": digest, "digest": digest, "brief": where, "file": under_review}
                         say(f"{tag} STOP. These bytes need an independent review (a different agent, not {ctx.author}).")
                         if under_review:
@@ -425,9 +454,9 @@ class Engine:
                     if approved != digest:
                         raise Refuse(f"--approved {opts.approved[:12]}... is not the digest of the bytes under review ({digest}). "
                                      "Changed bytes need a new verdict", cmd, USAGE)
-                    verdict = store.get_receipt("verdicts", digest)
+                    verdict = head_verdict(store, digest, for_head) if for_head else store.get_receipt("verdicts", digest)
                     if not verdict:
-                        raise Refuse(f"no verdict is recorded for {digest}: the digest alone is not a review", record)
+                        raise Refuse(f"no verdict is recorded for {digest}" + (f" at head {for_head[:12]}" if for_head else "") + ": the digest alone is not a review", record)
                     if verdict.get("verdict") != "approve":
                         raise Refuse(f"the recorded verdict for {digest[:12]} is '{verdict.get('verdict')}' by {verdict.get('reviewer')}: "
                                      f"{verdict.get('notes', '')}. Change the work; new bytes get a new review", cmd)
@@ -502,10 +531,11 @@ def done_all(steps: dict[str, Any], names: list[str]) -> bool:
     return all(steps.get(n, {}).get("status") == "done" for n in names)
 
 
-def _verdict_lines(digest: str, author: str) -> str:
+def _verdict_lines(digest: str, author: str, head: str = "") -> str:
+    at = f" --head {head}" if head else ""
     return (f"\n\nYou are the reviewer. You are not {author} and you did not produce these bytes. You change nothing else.\n"
-            f"Record your verdict with exactly one of:\n  {PROG} review verdict {digest} --approve --reviewer YOUR_NAME --notes \"what you checked\"\n"
-            f"  {PROG} review verdict {digest} --reject --reviewer YOUR_NAME --notes \"why\"\n")
+            f"Record your verdict with exactly one of:\n  {PROG} review verdict {digest} --approve --reviewer YOUR_NAME{at} --notes \"what you checked\"\n"
+            f"  {PROG} review verdict {digest} --reject --reviewer YOUR_NAME{at} --notes \"why\"\n")
 
 
 class _nolock:

@@ -7,7 +7,7 @@ A Core PR merges only when all of these hold for the exact PINNED head:
 3. when the head changes a protected path against main (`native/protected.py`: `.github/`, the release, publish, PyPI and
    acceptance scripts, the gate scripts, Makefile, uv.lock, the coverage and pytest config, quarantine.toml, conftest.py,
    Core's own execution inputs), a protected-review verdict exists, recorded by a different agent
-   of exactly those files' content (the digest `sm head admit` stops at, `sm review verdict`): an update of the branch that leaves them alone keeps it.
+   of exactly those files' content (the digest `sm head admit` stops at, `sm review verdict --head`), at exactly the pinned head: a new head needs a new verdict.
 
 `queue add` does not evaluate the rule: it queues, and the merge-time guard decides. Fail closed: any unreadable fact is a
 refusal that names it.
@@ -85,7 +85,7 @@ def _verdict(head: str, blobs: dict[str, str]) -> str:
         verdicts = importlib.import_module("steuermaschine.verdicts")
         go = importlib.import_module("steuermaschine.go")
         store = native.runtime().providers.store
-        verdicts.require_independent(store, digest, go.run_states(store), f"sm review verdict {digest} --approve --reviewer NAME --model M")
+        verdicts.require_independent(store, digest, go.run_states(store), f"sm review verdict {digest} --approve --reviewer NAME --model M --head {head}", head=head)
     except Refuse as refused:
         return f"{refused.message}: changed protected paths {', '.join(paths[:6])}"
     except Exception as error:  # noqa: BLE001 - fail closed: no readable store, no verdict
