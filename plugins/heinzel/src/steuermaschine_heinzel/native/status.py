@@ -23,7 +23,7 @@ from steuermaschine.native import native, runtime
 
 from .go import world
 from .go_lib import legacy, probes
-from .status_lib import gate, table
+from .status_lib import gate, owner, prtable, table
 
 DEFAULT_REPOS = {"heinzel": "", "heinzel-plugins": "plugins ", "heinzel-acme": "acme "}
 
@@ -37,6 +37,8 @@ class StatusSettings(BaseModel):
     status_gate_notes: dict[str, str] = Field(default={}, description="Repositories without a readable gate: name -> the one line shown for it.")
     status_doc_cap_bytes: int = Field(16 * 1024, description="`sm status --write`: the size the tracking document may not grow past; older checkpoints and log lines move out.")
     status_keep_checkpoints: int = Field(3, description="`sm status --write`: the newest checkpoints that stay in the tracking document.")
+    status_pr_repos: list[str] = Field(default=prtable.DEFAULT_REPOS, description="Repositories of `sm status --prs` and the owner update (same owner as `repo`).")
+    status_decisions_file: Path | None = Field(None, description="The owner's open decisions, one per line (`- [ ] text`; `- [x]` is closed); `sm status --owner` lists the open ones.")
 
 
 class StatusGate(Model):
@@ -133,6 +135,56 @@ def slots(w: probes.World) -> tuple[StatusSlots | None, str]:
                        heads_left=free // table.HEAD_BYTES, source=source), ""
 
 
+class PrTable(Model):
+    """`sm status --prs`: every open pull request of every repository, over gh, nothing stored."""
+
+    rows: list[prtable.PrRow] = []
+    unknown: list[str] = []
+
+    def render(self) -> list[str]:
+        return prtable.render(self.rows) + [f"UNKNOWN  {u}" for u in self.unknown]
+
+
+def collect_prs(w: probes.World) -> PrTable:
+    owner_name = w.repo.split("/")[0]
+    now = datetime.fromtimestamp(w.now(), UTC)
+    repos = list(w.settings.get("status_pr_repos") or prtable.DEFAULT_REPOS)
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        got = list(pool.map(lambda repo: prtable.fetch(w.gh, owner_name, repo, now), repos))
+    return PrTable(rows=[r for rows, _ in got for r in rows], unknown=[why for _, why in got if why])
+
+
+def collect_owner(w: probes.World, since: str) -> owner.OwnerUpdate:
+    from .tasks_lib import beads
+
+    s = w.settings
+    owner_name = w.repo.split("/")[0]
+    now = w.now()
+    try:
+        began = owner.since_of(since, now)
+    except ValueError as exc:
+        raise Refuse(f"--since {since!r}: {exc}", "sm status --owner --since 2h", code=2) from None
+    repos = list(s.get("status_pr_repos") or prtable.DEFAULT_REPOS)
+    unknown: list[str] = []
+    prs = collect_prs(w)
+    unknown += prs.unknown
+    releases, why = owner.releases_since(w.gh, owner_name, repos, began)
+    unknown += why
+    today, yesterday, why_merged = owner.merged_counts(w.gh, owner_name, repos, now)
+    unknown += [why_merged] if why_merged else []
+    counts: dict[str, int] = {}
+    try:
+        tracker = beads.Tracker(runtime())
+        counts = {"open": len(tracker.jl("open")), "in progress": len(tracker.jl("in_progress")), "blocked": len(tracker.jl("blocked")), "ready": len(tracker.jl(ready=True))}
+    except Refuse as exc:
+        unknown.append(f"beads: {exc}")
+    path = s.get("status_decisions_file")
+    decisions, source = owner.read_decisions(Path(str(path)).expanduser() if path else None)
+    return owner.OwnerUpdate(now=owner.stamp(now), since=owner.stamp(began), releases=releases, repos=[owner.repo_summary(r, prs.rows) for r in repos], beads=counts,
+                             main_ci=owner.main_ci_line(probes.main_runs(w, 1), now), merged_today=today, merged_yesterday=yesterday, decisions=decisions,
+                             decisions_source=source, unknown=unknown)
+
+
 def collect(w: probes.World, view: str = "table", check: bool = False) -> Status:
     s = w.settings
     fetch = getattr(runtime().providers, "extra", {}).get("http_fetch") or urllib_fetch  # the one HTTP GET function; a test injects a fake
@@ -173,7 +225,7 @@ def collect(w: probes.World, view: str = "table", check: bool = False) -> Status
     "Use for the hourly owner update and the handoff, and when you need every open pull request on one screen.",
     "without --write nothing (GitHub reads only). With --write: caps the tracking document (older checkpoints and log lines move to"
     " the dated log file) and writes the hourly facts; with --write --live also commits and pushes the handoff.",
-    "sm status            (markdown: sm status --md; every hour: sm status --write --live)",
+    "sm status            (markdown: sm status --md; all repositories: sm status --prs; the 2-hourly owner update: sm status --owner; every hour: sm status --write --live)",
     "sm why NUMBER for one pull request under Needs work.",
     "The first lines are the merge gate: Sonar ratings, coverage, what main requires. `<<< NOT A`, `RED`, `BYPASS` or\n"
     "`NO RULESET` is what to act on. Then `Focused slots`: bytes used per registry variable and about how many heads\n"
@@ -181,14 +233,29 @@ def collect(w: probes.World, view: str = "table", check: bool = False) -> Status
     "diagnostic `Focused ...` run never put a pull request under Needs work; the checks merge-gate and coverage-floor\n"
     "do only once main requires them. A pull request without a row in the action table prints NO OWNER.\n"
     "--write takes over the hourly update, the handoff and the checkpoint upkeep (the old `doc hour`, `doc handoff`): the\n"
-    "tracking document never grows past the setting status_doc_cap_bytes; the newest status_keep_checkpoints stay."))
+    "tracking document never grows past the setting status_doc_cap_bytes; the newest status_keep_checkpoints stay.\n"
+    "--prs: one table over gh of every repository (setting status_pr_repos): merge state, CI (the advisory review check and\n"
+    "Focused runs never count), Sonar, unresolved review threads, age as a duration, author. Nothing is stored.\n"
+    "--owner [--since 2h]: the owner update, rendered from reads only: releases since the time, pull requests per repository,\n"
+    "bead counts, main's CI, merges today against yesterday, and the open lines of the decisions file (status_decisions_file)."))
 def status(md: bool = typer.Option(False, "--md", help="Markdown tables, for the handoff document."),
            check: bool = typer.Option(False, "--check", help="Exit 1 when a pull request has no owner."),
            stale: bool = typer.Option(False, "--stale", help="Only the pull requests unchanged for more than six hours."),
            write: bool = typer.Option(False, "--write", help="Cap the tracking document and write the hourly facts (local)."),
-           live: bool = typer.Option(False, "--live", help="With --write: also commit and push the handoff.")) -> Status:
+           live: bool = typer.Option(False, "--live", help="With --write: also commit and push the handoff."),
+           prs: bool = typer.Option(False, "--prs", help="One table of the open pull requests of every repository: state, CI, Sonar, unresolved threads, age, author."),
+           owner_update: bool = typer.Option(False, "--owner", help="The 2-hourly owner update: releases, pull requests per repository, beads, main CI, merges, open decisions."),
+           since: str = typer.Option("2h", "--since", metavar="TIME", help="With --owner: releases since 2h, 90m, 1d or an ISO time with its zone.")) -> Status | PrTable | owner.OwnerUpdate:
     if live and not write:
         raise Refuse("--live goes with --write", "sm status --write --live", code=2)
+    if prs and owner_update:
+        raise Refuse("--prs and --owner are two views; pick one", "sm status --owner", code=2)
+    if (prs or owner_update) and write:
+        raise Refuse("--write goes with the plain status view", "sm status --write", code=2)
+    if owner_update:
+        return collect_owner(world(), since)
+    if prs:
+        return collect_prs(world())
     found = collect(world(), "stale" if stale else "markdown" if md else "table", check)
     if write:
         found.written = write_document(live, found)

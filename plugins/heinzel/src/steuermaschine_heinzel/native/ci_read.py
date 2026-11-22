@@ -154,6 +154,11 @@ class FailLog(Model):
     unknown: list[str] = []
     read_only: bool = True
 
+    @property
+    def verbatim(self) -> bool:
+        """Log lines are what CI printed: their stamps stay as they are."""
+        return True
+
     def render(self) -> list[str]:
         if self.lines:
             return self.lines

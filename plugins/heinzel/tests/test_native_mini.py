@@ -39,6 +39,10 @@ class Mini:
         c.on(["hz", "system", "daemon"], lambda argv: Result(0, json.dumps(self.daemon)))
         c.on(["hz", "system", "doctor"], lambda argv: Result(0, json.dumps(self.doctor)))
         c.on(["hz", "system", "plugin"], lambda argv: Result(0, json.dumps(self.plugins)))
+        self.ps = "  500     1 02:00:00 /opt/hz/bin/hz ui serve --port 8737\n"  # the owned backend only
+        self.listener = "p500\n"
+        c.on(["ps"], lambda argv: Result(0, self.ps))
+        c.on(["lsof"], lambda argv: Result(0, self.listener))
         c.on(["curl"], lambda argv: Result(0, self.codes.get(argv[-1], "000")))
         stack = stack_of(plugin)
         table = {"legacy_state_dir": str(self.state), **({"mini_remote_url": remote} if remote else {})}
@@ -62,7 +66,7 @@ def test_live_ok_prints_the_five_lines_of_the_old_tool(tmp_path):
     assert out.stdout.splitlines() == ["latest=0.9.39 cli=0.9.39", "web=0.9.39 web_ok=True daemon=0.9.39 daemon_ok=True acceptance_run=43158281029",
                                        "local=200 tail=200 doctor=healthy", "plugins: google=0.9.1/pypi", "LIVE-OK 0.9.39"]
     assert "never shown" not in out.stdout
-    assert {argv[0] for argv in m.commands.calls} == {"hz", "curl"} and not [a for a in m.commands.calls if a[0] == "hz" and a[1] not in ("--version", "ui", "system")]
+    assert {argv[0] for argv in m.commands.calls} == {"hz", "curl", "ps", "lsof"} and not [a for a in m.commands.calls if a[0] == "hz" and a[1] not in ("--version", "ui", "system")]
 
 
 def test_json_is_one_document_of_the_model(tmp_path):
@@ -258,3 +262,40 @@ def test_update_stops_when_a_kickstart_fails_and_refuses_a_loose_minimum(tmp_pat
     out = update_run(m)
     assert out.exit_code == 1 and out.stdout.splitlines()[-1].startswith("NOT-LIVE: launchctl kickstart -k io.github.")
     assert update_run(m, "--minimum", "0.9").exit_code == 2
+
+
+def test_extra_and_stale_ui_serve_processes_are_warned_about_with_pid_age_and_version(tmp_path):
+    m = Mini(tmp_path)
+    m.ps += ("  611     1 3-04:05:06 /Users/x/.local/share/uv/tools/heinzel/0.9.31/bin/hz ui serve --port 8800\n"
+             "  612   611 01:00 /opt/hz/bin/python -m other\n"
+             "  700     1 05:00 /opt/hz/bin/hz ui serve --port 8737\n")
+    out = m.run()
+    assert out.exit_code == 0 and out.stdout.splitlines()[-1] == "LIVE-OK 0.9.39", out  # a warning never changes the proof
+    warn = [line for line in out.stdout.splitlines() if line.startswith("WARN")]
+    assert len(warn) == 2
+    assert "pid 611 age 3d 4h version 0.9.31 (STALE: installed is 0.9.39)" in warn[0] and "owned backend is pid 500" in warn[0]
+    assert "pid 700 age 5m version unknown" in warn[1] and "STALE" not in warn[1]
+
+
+def test_the_launcher_and_workers_of_the_owned_backend_are_not_extra(tmp_path):
+    m = Mini(tmp_path)
+    m.ps = ("  400     1 05:00 /opt/hz/bin/hz ui serve --port 8737\n  500   400 05:00 /opt/hz/bin/python hz ui serve --port 8737\n"
+            "  501   500 05:00 /opt/hz/bin/python worker\n")
+    assert not [line for line in m.run().stdout.splitlines() if line.startswith("WARN")]
+
+
+def test_unreadable_processes_and_a_missing_owner_are_said_not_hidden(tmp_path):
+    m = Mini(tmp_path)
+    m.commands.on(["ps"], Result(1, "", "boom"))
+    assert "WARN  serve processes unread (ps exited 1)" in m.run().stdout
+    m = Mini(tmp_path / "b")
+    m.listener = ""
+    m.ps = "  611     1 05:00 /opt/hz/bin/hz ui serve --port 8800\n"
+    assert "nobody listens on port 8737" in m.run().stdout
+
+
+def test_update_reports_the_same_warnings(tmp_path):
+    m = Mini(tmp_path)
+    m.ps += "  611     1 05:00 /opt/hz/bin/hz ui serve --port 8800\n"
+    out = invoke(m.rt, ["mini", "update"])
+    assert "WARN  extra `ui serve` pid 611" in out.stdout and out.stdout.splitlines()[-1] == "LIVE-OK 0.9.39"

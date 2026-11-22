@@ -21,6 +21,7 @@ from . import merge_tier
 from .go_lib import legacy, probes
 from .queue_lib import core_facts
 from .release_lib import ios
+from .why_lib import threads as review_threads
 
 REQUIRED = core_facts.CONTEXTS  # the required contexts of Core's release policy at main
 
@@ -65,6 +66,8 @@ class PullRequestWhy(Model):
     gate_notes: list[str] = []  # clauses of the merge gate's verdict that only inform (Core ADR 0149): never red
     advisory_failing: dict[str, list[str]] = {}  # advisory lane -> its failing names (consumers: the plugins)
     ios: str = ""  # the newest release's TestFlight step (release_lib/ios.py): build and group, or NOT-CLEAN
+    threads: list[review_threads.Thread] = []  # unresolved review threads (read only when BLOCKED with every check green)
+    threads_unread: str = ""  # why they could not be read
     why: str = ""
     more: list[str] = Field([], description="`sm why PR` with a red check: the CI cause and, for a red merge gate, Sonar's verdict.")
 
@@ -76,6 +79,8 @@ class PullRequestWhy(Model):
         out.append(f"  {self.main_run.line() if self.main_run else 'main run: ?'}")
         out.append(f"  last tick waiting: {self.queue_waits_on}" if self.queue_waits_on else "  ")
         out += [f"  gate note (not red): {note}" for note in self.gate_notes]
+        out += [f"  unresolved thread: {t.line_text()}" for t in self.threads]
+        out += [f"  review threads unread: {self.threads_unread}"] if self.threads_unread else []
         out.append("  role: " + (", ".join(self.roles) or ("standalone" if self.roles_known else "unknown (no combine member lists configured)")))
         if self.ios:
             out.append(f"  {self.ios}")
@@ -97,13 +102,16 @@ def per_name(runs: list[dict[str, Any]], names: Any = REQUIRED) -> list[CheckSta
     return out
 
 
-def verdict(number: int, state: str, merge_state: str, checks: list[CheckState], item: dict[str, Any] | None, frozen: bool, holds: list[Any], main_ok: bool) -> str:
+def verdict(number: int, state: str, merge_state: str, checks: list[CheckState], item: dict[str, Any] | None, frozen: bool, holds: list[Any], main_ok: bool,
+            threads: list[review_threads.Thread] | None = None) -> str:
     """The single most likely reason, in the order a person would test it."""
     if state != "OPEN":
         return f"nothing: PR is {state}"
     bad = [c.name for c in checks if c.latest != "SUCCESS"]
     if bad:
         return f"required check not green: {', '.join(bad)}"
+    if merge_state == "BLOCKED" and threads:
+        return review_threads.reason(threads)
     dups = [c.name for c in checks if c.older_not_green]
     if merge_state == "BLOCKED" and dups:
         return (f"GitHub BLOCKED with all latest required checks green and an older failed duplicate on {', '.join(dups)}: duplicate is the only "
@@ -170,9 +178,13 @@ def explain(w: probes.World, number: int) -> PullRequestWhy:
     main_ok = bool(main) and main.status == "completed" and main.conclusion == "success" and "not green" not in blocked
     found, known = roles(w.settings.get("why_combine_members_glob"), number)
     notes = gate_notes(runs_of_head)
+    state, merge_state = str(pr.get("state") or ""), str(pr.get("mergeStateStatus") or "")
+    found_threads, unread = ([], "")
+    if state == "OPEN" and merge_state == "BLOCKED" and all(c.latest == "SUCCESS" for c in checks):  # green but BLOCKED: look for the reason beyond CI
+        found_threads, unread = review_threads.read(w.gh, w.repo, number)
     return PullRequestWhy(number=number, state=str(pr.get("state") or ""), head=sha, merge_state=str(pr.get("mergeStateStatus") or ""), title=str(pr.get("title") or ""),
                           checks=checks, queue=f"{item['status']} {str(item.get('detail', ''))[:50]}" if item else "not queued", freeze=frozen, release_holds=holds,
                           main_run=main, queue_waits_on=blocked, roles=found, roles_known=known, gate_notes=notes.info,
-                          advisory_failing=notes.advisory_failing, ios=ios.summary(ios.latest_receipt(w.state_dir)),
-                          why=verdict(number, pr.get("state", "?"), pr.get("mergeStateStatus", "?"), checks, item, frozen, holds, main_ok))
+                          advisory_failing=notes.advisory_failing, ios=ios.summary(ios.latest_receipt(w.state_dir)), threads=found_threads, threads_unread=unread,
+                          why=verdict(number, pr.get("state", "?"), pr.get("mergeStateStatus", "?"), checks, item, frozen, holds, main_ok, found_threads))
 

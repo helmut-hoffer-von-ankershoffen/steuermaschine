@@ -19,6 +19,7 @@ import io
 import os
 import pwd
 import tempfile
+import time
 from pathlib import Path
 
 import pytest
@@ -101,6 +102,16 @@ def _real_files_untouched():
 @pytest.fixture(autouse=True)
 def _quiet_machine(monkeypatch):
     monkeypatch.setattr(os, "getloadavg", lambda: (1.0, 1.0, 1.0))
+
+
+@pytest.fixture(autouse=True)
+def _utc_zone(monkeypatch):
+    """Text output shows local time with its zone (steuermaschine.localtime): the zone of a test is UTC, never the machine's."""
+    monkeypatch.setenv("TZ", "UTC")
+    time.tzset()
+    yield
+    monkeypatch.undo()
+    time.tzset()
 
 
 @pytest.fixture(autouse=True)
