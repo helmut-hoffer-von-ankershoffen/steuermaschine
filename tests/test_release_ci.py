@@ -162,6 +162,7 @@ def test_loops_are_the_agents_that_run_the_stable_sm(tmp_path):
 
 
 WHEELS = {"steuermaschine": b"core-wheel", "steuermaschine-heinzel": b"plugin-wheel"}
+T0 = 1_800_000_000.0  # the follower's clock in these tests
 
 
 def wheel_name(name: str, version: str = "0.0.3") -> str:
@@ -257,8 +258,14 @@ def test_the_follower_installs_the_pypi_wheel_pair_switches_and_restarts_loops(f
     stable, clone, home, cand = follower
     api_get = fake_api(cand, repo=clone, releases=release_assets())
     calls: list = []
-    msg = rc.follow(stable, clone, home, fake_run(calls), api_get, fake_pypi(), fetcher())
-    assert msg.startswith("v0.0.3 (") and "is live from the PyPI wheels; restarted 1 loop(s)" in msg
+    msg = rc.follow(stable, clone, home, fake_run(calls), api_get, fake_pypi(), fetcher(), now=T0)
+    assert msg.startswith("v0.0.3 (") and "is the canary" in msg and "builders stay on" in msg
+    assert os.readlink(stable / "current") != "releases/v0.0.3" and os.readlink(stable / "canary") == "releases/v0.0.3"
+    assert not [c for c in calls if c[0] == "launchctl"]  # installed beside the live one; nothing restarted
+    assert "is the canary for 100s more" in rc.follow(stable, clone, home, fake_run([]), api_get, fake_pypi(), fetcher(), now=T0 + 200)
+    msg = rc.follow(stable, clone, home, fake_run(calls), api_get, fake_pypi(), fetcher(), now=T0 + 300)
+    assert "passed its canary tick and is live for all from the PyPI wheels; restarted 1 loop(s)" in msg
+    assert not (stable / "canary").exists() and not (stable / "canary.json").exists()
     assert os.readlink(stable / "current") == "releases/v0.0.3" and (stable / "previous").is_symlink()
     assert os.readlink(home / ".local" / "bin" / "sm") == str(stable / "bin" / "sm")
     meta = json.loads((stable / "releases" / "v0.0.3" / "release.json").read_text())
@@ -268,7 +275,7 @@ def test_the_follower_installs_the_pypi_wheel_pair_switches_and_restarts_loops(f
     assert ("uv", "venv", "--quiet", "--managed-python", "--python", "3.15", str(stable / "releases" / "v0.0.3" / "venv")) in calls
     assert calls[-1][:3] == ("launchctl", "kickstart", "-k") and calls[-1][3].endswith("/q")
     assert (stable / "releases" / "v0.0.3" / "live-at").is_file()
-    assert rc.follow(stable, clone, home, fake_run([]), api_get, fake_pypi(), fetcher()) == "v0.0.3 is live"
+    assert rc.follow(stable, clone, home, fake_run([]), api_get, fake_pypi(), fetcher(), now=T0 + 400) == "v0.0.3 is live"
     import promote_verdict as pv
     assert pv.promoted_base(stable, clone) == cand  # the fallback bin/promote still finds the reviewed base of a wheel release
 
@@ -324,15 +331,16 @@ def test_a_switch_held_by_a_running_step_waits_and_the_next_run_switches(followe
     cand = git(clone, "rev-parse", "HEAD")
     api_get = fake_api(cand, repo=clone, releases=release_assets())
     calls: list = []
-    with pytest.raises(rc.Wait, match="the next run switches"):
-        rc.follow(stable, clone, home, fake_run(calls), api_get, fake_pypi(), fetcher())
+    assert "is the canary" in rc.follow(stable, clone, home, fake_run(calls), api_get, fake_pypi(), fetcher(), now=T0)
+    with pytest.raises(rc.Wait, match="the next run swaps"):
+        rc.follow(stable, clone, home, fake_run(calls), api_get, fake_pypi(), fetcher(), now=T0 + 300)
     assert not [c for c in calls if c[0] == "launchctl"] and (stable / "current").resolve().name != "v0.0.3"
     lib.write_text(lib.read_text().replace("wait_idle() { return 1; }\n", ""))
     git(clone, "commit", "-q", "-am", "chore: idle")
     git(clone, "tag", "-f", "v0.0.3")
     api_get = fake_api(git(clone, "rev-parse", "HEAD"), repo=clone, releases=release_assets())
     calls.clear()
-    assert "is live" in rc.follow(stable, clone, home, fake_run(calls), api_get, fake_pypi(), fetcher())
+    assert "is live" in rc.follow(stable, clone, home, fake_run(calls), api_get, fake_pypi(), fetcher(), now=T0 + 600)
     assert not [c for c in calls if c[:2] == ("uv", "venv")]  # the installed, smoked release is switched, not rebuilt
 
 
@@ -515,3 +523,98 @@ def test_the_workflow_releases_both_packages_in_lockstep_and_marks_latest_only_a
     assert flow.count("skip-existing: true") == 2 and "workflow_dispatch" not in flow
     assert "uv version --package steuermaschine-heinzel" in flow and "Requires-Dist: steuermaschine==${VERSION}" in flow
     assert "timings.json" in flow
+
+
+# ----------------------------------------------------------------------------- the gate: a squash of a branch behind main
+def behind_branch_squash(repo: Path, extra: bool = False) -> tuple[str, str]:
+    """PR head c branched from v0.0.2 (main moved on to b since); the squash on main is b plus c (plus d when EXTRA)."""
+    git(repo, "checkout", "-q", "-b", "pr", "v0.0.2")
+    (repo / "c").write_text("c")
+    git(repo, "add", "c")
+    git(repo, "commit", "-q", "-m", "fix: c")
+    head = git(repo, "rev-parse", "HEAD")
+    git(repo, "checkout", "-q", "main")
+    (repo / "c").write_text("c")
+    if extra:
+        (repo / "d").write_text("not reviewed")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-q", "-m", "fix: c (#7)")
+    return git(repo, "rev-parse", "HEAD"), head
+
+
+def test_a_squash_of_a_branch_behind_main_is_what_was_reviewed(repo):
+    sha, head = behind_branch_squash(repo)
+    assert git(repo, "rev-parse", f"{sha}^{{tree}}") != git(repo, "rev-parse", f"{head}^{{tree}}")  # the old identity refused it
+    assert rc.verify(repo, sha, fake_api(sha, head=head, repo=repo), rc.sh) == (7, head, "rita")
+
+
+def test_a_squash_that_adds_what_the_head_did_not_hold_is_refused(repo):
+    sha, head = behind_branch_squash(repo, extra=True)
+    with pytest.raises(rc.Refused, match=r"is neither the head .* nor that head merged onto the squash's base"):
+        rc.verify(repo, sha, fake_api(sha, head=head, repo=repo), rc.sh)
+
+
+# ----------------------------------------------------------------------------- canary, Core window, rollback
+def to_canary(follower, calls, smoke=FAKE_SM):
+    stable, clone, home, cand = follower
+    api_get = fake_api(cand, repo=clone, releases=release_assets())
+    assert "is the canary" in rc.follow(stable, clone, home, fake_run(calls, smoke), api_get, fake_pypi(), fetcher(), now=T0)
+    return api_get
+
+
+def test_an_exit_70_of_the_canary_rejects_it_and_builders_never_leave_the_live_release(follower):
+    stable, clone, home, _cand = follower
+    calls: list = []
+    api_get = to_canary(follower, calls)
+    before = os.readlink(stable / "current")
+    (stable / "exits.log").write_text(f"{int(T0) + 10} v0.0.3 70\n{int(T0) + 20} {before.split('/')[-1]} 70\n")
+    with pytest.raises(rc.Alarm, match="REJECTED by its canary tick: 1 exit 70 of the canary"):
+        rc.follow(stable, clone, home, fake_run(calls), api_get, fake_pypi(), fetcher(), now=T0 + 300)
+    assert os.readlink(stable / "current") == before and not (stable / "canary").exists()
+    assert ("gh", "release", "edit", "v0.0.3", "--repo", rc.REPO, "--prerelease", "--latest=false") in calls
+    assert "was rejected here" in rc.follow(stable, clone, home, fake_run([]), api_get, fake_pypi(), fetcher(), now=T0 + 600)
+    assert rc.main.__module__ and not [c for c in calls if c[0] == "launchctl"]
+
+
+def test_a_red_probe_of_the_canary_rejects_it(follower):
+    stable, clone, home, _cand = follower
+    calls: list = []
+    api_get = to_canary(follower, calls)
+    bad = stable / "releases" / "v0.0.3" / "venv" / "bin" / "steuermaschine"
+    bad.write_text(FAKE_SM.replace("plugin: heinzel (loaded)", "plugin: None"))
+    with pytest.raises(rc.Alarm, match="REJECTED by its canary tick: smoke: sm self config"):
+        rc.follow(stable, clone, home, fake_run(calls), api_get, fake_pypi(), fetcher(), now=T0 + 300)
+
+
+def test_no_swap_between_a_core_cut_and_its_live_ok(follower, monkeypatch):
+    stable, clone, home, _cand = follower
+    api_get = to_canary(follower, [])
+    window = home / ".cache" / "sm-core-release-window"
+    window.parent.mkdir(parents=True)
+    window.write_text(json.dumps({"version": "0.9.56", "opened": rc.now_stamp(T0)}))
+    held = rc.follow(stable, clone, home, fake_run([]), api_get, fake_pypi(), fetcher(), now=T0 + 300)
+    assert "the swap waits: Core v0.9.56 is between its cut" in held and os.readlink(stable / "canary") == "releases/v0.0.3"
+    window.write_text(json.dumps({"version": "0.9.56", "opened": rc.now_stamp(T0 - rc.WINDOW_MAX_SECONDS - 1)}))  # stale: holds nothing
+    assert "is live for all" in rc.follow(stable, clone, home, fake_run([]), api_get, fake_pypi(), fetcher(), now=T0 + 600)
+
+
+def test_a_tool_stall_after_the_swap_rolls_back_by_symlink(follower):
+    stable, clone, home, _cand = follower
+    (clone / "bin" / "rollback").write_text((BIN / "rollback").read_text())
+    calls: list = []
+    api_get = to_canary(follower, calls)
+    before = os.readlink(stable / "current")
+    assert "is live for all" in rc.follow(stable, clone, home, fake_run(calls), api_get, fake_pypi(), fetcher(), now=T0 + 300)
+    (stable / "exits.log").write_text(f"{int(T0) + 400} v0.0.3 70\n")
+    assert rc.follow(stable, clone, home, fake_run([]), api_get, fake_pypi(), fetcher(), now=T0 + 500) == "v0.0.3 is live"  # one is no stall
+    with (stable / "exits.log").open("a") as fh:
+        fh.write(f"{int(T0) + 700} v0.0.3 70\n")
+    with pytest.raises(rc.Alarm, match=r"ROLLED BACK to .*tool-stall alarm, 2 exit 70"):
+        rc.follow(stable, clone, home, fake_run(calls), api_get, fake_pypi(), fetcher(), now=T0 + 800)
+    assert os.readlink(stable / "current") == before and (stable / "rejected" / "v0.0.3").is_file()
+    assert "was rejected here" in rc.follow(stable, clone, home, fake_run([]), api_get, fake_pypi(), fetcher(), now=T0 + 900)
+
+
+def test_the_stall_rule_counts_two_tool_errors_within_ten_minutes():
+    assert not rc.stalled([]) and not rc.stalled([0.0]) and not rc.stalled([0.0, 601.0])
+    assert rc.stalled([0.0, 600.0]) and rc.stalled([0.0, 1000.0, 1300.0])

@@ -60,3 +60,29 @@ def test_a_pin_outside_this_install_is_ignored(tmp_path):
     assert run(root, str(foreign))[0] == "a"
     assert run(root, str(root / "releases" / "b" / "venv"))[0] == "a"  # deeper than one release
     assert run(root, str(tmp_path / "missing"))[0] == "a"
+
+
+def run_env(root: Path, **env: str) -> subprocess.CompletedProcess:
+    base = {k: v for k, v in os.environ.items() if not k.startswith("STEUERMASCHINE_")}
+    return subprocess.run([str(root / "bin" / "sm")], capture_output=True, text=True, env={**base, **env}, check=False)
+
+
+def test_only_an_sm_started_with_the_canary_flag_runs_the_canary(tmp_path):
+    root = layout(tmp_path)
+    (root / "canary").symlink_to("releases/b")
+    assert run_env(root).stdout.split()[0] == "a"  # a builder stays on current
+    assert run_env(root, STEUERMASCHINE_CANARY="1").stdout.split()[0] == "b"
+    (root / "canary").unlink()
+    foreign = release(tmp_path / "elsewhere", "evil")
+    (root / "canary").symlink_to(foreign)
+    assert run_env(root, STEUERMASCHINE_CANARY="1").stdout.split()[0] == "a"  # a canary outside this install is ignored
+
+
+def test_the_launcher_passes_the_exit_code_on_and_logs_each_tool_error(tmp_path):
+    root = layout(tmp_path)
+    entry = root / "releases" / "a" / "venv" / "bin" / "steuermaschine"
+    entry.write_text("#!/bin/sh\nexit ${CODE}\n")
+    assert run_env(root, CODE="1").returncode == 1 and not (root / "exits.log").exists()  # a refusal is no tool error
+    assert run_env(root, CODE="70").returncode == 70
+    stamp, name, code = (root / "exits.log").read_text().split()
+    assert stamp.isdigit() and (name, code) == ("a", "70")

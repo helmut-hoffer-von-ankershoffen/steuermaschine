@@ -1,5 +1,8 @@
 """The stage table of `sm why VERSION`: pure rows from facts, the recorded rows that outlive expired runs, the LIVE-OK mark."""
 
+import inspect
+import json
+
 from steuermaschine_heinzel.native import release_stages as st
 
 
@@ -54,3 +57,43 @@ def test_why_version_prints_the_stage_table(monkeypatch):
     assert "STAGES" in out and any("candidate CI" in line for line in out) and out[-1].lstrip().startswith("TOTAL")
     monkeypatch.setattr(why_subject, "world", lambda: (_ for _ in ()).throw(RuntimeError("down")))
     assert why_subject.stage_table("0.9.54") == []
+
+
+def test_the_core_release_window_opens_at_the_cut_and_closes_only_for_its_version(tmp_path):
+    st.open_window("0.9.56", 1795320000.0, tmp_path)
+    path = st.window_path(tmp_path)
+    opened = json.loads(path.read_text())
+    assert opened == {"version": "0.9.56", "opened": "2026-11-22T04:00:00Z"}
+    st.open_window("0.9.56", 1795329999.0, tmp_path)  # a later resume keeps the time of the cut
+    assert json.loads(path.read_text()) == opened
+    st.close_window("0.9.55", tmp_path)
+    assert path.is_file()
+    st.close_window("0.9.56", tmp_path)
+    assert not path.exists()
+
+
+def test_the_driver_holds_the_window_from_an_unfinished_resume_to_live_ok(monkeypatch, tmp_path):
+    from steuermaschine_heinzel.native import release
+
+    params = inspect.signature(release.release_resume).parameters
+    options = {n: getattr(p.default, "default", p.default) for n, p in params.items() if n not in ("version", "live")}
+    seen: list[str] = []
+    monkeypatch.setattr(st, "open_window", lambda v, now, home=None: seen.append(f"open {v}"))
+    monkeypatch.setattr(st, "close_window", lambda v, home=None: seen.append(f"close {v}"))
+    monkeypatch.setattr(st, "mark_live", lambda *a: seen.append("live"))
+    monkeypatch.setattr(release, "runner", lambda: object())
+    monkeypatch.setattr(release, "run", lambda module, argv: (0, [], []))
+    monkeypatch.setattr(release, "world", lambda: type("W", (), {"now": lambda self: 1.0, "state_dir": tmp_path})())
+    monkeypatch.setattr(release.release_ios, "after_accepted", lambda w, v: [])
+    monkeypatch.setattr(release.mini, "update", lambda w, v: type("P", (), {"render": lambda self: ["LIVE-OK " + v], "exit_code": 0, "live": True})())
+    receipts = {"finished": False}
+    monkeypatch.setattr(release, "receipt_of", lambda module, v: ("candidate", dict(receipts)))
+    done = release.ReleaseRun(action="resume", version="0.9.56", exit=0, stopped="", steps=[], stands="tail", finished=True, accepted=True)
+    monkeypatch.setattr(release, "outcome", lambda *a: done)
+    release.release_resume("0.9.56", **options, live=True)
+    assert seen == ["open 0.9.56", "live", "close 0.9.56"]
+    seen.clear()
+    receipts["finished"] = True  # resuming a finished release opens nothing
+    done.accepted = False
+    release.release_resume("0.9.56", **options, live=False)
+    assert seen == ["close 0.9.56"]  # finished without an acceptance: no LIVE-OK will come

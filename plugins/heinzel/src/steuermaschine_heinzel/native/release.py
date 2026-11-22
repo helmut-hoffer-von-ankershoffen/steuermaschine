@@ -244,13 +244,19 @@ def release_resume(
     if live and (action != "resume" or not EXACT.fullmatch(version)):
         raise Refuse("--live goes with resuming an exact X.Y.Z only", "sm release resume 0.9.53 --live", code=2)
     module = runner()
+    exact = action == "resume" and bool(EXACT.fullmatch(version))
+    if exact and not receipt_of(module, version)[1].get("finished"):
+        release_stages.open_window(version, world().now())  # the sm follower swaps no `sm` until LIVE-OK
     code, lines, errors = run(module, argv)
     done = outcome(module, action, version, code, lines, errors)
+    if exact and done.finished and not done.accepted:
+        release_stages.close_window(version)
     if live and done.exit == 0 and done.finished and done.accepted:
         proof = mini.update(world(), done.version)
         done.live, done.exit = proof.render(), proof.exit_code
         if proof.live:
             release_stages.mark_live(world().state_dir, done.version, world().now())
+            release_stages.close_window(done.version)
         done.ios = release_ios.after_accepted(world(), done.version)
     return done
 
