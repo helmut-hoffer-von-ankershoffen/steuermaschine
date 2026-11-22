@@ -23,7 +23,7 @@ Checks, in the order they run (every one runs, so one pass names every finding):
   standards   the repository-wide standards tests
   tests       the hook's early guards and the selector's tests of the changed paths
   bound       HEAD and the tree are still what the checks began with
-Coverage and the whole-project type checks are not run here: PR CI's `CI OK` enforces them before merge (owner decision 2026-11-21: fast local checks, CI is the gate). Every
+Coverage and the whole-project type checks are not run here: PR CI enforces them before merge (owner decision 2026-11-21: fast local checks, CI is the gate). Every
 step either runs or fails.
 """
 from __future__ import annotations

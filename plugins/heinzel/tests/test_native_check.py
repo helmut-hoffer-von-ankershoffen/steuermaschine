@@ -122,7 +122,7 @@ def test_a_types_step_with_no_slot_or_a_timeout_fails_and_writes_no_receipt(core
 
 def test_the_receipt_names_the_steps_that_ran_and_says_coverage_and_types_are_ci_enforced(core, rt):  # noqa: F811
     found = report(invoke(rt(src_change(core)), ["--format", "json", "check", str(core)]))
-    assert found.ready and found.receipt and "Steps run: " in found.receipt_note and "types" in found.receipt_note and "CI OK enforces" in found.receipt_note
+    assert found.ready and found.receipt and "Steps run: " in found.receipt_note and "types" in found.receipt_note and "PR CI enforces" in found.receipt_note
 
 
 def test_a_real_type_error_and_a_busy_type_check_both_fail(core, rt):  # noqa: F811

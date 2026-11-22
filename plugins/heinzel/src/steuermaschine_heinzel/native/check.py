@@ -110,7 +110,7 @@ def extra_tests(sel: Path | None) -> list[str]:
     "Everything here is fast: each command runs in a fast slot of the run lock (up to three at once, any load, never exclusive)\n"
     "and is stopped after 150 s. The whole unit suite, integration and e2e never run here; PR CI runs them.\n"
     "Coverage and the whole-project type checks never run here: owner decision 2026-11-21, fast local checks and CI is the\n"
-    "gate (PR CI's CI OK enforces 90 % coverage and whole-project mypy/pyright before merge). Types run over the changed\n"
+    "gate (PR CI enforces 90 % coverage and whole-project mypy/pyright before merge). Types run over the changed\n"
     "files only. Every step runs or fails: no slot (75) or a timeout (124) in any step, types included, fails, never skips.\n"
     "A src/ change with no selected test fails. The receipt lists the steps that ran and says coverage and whole-project\n"
     "types are CI-enforced.\n"
@@ -160,6 +160,6 @@ def check(worktree: Path | None = typer.Argument(None, metavar="WORKTREE", help=
         report.receipt = state in ("written", "kept")
         report.receipt_note = (f"{verdicts.CHECKS} {c.sha} ({'written' if state == 'written' else 'this commit already had one'}), measured from {c.base_sha[:12]}: "
                                "an approval of this exact commit on that base can be recorded. Steps run: " + ", ".join(s.name for s in report.steps if s.status != SKIP)
-                               + "; coverage and whole-project types did not run here: PR CI's CI OK enforces them" if report.receipt else f"none that counts: {state}")
+                               + "; coverage and whole-project types did not run here: PR CI enforces them" if report.receipt else f"none that counts: {state}")
     providers.store.save(SUMMARY_KIND, c.sha, report.model_dump(mode="json"))
     return report
