@@ -79,7 +79,7 @@ def test_the_plugins_repository_is_recognised_by_its_origin():
     assert not gs.is_plugins("helmut-hoffer-von-ankershoffen/heinzel") and not gs.is_plugins("x/heinzel-plugins-extra")
 
 
-def test_the_freshness_check_is_the_repositorys_own_offline_command(repo):
+def test_the_freshness_check_is_the_own_repository_offline_command(repo):
     rt = runtime([FRESH])
     assert gs.stale(rt.providers.commands, repo) == []
     assert rt.providers.commands.calls[0] == [*pg.FROZEN, "screenshots-check", "--all", "--json"]
@@ -142,3 +142,59 @@ def test_a_fresh_clean_worktree_ships_unchanged(repo):
     rt = runtime([FRESH])
     assert gs.into_head(rt, repo) == []
     assert check_module.plugins_check(rt, repo).steps[0].detail.startswith("every screenshot gallery is fresh")
+
+
+def test_the_freshness_report_is_the_last_readable_json_line_and_anything_else_refuses(repo):
+    ok = gs.stale(Commands([STALE]), repo)
+    assert ok[0]["plugin"] == "heinzel-clock"
+
+    class Noise(Commands):
+        def run(self, argv, cwd=None, timeout=None, env=None):
+            if argv[: len(pg.FROZEN)] == pg.FROZEN:
+                return Result(1, "{broken\nnot a report\n", "")
+            return super().run(argv, cwd=cwd, timeout=timeout, env=env)
+
+    with pytest.raises(Refuse, match="no readable answer"):
+        gs.stale(Noise([FRESH]), repo)
+
+
+def test_dirty_lists_the_changed_paths_and_refuses_outside_a_repository(repo, tmp_path):
+    (repo / "plugins/heinzel-clock/web.css").write_text("main { color: red }\n")
+    (repo / "new file.txt").write_text("x")
+    assert gs.dirty(Commands([FRESH]), repo) == ["new file.txt", "plugins/heinzel-clock/web.css"]
+    with pytest.raises(Refuse, match="cannot read the status"):
+        gs.dirty(Commands([FRESH]), tmp_path / "nowhere")
+
+
+def test_a_record_with_nothing_left_to_commit_is_dropped_and_a_record_of_another_head_is_never_folded(repo, monkeypatch):
+    capture_that_writes(monkeypatch, repo)
+    rt = runtime([STALE, FRESH])
+    check_module.plugins_check(rt, repo)
+    git(repo, "checkout", "--", ".")
+    git(repo, "clean", "-fdq")
+    assert gs.fold(rt, repo) == [] and rt.providers.store.load(gs.KIND, str(repo)) is None  # nothing dirty: the record goes
+    capture_that_writes(monkeypatch, repo)
+    rt.providers.commands = Commands([STALE, FRESH])  # the check answers again from the start
+    check_module.plugins_check(rt, repo)
+    git(repo, "-c", "core.hooksPath=/dev/null", "commit", "-q", "--allow-empty", "-m", "chore: the head moved")
+    assert "did not regenerate for this head" in gs.fold(rt, repo)[0]
+    assert git(repo, "rev-list", "--count", "HEAD") == "2"
+
+
+def test_a_commit_hook_that_refuses_the_gallery_commit_is_a_refusal_with_the_hook_output(repo, monkeypatch):
+    capture_that_writes(monkeypatch, repo)
+    rt = runtime([STALE, FRESH])
+    check_module.plugins_check(rt, repo)
+    hook = repo / ".git" / "hooks" / "pre-commit"
+    hook.write_text("#!/bin/sh\necho hook says no >&2\nexit 1\n")
+    hook.chmod(0o755)
+    with pytest.raises(Refuse, match="the commit of the regenerated gallery failed"):
+        gs.fold(rt, repo)
+
+
+def test_a_gallery_still_stale_after_the_regeneration_refuses_and_names_the_command(repo, monkeypatch):
+    capture_that_writes(monkeypatch, repo)
+    rt = runtime([STALE])  # the freshness check keeps saying stale
+    with pytest.raises(Refuse, match="still stale after regeneration") as refused:
+        gs.into_head(rt, repo)
+    assert "make screenshots NAME=heinzel-clock" in refused.value.next_cmd

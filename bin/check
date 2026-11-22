@@ -38,12 +38,12 @@ for project in tests/projects/*/; do
   gate "help lint ($(basename "$project"))" env STEUERMASCHINE_PROJECT="$here/$project" XDG_CONFIG_HOME=/nonexistent "$here/.venv/bin/steuermaschine" self lint
 done
 gate "private-term deny-list (tree)" uv run --quiet --script scripts/check_confidentiality.py
-gate "typos" uv run --quiet typos src plugins examples tests docs README.md bin
+gate "typos" make --no-print-directory -s typos
 gate "ruff (core, examples, core tests)" uv run --quiet ruff check src examples tests
 gate "mypy strict (core)" uv run --quiet mypy -p steuermaschine
 gate "pyright (core)" uv run --quiet pyright
 gate "dead code (vulture)" uv run --quiet vulture src plugins/heinzel/src examples/toy/src examples/layer/src tests/vulture_whitelist.py --min-confidence 80
-[ $fast = 0 ] && { if [ $hosted_static = 1 ]; then gate "source debt ratchet (plugin)" uv run --quiet python bin/debt.py --gate --source-only; else gate "debt ratchet (plugin)" uv run --quiet python bin/debt.py --gate; fi; }
+[ $fast = 0 ] && { if [ $hosted_static = 1 ]; then gate "source debt ratchet (plugin)" uv run --quiet python bin/debt.py --gate --source-only; else gate "debt ratchet (plugin)" make --no-print-directory -s debt; fi; }
 [ $hosted_static = 1 ] && echo "check: hosted-static only; full test and coverage evidence required separately"
 if [ ${#failed[@]} = 0 ]; then
   if [ $hosted_static = 1 ]; then echo "check: STATIC GATE GREEN"; else echo "check: PROMOTE GATE GREEN"; fi
