@@ -261,6 +261,7 @@ def test_the_follower_installs_the_pypi_wheel_pair_switches_and_restarts_loops(f
     msg = rc.follow(stable, clone, home, fake_run(calls), api_get, fake_pypi(), fetcher(), now=T0)
     assert msg.startswith("v0.0.3 (") and "is the canary" in msg and "builders stay on" in msg
     assert os.readlink(stable / "current") != "releases/v0.0.3" and os.readlink(stable / "canary") == "releases/v0.0.3"
+    assert not (stable / "bin" / "sm").exists() and (stable / "bin" / "sm-canary").is_file()  # builders' launcher untouched
     assert not [c for c in calls if c[0] == "launchctl"]  # installed beside the live one; nothing restarted
     assert "is the canary for 100s more" in rc.follow(stable, clone, home, fake_run([]), api_get, fake_pypi(), fetcher(), now=T0 + 200)
     msg = rc.follow(stable, clone, home, fake_run(calls), api_get, fake_pypi(), fetcher(), now=T0 + 300)
@@ -571,6 +572,7 @@ def test_an_exit_70_of_the_canary_rejects_it_and_builders_never_leave_the_live_r
     with pytest.raises(rc.Alarm, match="REJECTED by its canary tick: 1 exit 70 of the canary"):
         rc.follow(stable, clone, home, fake_run(calls), api_get, fake_pypi(), fetcher(), now=T0 + 300)
     assert os.readlink(stable / "current") == before and not (stable / "canary").exists()
+    assert not (stable / "bin" / "sm").exists()  # the rejected release never wrote the builders' launcher
     assert ("gh", "release", "edit", "v0.0.3", "--repo", rc.REPO, "--prerelease", "--latest=false") in calls
     assert "was rejected here" in rc.follow(stable, clone, home, fake_run([]), api_get, fake_pypi(), fetcher(), now=T0 + 600)
     assert rc.main.__module__ and not [c for c in calls if c[0] == "launchctl"]

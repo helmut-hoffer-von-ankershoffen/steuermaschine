@@ -91,7 +91,7 @@ install_launcher() {
   mkdir -p "$1/bin" || return 1
   cat > "$1/bin/.sm.$$" <<'SH'
 #!/bin/sh
-# sm: the STABLE steuermaschine. It changes through release_ci.py follow (canary, swap, rollback), bin/promote and bin/rollback.
+# sm: the STABLE steuermaschine. It changes only through bin/promote (and bin/rollback) of the development checkout.
 # `current` is resolved ONCE per process tree: STEUERMASCHINE_PINNED carries the release to every sm a running sm starts,
 # so a switch never mixes two releases (or a new config with old code) in one tree.
 root="$(cd "$(dirname "$(readlink -f "$0" 2>/dev/null || python3 -c 'import os,sys;print(os.path.realpath(sys.argv[1]))' "$0")")/.." && pwd)"
@@ -101,20 +101,11 @@ if [ -n "${STEUERMASCHINE_PINNED:-}" ] && [ -n "$releases" ]; then
   pin="$(cd "$STEUERMASCHINE_PINNED" 2>/dev/null && pwd -P)"
   case "$pin" in "$releases"/*/*|"") ;; "$releases"/*) [ -x "$pin/venv/bin/steuermaschine" ] && rel="$pin" ;; esac
 fi
-# The canary (release_ci.py follow): only an sm started with STEUERMASCHINE_CANARY=1 runs it, and only a release of THIS install.
-if [ -z "$rel" ] && [ "${STEUERMASCHINE_CANARY:-}" = 1 ] && [ -L "$root/canary" ] && [ -n "$releases" ]; then
-  can="$(cd "$root/canary" 2>/dev/null && pwd -P)"
-  case "$can" in "$releases"/*/*|"") ;; "$releases"/*) [ -x "$can/venv/bin/steuermaschine" ] && rel="$can" ;; esac
-fi
 [ -n "$rel" ] || rel="$(cd "$root/current" && pwd -P)" || exit 70
 export STEUERMASCHINE_PINNED="$rel"
 if [ -f "$rel/user-config.toml" ]; then export STEUERMASCHINE_USER_CONFIG="$rel/user-config.toml"; fi   # code and config switch together
 export STEUERMASCHINE_RELEASE="$root/current"   # a running loop ends when this pointer names another release
-"$rel/venv/bin/steuermaschine" "$@"
-rc=$?
-# A tool error is evidence for the canary verdict and the tool-stall alarm (release_ci.py follow): `EPOCH RELEASE 70`.
-if [ "$rc" = 70 ]; then printf '%s %s %s\n' "$(date +%s)" "${rel##*/}" "$rc" >> "$root/exits.log" 2>/dev/null; fi
-exit "$rc"
+exec "$rel/venv/bin/steuermaschine" "$@"
 SH
   chmod +x "$1/bin/.sm.$$" && mv -f "$1/bin/.sm.$$" "$1/bin/sm"
 }

@@ -23,7 +23,7 @@ publish the release (this makes the tag), clean-container acceptance, then Lates
 The follower. It reads the Latest GitHub release (Latest only after acceptance), checks the verdict of that tag's merge
 the same way, takes the PyPI wheels of both packages whose sha256 equal the release's assets, installs them into
 $SM_STABLE/releases/vX (its own uv venv) beside the live one, migrates the user config, smokes, and makes it the canary
-for one tick (`canary`; only the follower's probe and `STEUERMASCHINE_CANARY=1 sm` run it). The next run after the tick
+for one tick (`canary`; only the follower's probe and the coordinator's bin/sm-canary run it). The next run after the tick
 swaps with the release's bin/promote_lib.sh (waits for running admission and release steps, moves state, points
 `current`) and restarts the launchd loops that run the stable `sm`, unless the canary had an exit 70 or a red probe
 (rejected) or a Core release is between its cut and LIVE-OK (the swap waits). For 15 minutes after a swap the tool-stall
@@ -445,14 +445,15 @@ def follow(stable: Path, clone: Path, home: Path, run: Run = sh, api_get: Callab
                 "wheels": {w["filename"]: w["sha256"] for w in wheels}}
         (rel / "release.json").write_text(json.dumps(meta, indent=1) + "\n", encoding="utf-8")
     start_canary(stable, clone, home, rel, tag, at)
-    return (f"{tag} ({commit[:12]}) is the canary: the follower's probe and every `STEUERMASCHINE_CANARY=1 sm` use it for one tick "
+    return (f"{tag} ({commit[:12]}) is the canary: the follower's probe and {stable / 'bin' / 'sm-canary'} use it for one tick "
             f"({CANARY_SECONDS}s); builders stay on {live['name'] or 'the live release'}")
 
 
 # ----------------------------------------------------------------------------- canary, swap, rollback
-# A new release is installed beside the live one and is the canary for one tick: the follower probes it, and an `sm`
-# started with STEUERMASCHINE_CANARY=1 (the coordinator's) runs it; every other `sm` stays on `current`. The stable
-# launcher appends each exit 70 (a tool error) to STABLE/exits.log as `EPOCH RELEASE 70`. No exit 70 of the canary and a
+# A new release is installed beside the live one and is the canary for one tick: the follower probes it, and the
+# coordinator runs it through STABLE/bin/sm-canary; every builder's `bin/sm` stays on `current` (it is not rewritten
+# before the swap). A stable release's sm appends each of its exit 70 (a tool error) to STABLE/exits.log as
+# `EPOCH RELEASE 70` (steuermaschine.app.record_tool_error). No exit 70 of the canary and a
 # green probe for one tick: the symlink `current` swaps, unless a Core release is between its cut and LIVE-OK (the swap
 # waits; nobody else does). Within WATCH_SECONDS after a swap, STALL_COUNT exit 70 of the new release within
 # STALL_SECONDS (the tool-stall alarm) set `current` back to `previous` by bin/rollback. A canary that fails or a release
@@ -521,11 +522,30 @@ def lib_env(clone: Path, stable: Path, home: Path, **more: str) -> dict[str, str
     return {**os.environ, "LIB": str(clone / "bin" / "promote_lib.sh"), "STABLE": str(stable), "HOME": str(home), **more}
 
 
+CANARY_LAUNCHER = r"""#!/bin/sh
+# sm-canary: the coordinator's `sm` on the canary release of this install (release_ci.py follow), `bin/sm` when there is
+# none. Builders run `bin/sm`, which never reads `canary`: they stay on `current` until the swap. An sm this one starts
+# stays on the canary through STEUERMASCHINE_PINNED (bin/sm honours a pin to a release of this install).
+root="$(cd "$(dirname "$0")/.." && pwd -P)" || exit 70
+releases="$(cd "$root/releases" 2>/dev/null && pwd -P)"
+rel="$(cd "$root/canary" 2>/dev/null && pwd -P)" || rel=""
+case "$rel" in "$releases"/*/*|"") rel="" ;; "$releases"/*) [ -x "$rel/venv/bin/steuermaschine" ] || rel="" ;; *) rel="" ;; esac
+[ -n "$rel" ] && [ -n "$releases" ] || exec "$root/bin/sm" "$@"
+export STEUERMASCHINE_PINNED="$rel"
+if [ -f "$rel/user-config.toml" ]; then export STEUERMASCHINE_USER_CONFIG="$rel/user-config.toml"; fi
+export STEUERMASCHINE_RELEASE="$root/current"
+exec "$rel/venv/bin/steuermaschine" "$@"
+"""
+
+
 def start_canary(stable: Path, clone: Path, home: Path, rel: Path, tag: str, at: float) -> None:
-    """The launcher of this release (it knows `canary`), then STABLE/canary -> releases/vX. `current` is untouched."""
-    done = subprocess.run(["bash", "-c", '. "$LIB" && install_launcher "$STABLE"'], check=False, env=lib_env(clone, stable, home))
-    if done.returncode != 0:
-        raise Refused(f"the launcher of {tag} could not be written; nothing changed")
+    """STABLE/canary -> releases/vX and STABLE/bin/sm-canary, the coordinator's way to it. `current` and `bin/sm` (every
+    builder's launcher) are untouched: the new release's launcher is installed only by the swap."""
+    (stable / "bin").mkdir(parents=True, exist_ok=True)
+    tmp = stable / "bin" / f".sm-canary.{os.getpid()}"
+    tmp.write_text(CANARY_LAUNCHER, encoding="utf-8")
+    tmp.chmod(0o755)
+    os.replace(tmp, stable / "bin" / "sm-canary")
     (stable / "canary.json").write_text(json.dumps({"tag": tag, "since": int(at), "at": now_stamp(at)}) + "\n", encoding="utf-8")
     point(stable, "canary", f"releases/{rel.name}")
 
