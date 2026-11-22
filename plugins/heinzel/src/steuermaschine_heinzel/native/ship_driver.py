@@ -1,7 +1,8 @@
 """`sm ship WORKTREE`: the one verb that takes a head from its worktree to a merged PR, as a driver over `sm head admit`.
 
 It adds no step of its own: it hands the head to the `head admit` pipeline (local check, push, PR, queue) and, after the
-queue step, can wait for the PR to merge. Core's CI merges it on green; a PR the diff guard flags waits for its review.
+queue step, can wait for the PR to merge. The queue arms GitHub auto-merge and GitHub merges it on green; a PR the
+diff guard flags waits for its review.
 """
 
 from __future__ import annotations
@@ -170,7 +171,7 @@ def open_elsewhere(rt: Any, worktree: str, repo: str, live: bool, given: dict[st
 
 
 @native("ship", writes=True, help=H(
-    "Take one change from its worktree to a merged PR: check, push, open the PR, queue it; optionally wait for the merge.",
+    "Take one change from its worktree to a merged PR: check, push, open the PR, arm auto-merge (via the queue); optionally wait.",
     "Use when a head is committed in its own worktree and should go out; type it again after every stop.",
     "state on this machine; with --live also one push, the PR and one queue entry. Waiting only reads.",
     "sm ship ~/Code/heinzel-fix --live --wait 45 --set bead=abc --set title=\"fix(web): short title\"",
@@ -185,8 +186,10 @@ def open_elsewhere(rt: Any, worktree: str, repo: str, live: bool, given: dict[st
     "the title from --set title or the newest conventional commit subject. What cannot be found is ONE refusal naming the exact\n"
     "--set, before any check. DERIVED in the output says what was found. A plugins worktree first gets every stale screenshot\n"
     "gallery regenerated (deterministic capture, no agent) and the regenerated files into the head commit (amended while unpushed,\n"
-    "else one docs(screenshots) commit); a gallery that cannot be regenerated refuses, naming the exact command. steuermaschine and heinzel-management have no merge queue:\n"
-    "their PR merges when its required checks are green.\n"
+    "else one docs(screenshots) commit); a gallery that cannot be regenerated refuses, naming the exact command.\n"
+    "The queue loop arms GitHub auto-merge (squash, pinned to the guarded head; off during a Core release freeze) only when the train's checks, the\n"
+    "merge rule (main an ancestor of a Core head, the protected-path verdict) and the red-main hold pass, one Core PR at a time; a red main is reverted.\n"
+    "steuermaschine and heinzel-management have no queue entry: their PR merges when its required checks are green.\n"
     "No packet, no plan slot: Core's CI runs the full matrix on every PR. One blocking stop is kept: a head that changes .github/, the\n"
     "release, publish, PyPI or acceptance scripts, quarantine.toml, the coverage config or a conftest.py stops with the digest of exactly\n"
     "those paths; a different agent records `sm review verdict DIGEST --approve`, then run this again with --approved DIGEST.\n"

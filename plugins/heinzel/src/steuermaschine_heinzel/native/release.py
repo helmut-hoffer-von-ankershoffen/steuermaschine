@@ -370,18 +370,19 @@ def release_replace_compose(
 
 
 @native("release plugin", writes=True, replaces=("hz-release",), help=H(
-    "Release a plugin whose version on the plugins repository's main is not on PyPI yet, and verify PyPI.",
-    "Use after a plugin PR with a version bump merged.",
-    "dispatches the plugins repository's release workflow (publish to PyPI) and writes the dispatch and its run ID into the\n"
-    "plugin release receipt.",
+    "Status of a plugin release: is the version on the plugins repository's main on PyPI; --redispatch re-runs its release.",
+    "Use after a plugin PR with a version bump merged: the plugins CI publishes it by itself; this reads and, if asked, re-runs.",
+    "nothing without --redispatch (a dispatch recorded earlier is followed). With --redispatch: one dispatch of the plugins\n"
+    "repository's release workflow, recorded with its run ID in the plugin release receipt.",
     "sm release plugin audio", "sm release verify --package heinzel-audio VERSION --surface pypi",
     "A rerun follows only the run of its own dispatch (by its recorded ID), never the newest release run of another plugin.\n"
     "Success needs the version on PyPI AND that run's RELEASE_TAG equal to heinzel-NAME/vVERSION.\n"
     "A failed run is never dispatched again by itself (a failure can repeat; a second dispatch costs a CI run): after the fix,\n"
-    "--redispatch dispatches once more; it refuses while the recorded run has not completed. Exit 0: released, 1: stopped."))
+    "--redispatch dispatches once more; it refuses while the recorded run has not completed. Without a recorded dispatch, --redispatch\n"
+    "is the first dispatch. Exit 0: released, or (without --redispatch) the read-only status line \"NOT RELEASED: ... not on PyPI yet\"; 1: stopped."))
 def release_plugin(name: str = typer.Argument(..., metavar="NAME", help="The plugin, with or without the `heinzel-` prefix."),
                    timeout: int | None = typer.Option(None, "--timeout", metavar="MINUTES", help="Minutes to wait for PyPI (default 120)."),
-                   redispatch: bool = typer.Option(False, "--redispatch", help="Dispatch again after the recorded run completed without the release "
+                   redispatch: bool = typer.Option(False, "--redispatch", help="Dispatch the release (CI did not publish it), or again after the recorded run completed without it "
                                                    "(or an older sm left only a dispatch time).")) -> ReleaseRun:
     module = runner()
     code, lines, errors = run(module, ["--plugin", name, *(["--timeout", str(timeout)] if timeout is not None else []), *(["--redispatch"] if redispatch else [])])

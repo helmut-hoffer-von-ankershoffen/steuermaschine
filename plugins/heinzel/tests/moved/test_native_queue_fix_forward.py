@@ -203,7 +203,7 @@ def test_red_main_fix_forward_goes_alone_once_per_main_run(q, lib, monkeypatch):
     assert run_add(q, "--for", "web-2=9kk") == 0
     plain(q, "599")
     tick_setup(q, lib, monkeypatch, [view()])
-    q.tick(now=10_000)
+    q.train_tick(now=10_000)
     assert q.merges == [(CORE, "598", HEAD)]
     assert queued(q)["599"]["status"] == "queued" and queued(q)["598"]["status"] == "merged"
     assert q.load()["fix_forward_runs"] == {"42377404946": "598"}
@@ -213,19 +213,19 @@ def test_red_main_fix_forward_goes_alone_once_per_main_run(q, lib, monkeypatch):
     q.pr_reply = pr(head="a" * 40)
     assert run_add(q, "--for", "web-2=9kk", number="602") == 0  # queues (one-per-run is a hold, not a refusal)
     tick_setup(q, lib, monkeypatch, [view("a" * 40)])
-    q.tick(now=20_000)
+    q.train_tick(now=20_000)
     assert len(q.merges) == 1 and queued(q)["602"]["status"] == "queued"
 
 
 def test_tick_refuses_a_changed_head_or_a_new_unattributed_failure(q, lib, monkeypatch):
     assert run_add(q, "--for", "web-2=9kk") == 0
     tick_setup(q, lib, monkeypatch, [view("b" * 40)])
-    q.tick(now=10_000)
+    q.train_tick(now=10_000)
     assert not q.merges and "fix-forward head changed" in queued(q)["598"]["detail"]
     assert run_add(q, "--for", "web-2=9kk") == 0
     monkeypatch.setattr(q, "main_red_jobs", lambda: {**RED, "run": 1, "jobs": ["Test (ubuntu-24.04, Python 3.12)"]})
     tick_setup(q, lib, monkeypatch, [view()])
-    q.tick(now=20_000)
+    q.train_tick(now=20_000)
     assert not q.merges and "is not attributed" in queued(q)["598"]["detail"]
 
 
@@ -233,7 +233,7 @@ def test_tick_holds_during_a_release(q, lib, monkeypatch):
     assert run_add(q, "--for", "web-2=9kk") == 0
     monkeypatch.setattr(q, "release_active", lambda: "sm release resume 0.9.30 unfinished")
     tick_setup(q, lib, monkeypatch, [view()])
-    q.tick(now=10_000)
+    q.train_tick(now=10_000)
     assert not q.merges and queued(q)["598"]["status"] == "queued"
 
 

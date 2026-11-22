@@ -47,6 +47,24 @@ def _planned_main(request, monkeypatch):
     yield
 
 
+@pytest.fixture
+def real_disarm():
+    """Opt out of the no-armed-PR default: the test drives auto_arm.disarm_all (the release cut's 8i4oi step) itself."""
+    from steuermaschine_heinzel.native.queue_lib import auto_arm
+
+    return auto_arm
+
+
+@pytest.fixture(autouse=True)
+def _no_armed_prs(request, monkeypatch):
+    """Release tests script GitHub without the open-PR list: by default no Core PR has auto-merge on."""
+    if "real_disarm" not in request.fixturenames:
+        from steuermaschine_heinzel.native.queue_lib import auto_arm
+
+        monkeypatch.setattr(auto_arm, "disarm_all", lambda repo=None: [])
+    yield
+
+
 @pytest.fixture(autouse=True)
 def _fresh_rules(monkeypatch):
     """Each test reads the rulesets afresh: the per-tick cache of hzlib.required_checks never carries over."""

@@ -45,18 +45,18 @@ def scripted(rel, monkeypatch, conclusion, on_pypi_after):
 
 def test_a_success_run_before_pypi_lists_the_version_keeps_polling_and_releases(rel, monkeypatch):
     scripted(rel, monkeypatch, "success", on_pypi_after=90)
-    assert rel.release_plugin("resource", 3600) == 0
+    assert rel.release_plugin("resource", 3600, redispatch=True) == 0
 
 
 def test_a_success_run_without_the_version_after_the_bounded_window_stops(rel, monkeypatch):
     scripted(rel, monkeypatch, "success", on_pypi_after=None)
     with pytest.raises(rel.Stop, match=r"ended success but heinzel-resource 0\.1\.5 is not on PyPI after 5 minutes"):
-        rel.release_plugin("resource", 3600)
+        rel.release_plugin("resource", 3600, redispatch=True)
     assert rel.PYPI_PROPAGATION <= rel.clock.now - 1_000_000.0 < rel.PYPI_PROPAGATION + 2 * rel.POLL
 
 
 def test_a_failed_run_stops_at_once(rel, monkeypatch):
     scripted(rel, monkeypatch, "failure", on_pypi_after=None)
     with pytest.raises(rel.Stop, match=r"ended failure without heinzel-resource 0\.1\.5 on PyPI"):
-        rel.release_plugin("resource", 3600)
+        rel.release_plugin("resource", 3600, redispatch=True)
     assert rel.clock.now == 1_000_000.0

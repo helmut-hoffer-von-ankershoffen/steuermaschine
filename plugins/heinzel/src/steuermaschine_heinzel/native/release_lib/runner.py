@@ -1182,6 +1182,7 @@ def merge_release_pr(tag: str, composite_run: int | None = None) -> None:
     pr = release_pr(tag)
     if not pr:
         raise Stop(f"no release PR for {tag}")
+    disarm_core_auto_merge()  # once more right before the merge: a queue tick may have armed a PR after the cut's disarm
     waiver = None if composite_run else pending_waiver(tag.removeprefix("v"))
     def full_candidate_guard() -> bool:
         if (moved := main_moved_refusal(pr["number"], tag)):
@@ -1729,6 +1730,16 @@ def owned_hold_exists(version: str) -> bool:
     return True
 
 
+def disarm_core_auto_merge() -> None:
+    """8i4oi with auto-merge: after the freeze is taken and before the cut goes on, no Core PR may still have GitHub
+    auto-merge on, or it would merge onto the candidate's base. Synchronous here, not on the queue's next tick."""
+    from ..queue_lib import auto_arm
+
+    if remaining := auto_arm.disarm_all(CORE):
+        raise Stop("auto-merge is still on for Core PR(s) " + ", ".join(remaining) + " after the freeze; nothing proceeds "
+                   "until it is off (gh pr merge N --disable-auto), then run the same release command again")
+
+
 def acquire_snapshot_freeze(version: str) -> None:
     """Use a unique owned hold; incident and other release holds have different names."""
     root = hzlib.release_holds()
@@ -1952,6 +1963,7 @@ def resume_paused_hold() -> None:
     if events and events[-1]["action"] in ("pause-request", "pause"):
         # Reacquire before any remote read or readiness mutation, even after a partially completed pause.
         acquire_snapshot_freeze(data["version"])
+        disarm_core_auto_merge()
         request = pause_request(events)
         if request is None:
             raise Stop("paused release has no durable pause request")
@@ -2246,11 +2258,13 @@ def release_core(request: str, intro: str, timeout: float, snapshot_acceptance: 
     # freezes main again, because PyPI, compose and acceptance are pinned to the tag, not to main.
     if has_tag(CORE, tag):
         hzlib.say("ok   freeze (not needed: tag exists, main stays open)")
-    elif owned_hold:
-        acquire_snapshot_freeze(version)
-        hzlib.say("ok   freeze (release-owned)")
     else:
-        step("freeze", freeze.exists, lambda: freeze.touch(), 60)
+        if owned_hold:
+            acquire_snapshot_freeze(version)
+            hzlib.say("ok   freeze (release-owned)")
+        else:
+            step("freeze", freeze.exists, lambda: freeze.touch(), 60)
+        disarm_core_auto_merge()  # 8i4oi: before the gate reads main, no Core PR can still merge by itself
     if candidate_gate:
         step("main gate (train path)", lambda: has_tag(CORE, tag) or main_candidate_gate(version), None, timeout)
     else:
@@ -2710,6 +2724,10 @@ def plugin_run_tag(run_id: int) -> str | None:
     return tags.pop() if len(tags) == 1 else None
 
 
+class StatusOnly(Exception):
+    """The plugin is not on PyPI and nothing may be dispatched: the message is the status, printed with exit 0."""
+
+
 def release_plugin(name: str, timeout: float, redispatch: bool = False) -> int:
     """Plugin stamps live in their own receipt: the core receipt (and its handoff, verify and the next cut) never sees them.
     The receipt binds the release to its dispatched run's ID; `--redispatch` is the only way to a second dispatch."""
@@ -2739,6 +2757,10 @@ def release_plugin(name: str, timeout: float, redispatch: bool = False) -> int:
         elif data.get(key) and not redispatch:
             raise Stop(f"the plugin receipt holds only a dispatch time for {dist} {version} (an older sm) and no run of its own; "
                        f"no other run is adopted. Look at the release runs; if none releases {tag}: {again}")
+        elif not redispatch:  # owner 2026-11-22: CI publishes a plugin when its bump merges; this command only reads
+            raise StatusOnly(f"NOT RELEASED: {dist} {version} is not on PyPI yet: the plugins CI publishes it after the green main run of its bump "
+                             f"(workflow Release bumped plugins): gh run list -R {PLUGINS} --workflow release.yml. "
+                             f"Only when that run failed and the cause is fixed: {again}")
         plugin_dispatch(key, dist)
 
     succeeded_at: list[float] = []  # when the run was first seen ended success without the version on PyPI
@@ -2755,7 +2777,11 @@ def release_plugin(name: str, timeout: float, redispatch: bool = False) -> int:
             raise Stop(f"the release run {run['databaseId']} ended {run['conclusion']} without {dist} {version} on PyPI: "
                        f"sm ci watch {run['databaseId']} -R {PLUGINS}; after the fix: {again}")
 
-    step(f"PyPI {dist} {version}", lambda: pypi_has(dist, version), act, timeout, check)
+    try:
+        step(f"PyPI {dist} {version}", lambda: pypi_has(dist, version), act, timeout, check)
+    except StatusOnly as status:  # read-only status, not a stop: exit 0
+        hzlib.say(str(status))
+        return 0
     run_id = state().get(f"{key}_run_id")
     if run_id is not None:  # the version is on PyPI; success names this run only when it released exactly this tag
         released = plugin_run_tag(run_id) if type(run_id) is int and run_id > 0 else None
