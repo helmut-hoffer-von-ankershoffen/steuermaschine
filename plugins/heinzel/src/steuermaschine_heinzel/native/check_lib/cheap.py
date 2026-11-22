@@ -14,7 +14,7 @@ Checks, in the order they run (every one runs, so one pass names every finding):
   tree        clean tree, head ahead of the base: the receipt is bound to the commit, so the commit must be what ran
   ruff        format and lint of the changed Python files
   types       the hook's type checks over the changed Python files only (never the whole project), when the change is not
-              web, desktop, plugins or documents only; non-gating here: a timeout is "skipped: busy", PR CI's type job gates
+              web, desktop, plugins or documents only; no slot or a timeout fails (never skipped)
   hook        Core's hook answered for the changed paths; if it did not, its steps and guards are unknown and the run fails
   parity      what PR CI fails on that the hook does not run: the lockfile (`uv lock --check`), the template
               (scripts/sync_template.py --check) and the import contracts (`uv run lint-imports`), each when a path it reads changed
@@ -23,8 +23,8 @@ Checks, in the order they run (every one runs, so one pass names every finding):
   standards   the repository-wide standards tests
   tests       the hook's early guards and the selector's tests of the changed paths
   bound       HEAD and the tree are still what the checks began with
-Coverage and the whole-project type checks are not run here: PR CI's `coverage-floor` and its lint job ("Lint, contracts
-and types") gate them. Every gating step either runs or fails; only a non-gating one may be reported as skipped.
+Coverage and the whole-project type checks are not run here: PR CI enforces them before merge (owner decision 2026-11-21: fast local checks, CI is the gate). Every
+step either runs or fails.
 """
 from __future__ import annotations
 
@@ -277,6 +277,9 @@ def step_tests(c: Ctx) -> Step:
         s.fail(c.plan.error, "run it by hand in the worktree and fix the cause; the tests of a change are never guessed")
     whole = c.plan.pytest is None
     files = selected_tests(c)
+    if not files and (src := production(c)):  # no coverage is measured here, but a src/ change with no test still never passes
+        s.fail(f"{len(src)} file(s) under src/ changed and no test is selected for them ({c.plan.error or c.plan.narrowed or 'the selector names none'})",
+               'write the tests of the changed files, or name the covering ones: --sel FILE with {"python": [test files]}')
     if whole and not c.full:  # nothing narrows the change: the whole suite is PR CI's job, never run on this machine without --full
         s.warn(f"{c.plan.narrowed}: the whole unit suite runs on PR CI, not here (a full local run is the coordinator's call: sm check --full)")
     elif whole:
@@ -301,8 +304,9 @@ def step_tests(c: Ctx) -> Step:
 
 
 def step_types(c: Ctx) -> Step:
-    """The hook's type checks over the changed Python files only. Not gating here (PR CI's lint job runs them over the
-    project): a command stopped at its time limit is reported as "skipped: busy", a real finding still fails."""
+    """The hook's type checks over the changed Python files only (PR CI's lint job runs them over the whole project:
+    an owner decision, 2026-11-21). A gating step: a command with no slot (75) or at its time limit (124) FAILS, so a busy
+    machine never yields a green receipt with the type checks unrun."""
     s = Step("types")
     changed = c.changed(filter_="ACMRD")
     if not [f for f in changed if not head.TYPES_EXEMPT.match(f)]:
@@ -315,19 +319,16 @@ def step_types(c: Ctx) -> Step:
     commands, read = head.hook_types(c.wt)
     if not read:
         s.warn(f"could not read TYPES from {head.HOOK_SCRIPT}: the default mypy and pyright commands ran")
-    busy = []
     for name, cmd in commands:
         rc, out = c.gate([*cmd, *files], cwd=c.wt)
         if rc in (75, TIMED_OUT):
-            busy.append(name)
+            s.fail(f"{name} {'got no slot' if rc == 75 else 'ran out of time'} (exit {rc}): the type check did not run",
+                   NO_SLOT if rc == 75 else "run sm check again when the machine is less busy; a type check that did not run is never a pass")
         elif rc != 0:
             log = c.log(name, out)
             s.fail(f"{name} failed on the changed files (exit {rc}){'; log ' + log if log else ''}\n{head.tail(out)}",
                    f"fix the reported errors (`{' '.join([*cmd, *files])}` reproduces; pyright reportPrivateUsage: no access to a `_name` of another module)")
-    if busy and s.status != FAIL:
-        s.status = SKIP
-        s.detail = f"skipped: busy ({', '.join(busy)} got no slot or ran out of time); PR CI's lint job runs the type checks over the project"
-    elif s.status != FAIL:
+    if s.status != FAIL:
         s.detail = f"{', '.join(name for name, _ in commands)} clean over {len(files)} changed Python file(s); the whole project is PR CI's job"
     return s
 

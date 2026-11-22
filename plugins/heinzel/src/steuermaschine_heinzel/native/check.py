@@ -20,7 +20,7 @@ from steuermaschine import USAGE, verdicts
 from steuermaschine.engine import Refuse
 from steuermaschine.helpdoc import H
 from steuermaschine.native import native, runtime
-from steuermaschine.preflight import PreflightReport
+from steuermaschine.preflight import SKIP, PreflightReport
 
 from . import affected, lock
 from . import preflight as _preflight
@@ -109,8 +109,11 @@ def extra_tests(sel: Path | None) -> list[str]:
     "warning says so; --allow-full, the coordinator's call, runs it here through the heavy lane); when it fails, the run fails.\n"
     "Everything here is fast: each command runs in a fast slot of the run lock (up to three at once, any load, never exclusive)\n"
     "and is stopped after 150 s. The whole unit suite, integration and e2e never run here; PR CI runs them.\n"
-    "Coverage (CI's coverage-floor) and the whole-project type checks (CI's lint job) never run here. Only a non-gating\n"
-    "step (types) may report \"skipped: busy\"; a gating step that gets no slot or times out fails, never passes silently.\n"
+    "Coverage and the whole-project type checks never run here: owner decision 2026-11-21, fast local checks and CI is the\n"
+    "gate (PR CI enforces 90 % coverage and whole-project mypy/pyright before merge). Types run over the changed\n"
+    "files only. Every step runs or fails: no slot (75) or a timeout (124) in any step, types included, fails, never skips.\n"
+    "A src/ change with no selected test fails. The receipt lists the steps that ran and says coverage and whole-project\n"
+    "types are CI-enforced.\n"
     "Runs queue: one sm check at a time per machine, the others wait (exit 75 after 20 minutes: run it again).\n"
     "E2E lanes never run here. --sel FILE adds tests ({\"python\": [files]}).\n"
     "The receipt is bound to the commit and names the base it was measured from: any new commit needs a new run, and\n"
@@ -156,6 +159,7 @@ def check(worktree: Path | None = typer.Argument(None, metavar="WORKTREE", help=
                                                                "checks": [{"name": s.name, "status": s.status, "detail": s.detail} for s in report.steps]})
         report.receipt = state in ("written", "kept")
         report.receipt_note = (f"{verdicts.CHECKS} {c.sha} ({'written' if state == 'written' else 'this commit already had one'}), measured from {c.base_sha[:12]}: "
-                               "an approval of this exact commit on that base can be recorded" if report.receipt else f"none that counts: {state}")
+                               "an approval of this exact commit on that base can be recorded. Steps run: " + ", ".join(s.name for s in report.steps if s.status != SKIP)
+                               + "; coverage and whole-project types did not run here: PR CI enforces them" if report.receipt else f"none that counts: {state}")
     providers.store.save(SUMMARY_KIND, c.sha, report.model_dump(mode="json"))
     return report
