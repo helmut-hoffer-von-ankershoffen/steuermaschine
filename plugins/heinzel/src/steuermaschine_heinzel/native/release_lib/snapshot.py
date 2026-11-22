@@ -136,7 +136,8 @@ def workflow_supports_snapshot(commit: str) -> bool:
     The receipt check alone can fail open: the workflow writes the receipt, so a workflow that ignores the dispatched
     digests can still echo them. Core reviews the workflow and its digest in `release/pins.toml` in one PR (its
     contract test fails a workflow change without the pin), and sm reads both at the commit, never a copy of its own.
-    A commit without the pin, a malformed pin or a different workflow fails closed.
+    A commit without the pin, a malformed pin or a different workflow fails closed, and so does a workflow whose wiring
+    is gone even when its pin matches (`workflow_wiring_holds`).
     """
     if not COMMIT.fullmatch(commit):
         return False
@@ -147,4 +148,48 @@ def workflow_supports_snapshot(commit: str) -> bool:
         pinned = tomllib.loads(pins.decode("utf-8"))["sha256"][WORKFLOW]
     except (UnicodeError, tomllib.TOMLDecodeError, KeyError, TypeError):
         return False
-    return isinstance(pinned, str) and SHA.fullmatch(pinned) is not None and hashlib.sha256(source).hexdigest() == pinned
+    return (isinstance(pinned, str) and SHA.fullmatch(pinned) is not None and hashlib.sha256(source).hexdigest() == pinned
+            and workflow_wiring_holds(source))
+
+
+HARNESS, REDUCER = "scripts/acceptance/run_acceptance.py", "scripts/acceptance/reduce.py"
+QUOTA_WAIT = range(900, 3901)
+"""Seconds the harness may wait for anonymous GitHub quota (the longest bridge window is 65 minutes); outside it the quota
+handling is not the reviewed one. A structural bound, no digest: the pin holds the exact bytes."""
+VARIABLE = r'"\$[A-Z][A-Z0-9_]*"'
+
+
+def _commands(lines: list[str], script: str) -> list[str]:
+    """The text of every uncommented command that runs `script`, each with its continuation lines (`--option ...`)."""
+    found = []
+    for number, line in enumerate(lines):
+        if script in line:
+            block = [line]
+            for following in lines[number + 1:]:
+                if not following.strip().startswith("--"):
+                    break
+                block.append(following)
+            found.append(" ".join(part.strip() for part in block))
+    return found
+
+
+def _has(commands: list[str], options: tuple[str, ...]) -> bool:
+    """One of the commands passes every option a variable (not an empty string, not a comment)."""
+    return any(all(re.search(rf"(?:^| ){option} {VARIABLE}(?: |$)", command) for option in options) for command in commands)
+
+
+def workflow_wiring_holds(source: bytes) -> bool:
+    """What sm checks itself in the workflow at the tag, beside the pin (Core's PR review owns the pin): the harness gets
+    the dispatched versions and the wheel and profile digests to accept, the reducer gets the digests it copies into the
+    receipt, and the quota wait is present and inside its window. Comments and an emptied value do not count."""
+    try:
+        lines = [re.sub(r"\s#.*$", "", line) for line in source.decode("utf-8").splitlines() if not line.strip().startswith("#")]
+    except UnicodeError:
+        return False
+    harness, reducer = _commands(lines, HARNESS), _commands(lines, REDUCER)
+    if not _has(harness, ("--expect-version", "--expect-app-version", "--accept-wheel-sha256", "--accept-profile-sha256")):
+        return False
+    if not _has(reducer, ("--wheel-sha256", "--profile-sha256")):
+        return False
+    waits = [int(m.group(1)) for command in harness if (m := re.search(r"(?:^| )--bridge-quota-wait-seconds ([0-9]+)(?: |$)", command))]
+    return len(waits) == 1 and waits[0] in QUOTA_WAIT

@@ -372,9 +372,13 @@ def test_workflow_capability_requires_the_workflow_core_pinned_at_the_same_commi
     assert not snapshot.workflow_supports_snapshot("c" * 40)
     serve(monkeypatch, b"# " + b"\n# ".join(reviewed.splitlines()), core_pins(reviewed))
     assert not snapshot.workflow_supports_snapshot("c" * 40)
-    # A workflow change that Core reviewed together with its pin needs no change in sm.
-    serve(monkeypatch, disabled, core_pins(disabled))
+    # A workflow change that Core reviewed together with its pin needs no change in sm, while its wiring holds.
+    harmless = reviewed.replace(b"timeout-minutes: 240", b"timeout-minutes: 250")
+    assert harmless != reviewed
+    serve(monkeypatch, harmless, core_pins(harmless))
     assert snapshot.workflow_supports_snapshot("c" * 40)
+    serve(monkeypatch, disabled, core_pins(disabled))  # pinned, but the digest is no longer passed on: sm refuses
+    assert not snapshot.workflow_supports_snapshot("c" * 40)
 
 
 def test_sm_holds_no_acceptance_workflow_digest():
@@ -433,6 +437,39 @@ def test_workflow_that_drops_digest_or_quota_wiring_without_its_pin_refuses(monk
     assert changed != reviewed
     serve(monkeypatch, changed, core_pins(reviewed))
     assert not snapshot.workflow_supports_snapshot("c" * 40)
+    serve(monkeypatch, changed, core_pins(changed))  # the matching pin does not excuse missing wiring
+    assert not snapshot.workflow_supports_snapshot("c" * 40)
+
+
+@pytest.mark.parametrize("wait", [b"120", b"0", b"3901"])
+def test_a_quota_wait_outside_its_window_refuses_even_with_its_pin(monkeypatch, wait):
+    reviewed = REVIEWED.read_bytes()
+    changed = reviewed.replace(b"--bridge-quota-wait-seconds 3900", b"--bridge-quota-wait-seconds " + wait)
+    assert changed != reviewed
+    serve(monkeypatch, changed, core_pins(changed))
+    assert not snapshot.workflow_supports_snapshot("c" * 40)
+    serve(monkeypatch, reviewed, core_pins(reviewed))
+    assert snapshot.workflow_supports_snapshot("c" * 40)
+
+
+@pytest.mark.parametrize("option", [b"--wheel-sha256", b"--profile-sha256"])
+def test_the_reducer_must_still_get_the_digests_it_copies_into_the_receipt(monkeypatch, option):
+    reviewed = REVIEWED.read_bytes()
+    line = [x for x in reviewed.splitlines() if x.strip().startswith(option + b' "$')]
+    assert len(line) == 1
+    changed = reviewed.replace(line[0] + b"\n", b"")
+    serve(monkeypatch, changed, core_pins(changed))
+    assert not snapshot.workflow_supports_snapshot("c" * 40)
+
+
+def test_a_commented_out_or_emptied_wiring_does_not_count(monkeypatch):
+    reviewed = REVIEWED.read_bytes()
+    for old, new in ((b'--accept-profile-sha256 "$EXPECTED_PROFILE_SHA256"', b'--accept-profile-sha256 ""'),
+                     (b'--accept-profile-sha256 "$EXPECTED_PROFILE_SHA256"', b'# --accept-profile-sha256 "$EXPECTED_PROFILE_SHA256"')):
+        changed = reviewed.replace(old, new)
+        assert changed != reviewed
+        serve(monkeypatch, changed, core_pins(changed))
+        assert not snapshot.workflow_supports_snapshot("c" * 40)
 
 
 def test_scoped_hold_names_are_honored_by_queue_and_do_not_delete_other_holds(tool, home, monkeypatch):
