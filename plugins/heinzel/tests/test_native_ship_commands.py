@@ -246,7 +246,7 @@ def test_ship_pins_the_reviewed_head_and_passes_the_queues_refusal_on(rt, gh):
     moved = invoke(rt, ["head", "ship", "801", "review r", "--reviewed-head", "f" * 40])
     assert moved.exit_code == 1 and "current reviewed head differs" in moved.stderr
     empty = invoke(rt, ["head", "ship", "801", "review r", "--reviewed-head", ""])
-    assert empty.exit_code == 1 and "--reviewed-head requires one normal core PR" in empty.stderr
+    assert empty.exit_code == 1 and "--reviewed-head requires one normal PR" in empty.stderr
 
 
 @pytest.mark.parametrize("argv", [["801", "--reviewed-head", HEAD], ["801", "", "--reviewed-head", HEAD], ["801", "--for", "web=abc"], ["801", "--dry-run"]])
@@ -271,7 +271,7 @@ def test_ship_fix_forward_passes_reviewed_head_to_the_lane_which_refuses_it(rt, 
     """Blocker: --reviewed-head was dropped, so the lane pinned whatever the PR head is now. It reaches the queue, as
     the script's "$@" did, and the queue refuses it in the fix-forward lane: nothing is queued."""
     out = invoke(rt, ["head", "ship", "801", "--fix-forward", "--for", "web-2=9kk", "--reviewed", "r", "--reviewed-head", HEAD])
-    assert out.exit_code == 1 and "--reviewed-head requires one normal core PR" in out.stderr and keys(rt) == [], out
+    assert out.exit_code == 1 and "--reviewed-head requires one normal PR" in out.stderr and keys(rt) == [], out
     assert not any("pr merge" in line for line in gh.lines())
 
 

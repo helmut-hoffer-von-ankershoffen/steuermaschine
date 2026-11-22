@@ -14,7 +14,7 @@ absent. The advisory `review` check is ignored, and `merge-gate` and `coverage-f
 or tool edits; this does not shorten the five-minute batch cadence. Only one `run` works at a time (flock on ~/.cache/hz-queue.lock); a second waits for the first to
 exit, so launchd's instance takes over when a session's ends. `hz-note` gets one line when a PR merges or is stuck. Add a PR again to retry it. `add` runs hz-diff-guard on each diff and refuses a PR that raises timeouts, skips or deletes tests, adds retries
 or continue-on-error, lowers a threshold and the like, unless `--reviewed "reason"` is given (the reason is logged with hz-note).
-For one normal core PR, --reviewed-head FULL_SHA with --reviewed pins admission to the independently reviewed commit.
+For one normal PR (any repository), --reviewed-head FULL_SHA with --reviewed pins admission to the independently reviewed commit.
 The normal queue gates still apply. A changed head needs independent review and requeue.
 Owner 11-03: --diagnostics-main permits one independently reviewed, head-pinned core diagnostic PR while main is red.
 It requires --reviewed and --diagnostic-head SHA, preserves all PR gates, holds and cadence, and neither claims a fix
@@ -1587,10 +1587,10 @@ def add(args) -> int:
     fix_forward = getattr(args, "fix_forward", False) or getattr(args, "fix_for", None) or getattr(args, "dry_run", False)
     if normal_head is not None and (
         not reviewed or not re.fullmatch(r"[0-9a-f]{40}", normal_head)
-        or len(args.pr) != 1 or hzlib.split_key(args.pr[0])[0] != hzlib.CORE
+        or len(args.pr) != 1
         or fix_forward or getattr(args, "fixes_main", False) or any(purpose for _, _, purpose in purposes)
     ):
-        print("refused: --reviewed-head requires one normal core PR, --reviewed reason and a full SHA", file=sys.stderr)
+        print("refused: --reviewed-head requires one normal PR, --reviewed reason and a full SHA", file=sys.stderr)
         return 1
     if fix_forward:
         return add_fix_forward(args, reviewed, after)
@@ -1823,7 +1823,7 @@ def _main(argv: list[str]) -> int:
     p.add_argument("--after", action="append", default=[])
     p.add_argument("--bead", default="", help="the bead this PR closes; on merge the queue records pr + merge_sha and runs sm beads stamp")
     p.add_argument("--reviewed", metavar="REASON", help="queue a PR the diff guard flagged; the reason goes to sm note")
-    p.add_argument("--reviewed-head", metavar="SHA", help="pin one normal core PR to its independently reviewed full SHA; requires --reviewed")
+    p.add_argument("--reviewed-head", metavar="SHA", help="pin one normal PR (any repository) to its reviewed full SHA; requires --reviewed")
     kind = p.add_mutually_exclusive_group()
     kind.add_argument("--fixes-main", action="store_true", help="the PR that makes a red main green: it may merge while main is red, alone")
     kind.add_argument("--diagnostics-main", metavar="REASON", help="one reviewed core diagnostic, not a fix; requires --reviewed and pins its head")

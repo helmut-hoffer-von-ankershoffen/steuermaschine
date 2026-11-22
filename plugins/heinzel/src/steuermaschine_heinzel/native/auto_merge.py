@@ -13,6 +13,7 @@ A repository the queue knows (Core, plugins, acme) gets a queue entry; another o
 from __future__ import annotations
 
 import re
+from contextlib import nullcontext
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -22,6 +23,7 @@ import typer
 from steuermaschine.engine import Refuse
 from steuermaschine.helpdoc import H
 from steuermaschine.models import Model
+from steuermaschine.protocols import Busy
 from steuermaschine.native import native, runtime
 
 from . import auto_review, merge_ready, queue, queue_hold
@@ -30,6 +32,7 @@ from .queue_lib import hzlib
 from .status_lib import prtable
 
 READY_STATES = ("CLEAN", "BEHIND")
+PASS_LOCK = "heinzel.queue-auto"
 
 
 class AutoRow(Model):
@@ -64,8 +67,10 @@ def eligible(row: prtable.PrRow) -> str:
         return f"merge state {row.state}"
     if row.ci != "ok":
         return f"CI {row.ci}"
-    if row.sonar in ("FAIL", "running"):
-        return f"Sonar {row.sonar}"
+    if row.sonar != "ok":
+        return "no Sonar check" if row.sonar == "-" else f"Sonar {row.sonar}"  # a missing check is not a passing one
+    if not re.fullmatch(r"[0-9a-f]{40}", row.head):
+        return "the head the checks were read for is unknown"
     if row.threads:
         return f"{row.threads} unresolved review thread(s)"
     return ""
@@ -111,11 +116,21 @@ def queue_auto(live: bool = typer.Option(False, "--live", help="Queue and merge;
         return AutoQueued(stopped=hold.describe())
     w = world()
     owner = w.repo.split("/")[0]
+    settings = auto_review.settings_of(w)
+    try:
+        with rt.providers.store.lock(PASS_LOCK) if live else nullcontext():
+            return one_pass(rt, w, owner, settings, live, dispatch)
+    except Busy:
+        raise Refuse("another `sm queue auto` pass is running", "sm queue list", code=1) from None
+
+
+def one_pass(rt: Any, w: Any, owner: str, settings: auto_review.AutoReviewSettings, live: bool, dispatch: bool) -> AutoQueued:
     module: Any = queue._queue()  # type: ignore[no-untyped-call]
     frozen = bool(module.hzlib.merge_frozen())
     queued = {str(i["key"]) for i in queue._load(module)["items"] if i["status"] == "queued"}
     names = list(w.settings.get("status_pr_repos") or prtable.DEFAULT_REPOS)
     now = datetime.now(UTC)
+    budget = [settings.review_max_per_pass]  # headless reviews this pass may still start
     rows: list[AutoRow] = []
     for name in names:
         listed, why = prtable.fetch(w.gh, owner, name, now)
@@ -123,44 +138,61 @@ def queue_auto(live: bool = typer.Option(False, "--live", help="Queue and merge;
             rows.append(AutoRow(repo=name, number=0, action="skipped", why=why))
             continue
         for pr in listed:
-            rows.append(handle(rt, w, module, owner, pr, live, dispatch, frozen, queued))
+            rows.append(handle(rt, w, module, owner, pr, (live, dispatch, frozen), queued, settings, budget))
     return AutoQueued(rows=[r for r in rows if r.action != "idle"])
 
 
-def handle(rt: Any, w: Any, module: Any, owner: str, pr: prtable.PrRow, live: bool, dispatch: bool, frozen: bool, queued: set[str]) -> AutoRow:
-    """One pull request through the rules; an `idle` row is one that merely is not ready yet (it is not listed)."""
+def handle(rt: Any, w: Any, module: Any, owner: str, pr: prtable.PrRow, mode: tuple[bool, bool, bool], queued: set[str],
+           settings: auto_review.AutoReviewSettings, budget: list[int]) -> AutoRow:
+    """One pull request through the rules; an `idle` row is one that merely is not ready yet (it is not listed).
+    `mode` is (live, dispatch, frozen); `budget[0]` the headless reviews this pass may still start."""
+    live, dispatch, frozen = mode
+
+    def row(action: str, why: str = "") -> AutoRow:
+        return AutoRow(repo=pr.repo, number=pr.number, action=action, why=why)
+
     full = f"{owner}/{pr.repo}"
-    if (bad := eligible(pr)) :
-        return AutoRow(repo=pr.repo, number=pr.number, action="idle", why=bad)
+    if bad := eligible(pr):
+        return row("idle", bad)
     words = queue_words(pr.repo, pr.number, owner)
     key = module.hzlib.split_key(words)[2] if words else ""
     if key and key in queued:
-        return AutoRow(repo=pr.repo, number=pr.number, action="idle", why="already queued")
+        return row("idle", "already queued")
     if held := hold_reason(w, full, pr.number):
-        return AutoRow(repo=pr.repo, number=pr.number, action="skipped", why=held)
-    data, why = w.gh.try_json(["pr", "view", str(pr.number), "-R", full, "--json", "headRefOid,baseRefOid,files,comments"], timeout=30)
+        return row("skipped", held)
+    data, why = w.gh.try_json(["pr", "view", str(pr.number), "-R", full, "--json", "headRefOid,baseRefOid,files,comments,commits"], timeout=30)
     head, base = (str(data.get("headRefOid") or ""), str(data.get("baseRefOid") or "")) if isinstance(data, dict) else ("", "")
     if why or not (re.fullmatch(r"[0-9a-f]{40}", head) and re.fullmatch(r"[0-9a-f]{40}", base)):
-        return AutoRow(repo=pr.repo, number=pr.number, action="skipped", why=f"head unreadable: {why or 'no exact commits'}")
+        return row("skipped", f"head unreadable: {why or 'no exact commits'}")
+    if head != pr.head:  # CI, Sonar and threads were read for another commit: the next pass reads them again
+        return row("idle", f"the head moved from {pr.head[:12]} to {head[:12]} since the checks were read")
     reasons = auto_review.needs_review(full, pr.number, base, head, list(data.get("files") or []))
-    verdict = auto_review.recorded_verdict(list(data.get("comments") or []), head) if reasons else ""
-    if reasons and not verdict and dispatch:
-        res = auto_review.review_dispatch(number=pr.number, repo=full, model="", live=True)
-        verdict = res.verdict
-        if not verdict:
-            return AutoRow(repo=pr.repo, number=pr.number, action="waiting", why=res.note or "review started, no verdict yet")
+    verdict = ""
+    if reasons:
+        messages = [f"{c.get('messageHeadline', '')}\n{c.get('messageBody', '')}" for c in data.get("commits") or []]
+        verdict = auto_review.recorded_verdict(list(data.get("comments") or []), head, settings.review_comment_authors, auto_review.author_families(messages))
+        if not verdict and dispatch:
+            if budget[0] <= 0:
+                return row("waiting", f"{settings.review_max_per_pass} reviews were started in this pass; the next pass goes on")
+            budget[0] -= 1
+            try:
+                res = auto_review.review_dispatch(number=pr.number, repo=full, model="", live=True)
+            except Refuse as refused:
+                return row("waiting", str(refused)[:120])
+            verdict = res.verdict
+            if not verdict:
+                return row("waiting", res.note or "review started, no verdict yet")
     if stop := review_gate(verdict, reasons):
-        return AutoRow(repo=pr.repo, number=pr.number, action="waiting" if verdict != "REJECT" else "skipped", why=stop)
+        return row("waiting" if verdict != "REJECT" else "skipped", stop)
     if words:
-        reviewed = [] if not reasons else ["--reviewed", f"review: sm-review comment on head {head[:12]}", *(["--reviewed-head", head] if not words[:-1] else [])]
+        reason = f"review: sm-review comment on head {head[:12]}" if reasons else f"sm queue auto: no gate touched, ready at head {head[:12]}"
         if not live:
-            return AutoRow(repo=pr.repo, number=pr.number, action="would-queue")
-        done = queue._changed("add", ["add", *reviewed, *words], words)
-        return AutoRow(repo=pr.repo, number=pr.number, action="queued" if not done.exit else "skipped",
-                       why="" if not done.exit else "; ".join(done.errors or done.lines)[:120])
+            return row("would-queue")
+        done = queue._changed("add", ["add", "--reviewed", reason, "--reviewed-head", head, *words], words)  # every entry is bound to the head the checks were read for
+        return row("queued" if not done.exit else "skipped", "" if not done.exit else "; ".join(done.errors or done.lines)[:120])
     if frozen:
-        return AutoRow(repo=pr.repo, number=pr.number, action="waiting", why="merge freeze is on")
+        return row("waiting", "merge freeze is on")
     if not live:
-        return AutoRow(repo=pr.repo, number=pr.number, action="would-merge")
+        return row("would-merge")
     merged = rt.providers.commands.run(["gh", "pr", "merge", str(pr.number), "-R", full, "--squash", "--match-head-commit", head], timeout=120)
-    return AutoRow(repo=pr.repo, number=pr.number, action="merged" if merged.rc == 0 else "skipped", why="" if merged.rc == 0 else merged.err.strip()[:120])
+    return row("merged" if merged.rc == 0 else "skipped", "" if merged.rc == 0 else merged.err.strip()[:120])
