@@ -1,11 +1,14 @@
 """`sm head admit WORKTREE`: one head from a clean worktree to a queued PR, as one resumable engine pipeline.
 
-    check -> protected review (STOP, only for protected paths) -> pr* -> queue*
+    check -> protected review (STOP, only for protected paths, only without a required CI Gate review) -> pr* -> queue*
 
-Core's CI runs the full matrix on every PR, so nothing is admitted first: no packet, no plan slot. One blocking STOP
-is kept: a head that changes `.github/`, the release, publish, PyPI or acceptance scripts, `quarantine.toml`, the
-coverage config or a `conftest.py` stops until a different agent approves the digest of exactly those paths
-(`sm review verdict`). The diff guard of `head pr` stays too (a flagged PR is queued only with --set reviewed=...).
+Core's CI runs the full matrix on every PR, so nothing is admitted first: no packet, no plan slot. The one blocking
+review of a gate-touching change is CI's `Gate review` where main's ruleset requires it: then a head that changes
+protected paths prints "gate paths changed: CI Gate review decides" and goes on, and the queue merges it only with that
+check green on the exact head. Where the ruleset does not require it, the local STOP stays: a head that changes
+`.github/`, the release, publish, PyPI or acceptance scripts, `quarantine.toml`, the coverage config or a `conftest.py`
+stops until a different agent approves the digest of exactly those paths (`sm review verdict`), and a PR the diff guard
+of `head pr` flags is queued only with --set reviewed=....
 Every other head is queued and merges when CI and Sonar are green on its exact head.
 
 Each step runs the existing native command (`check`, `head pr`, `queue add`) through its review gate; nothing here
@@ -25,6 +28,7 @@ from steuermaschine.native import unit
 
 from .. import state as statedir
 from ..native import protected
+from ..native.queue_lib import ruleset
 from .common import need, ok, run
 
 VERB = "admit"
@@ -102,10 +106,19 @@ def protected_blobs(ctx: Ctx, paths: list[str]) -> dict[str, str]:
     return out
 
 
+def gate_review_decides(ctx: Ctx) -> bool:
+    """Whether main's ruleset of the repository requires the CI `Gate review`; False when it cannot be read (the stop stays)."""
+    rules, why = _gh(ctx).try_json(["api", f"repos/{_repo(ctx)}/rules/branches/main"])
+    return not why and ruleset.gate_review_decides(rules)
+
+
 def protected_review(ctx: Ctx) -> tuple[str, str, str]:
     changed = protected_changes(ctx)
     if not changed:
         return "", "", ""  # nothing protected: no stop
+    if gate_review_decides(ctx):  # the one blocking review is CI's, green on the exact head before the queue merges
+        ctx.say(f"gate paths changed: CI Gate review decides ({', '.join(changed[:6])})")
+        return "", "", ""
     head, wt = ctx.subject.key, ctx.subject.facts["worktree"]
     digest, record = protected.record(protected_blobs(ctx, changed))
     command = f"sm check {wt}"
@@ -180,7 +193,7 @@ def queue(ctx: Ctx) -> str:
     if not number:
         raise Refuse("no PR is known for this head: the pr step did not record one", f"sm head admit {ctx.subject.facts['worktree']}")
     reviewed = ctx.inputs.get("reviewed")
-    if ctx.data.get("guard") == "needs_review" and not reviewed:
+    if ctx.data.get("guard") == "needs_review" and not reviewed and not gate_review_decides(ctx):
         raise Refuse(f"the diff guard flagged PR #{number}: an independent review first, then --set reviewed=\"review: FILE\"", f"sm head guard {number}")
     ok("queue add", pr=[str(number)], bead=ctx.inputs.get("bead") or None, reviewed=reviewed or None, reviewed_head=ctx.subject.key if reviewed else None)
     return f"PR #{number} queued at {ctx.subject.key[:12]}"

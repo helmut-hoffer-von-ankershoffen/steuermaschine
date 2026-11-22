@@ -15,6 +15,12 @@ from typing import Any
 # always: the review informs, it never holds.
 ADVISORY_REVIEW = frozenset({"review", "attempt", "Claude review"})
 
+# The one blocking review of a gate-touching change (owner/SDLC 2026-11-22): CI's `Gate review` check. Where the ruleset
+# of main requires it, it replaces sm's local reviews (the protected-path stop and the diff guard's --reviewed): the queue
+# then merges only with it green on the exact head. Where the ruleset does not require it (or cannot be read), the local
+# reviews stay: a gate is never removed on a guess.
+GATE_REVIEW = "Gate review"
+
 
 def required_in_order(rules: Any) -> list[str] | None:
     """The contexts of every required_status_checks rule of a `rules/branches/BRANCH` answer, in the rules' order; None
@@ -32,6 +38,11 @@ def required_in_order(rules: Any) -> list[str] | None:
 def required_from(rules: Any) -> frozenset[str] | None:
     names = required_in_order(rules)
     return None if names is None else frozenset(names)
+
+
+def gate_review_decides(rules: Any) -> bool:
+    """Whether a `rules/branches/main` answer requires the CI `Gate review`; False for no answer (the local review stays)."""
+    return GATE_REVIEW in (required_from(rules) or ())
 
 
 @dataclass(frozen=True)

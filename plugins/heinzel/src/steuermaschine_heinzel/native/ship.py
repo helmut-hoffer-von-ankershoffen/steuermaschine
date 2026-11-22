@@ -109,7 +109,8 @@ def head_guard(pr: list[str] = typer.Argument(..., metavar="PR", help="A PR numb
     "Use when a PR is open and its head is final.",
     "adds the PR to the merge queue (and a note when a reason is given); nothing when the guard answers NEEDS_REVIEW.",
     "sm head ship 801", "sm go   (it shows the queue wait and flags a stall)",
-    "Exit 0 queued or already cleared, 2 NEEDS_REVIEW (start an independent reviewer; ship again with its written reason),\n"
+    "Exit 0 queued or already cleared (a flagged PR is queued when main's ruleset requires the CI Gate review: it decides),\n"
+    "2 NEEDS_REVIEW (only without a required Gate review: start an independent reviewer; ship again with its written reason),\n"
     "1 the queue refused (moved head, combine notes, `sm queue hold`). --fix-forward passes PR, REASON and every option to the queue's\n"
     "fix-forward lane, which refuses REASON and --reviewed-head there (exit 1, nothing queued)."))
 @mirrored  # it runs a program that writes the working files: the subject journals follow (journal_view.py)
@@ -160,7 +161,8 @@ def is_focus(worktree: Path) -> bool:
     "The push takes a fast slot of the run lock (up to three at once, fewer under load, no load bar; a focus head goes ahead of the\n"
     "others): its pre-push hook runs the fast checks. Full suites run on hosted PR CI. A release/* push is a full, exclusive run:\n"
     "it starts only on an idle machine below the load bars and no other command starts beside it.\n"
-    "Exit 2 after the PR is open: the guard answered NEEDS_REVIEW. It does not run the repository's `make pr`.\n"
+    "Exit 2 after the PR is open: the guard answered NEEDS_REVIEW and main's ruleset does not require the CI Gate review\n"
+    "(where it does, the flagged PR is queued and Gate review decides). It does not run the repository's `make pr`.\n"
     "While `sm queue hold` holds the queue, --live refuses with the hold's reason (exit 1, nothing pushed)."))
 def head_pr(
     bead: str = typer.Argument(..., metavar="BEAD", help="The bead this head closes; the default body names it."),

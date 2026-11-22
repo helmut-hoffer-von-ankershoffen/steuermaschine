@@ -58,7 +58,7 @@ Only the coordinator promotes, and never during a running admission or release.
 
 Two different things carry the word.
 
-**Verdicts on a run** are product behaviour. A pipeline stops at a digest of prepared bytes; a reviewer who is not the author records `sm review verdict DIGEST --approve --reviewer NAME`; the apply step refuses without it. Do not weaken this.
+**Verdicts on a run** are product behaviour. A pipeline stops at a digest of prepared bytes; a reviewer who is not the author records `sm review verdict DIGEST --approve --reviewer NAME`; the apply step refuses without it. Do not weaken this. One exception, by the owner's decision of 2026-11-22: a PR's gate-touching change has exactly one blocking review, CI's `Gate review`, wherever main's ruleset requires that check; there `sm ship` skips its protected-path stop and the diff guard's `--reviewed` (`queue_lib/ruleset.py` `GATE_REVIEW`), and the queue merges only with every required check green on the exact head. Where the ruleset does not require it, the local review stays.
 
 **Verdicts on code** decide whether a commit of sm may go live. `bin/promote` switches only a commit with one
 independent verdict on that exact commit, recorded outside the tree (`$SM_STABLE/verdicts/<commit>`) by

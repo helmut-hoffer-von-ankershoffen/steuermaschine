@@ -109,6 +109,12 @@ def required_checks(repo: str) -> frozenset[str] | None:
     return found
 
 
+def gate_review_decides(repo: str) -> bool:
+    """Whether main's ruleset in REPO requires the CI `Gate review` (queue_lib/ruleset.py): then it alone reviews a
+    gate-touching or diff-guard-flagged PR and sm asks for no local review. False when the rules cannot be read."""
+    return ruleset.GATE_REVIEW in (required_checks(repo) or ())
+
+
 def advisory_checks(repo: str) -> ruleset.Advisory:
     """The checks that do not hold a PR of REPO: only `review` (and what a caller waives by name). A red check holds,
     required or not; the ruleset (queue_lib/ruleset.py) only adds that a required check must have reported."""

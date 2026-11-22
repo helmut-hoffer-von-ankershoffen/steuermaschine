@@ -1,6 +1,7 @@
 """Guard the diff, then queue the PR: the ship step. A port of the former shell script, same order, same lines.
 
-    ship(PR)                          guard PASS -> queue; FLAG or unreadable -> NEEDS_REVIEW and the guard's first lines, exit 2
+    ship(PR)                          guard PASS -> queue; FLAG or unreadable -> NEEDS_REVIEW and the guard's first lines, exit 2,
+                                      unless main's ruleset requires the CI Gate review: then queue, and that check decides
     ship(PR, reason)                  queue as reviewed, with the written reason of an independent review
     ship(PR, reason, reviewed_head)   the same, pinned to the reviewed head
     push(PR)                          before a push that starts PR CI: OK (0) or WAIT (75)
@@ -69,6 +70,9 @@ def ship(pr: str, reason: str | None = None, reviewed_head: str | None = None) -
     if verdict.startswith("PASS"):  # the queue guards again and binds that verdict to the head it read
         added = _add([pr])
         return _done(added.returncode, out + added.stdout, added.stderr)
+    if repo and hzlib.gate_review_decides(repo):  # main's ruleset requires the CI Gate review: it decides, not a local review
+        added = _add([pr])
+        return _done(added.returncode, out + f"diff guard flagged {pr}: CI Gate review decides\n" + added.stdout, added.stderr)
     return _done(2, out + f"NEEDS_REVIEW {pr}\n" + "".join(f"{line}\n" for line in verdict.splitlines()[:6]))
 
 

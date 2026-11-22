@@ -1,7 +1,8 @@
 """`sm ship WORKTREE`: the one verb that takes a head from its worktree to a merged PR, as a driver over `sm head admit`.
 
 It adds no step of its own: it hands the head to the `head admit` pipeline (local check, push, PR, queue) and, after the
-queue step, can wait for the PR to merge. Core's CI merges it on green; a PR the diff guard flags waits for its review.
+queue step, can wait for the PR to merge. Core's CI merges it on green, with the CI Gate review as the one review of a
+gate-touching change where main's ruleset requires it (a local review only where it does not).
 """
 
 from __future__ import annotations
@@ -169,26 +170,27 @@ def open_elsewhere(rt: Any, worktree: str, repo: str, live: bool, given: dict[st
     "Use when a head is committed in its own worktree and should go out; type it again after every stop.",
     "state on this machine; with --live also one push, the PR and one queue entry. Waiting only reads.",
     "sm ship ~/Code/heinzel-fix --live --wait 45 --set bead=abc --set title=\"fix(web): short title\"",
-    "the NEXT line it prints (a review stop names the digest and the brief); exit 75: the same command again",
+    "the NEXT line it prints; exit 75: the same command again",
     "WORKTREE of the core repository: the core pipeline below. A worktree of another repository (its origin decides, for\n"
     "example the plugins repository): checks, one push, the PR and the queue entry, with the title from --set title or the last\n"
-    "commit subject and the bead from --set bead. A PR number instead of a worktree: queue that open PR (with --live; a\n"
-    "flagged PR needs --set reviewed=\"review: FILE\").\n"
+    "commit subject and the bead from --set bead. A PR number instead of a worktree: queue that open PR (with --live).\n"
     "Before the first check, in one pass: the repository is read from the origin (core, plugins, acme, sf, the public steuermaschine,\n"
     "heinzel-management); a branch behind origin/main gets main merged in by sm (subject \"chore: merge origin/main\"; a conflict is\n"
     "aborted and named); the bead comes from --set bead, a `Bead:` trailer of a commit, or a bead id in the branch name, else `none`;\n"
     "the title from --set title or the newest conventional commit subject. What cannot be found is ONE refusal naming the exact\n"
     "--set, before any check. DERIVED in the output says what was found. steuermaschine and heinzel-management have no merge queue:\n"
     "their PR merges when its required checks are green.\n"
-    "No packet, no plan slot: Core's CI runs the full matrix on every PR. One blocking stop is kept: a head that changes .github/, the\n"
-    "release, publish, PyPI or acceptance scripts, quarantine.toml, the coverage config or a conftest.py stops with the digest of exactly\n"
-    "those paths; a different agent records `sm review verdict DIGEST --approve`, then run this again with --approved DIGEST.\n"
-    "The diff guard stays too: a flagged PR is queued only with --set reviewed=\"review: FILE\".\n"
+    "No packet, no plan slot: Core's CI runs the full matrix on every PR. The one blocking review of a gate-touching change is CI's\n"
+    "`Gate review` check where main's ruleset requires it: sm prints \"gate paths changed: CI Gate review decides\", pushes, opens the\n"
+    "PR and queues it, and the queue merges only with every required check, Gate review included, green on the exact head.\n"
+    "Only in a repository whose ruleset does not require Gate review does sm keep its local review: a head that changes .github/,\n"
+    "the release, publish, PyPI or acceptance scripts, quarantine.toml, the coverage config or a conftest.py stops with a digest\n"
+    "for another agent's verdict (--approved), and a PR the diff guard flags waits for --set reviewed=REASON.\n"
     "--wait MINUTES, after the queue step: exit 0 when the PR merged, exit 1 with the reason when it was closed or the queue dropped it,\n"
     "exit 75 when the ceiling is reached (run it again to keep waiting)."))
 def ship(worktree: str = typer.Argument(..., metavar="WORKTREE", help="The clean worktree of the head, on its own work branch; or an open PR number."),
          live: bool = typer.Option(False, "--live", help="Also run the steps that write outside this machine (push and PR, queue)."),
-         approved: str = typer.Option("", "--approved", metavar="SHA256", help="The digest a different agent approved at the protected-path stop."),
+         approved: str = typer.Option("", "--approved", metavar="SHA256", help="Only where main's ruleset does not require the CI Gate review: the digest another agent approved at the local stop."),
          author: str = typer.Option("", "--as", metavar="NAME", help="Who drives this run; the reviewer must be someone else."),
          set_: list[str] | None = typer.Option(None, "--set", metavar="NAME=VALUE", help="An input of `head admit` (remembered)."),
          wait: int | None = typer.Option(None, "--wait", min=1, metavar="MINUTES", help="After the queue step, wait up to MINUTES for the PR to merge.")) -> ShipResult:

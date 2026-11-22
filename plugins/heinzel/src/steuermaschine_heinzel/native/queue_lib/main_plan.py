@@ -8,6 +8,8 @@ A Core PR merges only when all of these hold for the exact PINNED head:
    acceptance scripts, the gate scripts, Makefile, uv.lock, the coverage and pytest config, quarantine.toml, conftest.py,
    Core's own execution inputs), a protected-review verdict exists, recorded by a different agent
    of exactly those files' content (the digest `sm head admit` stops at, `sm review verdict`): an update of the branch that leaves them alone keeps it.
+   When main's ruleset requires the CI `Gate review` (queue_lib/ruleset.py), that check, green on the head under rule 1, is the
+   one review and no local verdict is asked for.
 
 `queue add` does not evaluate the rule: it queues, and the merge-time guard decides. Fail closed: any unreadable fact is a
 refusal that names it.
@@ -18,7 +20,7 @@ from __future__ import annotations
 import importlib
 from pathlib import Path
 
-from . import hzlib
+from . import hzlib, ruleset
 
 SETTING = "queue_core_repo"  # kept: the setting still exists, nothing reads a Core checkout for this rule any more
 PREFIX = "merge rule"
@@ -128,6 +130,8 @@ def gap(pr: str, head: str = "") -> str:
             found.add("pyproject.toml")
     except Exception as error:  # noqa: BLE001 - fail closed: every error is a named refusal
         return f"{PREFIX}: cannot check #{pr}: {error}"
+    if found and ruleset.GATE_REVIEW in required:  # the CI Gate review is required and green on this head (above): it alone decides
+        return ""
     if found and (reason := _verdict(head, {name: changed[name] for name in found})):
         return f"{PREFIX}: #{pr} ({head[:8]}): {reason}"
     return ""

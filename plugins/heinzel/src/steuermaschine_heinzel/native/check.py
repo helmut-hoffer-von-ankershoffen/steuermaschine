@@ -80,10 +80,10 @@ def extra_tests(sel: Path | None) -> list[str]:
 
 
 @native("check", writes=True, help=H(
-    "The fast checks of exactly what a Core head changes, in one pass: READY and a receipt for the commit, or every failure with its fix.",
+    "The fast checks of exactly what a Core head changes, in one pass: READY, or every failure with its fix.",
     "Use before you ask for a review and before any push, on your committed head; again after every new commit.",
-    "writes the check receipt of the commit on this machine when every check is green (written once per commit; "
-    "`sm review verdict --approve` needs it); runs local checks through the run lock.",
+    "an internal cache on this machine when every check is green (once per commit; `sm ship` reuses it instead of "
+    "checking again; nothing you hand to anyone); runs local checks through the run lock.",
     "sm check ~/Code/heinzel-chat-composer",
     "ask for the review; then sm head preflight WORKTREE --sel SEL.json",
     "Checks, in this order; every one runs, so one pass names every finding:\n"

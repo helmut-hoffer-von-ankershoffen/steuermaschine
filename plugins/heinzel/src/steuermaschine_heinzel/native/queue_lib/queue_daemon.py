@@ -1557,7 +1557,8 @@ def pr_head(repo: str, number: str) -> str:
 
 def add(args) -> int:
     """Queue the PRs. A PR whose diff weakens a check (hz-diff-guard) is refused unless `--reviewed "reason"` is given, which
-    queues it and notes the reason. Returns 1 when any PR was refused."""
+    queues it and notes the reason, or main's ruleset requires the CI `Gate review`: then that check decides (the merge
+    needs every required check green on the pinned head). Returns 1 when any PR was refused."""
     after = [hzlib.split_key(a)[2] for a in args.after]
     reviewed = (getattr(args, "reviewed", None) or "").strip()
     diagnostics = (getattr(args, "diagnostics_main", None) or "").strip()
@@ -1613,9 +1614,13 @@ def add(args) -> int:
             print(f"refused {key}: the PR head is unreadable or moved while the diff guard read it; ship it again", file=sys.stderr)
             refused += 1
             continue
+        gate_decides = False
         if found is None or found:
             print(shown, file=sys.stderr)
-            if not reviewed:
+            gate_decides = not reviewed and hzlib.gate_review_decides(repo)
+            if gate_decides:  # main's ruleset requires the CI Gate review: it decides, green on the exact head, before any merge
+                print(f"{key}: diff guard flagged: CI Gate review decides (required by main's ruleset; no local review)", file=sys.stderr)
+            elif not reviewed:
                 print(f"refused {key}: fix the change, or review it and add --reviewed \"reason\"", file=sys.stderr)
                 refused += 1
                 continue
@@ -1641,7 +1646,8 @@ def add(args) -> int:
                 hzlib.note(f"sm queue: mitigation #{key} measured evidence: {evidence}; underlying main failure remains unresolved")
         if found is None or found:
             what = "unreadable diff" if found is None else ", ".join(sorted({f[2] for f in found}))
-            hzlib.note(f"sm queue: {key if repo != hzlib.CORE else '#' + key} queued past the diff guard ({what}), reviewed: {reviewed}")
+            hzlib.note(f"sm queue: {key if repo != hzlib.CORE else '#' + key} queued past the diff guard ({what}), "
+                       + ("the CI Gate review decides" if gate_decides else f"reviewed: {reviewed}"))
         queued = [i for i in queued if i["key"] != key]
         queued.append({"key": key, "repo": repo, "pr": number, "after": after, "status": "queued", "detail": "", "reruns": 0, "noted": "", "added": int(time.time()), "fixes_main": bool(getattr(args, "fixes_main", False)), "diagnostics_main": diagnostics, "safety_fix_main": safety_fix, "mitigation_main": mitigation, "mitigation_evidence": evidence, "reviewed_progress_main": progress, "progress_anchor": progress_anchor, "reviewed_head": reviewed_head, "guarded_head": guarded_head, "bead": (getattr(args, "bead", "") or "").strip()})
         print(f"queued {key}" + (f" after {', '.join(after)}" if after else ""))
