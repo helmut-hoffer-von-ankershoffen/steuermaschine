@@ -2724,6 +2724,10 @@ def plugin_run_tag(run_id: int) -> str | None:
     return tags.pop() if len(tags) == 1 else None
 
 
+class StatusOnly(Exception):
+    """The plugin is not on PyPI and nothing may be dispatched: the message is the status, printed with exit 0."""
+
+
 def release_plugin(name: str, timeout: float, redispatch: bool = False) -> int:
     """Plugin stamps live in their own receipt: the core receipt (and its handoff, verify and the next cut) never sees them.
     The receipt binds the release to its dispatched run's ID; `--redispatch` is the only way to a second dispatch."""
@@ -2754,9 +2758,9 @@ def release_plugin(name: str, timeout: float, redispatch: bool = False) -> int:
             raise Stop(f"the plugin receipt holds only a dispatch time for {dist} {version} (an older sm) and no run of its own; "
                        f"no other run is adopted. Look at the release runs; if none releases {tag}: {again}")
         elif not redispatch:  # owner 2026-11-22: CI publishes a plugin when its bump merges; this command only reads
-            raise Stop(f"{dist} {version} is not on PyPI yet: the plugins CI publishes it after the green main run of its bump "
-                       f"(workflow Release bumped plugins): gh run list -R {PLUGINS} --workflow release.yml. "
-                       f"Only when that run failed and the cause is fixed: {again}")
+            raise StatusOnly(f"NOT RELEASED: {dist} {version} is not on PyPI yet: the plugins CI publishes it after the green main run of its bump "
+                             f"(workflow Release bumped plugins): gh run list -R {PLUGINS} --workflow release.yml. "
+                             f"Only when that run failed and the cause is fixed: {again}")
         plugin_dispatch(key, dist)
 
     succeeded_at: list[float] = []  # when the run was first seen ended success without the version on PyPI
@@ -2773,7 +2777,11 @@ def release_plugin(name: str, timeout: float, redispatch: bool = False) -> int:
             raise Stop(f"the release run {run['databaseId']} ended {run['conclusion']} without {dist} {version} on PyPI: "
                        f"sm ci watch {run['databaseId']} -R {PLUGINS}; after the fix: {again}")
 
-    step(f"PyPI {dist} {version}", lambda: pypi_has(dist, version), act, timeout, check)
+    try:
+        step(f"PyPI {dist} {version}", lambda: pypi_has(dist, version), act, timeout, check)
+    except StatusOnly as status:  # read-only status, not a stop: exit 0
+        hzlib.say(str(status))
+        return 0
     run_id = state().get(f"{key}_run_id")
     if run_id is not None:  # the version is on PyPI; success names this run only when it released exactly this tag
         released = plugin_run_tag(run_id) if type(run_id) is int and run_id > 0 else None

@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from steuermaschine.engine import Refuse
 from steuermaschine.github.client import Gh
 from steuermaschine.github.forge import GitHub
 from steuermaschine.hashing import canonical_sha256
@@ -130,6 +131,17 @@ def probe_releases(w: World) -> dict[str, Any]:
     rows = w.gh_json(["release", "list", "-R", w.repo, "-L", "5", "--json", "tagName,isLatest,publishedAt"]) or []
     latest = next((r for r in rows if r.get("isLatest")), rows[0] if rows else {})
     return {"latest": str(latest.get("tagName", "")).removeprefix("v"), "published": latest.get("publishedAt", "")}
+
+
+def probe_builders(w: World) -> dict[str, Any]:
+    """The builders working now against the cap (setting brief_max_agents): `sm beads brief` refuses a new builder at the cap."""
+    from ..briefs_lib import builder
+
+    try:
+        working, cap = builder.working_count(w.commands, w.settings)
+    except Refuse:  # no tracker is configured: no builders to count (a project without agents)
+        return {}
+    return {"working": working, "cap": cap}
 
 
 def probe_slots(w: World) -> dict[str, Any]:
@@ -568,7 +580,7 @@ def collect(w: World, live: bool = False, budget: float | None = None) -> dict[s
     probes = {"main": probe_main, "remote_heads": probe_remote_heads, "runs": probe_runs, "active_runs": probe_active_runs, "prs": probe_prs, "releases": probe_releases,
               "queue": probe_queue, "train": probe_train, "release": probe_release, "holds": probe_holds, "procs": probe_procs,
               "receipts": probe_receipts, "slots": probe_slots, "mini": lambda world: probe_mini(world, live),
-              "tools": probe_tools, "alarms": probe_alarms, "rehearse": probe_rehearse, "focus": probe_focus,
+              "tools": probe_tools, "alarms": probe_alarms, "rehearse": probe_rehearse, "focus": probe_focus, "builders": probe_builders,
               "pipelines": probe_pipelines}
     state: dict = {}
     done: dict = {}

@@ -10,9 +10,10 @@ One check per queue tick (`auto_arm.tick`):
 3. The commit is a squash merge of a PR (`subject (#N)`), not a release commit (release/* head or a `release` subject)
    and not itself a revert. Anything else: an alarm only.
 4. One revert PR per merge, idempotent by branch name `revert/pr-N`: a blob-less shallow clone in a temporary directory,
-   `git revert --no-commit`, one commit as the merge's own author (the owner's noreply identity; any other address
-   refuses), a plain push of the new branch (never a force), `gh pr create`, and a queue entry: the queue arms
-   auto-merge on it like any other entry (and holds it during a release freeze).
+   `git revert --no-commit`, one commit authored and committed as the owner's noreply identity (never the reverted
+   PR's author), a plain push of the new branch (never a force), `gh pr create`, and then the same rules as any PR: the
+   diff guard reads the revert PR; a PR that touches guarded paths is NOT queued (it needs `sm ship` with its review),
+   any other is queued, and `auto_arm` applies the merge rule (checks, protected-path verdict, red-main hold) before it arms.
 5. An ALERT alarm names the run, the merge and the revert PR.
 """
 
@@ -28,7 +29,8 @@ from . import edge, hzlib, main_lanes
 
 SQUASH = re.compile(r"^(?P<title>.+) \(#(?P<pr>\d+)\)$")
 RELEASE = re.compile(r"^(release|chore\(release\)|revert)\b", re.IGNORECASE)
-NOREPLY = re.compile(r"^[0-9]+\+[A-Za-z0-9-]+@users\.noreply\.github\.com$")
+OWNER_NAME = hzlib.OWNER
+OWNER_EMAIL = f"1826050+{hzlib.OWNER}@users.noreply.github.com"
 RED = ("failure", "timed_out")
 DEPTH = 50  # the shallow clone: a merge further back than this is not reverted by the tool
 MAX_SUBJECT = 72
@@ -68,12 +70,11 @@ def unknown_failures(q: Any, red: dict[str, Any]) -> list[str] | None:
 
 
 def merge_of(sha: str) -> dict[str, Any]:
-    """{pr, title, name, email} of a squash merge commit of a PR, or {"why": reason} when the tool must not revert it."""
+    """{pr, title} of a squash merge commit of a PR, or {"why": reason} when the tool must not revert it."""
     commit = hzlib.ghj("api", f"repos/{hzlib.CORE}/commits/{sha}", default=None)
     if not isinstance(commit, dict):
         return {"why": f"commit {sha[:8]} cannot be read"}
     message = str((commit.get("commit") or {}).get("message") or "")
-    author = (commit.get("commit") or {}).get("author") or {}
     subject = message.splitlines()[0] if message else ""
     found = SQUASH.match(subject)
     if not found:
@@ -85,10 +86,7 @@ def merge_of(sha: str) -> dict[str, Any]:
         return {"why": f"PR #{found['pr']} cannot be read, or its merge commit is not {sha[:8]}"}
     if str(pull.get("headRefName", "")).startswith("release/"):
         return {"why": f"PR #{found['pr']} is a release PR: never reverted by the tool"}
-    email = str(author.get("email") or "")
-    if not NOREPLY.fullmatch(email):
-        return {"why": f"the author of {sha[:8]} has no GitHub noreply address: the revert commit would publish it"}
-    return {"pr": found["pr"], "title": found["title"], "name": str(author.get("name") or ""), "email": email}
+    return {"pr": found["pr"], "title": found["title"]}
 
 
 def revert_exists(branch: str) -> bool:
@@ -112,10 +110,10 @@ def make_revert(sha: str, merge: dict[str, Any], branch: str, subject: str, body
             return "the clone of Core failed"
         if git(work, "cat-file", "-e", f"{sha}^{{commit}}").returncode != 0:
             return f"{sha[:8]} is not within the last {DEPTH} commits of main"
-        who = ("-c", f"user.name={merge['name']}", "-c", f"user.email={merge['email']}")  # author and committer: the merge's author
+        who = ("-c", f"user.name={OWNER_NAME}", "-c", f"user.email={OWNER_EMAIL}")  # author and committer: the owner, never the reverted PR's author
         if git(work, *who, "revert", "--no-commit", sha).returncode != 0:
             return f"{sha[:8]} does not revert cleanly on main"
-        if git(work, *who, "commit", "--author", f"{merge['name']} <{merge['email']}>", "-m", subject, "-m", body).returncode != 0:
+        if git(work, *who, "commit", "--author", f"{OWNER_NAME} <{OWNER_EMAIL}>", "-m", subject, "-m", body).returncode != 0:
             return "the revert commit failed"
         pushed = git(work, "push", "origin", f"HEAD:refs/heads/{branch}")
         return "" if pushed.returncode == 0 else f"the push of {branch} failed"
@@ -153,6 +151,11 @@ def check(q: Any) -> str:
         return finish(q, red, key, f"main run {red['run']} red at #{merge['pr']}; {branch} pushed, the PR could not be opened", {"branch": branch})
     number = found.group(1)
     head = (hzlib.ghj("pr", "view", number, "-R", hzlib.CORE, "--json", "headRefOid", default={}) or {}).get("headRefOid", "")
+    found, _shown = q.guard_findings(hzlib.CORE, number)  # the diff guard reads the revert PR like any other PR
+    if found is None or found:
+        what = "an unreadable diff" if found is None else ", ".join(sorted({f[2] for f in found}))
+        return finish(q, red, key, f"main run {red['run']} turned red at #{merge['pr']} ({jobs}): revert PR #{number} opened but NOT queued: "
+                      f"it touches guarded paths ({what}); review it and ship it with `sm ship`", {"pr": number, "branch": branch})
     with q.state_lock():
         data = q.load()
         data["items"] = [i for i in data["items"] if i["key"] != number] + [{

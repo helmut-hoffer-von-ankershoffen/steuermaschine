@@ -137,51 +137,226 @@ def test_a_timeout_of_a_gating_step_fails_and_is_never_skipped(core, rt):  # noq
     assert not found.ready and [f.step for f in found.failures] == ["tests"] and "exit 124" in found.failures[0].message and not found.receipt
 
 
-def test_a_concurrent_check_waits_for_its_turn_and_gives_up_with_wait(tmp_path):
+def hold(directory, kind, count):
+    """Hold `count` slot files of the pool the way other runs do: an exclusive flock each."""
     import fcntl
     import os
 
-    import pytest
+    fds = []
+    for n in range(count):
+        fd = os.open(directory / f"sm-{kind}.slot.{n}", os.O_RDWR | os.O_CREAT, 0o644)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        fds.append(fd)
+    return fds
 
-    from steuermaschine.engine import Wait
-    from steuermaschine_heinzel.native.check_lib import queue
 
-    said, naps, now = [], [], [0.0]
+def release(fds):
+    import fcntl
+    import os
+
+    for fd in fds:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+
+
+def test_the_pool_gives_four_check_slots_and_defers_the_fifth_after_60_seconds_without_failing(tmp_path):
+    from steuermaschine_heinzel.native.check_lib import slots
+
+    said, now = [], [0.0]
 
     def nap(seconds):
-        naps.append(seconds)
         now[0] += seconds
 
-    with queue.queued(tmp_path):  # free: no wait, and the lock is released afterwards
+    demoted = []
+    with slots.pool(tmp_path, demote=lambda: demoted.append(1)) as a, slots.pool(tmp_path) as b, slots.pool(tmp_path) as c, slots.pool(tmp_path) as d:
+        assert sorted(g.slot for g in (a, b, c, d)) == [0, 1, 2, 3] and all(g.granted for g in (a, b, c, d)) and demoted == [1]
+        with slots.pool(tmp_path, say=said.append, sleep=nap, clock=lambda: now[0]) as fifth:  # never raises, never waits longer than a minute
+            assert not fifth.granted and now[0] == 60.0 and "no check slot of 4 was free within 60 s" in fifth.deferred
+        assert len(said) == 1 and "waiting up to 60 s" in said[0]
+    with slots.pool(tmp_path) as again:  # released: the next run gets a slot at once
+        assert again.granted
+
+
+def test_a_slot_freed_while_waiting_goes_to_the_waiting_run(tmp_path):
+    from steuermaschine_heinzel.native.check_lib import slots
+
+    fds = hold(tmp_path, "check", 4)
+    with slots.pool(tmp_path, sleep=lambda _s: release(fds[:1]) if fds else None, demote=lambda: None) as grant:
+        assert grant.granted and grant.slot == 0
+
+
+def test_a_machine_over_load_30_is_refused_at_once_and_a_check_starts_at_30(tmp_path):
+    from steuermaschine_heinzel.native.check_lib import slots
+
+    naps = []
+    with slots.pool(tmp_path, load=lambda: 31.0, sleep=naps.append) as busy:
+        assert not busy.granted and "load 31 is over 30" in busy.deferred and not naps  # no waiting for a load
+    with slots.pool(tmp_path, load=lambda: 30.0, demote=lambda: None) as edge:
+        assert edge.granted  # a check starts at 30, not over it
+    assert not hasattr(slots, "SIM_SLOTS")  # no simulator slot: sm check starts no simulator
+
+
+def test_the_priority_is_lowered_to_background_on_a_grant_only(tmp_path, monkeypatch):
+    from steuermaschine_heinzel.native.check_lib import slots
+
+    class Commands:
+        calls: list = []
+
+        def run(self, argv, cwd=None, timeout=None, env=None):
+            self.calls.append(argv)
+            return Result(0, "", "")
+
+    commands = Commands()
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    monkeypatch.setattr(slots.sys, "platform", "darwin")
+    with slots.pool(tmp_path, demote=lambda: slots.lower_priority(commands)):
         pass
-    holder = os.open(tmp_path / queue.LOCK_NAME, os.O_RDWR)
-    fcntl.flock(holder, fcntl.LOCK_EX)
+    assert commands.calls and commands.calls[0][:3] == ["taskpolicy", "-b", "-p"]
+    commands.calls.clear()
+    with slots.pool(tmp_path, load=lambda: 99.0, demote=lambda: slots.lower_priority(commands)):
+        pass
+    assert not commands.calls  # a deferred run is never demoted: it runs nothing
+
+
+def test_a_check_with_all_four_slots_held_exits_75_runs_nothing_and_is_never_ready(core, rt, tmp_path):  # noqa: F811
+    fds = hold(tmp_path / "locks", "check", 4)
     try:
-        with pytest.raises(Wait), queue.queued(tmp_path, said.append, wait=3.0, poll=1.0, sleep=nap, clock=lambda: now[0]):
-            raise AssertionError("the queue was held")
-        assert said == ["sm check: another check is running on this machine; waiting for my turn"] and naps == [1.0, 1.0, 1.0]
+        machine = src_change(core)
+        runtime = rt(machine)
+        done = invoke(runtime, ["check", str(core)])
     finally:
-        fcntl.flock(holder, fcntl.LOCK_UN)
-        os.close(holder)
-    with queue.queued(tmp_path, said.append, wait=3.0, sleep=nap):  # released: the next run gets in at once
-        pass
+        release(fds)
+    assert done.exit_code == 75, done
+    assert "no check slot of 4 was free within 60 s" in done.stderr and "READY" not in done.stdout
+    assert not machine.ran("ruff") and not machine.ran("mypy") and not machine.ran("pytest") and not machine.ran("scoped_checks")  # nothing ran
+    assert runtime.providers.store.get_receipt(verdicts.CHECKS, HEAD) is None
 
 
-def test_the_queue_hands_the_turn_on_when_the_holder_finishes(tmp_path):
-    import fcntl
-    import os
+def test_a_check_at_load_40_exits_75_and_never_waits(core, rt, monkeypatch):  # noqa: F811
+    monkeypatch.setattr("steuermaschine_heinzel.native.check_lib.slots.os.getloadavg", lambda: (40.0, 30.0, 20.0))
+    machine = src_change(core)
+    runtime = rt(machine)
+    done = invoke(runtime, ["check", str(core)])
+    assert done.exit_code == 75 and "load 40 is over 30" in done.stderr and not machine.ran("ruff") and not runtime.providers.clock.slept
 
-    from steuermaschine_heinzel.native.check_lib import queue
 
-    holder = os.open(tmp_path / queue.LOCK_NAME, os.O_RDWR | os.O_CREAT)
-    fcntl.flock(holder, fcntl.LOCK_EX)
+def test_fifteen_checks_at_once_run_four_and_defer_eleven(tmp_path):
+    from steuermaschine_heinzel.native.check_lib import slots
 
-    def release(_seconds):
-        fcntl.flock(holder, fcntl.LOCK_UN)
+    stack, grants = __import__("contextlib").ExitStack(), []
+    with stack:
+        for _ in range(15):
+            grants.append(stack.enter_context(slots.pool(tmp_path, wait=0.0, demote=lambda: None)))
+        assert sum(g.granted for g in grants) == 4 and sum(not g.granted for g in grants) == 11 and all(g.deferred for g in grants if not g.granted)
 
-    with queue.queued(tmp_path, wait=5.0, sleep=release):
-        pass
-    os.close(holder)
+
+def many_tests(core, count, owned=True):  # noqa: F811
+    """A selection of COUNT test files for a change of src/heinzel/x.py; with `owned` the first, x_test.py, is named for the module."""
+    names = [f"tests/unit/t{n}_test.py" for n in range(count)]
+    if owned:
+        names[0] = "tests/unit/x_test.py"
+    selector = SELECTOR.replace('(["tests/unit/x_test.py"] if any(p.startswith("src/") for p in changed) else [])', f"({names!r} if any(p.startswith('src/') for p in changed) else [])")
+    return checkout(core, **{"scripts/affected.py": selector}).on("git diff --name-only", "src/heinzel/x.py")
+
+
+def test_a_selection_over_40_test_files_runs_the_owning_tests_and_defers_the_rest_to_ci(core, rt):  # noqa: F811
+    for n in range(41):
+        (core / "tests/unit" / f"t{n}_test.py").parent.mkdir(parents=True, exist_ok=True)
+        (core / "tests/unit" / f"t{n}_test.py").write_text("")
+    machine = many_tests(core, 41)
+    runtime = rt(machine)
+    done = invoke(runtime, ["--format", "json", "check", str(core)])
+    found = report(done)
+    assert done.exit_code == 0 and found.ready and found.receipt, done
+    assert found.ci_must_run == ["40 of 41 selected test files"] and "deferred to CI: 40 of 41 selected test files" in found.receipt_note
+    assert step(found, "tests").status == "WARN" and "1 of 41 selected test file(s) ran, 40 deferred to PR CI (over 40)" in step(found, "tests").detail
+    ran = [call for call in machine.ran("pytest")]
+    assert any("tests/unit/x_test.py" in call[0] for call in ran) and not [call for call in ran if "tests/unit/t1_test.py" in call[0]]  # the owner ran, the rest did not
+    assert machine.ran("ruff") and machine.ran("mypy")  # the cheap checks of the change still did
+    receipt = runtime.providers.store.get_receipt(verdicts.CHECKS, HEAD)
+    assert receipt["deferred"] is True and receipt["ci_must_run"] == ["40 of 41 selected test files"] and (receipt["tests_ran"], receipt["tests_selected"]) == (1, 41)
+    stored, _ = verdicts.check_receipt(runtime.providers.store, HEAD)
+    assert verdicts.deferred_note(stored) == "1 of 41 test files ran locally; 40 deferred to PR CI (required check)"
+
+
+def test_a_selection_over_40_test_files_that_no_test_owns_is_exit_75_and_writes_no_receipt(core, rt):  # noqa: F811
+    for n in range(41):
+        (core / "tests/unit" / f"t{n}_test.py").parent.mkdir(parents=True, exist_ok=True)
+        (core / "tests/unit" / f"t{n}_test.py").write_text("")
+    machine = many_tests(core, 41, owned=False)
+    runtime = rt(machine)
+    done = invoke(runtime, ["--format", "json", "check", str(core)])
+    assert done.exit_code == 75 and "no test owns a changed module" in done.stdout + done.stderr, done
+    assert runtime.providers.store.get_receipt(verdicts.CHECKS, HEAD) is None
+    assert not [call for call in machine.ran("pytest") if "tests/unit/t" in call[0]]  # not one of them ran
+
+
+def test_a_test_that_imports_the_changed_module_owns_it(core, rt):  # noqa: F811
+    for n in range(41):
+        (core / "tests/unit" / f"t{n}_test.py").parent.mkdir(parents=True, exist_ok=True)
+        (core / "tests/unit" / f"t{n}_test.py").write_text("")
+    (core / "tests/unit/t7_test.py").write_text("from heinzel.x import X\n")
+    machine = many_tests(core, 41, owned=False)
+    found = report(invoke(rt(machine), ["--format", "json", "check", str(core)]))
+    assert found.ready and found.ci_must_run == ["40 of 41 selected test files"]
+    assert any("tests/unit/t7_test.py" in call[0] for call in machine.ran("pytest"))
+
+
+def test_40_test_files_still_run_here(core, rt):  # noqa: F811
+    for n in range(40):
+        (core / "tests/unit" / f"t{n}_test.py").parent.mkdir(parents=True, exist_ok=True)
+        (core / "tests/unit" / f"t{n}_test.py").write_text("")
+    machine = many_tests(core, 40)
+    found = report(invoke(rt(machine), ["--format", "json", "check", str(core)]))
+    assert found.ready and not found.ci_must_run and any("tests/unit/x_test.py" in call[0] for call in machine.ran("pytest"))
+
+
+def test_a_150_file_mechanical_change_is_checked_cheaply_and_ships_without_a_failure(core, rt):  # noqa: F811
+    paths = [f"src/heinzel/m{n}.py" for n in range(150)]
+    for path in paths:
+        (core / path).parent.mkdir(parents=True, exist_ok=True)
+        (core / path).write_text("X = 1\n")
+    for n in range(41):
+        (core / "tests/unit" / f"t{n}_test.py").write_text("")
+    paths.append("src/heinzel/x.py")  # the one module whose test (x_test.py) is among the selected files
+    machine = many_tests(core, 41).on("git diff --name-only", "\n".join(paths)).on("git ls-files", "\n".join(paths))
+    found = report(invoke(rt(machine), ["--format", "json", "check", str(core)]))
+    assert found.ready and found.changed == 151 and found.ci_must_run == ["40 of 41 selected test files"]
+
+
+def test_a_budget_spent_between_steps_exits_75_and_is_never_ready(core, rt):  # noqa: F811
+    machine = src_change(core)
+    runtime = rt(machine)
+    clock = runtime.providers.clock
+
+    def slow_ruff(argv):  # the formatter "takes" 91 s: the budget is gone before the next step starts
+        clock.t += 91
+        return Result(0, "", "")
+
+    machine.on("ruff format", slow_ruff)
+    done = invoke(runtime, ["check", str(core)])
+    assert done.exit_code == 75, done
+    assert "local budget of 90 s is spent" in done.stderr and "types, hook, parity, web, docs, standards, tests" in done.stderr
+    assert not machine.ran("mypy") and runtime.providers.store.get_receipt(verdicts.CHECKS, HEAD) is None
+
+
+def test_a_failure_before_the_budget_ends_still_fails_the_run(core, rt):  # noqa: F811
+    machine = src_change(core)
+    runtime = rt(machine)
+    machine.on("ruff format", lambda argv: (setattr(runtime.providers.clock, "t", runtime.providers.clock.t + 91), Result(1, "would reformat\n", ""))[1])
+    done = invoke(runtime, ["--format", "json", "check", str(core)])
+    found = report(done)
+    assert done.exit_code == 1 and not found.ready and [f.step for f in found.failures] == ["ruff"] and found.deferred
+
+
+def test_a_type_check_stopped_at_the_budgets_end_exits_75_but_one_stopped_at_its_own_limit_fails(core, rt):  # noqa: F811
+    machine = src_change(core)
+    runtime = rt(machine)
+    clock = runtime.providers.clock
+    machine.on("uv run mypy", lambda argv: (setattr(clock, "t", clock.t + 91), Result(124, "", ""))[1])  # stopped when the 90 s were up
+    assert invoke(runtime, ["check", str(core)]).exit_code == 75
+    plain = report(invoke(rt(src_change(core, **{"uv run mypy": Result(124, "", "")})), ["--format", "json", "check", str(core)]))
+    assert not plain.ready and [f.step for f in plain.failures] == ["types"] and "ran out of time" in plain.failures[0].message
 
 
 def test_every_finding_comes_in_one_pass_and_a_red_run_writes_no_receipt(core, rt):  # noqa: F811

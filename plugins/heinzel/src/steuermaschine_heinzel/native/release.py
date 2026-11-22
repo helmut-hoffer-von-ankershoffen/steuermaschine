@@ -367,7 +367,7 @@ def release_replace_compose(
     "Success needs the version on PyPI AND that run's RELEASE_TAG equal to heinzel-NAME/vVERSION.\n"
     "A failed run is never dispatched again by itself (a failure can repeat; a second dispatch costs a CI run): after the fix,\n"
     "--redispatch dispatches once more; it refuses while the recorded run has not completed. Without a recorded dispatch, --redispatch\n"
-    "is the first dispatch. Exit 0: released, 1: stopped or not on PyPI yet."))
+    "is the first dispatch. Exit 0: released, or (without --redispatch) the read-only status line \"NOT RELEASED: ... not on PyPI yet\"; 1: stopped."))
 def release_plugin(name: str = typer.Argument(..., metavar="NAME", help="The plugin, with or without the `heinzel-` prefix."),
                    timeout: int | None = typer.Option(None, "--timeout", metavar="MINUTES", help="Minutes to wait for PyPI (default 120)."),
                    redispatch: bool = typer.Option(False, "--redispatch", help="Dispatch the release (CI did not publish it), or again after the recorded run completed without it "

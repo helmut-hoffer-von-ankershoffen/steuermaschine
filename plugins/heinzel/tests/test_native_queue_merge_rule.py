@@ -22,13 +22,20 @@ GREEN = [{"name": n, "status": "COMPLETED", "conclusion": "SUCCESS"} for n in ("
 # the legacy checks are not required by the ruleset, but a red one still holds a merge (coverage-floor was red while CI OK was green)
 LEGACY_RED = [{"name": n, "status": "COMPLETED", "conclusion": "FAILURE"} for n in ("coverage-floor", "merge-gate")]
 # main's ruleset today (`rules/branches/main`)
-RULESET = [{"type": "required_status_checks", "ruleset_id": 25762292,
-            "parameters": {"strict_required_status_checks_policy": False, "required_status_checks": [
-                {"context": "CI OK", "integration_id": 15368}, {"context": "SonarCloud Code Analysis", "integration_id": 12526}]}},
-           {"type": "pull_request", "parameters": {}}]
+RULESET = [
+    {
+        "type": "required_status_checks",
+        "ruleset_id": 25762292,
+        "parameters": {
+            "strict_required_status_checks_policy": False,
+            "required_status_checks": [{"context": "CI OK", "integration_id": 15368}, {"context": "SonarCloud Code Analysis", "integration_id": 12526}],
+        },
+    },
+    {"type": "pull_request", "parameters": {}},
+]
 TOML = '[project]\nname = "x"\ndependencies = ["a"]\n[tool.coverage.report]\nfail_under = 90\n[tool.pytest.ini_options]\naddopts = "-q"\n'
 # Core's scripts/focused_plan.py at main (the part that names the protected files)
-CORE_PLAN = '''PLAN_VARIABLE = "FOCUSED_CI_PLANS"
+CORE_PLAN = """PLAN_VARIABLE = "FOCUSED_CI_PLANS"
 PROTECTED_FILES = (
     ".github/workflows/ci.yml",
     "scripts/bootstrap-pyyaml.sh",
@@ -37,7 +44,7 @@ PROTECTED_FILES = (
     "uv.lock",
 )
 MAX_PLAN = 48 * 1024
-'''
+"""
 NOT_FOUND = (1, '{"message":"Not Found","status":"404"}')
 
 
@@ -99,21 +106,31 @@ def test_a_fresh_pr_with_ci_ok_and_sonar_green_is_admitted_although_the_legacy_c
     assert gap(World()) == ""
 
 
-@pytest.mark.parametrize("rollup", [
-    [GREEN[0]],  # Sonar absent
-    [GREEN[0], {"name": "SonarCloud Code Analysis", "status": "COMPLETED", "conclusion": "FAILURE"}],
-    [{"name": "CI OK", "status": "IN_PROGRESS", "conclusion": ""}, GREEN[1]],
-    [GREEN[1]],
-    [],
-])
+@pytest.mark.parametrize(
+    "rollup",
+    [
+        [GREEN[0]],  # Sonar absent
+        [GREEN[0], {"name": "SonarCloud Code Analysis", "status": "COMPLETED", "conclusion": "FAILURE"}],
+        [{"name": "CI OK", "status": "IN_PROGRESS", "conclusion": ""}, GREEN[1]],
+        [GREEN[1]],
+        [],
+    ],
+)
 def test_a_check_the_ruleset_requires_that_is_not_green_on_the_head_refuses_and_names_it(gap, rollup):
     reason = gap(World(rollup=rollup))
     assert reason.startswith("merge rule:") and "required checks not green" in reason
 
 
-@pytest.mark.parametrize("ruleset", ["unreadable", [], [{"type": "pull_request", "parameters": {}}],
-                                     [{"type": "required_status_checks", "parameters": {"required_status_checks": []}}],
-                                     [{"type": "required_status_checks", "parameters": {}}]])
+@pytest.mark.parametrize(
+    "ruleset",
+    [
+        "unreadable",
+        [],
+        [{"type": "pull_request", "parameters": {}}],
+        [{"type": "required_status_checks", "parameters": {"required_status_checks": []}}],
+        [{"type": "required_status_checks", "parameters": {}}],
+    ],
+)
 def test_an_unreadable_or_empty_ruleset_refuses(gap, ruleset):
     reason = gap(World(ruleset=ruleset))
     assert reason.startswith("merge rule:") and "required status checks of main's ruleset" in reason
@@ -130,8 +147,20 @@ def test_the_pinned_head_must_be_the_current_head(gap):
     assert "not the pinned head aaaaaaaa" in gap(World(head="c" * 40), head=HEAD)
 
 
-@pytest.mark.parametrize("path", [".github/workflows/ci.yml", "Makefile", "uv.lock", ".pre-commit-config.yaml", "sonar-project.properties",
-                                  "scripts/merge_gate.py", "scripts/release_candidate.py", "tests/conftest.py", "quarantine.toml"])
+@pytest.mark.parametrize(
+    "path",
+    [
+        ".github/workflows/ci.yml",
+        "Makefile",
+        "uv.lock",
+        ".pre-commit-config.yaml",
+        "sonar-project.properties",
+        "scripts/merge_gate.py",
+        "scripts/release_candidate.py",
+        "tests/conftest.py",
+        "quarantine.toml",
+    ],
+)
 def test_a_protected_path_needs_the_recorded_verdict_of_its_content(gap, path):
     world = World(files=["src/heinzel/a.py", path])
     reason = gap(world)
@@ -221,3 +250,19 @@ def test_the_protected_matcher_and_digest_are_one_definition():
     one, text = protected.record({"b": "2", "a": "1"})
     assert one == protected.record({"a": "1", "b": "2"})[0] and '"a": "1"' in text
     assert protected.record({"a": "1", "b": "3"})[0] != one
+
+
+GATE_RULESET = [{"type": "required_status_checks", "parameters": {"required_status_checks": [{"context": "CI OK"}, {"context": "Gate review"}]}}]
+GATE_GREEN = [{"name": n, "status": "COMPLETED", "conclusion": "SUCCESS"} for n in ("CI OK", "Gate review")]
+
+
+def test_a_ruleset_that_requires_gate_review_does_not_replace_the_recorded_verdict(monkeypatch, tmp_path, real_main_plan):
+    """Gate review finding 1 of PR 70: a check is matched by name and a PR can add a job of that name: the verdict is never skipped."""
+    rt = runtime(tmp_path)
+    world = World(files=["src/heinzel/a.py", ".github/workflows/ci.yml"], ruleset=GATE_RULESET, rollup=GATE_GREEN)
+    monkeypatch.setattr(hzlib, "gh", world)
+    with native(rt):
+        assert "no verdict is recorded" in main_plan.gap("803", HEAD)
+    approve(rt, [".github/workflows/ci.yml"])
+    with native(rt):
+        assert main_plan.gap("803", HEAD) == ""

@@ -396,7 +396,7 @@ change to that command voids that command's verdict, not the pipeline's. Tests r
 `pipelines.common.OVERRIDE`; an override never opens a shut gate. Inputs and their meaning: `sm head admit --help`,
 `sm release cut --help`; the release runbook is `docs/RUNBOOK-release-cut.md`.
 
-`sm release plugin NAME` releases a plugin and follows only the run of its own recorded dispatch. A failed run is
+`sm release plugin NAME` reports a plugin release (read-only without `--redispatch`: exit 0 and a `NOT RELEASED` line while the version is not on PyPI; the plugins CI publishes on merge) and follows only the run of its own recorded dispatch. A failed run is
 never dispatched again by itself; after the fix `--redispatch` dispatches once more, and refuses while the recorded
 run has not completed.
 

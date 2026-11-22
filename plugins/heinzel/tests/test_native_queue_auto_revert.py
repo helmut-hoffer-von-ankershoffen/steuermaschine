@@ -10,7 +10,9 @@ from steuermaschine_heinzel.native.queue_lib import auto_revert, edge, hzlib
 
 CORE = hzlib.CORE
 RED, GREEN = "a" * 40, "b" * 40
-EMAIL = "1826050+owner@users.noreply.github.com"
+OWNER = hzlib.OWNER
+EMAIL = f"1826050+{OWNER}@users.noreply.github.com"  # the owner identity of the revert commit
+AUTHOR_EMAIL = "2222+someone-else@users.noreply.github.com"  # the reverted PR's author: never used
 
 
 def run(sha, conclusion, rid, attempt=1):
@@ -20,7 +22,10 @@ def run(sha, conclusion, rid, attempt=1):
 class Queue(SimpleNamespace):
     def __init__(self, jobs_known=False):
         state = {"items": []}
-        super().__init__(state=state, logs=[], known=jobs_known)
+        super().__init__(state=state, logs=[], known=jobs_known, guard=[])
+
+    def guard_findings(self, repo, number):
+        return self.guard, ""
 
     def ci_workflow(self):
         return "ci.yml"
@@ -58,7 +63,7 @@ def world(monkeypatch):
     calls, gits, alarms = [], [], []
     answers = {
         "run list": [run(RED, "failure", 2), run(GREEN, "success", 1)],
-        f"repos/{CORE}/commits/{RED}": {"commit": {"message": "feat(web): a change (#801)\n\nbody", "author": {"name": "owner", "email": EMAIL}}},
+        f"repos/{CORE}/commits/{RED}": {"commit": {"message": "feat(web): a change (#801)\n\nbody", "author": {"name": "someone else", "email": AUTHOR_EMAIL}}},
         "pr view 801": {"headRefName": "feat/x", "mergeCommit": {"oid": RED}},
         "pr list": [],
         "pr create": "https://github.com/x/y/pull/950\n",
@@ -85,7 +90,7 @@ def world(monkeypatch):
     return SimpleNamespace(calls=calls, gits=gits, alarms=alarms, answers=answers)
 
 
-def test_main_turned_red_on_a_merge_with_an_unknown_failure_opens_one_revert_pr_as_the_merge_author(world):
+def test_main_turned_red_on_a_merge_with_an_unknown_failure_opens_one_revert_pr_as_the_owner(world):
     q = Queue()
     text = auto_revert.check(q)
     assert "revert PR #950 opened" in text
@@ -97,7 +102,8 @@ def test_main_turned_red_on_a_merge_with_an_unknown_failure_opens_one_revert_pr_
     assert push.endswith("push origin HEAD:refs/heads/revert/pr-801") and "--force" not in push and "-f " not in push
     assert all("--no-verify" not in a for a in argvs)
     commit = next(a for a in argvs if " commit " in a)
-    assert f"user.email={EMAIL}" in commit and f"--author owner <{EMAIL}>" in commit
+    assert f"user.email={EMAIL}" in commit and f"user.name={OWNER}" in commit and f"--author {OWNER} <{EMAIL}>" in commit
+    assert all("someone" not in a for a in argvs)  # finding 4: never the reverted PR's author
     row = q.state["items"][-1]
     assert (row["key"], row["status"], row["guarded_head"]) == ("950", "queued", "c" * 40)  # the queue arms auto-merge on it
     assert world.alarms and world.alarms[0][:2] == ("main-red:2", "ALERT")
@@ -117,13 +123,11 @@ def test_main_red_before_the_commit_is_not_reverted(world):
     ({"message": "release: 0.9.56 (#801)"}, "release or revert commit"),
     ({"message": "revert: feat: x (#801)"}, "release or revert commit"),
     ({"message": "Merge branch main"}, "not the squash merge of a PR"),
-    ({"email": "someone@example.com"}, "noreply"),
     ({"head": "release/0.9.56"}, "release PR"),
 ])
 def test_what_the_tool_never_reverts_raises_only_the_alarm(world, change, why):
     commit = world.answers[f"repos/{CORE}/commits/{RED}"]["commit"]
     commit["message"] = change.get("message", commit["message"])
-    commit["author"]["email"] = change.get("email", EMAIL)
     if "head" in change:
         world.answers["pr view 801"]["headRefName"] = change["head"]
     text = auto_revert.check(Queue())
@@ -138,3 +142,16 @@ def test_an_existing_revert_branch_pr_is_not_opened_again(world):
 def test_the_subject_keeps_the_72_character_rule():
     subject = auto_revert.subject_of("feat(web): " + "x" * 90, "801")
     assert len(subject) == 72 and subject.startswith("revert: feat(web): ") and subject.endswith("... (#801)")
+
+
+def test_a_revert_pr_that_touches_guarded_paths_is_not_queued_for_arming(world):
+    """Finding 3 of PR 70: the diff guard reads the revert PR like any other; findings mean no queue row."""
+    q = Queue()
+    q.guard = [("a", "b", ".github/workflows/ci.yml")]
+    text = auto_revert.check(q)
+    assert "revert PR #950 opened but NOT queued" in text and ".github/workflows/ci.yml" in text and q.state["items"] == []
+    q2 = Queue()
+    q2.guard = None  # an unreadable diff is also a stop
+    world.answers["pr list"] = []
+    q2.state["auto_reverts"] = {}
+    assert "NOT queued" in auto_revert.check(q2) and q2.state["items"] == []
