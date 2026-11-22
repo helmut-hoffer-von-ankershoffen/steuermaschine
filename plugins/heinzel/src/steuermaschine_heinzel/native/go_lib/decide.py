@@ -534,6 +534,10 @@ def facts(s: dict, ci: dict, cand: dict | None, active_runs: list[dict]) -> list
         last, current = rehearse.get("last") or {}, rehearse.get("current")
         out.append("rehearsal: " + (f"running main {str(current.get('main'))[:8]}; " if current else "")
                    + (f"last {last.get('verdict')} main {str(last.get('main'))[:8]}" if last else "no verdict yet"))
+    builders = s.get("builders")
+    if known(builders) and isinstance(builders, dict) and "cap" in builders:
+        at = builders["working"] >= builders["cap"]
+        out.append(f"builders: {builders['working']} of {builders['cap']} working" + (": at the cap, brief no new builder until one ends" if at else ""))
     slots = s.get("slots")
     if known(slots) and slots:
         out.append("focused slots: " + ", ".join(f"{k.replace('FOCUSED_CI_PLANS', 'PLANS')} {v * 100 // MAX_VAR}%" for k, v in slots.items()))

@@ -56,7 +56,10 @@ def identify(providers: Any, settings: dict[str, Any], worktree: str) -> Subject
 # ----------------------------------------------------------------------------- local check
 def check_probe(ctx: Ctx) -> str | None:
     receipt, _why = verdicts.check_receipt(ctx.providers.store, ctx.subject.key)
-    return f"`sm check` is green for {ctx.subject.key[:12]}" if receipt is not None else None
+    note = verdicts.deferred_note(receipt)
+    if receipt is None:
+        return None
+    return f"`sm check` is green for {ctx.subject.key[:12]}" + (f"; {note}" if note else "")
 
 
 def check(ctx: Ctx) -> str:
@@ -65,7 +68,8 @@ def check(ctx: Ctx) -> str:
     if getattr(report, "exit_code", 0):
         failed = "; ".join(line.strip() for line in report.render() if line.strip())[:500]
         raise Refuse(f"NOT READY: {failed}", f"fix all of it in one commit, then: sm head admit {wt}")
-    return f"READY at {ctx.subject.key[:12]}"
+    later = getattr(report, "ci_must_run", None)
+    return f"READY at {ctx.subject.key[:12]}" + (f"; deferred to CI: {', '.join(later)}" if later else "")
 
 
 # ----------------------------------------------------------------------------- the blocking review of protected paths
