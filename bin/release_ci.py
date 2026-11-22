@@ -22,11 +22,14 @@ publish the release (this makes the tag), clean-container acceptance, then Lates
 
 The follower. It reads the Latest GitHub release (Latest only after acceptance), checks the verdict of that tag's merge
 the same way, takes the PyPI wheels of both packages whose sha256 equal the release's assets, installs them into
-$SM_STABLE/releases/vX (its own uv venv), migrates the user config, smokes, then switches with the release's
-bin/promote_lib.sh (waits for running admission and release steps, moves state, points `current`) and restarts the
-launchd loops that run the stable `sm`. Its own code is the clone ($SM_FOLLOW_CLONE, default ~/Code/steuermaschine-follow)
-checked out at the tag. It never goes back. bin/rollback switches to the previous release. Exit 0: live or nothing to
-do; 1: refused (the line says why); 75: wait.
+$SM_STABLE/releases/vX (its own uv venv) beside the live one, migrates the user config, smokes, and makes it the canary
+for one tick (`canary`; only the follower's probe and the coordinator's bin/sm-canary run it). The next run after the tick
+swaps with the release's bin/promote_lib.sh (waits for running admission and release steps, moves state, points
+`current`) and restarts the launchd loops that run the stable `sm`, unless the canary had an exit 70 or a red probe
+(rejected) or a Core release is between its cut and LIVE-OK (the swap waits). For 15 minutes after a swap the tool-stall
+alarm (two exit 70 within 10 minutes) rolls `current` back to `previous` by bin/rollback and rejects the release. Its own code is the clone ($SM_FOLLOW_CLONE, default ~/Code/steuermaschine-follow)
+checked out at the tag. It never goes forward to a rejected release. bin/rollback (by hand: the fallback, as bin/promote)
+switches to the previous release. Exit 0: live, canary or nothing to do; 1: refused or ALARM (the line says why); 75: wait.
 """
 
 from __future__ import annotations
@@ -40,6 +43,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable
@@ -362,12 +366,18 @@ def download(url: str, path: Path) -> None:
 
 def follow(stable: Path, clone: Path, home: Path, run: Run = sh, api_get: Callable[[str], object] | None = None,
            pypi: Callable[[str, str], list[dict[str, str]] | None] = pypi_files,
-           fetch: Callable[[str, Path], None] | None = None) -> str:
+           fetch: Callable[[str, Path], None] | None = None, now: float | None = None) -> str:
     """Install the Latest release (marked Latest only after its clean-container acceptance) as a user installs it: the
     PyPI wheels of steuermaschine and steuermaschine-heinzel at that version, each equal by sha256 to the GitHub
-    release's asset, into STABLE/releases/vX; smoke; switch between two steps (bin/promote_lib.sh of the release); then
-    restart the loops. Never back or sideways. Returns a one-line outcome; Refused when nothing is switched."""
+    release's asset, into STABLE/releases/vX beside the live one; smoke; make it the canary for one tick (canary_tick swaps
+    `current` on a later run, watch_swap rolls a stalled swap back). Never back or sideways. Returns a one-line outcome;
+    Refused when nothing is installed, Alarm when a canary is rejected or a swap is rolled back."""
     get = api_get or (lambda p: api(p, run))
+    at = time.time() if now is None else now
+    if (stable / "canary").is_symlink():
+        return canary_tick(stable, clone, home, run, at, get)
+    if watched := watch_swap(stable, clone, home, run, at):
+        return watched
     latest = get(f"repos/{REPO}/releases/latest")
     tag = str(latest["tag_name"])  # type: ignore[index,call-overload]
     version = tag.removeprefix("v")
@@ -376,6 +386,8 @@ def follow(stable: Path, clone: Path, home: Path, run: Run = sh, api_get: Callab
     live = live_release(stable)
     if live["name"] == tag:
         return f"{tag} is live"
+    if (stable / "rejected" / tag).is_file():
+        return f"{tag} was rejected here ({(stable / 'rejected' / tag).read_text(encoding='utf-8').strip()}); waiting for a newer release"
     if not clone.exists():
         run("gh", "repo", "clone", REPO, str(clone))
     run("git", "fetch", "--quiet", "--tags", "--force", "origin", cwd=clone)
@@ -414,19 +426,202 @@ def follow(stable: Path, clone: Path, home: Path, run: Run = sh, api_get: Callab
         meta = {"tag": tag, "version": version, "commit": commit, "pr": number, "reviewer": reviewer,
                 "wheels": {w["filename"]: w["sha256"] for w in wheels}}
         (rel / "release.json").write_text(json.dumps(meta, indent=1) + "\n", encoding="utf-8")
-    done = subprocess.run(["bash", "-c", SWITCH], check=False, env={**os.environ, "LIB": str(clone / "bin" / "promote_lib.sh"), "STABLE": str(stable),
-                                                                   "REL": str(rel), "ID": tag, "HOME": str(home)})
-    if done.returncode == 75:
-        raise Wait(f"{tag}: a write step still runs; the next run switches")
-    if done.returncode != 0:
-        raise Refused(f"the switch to {tag} failed with exit {done.returncode}; the lines above say why")
-    now = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-    (rel / "live-at").write_text(now + "\n", encoding="utf-8")  # the stage `Mini live` of the release's timings
+    start_canary(stable, clone, home, rel, tag, at)
+    return (f"{tag} ({commit[:12]}) is the canary: the follower's probe and {stable / 'bin' / 'sm-canary'} use it for one tick "
+            f"({CANARY_SECONDS}s); builders stay on {live['name'] or 'the live release'}")
+
+
+# ----------------------------------------------------------------------------- canary, swap, rollback
+# A new release is installed beside the live one and is the canary for one tick: the follower probes it, and the
+# coordinator runs it through STABLE/bin/sm-canary; every builder's `bin/sm` stays on `current` (it is not rewritten
+# before the swap). A stable release's sm appends each of its exit 70 (a tool error) to STABLE/exits.log as
+# `EPOCH RELEASE 70` (steuermaschine.app.record_tool_error). No exit 70 of the canary and a
+# green probe for one tick: the symlink `current` swaps, unless a Core release is between its cut and LIVE-OK (the swap
+# waits; nobody else does). Within WATCH_SECONDS after a swap, STALL_COUNT exit 70 of the new release within
+# STALL_SECONDS (the tool-stall alarm) set `current` back to `previous` by bin/rollback. A canary that fails or a release
+# that is rolled back is rejected: STABLE/rejected/vX, and on GitHub a prerelease that is no longer Latest.
+CANARY_SECONDS = int(os.environ.get("SM_CANARY_SECONDS", "300"))  # one follower tick (launchd: every 5 min)
+STALL_COUNT, STALL_SECONDS, WATCH_SECONDS = 2, 600, 900
+WINDOW_MAX_SECONDS = 6 * 3600  # a Core window older than this is stale (an abandoned cut): it holds nothing
+
+
+class Alarm(Refused):
+    """The follower rejected a canary or rolled a release back: done, and loud (exit 1)."""
+
+
+def now_stamp(at: float) -> str:
+    return datetime.datetime.fromtimestamp(at, datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def tool_errors(stable: Path, name: str, since: float) -> list[float]:
+    """The times of the exit-70 lines of release NAME in STABLE/exits.log at or after SINCE."""
+    try:
+        lines = (stable / "exits.log").read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return []
+    out = []
+    for line in lines:
+        parts = line.split()
+        if len(parts) >= 3 and parts[1] == name and parts[2] == "70" and parts[0].isdigit() and int(parts[0]) >= since:
+            out.append(float(parts[0]))
+    return sorted(out)
+
+
+def stalled(times: list[float]) -> bool:
+    """The tool-stall alarm: STALL_COUNT exit 70 within STALL_SECONDS."""
+    return any(times[i + STALL_COUNT - 1] - times[i] <= STALL_SECONDS for i in range(len(times) - STALL_COUNT + 1))
+
+
+def core_window(home: Path, at: float) -> str:
+    """Why the swap waits: a Core release between its cut and LIVE-OK (the release driver writes the window file at the cut
+    and removes it at LIVE-OK, see steuermaschine_heinzel.native.release_stages); "" when none, or when it is stale."""
+    path = Path(os.environ.get("SM_CORE_WINDOW") or home / ".cache" / "sm-core-release-window")
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        opened = datetime.datetime.strptime(str(data["opened"]), "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.UTC).timestamp()
+    except (OSError, ValueError, KeyError, TypeError):
+        return "a Core release window file that cannot be read" if path.exists() else ""
+    if at - opened > WINDOW_MAX_SECONDS:
+        return ""
+    return f"Core v{data.get('version', '?')} is between its cut ({data['opened']}) and LIVE-OK"
+
+
+def point(stable: Path, name: str, target: str | None) -> None:
+    """STABLE/NAME -> TARGET, atomically (a new link renamed over the old); None removes it."""
+    link = stable / name
+    if target is None:
+        if link.is_symlink():
+            link.unlink()
+        return
+    tmp = stable / f".{name}.{os.getpid()}"
+    if tmp.is_symlink():
+        tmp.unlink()
+    tmp.symlink_to(target)
+    os.replace(tmp, link)
+
+
+def lib_env(clone: Path, stable: Path, home: Path, **more: str) -> dict[str, str]:
+    return {**os.environ, "LIB": str(clone / "bin" / "promote_lib.sh"), "STABLE": str(stable), "HOME": str(home), **more}
+
+
+CANARY_LAUNCHER = r"""#!/bin/sh
+# sm-canary: the coordinator's `sm` on the canary release of this install (release_ci.py follow), `bin/sm` when there is
+# none. Builders run `bin/sm`, which never reads `canary`: they stay on `current` until the swap. An sm this one starts
+# stays on the canary through STEUERMASCHINE_PINNED (bin/sm honours a pin to a release of this install).
+root="$(cd "$(dirname "$0")/.." && pwd -P)" || exit 70
+releases="$(cd "$root/releases" 2>/dev/null && pwd -P)"
+rel="$(cd "$root/canary" 2>/dev/null && pwd -P)" || rel=""
+case "$rel" in "$releases"/*/*|"") rel="" ;; "$releases"/*) [ -x "$rel/venv/bin/steuermaschine" ] || rel="" ;; *) rel="" ;; esac
+[ -n "$rel" ] && [ -n "$releases" ] || exec "$root/bin/sm" "$@"
+export STEUERMASCHINE_PINNED="$rel"
+if [ -f "$rel/user-config.toml" ]; then export STEUERMASCHINE_USER_CONFIG="$rel/user-config.toml"; fi
+export STEUERMASCHINE_RELEASE="$root/current"
+exec "$rel/venv/bin/steuermaschine" "$@"
+"""
+
+
+def start_canary(stable: Path, clone: Path, home: Path, rel: Path, tag: str, at: float) -> None:
+    """STABLE/canary -> releases/vX and STABLE/bin/sm-canary, the coordinator's way to it. `current` and `bin/sm` (every
+    builder's launcher) are untouched: the new release's launcher is installed only by the swap."""
+    (stable / "bin").mkdir(parents=True, exist_ok=True)
+    tmp = stable / "bin" / f".sm-canary.{os.getpid()}"
+    tmp.write_text(CANARY_LAUNCHER, encoding="utf-8")
+    tmp.chmod(0o755)
+    os.replace(tmp, stable / "bin" / "sm-canary")
+    (stable / "canary.json").write_text(json.dumps({"tag": tag, "since": int(at), "at": now_stamp(at)}) + "\n", encoding="utf-8")
+    point(stable, "canary", f"releases/{rel.name}")
+
+
+def reject(stable: Path, tag: str, reason: str, at: float, run: Run = sh) -> str:
+    """vX is never installed again here; on GitHub it becomes a prerelease that is no longer Latest (users stop taking it)."""
+    (stable / "rejected").mkdir(exist_ok=True)
+    (stable / "rejected" / tag).write_text(f"{now_stamp(at)} {reason}\n", encoding="utf-8")
+    try:
+        run("gh", "release", "edit", tag, "--repo", REPO, "--prerelease", "--latest=false")
+        return f"{tag} is marked rejected on GitHub (prerelease, not Latest)"
+    except Refused as exc:
+        return f"{tag} could NOT be marked rejected on GitHub ({exc}); it is rejected here"
+
+
+def restart_loops(home: Path, run: Run) -> int:
     uid = os.getuid()
     labels = loops(home)
     for label in labels:
         run("launchctl", "kickstart", "-k", f"gui/{uid}/{label}", check=False)
-    return f"{tag} ({commit[:12]}) is live from the PyPI wheels; restarted {len(labels)} loop(s)"
+    return len(labels)
+
+
+def canary_tick(stable: Path, clone: Path, home: Path, run: Run, at: float, get: Callable[[str], object] | None = None) -> str:
+    """The canary's verdict after its tick: drop it when it is no longer Latest or was rejected, reject it, keep it, hold
+    the swap, or swap `current` to it for all. Latest is read again on every tick: a swap never promotes a demoted release."""
+    get = get or (lambda p: api(p, run))
+    try:
+        meta = json.loads((stable / "canary.json").read_text(encoding="utf-8"))
+        tag, since = str(meta["tag"]), float(meta["since"])
+    except (OSError, ValueError, KeyError, TypeError):
+        point(stable, "canary", None)
+        raise Refused("the canary has no readable canary.json: it is dropped; the next run installs Latest again") from None
+    if (stable / "rejected" / tag).is_file():
+        point(stable, "canary", None)
+        (stable / "canary.json").unlink(missing_ok=True)
+        return f"{tag} was rejected here: its canary is dropped, no swap"
+    try:
+        latest = str(get(f"repos/{REPO}/releases/latest")["tag_name"])  # type: ignore[index,call-overload]
+    except (Refused, KeyError, TypeError, ValueError, OSError) as exc:
+        return f"{tag}: Latest cannot be read ({exc}); the swap waits"  # fails closed: no swap on a guess
+    if latest != tag:
+        point(stable, "canary", None)
+        (stable / "canary.json").unlink(missing_ok=True)
+        return f"{tag} is no longer Latest ({latest}): its canary is dropped, no swap"
+    rel = (stable / "canary").resolve()
+    errors = tool_errors(stable, rel.name, since)
+    reason = f"{len(errors)} exit 70 of the canary" if errors else ""
+    if not reason:
+        try:
+            smoke(rel, run)
+        except Refused as exc:
+            reason = str(exc)
+    if reason:
+        point(stable, "canary", None)
+        (stable / "canary.json").unlink(missing_ok=True)
+        marked = reject(stable, tag, f"canary: {reason}", at, run)
+        raise Alarm(f"{tag} REJECTED by its canary tick: {reason}; builders never left {(stable / 'current').resolve().name}; {marked}")
+    if at - since < CANARY_SECONDS:
+        return f"{tag} is the canary for {int(CANARY_SECONDS - (at - since))}s more; no exit 70 so far"
+    if held := core_window(home, at):
+        return f"{tag} passed its canary tick; the swap waits: {held}"
+    done = subprocess.run(["bash", "-c", SWITCH], check=False, env=lib_env(clone, stable, home, REL=str(rel), ID=rel.name))
+    if done.returncode == 75:
+        raise Wait(f"{tag}: a write step still runs; the next run swaps")
+    if done.returncode != 0:
+        raise Refused(f"the swap to {tag} failed with exit {done.returncode}; the lines above say why")
+    point(stable, "canary", None)
+    (stable / "canary.json").unlink(missing_ok=True)
+    (stable / "swapped.json").write_text(json.dumps({"tag": tag, "release": rel.name, "since": int(at), "at": now_stamp(at)}) + "\n", encoding="utf-8")
+    (rel / "live-at").write_text(now_stamp(at) + "\n", encoding="utf-8")  # the stage `Mini live` of the release's timings
+    return f"{tag} passed its canary tick and is live for all from the PyPI wheels; restarted {restart_loops(home, run)} loop(s)"
+
+
+def watch_swap(stable: Path, clone: Path, home: Path, run: Run, at: float) -> str:
+    """After a swap: the tool-stall alarm of the new release sets `current` back to `previous` (bin/rollback). "" when
+    there is nothing to watch or nothing went wrong."""
+    try:
+        meta = json.loads((stable / "swapped.json").read_text(encoding="utf-8"))
+        tag, name, since = str(meta["tag"]), str(meta["release"]), float(meta["since"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return ""
+    if at - since > WATCH_SECONDS or (stable / "current").resolve().name != name:
+        return ""
+    errors = tool_errors(stable, name, since)
+    if not stalled(errors):
+        return ""
+    done = subprocess.run(["bash", str(clone / "bin" / "rollback")], check=False, env={**os.environ, "SM_STABLE": str(stable), "HOME": str(home)})
+    if done.returncode != 0:
+        raise Alarm(f"tool-stall alarm on {tag} ({len(errors)} exit 70 since the swap), and the rollback failed with exit {done.returncode}")
+    (stable / "swapped.json").unlink(missing_ok=True)
+    marked = reject(stable, tag, f"tool-stall alarm: {len(errors)} exit 70 within {STALL_SECONDS}s after the swap", at, run)
+    raise Alarm(f"{tag} ROLLED BACK to {(stable / 'current').resolve().name}: tool-stall alarm, {len(errors)} exit 70 after the swap; "
+                f"restarted {restart_loops(home, run)} loop(s); {marked}")
 
 
 def outputs(lines: list[str]) -> None:
@@ -470,6 +665,9 @@ def main(argv: list[str]) -> int:
     except Wait as exc:
         print(f"release_ci: WAIT: {exc}", file=sys.stderr)
         return 75
+    except Alarm as exc:
+        print(f"release_ci: ALARM: {exc}", file=sys.stderr)
+        return 1
     except AlreadyReleased as exc:
         outputs(["release=false"])
         print(f"release_ci: nothing to release: {exc}", file=sys.stderr)

@@ -174,3 +174,37 @@ def mark_live(state_dir: Path, version: str, now: float) -> None:
     with contextlib.suppress(OSError):
         record_path(state_dir, version).parent.mkdir(parents=True, exist_ok=True)
         record_path(state_dir, version).write_text(json.dumps({**saved, "version": version, "live_at": stamp}, indent=2) + "\n")
+
+
+# ----------------------------------------------------------------------------- the Core release window
+# Between a Core release's cut and its LIVE-OK the sm follower does not swap the live `sm` (bin/release_ci.py
+# core_window reads this file; it ignores one older than six hours). The driver opens it when it resumes an unfinished
+# release and removes it at LIVE-OK, or when the release finished without an acceptance.
+def window_path(home: Path | None = None) -> Path:
+    return (home or Path.home()) / ".cache" / "sm-core-release-window"
+
+
+def open_window(version: str, now: float, home: Path | None = None) -> bool:
+    """Open the window of VERSION; True when this call wrote it (a resume of the same release keeps the earlier one)."""
+    path = window_path(home)
+    wrote = False
+    with contextlib.suppress(OSError, ValueError):  # a corrupt window file never stops a release resume: it is rewritten
+        path.parent.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.fromtimestamp(now, UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        try:
+            saved = json.loads(path.read_text()) if path.is_file() else {}
+        except ValueError:
+            saved = {}  # unreadable: start the window of this release afresh
+        if not isinstance(saved, dict) or saved.get("version") != version:  # a resume of the same release keeps the time of its cut
+            partial = path.with_suffix(".partial")
+            partial.write_text(json.dumps({"version": version, "opened": stamp}) + "\n")
+            partial.replace(path)
+            wrote = True
+    return wrote
+
+
+def close_window(version: str, home: Path | None = None) -> None:
+    path = window_path(home)
+    with contextlib.suppress(OSError, ValueError):
+        if json.loads(path.read_text()).get("version") == version:
+            path.unlink()

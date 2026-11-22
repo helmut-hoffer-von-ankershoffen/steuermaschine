@@ -7,10 +7,11 @@ URL (`pushInsteadOf`). The remote-tracking refs are compared before and after, a
 
 What is drift detection (sm reads the worktree and refuses on a difference, but cannot prove it): the Makefile still
 runs that same command, and the capture script still has its throwaway profile, headless browser, fictional identity
-and credential scan. No module of the tooling package mentions a push.
+and deterministic text guards. No module of the tooling package mentions a push or an agent CLI (codex, claude):
+taking screenshots needs no AI (owner rule, bead heinzel-management-0tkk8).
 
-Afterwards it lists the images that changed and records that an independent privacy review of those images is required
-before merge. It never commits or pushes.
+Afterwards it lists the images that changed; the PR diff shows them for the normal review. It never commits or pushes
+(`sm ship` takes a gallery `sm check` regenerated into the shipped commit: gallery_sync.py).
 """
 
 from __future__ import annotations
@@ -37,6 +38,8 @@ from .lock import lock_of
 NAME = re.compile(r"[a-z][a-z0-9-]*")
 TOOLING = Path("src/heinzel_plugin_tools")
 CAPTURE = TOOLING / "capture.py"
+GUARDS = TOOLING / "privacy.py"
+DEFINITION = Path("docs/screenshot-definition.json")
 OUTPUT = Path("docs/assets/screenshots")
 DRAFT = Path(".preview/screenshots/draft")
 LOG = Path(".preview/sm-plugin-gallery.log")
@@ -48,17 +51,19 @@ ENV_ALLOWED = ("PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "TMPDIR", "T
 # it to a transport that does not exist. git does not apply it to an explicit remote.*.pushurl: `pushurls` refuses those.
 PUSH_BLOCK = "sm-push-blocked:/"
 
-# What the capture script must still contain (condition, needle): drift detection, read before every run.
+# What the capture tooling must still contain (condition, module, needle): drift detection, read before every run.
 REQUIRED = (
-    ("isolated profile", "env = demo_environment(work, interpreter)"),
-    ("isolated profile", "HOME=str(home)"),
-    ("isolated profile", 'env["HZ_" + key] = str(home / key.lower())'),
-    ("headless", "headless=not headed"),
-    ("fixture data", 'HZ_ORG__EMAIL="mira@example.com"'),
-    ("fixture data", 'HZ_SYSTEM_CREDENTIAL__BACKEND="environment"'),
-    ("fixture data", "def scan_text("),
+    ("isolated profile", CAPTURE, "env = demo_environment(work, interpreter)"),
+    ("isolated profile", CAPTURE, "HOME=str(home)"),
+    ("isolated profile", CAPTURE, 'env["HZ_" + key] = str(home / key.lower())'),
+    ("headless", CAPTURE, "headless=not headed"),
+    ("fixture data", CAPTURE, 'HZ_ORG__EMAIL="mira@example.com"'),
+    ("fixture data", CAPTURE, 'HZ_SYSTEM_CREDENTIAL__BACKEND="environment"'),
+    ("text guards", GUARDS, "def scan_text("),
+    ("text guards", GUARDS, "def page_text("),
 )
 PUSH = re.compile(r"""\bgit\s+push\b|["']push["']|pushurl""")
+AGENT = re.compile(r"\b(?:codex|claude)\b", re.IGNORECASE)  # the screenshot path never starts an agent
 
 
 class GallerySettings(BaseModel):
@@ -67,7 +72,7 @@ class GallerySettings(BaseModel):
 
 
 class Gallery(Model):
-    """One gallery recapture: the conditions read, the run, the changed images and the review it needs."""
+    """One gallery recapture: the conditions read, the run, the changed images."""
 
     plugin: str
     repo: str
@@ -79,8 +84,6 @@ class Gallery(Model):
     error: str = ""  # the capture's own error line, when it failed
     log: str = ""
     changed: list[str] = []  # images added, changed or removed (repository-relative)
-    review_required: bool = False
-    review: str = ""  # where the reviewer starts
     next: str = ""
 
     def render(self) -> list[str]:
@@ -92,9 +95,6 @@ class Gallery(Model):
         out += [f"IMAGE  {path}" for path in self.changed]
         if self.ran and not self.changed:
             out.append("IMAGE  none changed")
-        if self.review_required:
-            out.append(f"REVIEW privacy review of {len(self.changed)} image(s) required before merge: an independent reviewer reads "
-                       f"every changed image and transcript ({self.review}) and approves in the PR")
         if not self.live and not self.problems:
             out.append(f"PLAN   sm plugin gallery runs the frozen capture of {self.plugin} under the run lock with an allowlisted "
                        "environment and pushes blocked; nothing is committed or pushed")
@@ -156,25 +156,28 @@ def conditions(repo: Path, plugin: str) -> tuple[list[str], list[str]]:
     problems: list[str] = []
     try:
         makefile = (repo / "Makefile").read_text()
-        capture = (repo / CAPTURE).read_text()
+        modules = {path: (repo / path).read_text() for path in (CAPTURE, GUARDS)}
         sources = tooling_sources(repo)
     except OSError as exc:
         return met, [f"not a heinzel-plugins worktree: {exc.strerror}: {exc.filename}"]
     problems += makefile_drift(makefile)
-    for condition, needle in REQUIRED:
-        if needle not in capture:
-            problems.append(f"{condition}: {CAPTURE} no longer contains {needle!r}")
+    for condition, path, needle in REQUIRED:
+        if needle not in modules[path]:
+            problems.append(f"{condition}: {path} no longer contains {needle!r}")
     problems += [f"no push: {path} mentions a push" for path, source in sources.items() if PUSH.search(source)]
+    problems += [f"no agent: {path} mentions an agent CLI" for path, source in sources.items() if AGENT.search(source)]
     if not problems:
         met += ["command: the frozen capture runs directly (no make, no --headed, no --open, no TOOLING); the Makefile still runs the same",
                 "environment: an allowlist (no MAKEFLAGS, OPEN, TOOLING, PLUGIN_*, tokens); git pushes rewritten to an unreachable URL",
                 "isolated profile (drift check): the capture keeps its throwaway HOME, XDG and HZ_* directories",
                 "headless (drift check): the capture starts the browser headless unless --headed, which sm never passes",
-                "fixture data (drift check): fictional identity, environment credentials only, the credential and host scan",
-                f"no push (drift check): no module of {TOOLING} mentions a push; remote refs are compared before and after"]
-    plan = repo / "plugins" / f"heinzel-{plugin}" / "docs" / "screenshots.toml"
+                "fixture data (drift check): fictional identity, environment credentials only",
+                "text guards (drift check): page text, title, URL, transcripts and captions are scanned for secrets and private data",
+                f"no push (drift check): no module of {TOOLING} mentions a push; remote refs are compared before and after",
+                f"no agent (drift check): no module of {TOOLING} mentions an agent CLI; capture is deterministic"]
+    plan = repo / "plugins" / f"heinzel-{plugin}" / DEFINITION
     if not plan.is_file():
-        problems.append(f"heinzel-{plugin} has no screenshot plan ({plan.relative_to(repo)})")
+        problems.append(f"heinzel-{plugin} has no screenshot definition ({plan.relative_to(repo)})")
     return met, problems
 
 
@@ -287,14 +290,14 @@ NAME_ARG = typer.Argument(..., metavar="NAME", help="The plugin, without the hei
 REPO_OPT = typer.Option(None, "--repo", metavar="PATH", help="The heinzel-plugins worktree (default: setting gallery_plugins_repo).")
 CONDITIONS = ("Structural: the frozen capture command runs directly (never make, never --headed or --open) with an allowlisted\n"
               "environment in which git pushes go to an unreachable URL, and compares the remote refs before and after.\n"
-              "Drift detection: the Makefile still runs that command, and the capture script keeps its throwaway profile, headless\n"
-              "browser, fictional identity and credential scan, and no tooling module mentions a push; any difference refuses.")
+              "Drift detection: the Makefile still runs that command, and the capture tooling keeps its throwaway profile, headless\n"
+              "browser, fictional identity and text guards, and no tooling module mentions a push or an agent CLI; any difference refuses.")
 
 
 @native("plugin gallery-check", writes=False, help=H(
     "Can this worktree recapture a plugin's gallery safely? The conditions of sm plugin gallery, read only.",
     "Use before sm plugin gallery, and after heinzel-plugins changes its capture tooling.",
-    "nothing (read-only: the Makefile, the tooling package and the plugin's screenshot plan).",
+    "nothing (read-only: the Makefile, the tooling package and the plugin's screenshot definition).",
     "sm plugin gallery-check google --repo ~/Code/heinzel-plugins-gws",
     "sm plugin gallery NAME --repo PATH",
     CONDITIONS))
@@ -306,12 +309,11 @@ def plugin_gallery_check(name: str = NAME_ARG, repo: Path | None = REPO_OPT) -> 
     "Recapture one plugin's screenshot gallery in an isolated profile, headless, from fixture data; never pushes.",
     "Use when a plugin change makes its gallery stale (the plugin check: the gallery digest no longer matches).",
     "runs the screenshot capture in the given heinzel-plugins worktree, which rewrites that plugin's gallery, its README "
-    "gallery block and catalog metadata and sends the images to the repository's read-only privacy agent; it commits and pushes nothing.",
+    "gallery block and catalog metadata; no agent runs. It commits and pushes nothing.",
     "sm plugin gallery google --repo ~/Code/heinzel-plugins-gws",
-    "the privacy review of the listed images, then commit them on your branch",
+    "commit the listed images on your branch (sm ship takes a gallery sm check regenerated into the head commit)",
     CONDITIONS + "\nThe capture runs under the run lock; its output goes to .preview/sm-plugin-gallery.log.\n"
-    "The last lines list every image added, changed or removed and REVIEW: an independent privacy review of those images is\n"
-    "required before merge, whatever the capture's own agent said."))
+    "The last lines list every image added, changed or removed; the PR diff shows them for the normal review."))
 def plugin_gallery(name: str = NAME_ARG, repo: Path | None = REPO_OPT) -> Gallery:
     out = checked(name, repo, live=True)
     if out.problems:
@@ -342,15 +344,12 @@ def plugin_gallery(name: str = NAME_ARG, repo: Path | None = REPO_OPT) -> Galler
         out.problems.append("the remote-tracking refs changed during the capture: a push or fetch ran; do not trust this run, tell the coordinator")
     out.error = capture_error(log) if code else ""
     out.changed = changed_images(before, after, root)
-    out.review_required = bool(out.changed)
-    review = plugin_dir / DRAFT / "REVIEW.md"
-    out.review = str(review if review.is_file() else plugin_dir / OUTPUT)
     if out.problems:
         out.next = "tell the coordinator: the remote refs moved during the capture"
     elif code:
-        out.next = f"read {log}; a draft that only lacks the agent review is in {plugin_dir / DRAFT}"
+        out.next = f"read {log}; fix the definition or fixture it names, then sm plugin gallery {name} --repo {root}"
     elif out.changed:
-        out.next = "an independent privacy review of the changed images, then commit them on your branch (never push without the coordinator)"
+        out.next = "commit the changed gallery on your branch (sm ship after sm check does it); the PR diff shows the images"
     else:
         out.next = "nothing to review: the gallery bytes did not change"
     return out

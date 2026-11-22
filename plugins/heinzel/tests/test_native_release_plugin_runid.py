@@ -7,6 +7,7 @@ follows only that ID, success needs the run's RELEASE_TAG, and a failed run is d
 
 import base64
 import json
+import re
 import subprocess
 
 import pytest
@@ -106,7 +107,7 @@ def finish_after(rel, run_id, conclusion, tag):
 
 def test_the_dispatch_records_its_run_id_and_the_head_the_run_took(rel):
     finish_after(rel, GOOGLE, "success", "heinzel-google/v0.9.4")
-    assert rel.release_plugin("google", 3600) == 0
+    assert rel.release_plugin("google", 3600, redispatch=True) == 0
     data = receipt(rel)
     assert data["plugin-heinzel-google-0.9.4_run_id"] == GOOGLE
     assert data["plugin-heinzel-google-0.9.4_dispatch"]["sha"] == MOVED
@@ -119,13 +120,20 @@ def test_the_dispatch_records_its_run_id_and_the_head_the_run_took(rel):
 def test_a_resume_follows_only_the_recorded_run_never_the_newest_of_another_plugin(rel):
     finish_after(rel, GOOGLE, "failure", None)
     with pytest.raises(rel.Stop, match=rf"run {GOOGLE} ended failure"):
-        rel.release_plugin("google", 3600)
+        rel.release_plugin("google", 3600, redispatch=True)
     rel.fake.calls.clear()
     with pytest.raises(rel.Stop, match=rf"run {GOOGLE} ended failure .*--redispatch"):
         rel.release_plugin("google", 3600)
     assert not any(c[:2] == ("run", "list") for c in rel.fake.calls)  # no newest-runs window is looked at
     assert not any(str(TAILSCALE) in " ".join(c) for c in rel.fake.calls)
     assert not rel.fake.dispatched()
+
+
+def test_without_redispatch_it_only_reads_ci_publishes_on_merge(rel):
+    """Owner 2026-11-22: the plugins CI publishes a bump on merge; the command is a status, --redispatch the re-run."""
+    assert rel.release_plugin("google", 3600) == 0  # a status with exit 0, not a stop (finding 6 of PR 70)
+    assert re.search(r"heinzel-google 0\.9\.4 is not on PyPI yet: the plugins CI publishes it .*--redispatch", "\n".join(rel.said))
+    assert not rel.fake.dispatched() and not rel.plugin_receipt().exists()
 
 
 def test_a_time_only_stamp_adopts_no_run_and_dispatches_nothing(rel):
@@ -138,20 +146,20 @@ def test_a_time_only_stamp_adopts_no_run_and_dispatches_nothing(rel):
 def test_success_needs_the_runs_release_tag_to_be_this_plugin_and_version(rel):
     finish_after(rel, GOOGLE, "success", "heinzel-tailscale/v0.9.7")
     with pytest.raises(rel.Stop, match=rf"recorded release run {GOOGLE} released heinzel-tailscale/v0\.9\.7, not heinzel-google/v0\.9\.4"):
-        rel.release_plugin("google", 3600)
+        rel.release_plugin("google", 3600, redispatch=True)
     assert not any(line.startswith("RELEASED") for line in rel.said)
 
 
 def test_success_without_a_readable_release_tag_stops(rel):
     finish_after(rel, GOOGLE, "success", None)
     with pytest.raises(rel.Stop, match=r"released no readable RELEASE_TAG"):
-        rel.release_plugin("google", 3600)
+        rel.release_plugin("google", 3600, redispatch=True)
 
 
 def test_a_failed_run_is_dispatched_again_only_with_redispatch(rel):
     finish_after(rel, GOOGLE, "failure", None)
     with pytest.raises(rel.Stop):
-        rel.release_plugin("google", 3600)
+        rel.release_plugin("google", 3600, redispatch=True)
     rel.fake.dispatch_ids.append(AGAIN)
     finish_after(rel, AGAIN, "success", "heinzel-google/v0.9.4")
     assert rel.release_plugin("google", 3600, redispatch=True) == 0
@@ -195,7 +203,7 @@ def test_a_dispatch_reply_without_a_run_id_adopts_no_run(rel):
         return real(*a)
     rel.hzlib.gh = no_details
     with pytest.raises(rel.Stop, match=r"GitHub named no run ID .* no run is adopted"):
-        rel.release_plugin("google", 3600)
+        rel.release_plugin("google", 3600, redispatch=True)
     data = receipt(rel)
     assert data["plugin-heinzel-google-0.9.4_run_id"] is None and data["plugin-heinzel-google-0.9.4_dispatch"]["sha"] == SHA
     with pytest.raises(rel.Stop, match=r"GitHub named no run ID"):  # a rerun still adopts the listed tailscale run never

@@ -194,7 +194,7 @@ def test_the_checks_are_registered_in_their_order_and_reuse_the_preflights_stand
     registry = cheap.checks()
     assert registry.names == cheap.STEPS == ("tree", "ruff", "types", "hook", "parity", "web", "docs", "standards", "tests", "bound")
     by_name = {check.name: check.run for check in registry.checks}
-    assert by_name["types"] is cheap.step_types and by_name["standards"] is head.step_standards and "coverage" not in registry.names
+    assert by_name["types"].__wrapped__ is cheap.step_types and by_name["standards"].__wrapped__ is head.step_standards and "coverage" not in registry.names
 
 
 @pytest.mark.parametrize("changed", [["web/src/a.ts"], ["docs/a.md"], ["src/heinzel/x.py"], []])

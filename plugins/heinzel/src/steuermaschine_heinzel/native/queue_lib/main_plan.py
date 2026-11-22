@@ -96,7 +96,9 @@ def _verdict(head: str, blobs: dict[str, str]) -> str:
 
 
 def gap(pr: str, head: str = "") -> str:
-    """'' when the merge rule holds for the pinned head of PR, else the refusal reason (always starting with PREFIX)."""
+    """'' when the merge rule holds for the pinned head of PR, else the refusal reason (always starting with PREFIX).
+    The recorded verdict for protected paths is never skipped: a required check is matched by name, and a PR that edits
+    the workflows can add a job of that name."""
     try:
         info = hzlib.ghj("pr", "view", pr, "-R", hzlib.CORE, "--json", "headRefOid,statusCheckRollup", default={}) or {}
         current = info.get("headRefOid", "") if isinstance(info, dict) else ""

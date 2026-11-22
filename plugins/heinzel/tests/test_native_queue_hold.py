@@ -29,7 +29,7 @@ def test_hold_and_unhold_in_text_and_json(rt):  # noqa: F811
 
 def test_a_held_queue_runs_no_tick_and_merges_nothing_until_unhold(rt, gh):  # noqa: F811
     queue_one(rt, bead="abc")
-    gh.on("pr merge 801", "").on("state,mergeCommit,mergedAt", {"state": "MERGED", "mergeCommit": {"oid": MAIN}, "mergedAt": "2026-11-12T21:00:00Z"})
+    gh.on("pr list", []).on("pr merge 801", "").on("state,mergeCommit,mergedAt", {"state": "MERGED", "mergeCommit": {"oid": MAIN}, "mergedAt": "2026-11-12T21:00:00Z"})
     gh.on("--json mergeCommit", {"mergeCommit": {"oid": MAIN}})
     gh.on("show heinzel-management-abc", {"labels": []}).on("update heinzel-management-abc", "").on("label add heinzel-management-abc", "")
     invoke(rt, ["queue", "hold", "--reason", REASON])
@@ -45,7 +45,23 @@ def test_a_held_queue_runs_no_tick_and_merges_nothing_until_unhold(rt, gh):  # n
     area.reset()
     merged = area.QueueTick.model_validate(json.loads(invoke(rt, ["--format", "json", "daemon", "queue"]).stdout))
     assert merged.ran and merged.held == "" and [line for line in gh.lines() if line.startswith("pr merge")] == [
-        f"pr merge 801 -R helmut-hoffer-von-ankershoffen/heinzel --squash --match-head-commit {HEAD}"]
+        f"pr merge 801 -R helmut-hoffer-von-ankershoffen/heinzel --squash --auto --match-head-commit {HEAD}"]
+
+
+def test_a_hold_switches_auto_merge_off_on_armed_prs(rt, gh):  # noqa: F811
+    """`sm queue hold` means nothing merges: an entry armed earlier is disarmed, an excepted one keeps auto-merge."""
+    queue_one(rt, detail="auto-merge armed")
+    gh.on("pr merge 801", "")
+    invoke(rt, ["queue", "hold", "--reason", REASON])
+    assert not area.QueueTick.model_validate(json.loads(invoke(rt, ["--format", "json", "daemon", "queue"]).stdout)).ran
+    assert [line for line in gh.lines() if line.startswith("pr merge")] == ["pr merge 801 -R helmut-hoffer-von-ankershoffen/heinzel --disable-auto"]
+    assert items(rt)[-1]["detail"] == "merge freeze: auto-merge off until it lifts"
+    queue_one(rt, key="802", pr="802", detail="auto-merge armed")
+    gh.calls.clear()
+    area.reset()
+    invoke(rt, ["queue", "hold", "--reason", REASON, "--except", "802"])
+    invoke(rt, ["daemon", "queue"])
+    assert not [line for line in gh.lines() if line.startswith("pr merge 802")]  # the excepted PR keeps auto-merge
 
 
 def test_ship_and_a_live_pr_refuse_with_the_reason_while_held(rt, gh):  # noqa: F811
@@ -88,10 +104,10 @@ def test_an_excepted_pr_ships_and_merges_alone_while_the_rest_stays_held(rt, gh)
     assert not tick.ran and tick.held == REASON and not [line for line in gh.lines() if line.startswith("pr merge")]
     area.reset()
     invoke(rt, ["queue", "hold", "--reason", REASON, "--except", "801"])  # now the queued PR is the excepted one: the tick runs
-    gh.on("pr merge 801", "").on("state,mergeCommit,mergedAt", {"state": "MERGED", "mergeCommit": {"oid": MAIN}, "mergedAt": "2026-11-12T21:00:00Z"})
+    gh.on("pr list", []).on("pr merge 801", "").on("state,mergeCommit,mergedAt", {"state": "MERGED", "mergeCommit": {"oid": MAIN}, "mergedAt": "2026-11-12T21:00:00Z"})
     gh.on("--json mergeCommit", {"mergeCommit": {"oid": MAIN}})
     gh.on("show heinzel-management-abc", {"labels": []}).on("update heinzel-management-abc", "").on("label add heinzel-management-abc", "")
     ran = area.QueueTick.model_validate(json.loads(invoke(rt, ["--format", "json", "daemon", "queue"]).stdout))
     assert ran.ran and any("only excepted PRs are queued" in line for line in ran.lines)
     assert [line for line in gh.lines() if line.startswith("pr merge")] == [
-        f"pr merge 801 -R helmut-hoffer-von-ankershoffen/heinzel --squash --match-head-commit {HEAD}"]
+        f"pr merge 801 -R helmut-hoffer-von-ankershoffen/heinzel --squash --auto --match-head-commit {HEAD}"]

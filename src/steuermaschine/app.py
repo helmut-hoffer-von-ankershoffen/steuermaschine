@@ -379,7 +379,8 @@ def _review(rt: Runtime, app: typer.Typer, hidden: bool = False) -> None:
             store.put_receipt("verdicts", digest, data)
         except FileExistsError:
             fail(f"a verdict for {digest[:12]} is already recorded and cannot be changed: {store.get_receipt('verdicts', digest)}")
-        emit(as_json, data, [f"recorded: {data['verdict']} {digest} by {reviewer}"], models.Verdict)
+        later = verdicts.deferred_for_digest(store, digest) if approve else ""
+        emit(as_json, data, [f"recorded: {data['verdict']} {digest} by {reviewer}", *([f"{later} (the check of the bound head was not a full local run)"] if later else [])], models.Verdict)
 
     @review.command("list", context_settings=CTX, short_help="Runs stopped at a review, and the verdict recorded for each digest.", help=H(
         "Runs stopped at a review, and the verdict recorded for each digest.",
@@ -893,7 +894,29 @@ def runtime(start: str | None = None, cli: dict[str, Any] | None = None) -> Runt
     return Runtime(project, plugin, settings, sources)
 
 
+def record_tool_error(code: object, pinned: str | None, now: float | None = None) -> None:
+    """A stable release's exit 70 (a tool error) is evidence for the sm follower's canary verdict and tool-stall alarm
+    (bin/release_ci.py): one line `EPOCH RELEASE 70` in STABLE/exits.log, STABLE being the install the launcher pinned
+    this process to (STABLE/releases/RELEASE). Outside a stable install, or on any OSError, nothing is written."""
+    if code != INTERNAL or not pinned:
+        return
+    rel = Path(pinned)
+    if rel.parent.name != "releases":
+        return
+    with contextlib.suppress(OSError), (rel.parent.parent / "exits.log").open("a", encoding="utf-8") as fh:
+        fh.write(f"{int(time.time() if now is None else now)} {rel.name} {INTERNAL}\n")
+
+
 def main(argv: list[str] | None = None) -> None:
+    try:
+        _main(argv)
+    except SystemExit as done:
+        with contextlib.suppress(Exception):  # evidence only: the original exit code is never replaced
+            record_tool_error(done.code, config_mod.environment().steuermaschine_pinned)
+        raise
+
+
+def _main(argv: list[str] | None = None) -> None:
     args = list(sys.argv[1:] if argv is None else argv)
     start, cli, i = None, {}, 0
     rest: list[str] = []

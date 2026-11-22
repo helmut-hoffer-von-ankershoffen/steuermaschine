@@ -15,6 +15,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import typer
@@ -29,12 +30,12 @@ from steuermaschine.plugins import old_variable
 from .. import environment
 from . import queue_hold
 from .journal_view import mirrored
-from .queue_lib import edge, main_plan
+from .queue_lib import auto_arm, edge, main_plan
 
 GROUP = Group("queue", H(
     "queue: the merge queue; what is in it, why it does not merge, add and drop.",
     "Use when a PR should merge, or did not.",
-    "list and why only read; add and drop edit the queue's state file. The loop (`sm daemon queue`) does the merging.",
+    "list and why only read; add and drop edit the queue's state file. The loop (`sm daemon queue`) arms GitHub auto-merge; GitHub merges on green.",
     "sm queue why", "sm queue list"))
 
 
@@ -425,9 +426,10 @@ def _program_words() -> int:
 
 
 @native("daemon queue", writes=True, tick=True, replaces=("hz-queue",), help=H(
-    "One tick of the merge queue: assess queued PRs, gate on main and holds, squash-merge the ready batch; no tick while `sm queue hold` holds.",
+    "One tick of the merge queue: arm GitHub auto-merge on queued PRs, revert a red main; no tick while `sm queue hold` holds.",
     "Use for the launchd job (`--loop 1`); by hand for a single tick only while that job is stopped.",
-    "merges ready PRs onto protected main, may rerun main's KNOWN failed jobs once, writes queue state, log, notes, alarms; "
+    "arms or disarms auto-merge (squash, pinned head), may rerun main's KNOWN failed jobs once, opens a revert PR when main turned red "
+    "on a merge with an unknown failure, writes queue state, log, notes, alarms; "
     "with the merge tier at main starts `sm queue main-proof` detached, once per green main commit (posts hz/main-proof).",
     "sm daemon queue --loop 1 --interval 300", "sm queue why"))
 @mirrored  # it runs a program that writes the working files: the subject journals follow (journal_view.py)
@@ -453,6 +455,8 @@ def daemon_queue(
             wake = "queue changed"
         elif _LOOP["frozen"] and not now_frozen:
             wake = "merge hold released"
+        elif now_frozen and not _LOOP["frozen"]:
+            wake = "merge freeze started"  # armed PRs are disarmed at once, not on the next interval
         _LOOP["frozen"] = now_frozen
         if not wake and module.time.monotonic() < _LOOP["due"]:
             return None
@@ -465,6 +469,7 @@ def daemon_queue(
     if hold:  # sm queue hold: no tick at all, so nothing merges in any repository
         with contextlib.redirect_stdout(out):
             module.log(f"queue held, no tick: {hold.reason} (sm queue unhold lifts it)")
+            auto_arm.hold(SimpleNamespace(**vars(module)), hold.reason, lambda i: queue_hold.queued_key(i) in hold.excepted)  # an armed PR would still merge on GitHub
         _LOOP.update(due=module.time.monotonic() + interval, stamp=module.queue_stamp(), frozen=module.hzlib.merge_frozen())
         data = _load(module)
         return QueueTick(ran=False, wake=wake, held=hold.reason, queued=[i["key"] for i in data["items"] if i["status"] == "queued"],
