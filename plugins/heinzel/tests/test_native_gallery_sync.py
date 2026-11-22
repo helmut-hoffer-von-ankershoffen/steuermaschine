@@ -198,3 +198,42 @@ def test_a_gallery_still_stale_after_the_regeneration_refuses_and_names_the_comm
     with pytest.raises(Refuse, match="still stale after regeneration") as refused:
         gs.into_head(rt, repo)
     assert "make screenshots NAME=heinzel-clock" in refused.value.next_cmd
+
+
+def test_a_plugins_tooling_without_all_is_checked_per_touched_plugin_and_never_refused_for_the_flag(repo):
+    class Old(Commands):
+        def run(self, argv, cwd=None, timeout=None, env=None):
+            if argv[: len(pg.FROZEN)] == pg.FROZEN:
+                self.calls.append(list(argv))
+                if "--all" in argv:
+                    return Result(2, "", "hz-plugin screenshots: error: unrecognized arguments: --all\n")
+                return Result(0, json.dumps({"ok": True, "plugin": argv[-2]}) + "\n", "")
+            return super().run(argv, cwd, timeout, env)
+
+    commands = Old([])
+    assert gs.stale(commands, repo) == []
+    checks = [c for c in commands.calls if c[: len(pg.FROZEN)] == pg.FROZEN and "--all" not in c]
+    assert checks == [[*pg.FROZEN, "screenshots-check", "heinzel-clock", "--json"]]  # no origin/main in the fixture: every plugin directory
+
+
+def test_a_stale_gallery_under_a_tooling_without_all_refuses_with_the_exact_command(repo):
+    class Old(Commands):
+        def run(self, argv, cwd=None, timeout=None, env=None):
+            if argv[: len(pg.FROZEN)] == pg.FROZEN:
+                if "--all" in argv:
+                    return Result(2, "", "error: unrecognized arguments: --all")
+                return Result(1, json.dumps({"ok": False, "error": "screenshots are stale"}) + "\n", "")
+            return super().run(argv, cwd, timeout, env)
+
+    with pytest.raises(Refuse, match="no `--all`") as refused:
+        gs.stale(Old([]), repo)
+    assert "make screenshots NAME=heinzel-clock" in refused.value.next_cmd
+
+    class Garbled(Commands):
+        def run(self, argv, cwd=None, timeout=None, env=None):
+            if argv[: len(pg.FROZEN)] == pg.FROZEN:
+                return Result(2, "", "unrecognized arguments: --all") if "--all" in argv else Result(1, "boom", "")
+            return super().run(argv, cwd, timeout, env)
+
+    with pytest.raises(Refuse, match="no readable answer"):
+        gs.stale(Garbled([]), repo)

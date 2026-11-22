@@ -53,6 +53,8 @@ def stale(commands: Any, worktree: Path) -> list[dict[str, str]]:
     environ = child_environment()
     env = {key: environ[key] for key in pg.ENV_ALLOWED if key in environ}
     done = commands.run(check_command(), cwd=str(worktree), timeout=CHECK_TIMEOUT, env=env)
+    if done.rc == 2 and OLD_TOOLING in f"{done.out}\n{done.err}":
+        return per_plugin(commands, worktree, env)
     report: dict[str, Any] | None = None
     for line in reversed(str(done.out).splitlines()):
         if line.startswith("{"):
@@ -69,6 +71,36 @@ def stale(commands: Any, worktree: Path) -> list[dict[str, str]]:
         raise Refuse(f"the gallery of {first.get('plugin')} is broken, not stale: {first.get('error')}",
                      f"cd {worktree} && make screenshots-check NAME={first.get('plugin')}")
     return [item for item in report["stale"] if isinstance(item, dict) and item.get("plugin")]
+
+
+OLD_TOOLING = "unrecognized arguments: --all"  # the argparse text of a plugins tooling from before the deterministic capture
+
+
+def touched_plugins(commands: Any, worktree: Path) -> list[str]:
+    """The plugin directories this branch changes against origin/main; every plugin directory when that cannot be read."""
+    done = commands.run(["git", "-C", str(worktree), "diff", "--name-only", "origin/main...HEAD"], timeout=60)
+    if done.rc == 0:
+        names = {line.split("/")[1] for line in str(done.out).splitlines() if line.startswith("plugins/") and line.count("/") >= 2}
+    else:
+        names = {path.name for path in (worktree / "plugins").glob("*/") if path.is_dir()}
+    return sorted(names)
+
+
+def per_plugin(commands: Any, worktree: Path, env: dict[str, str]) -> list[dict[str, str]]:
+    """The check of a plugins tooling that has no `--all` (plugins main before the deterministic capture, plugins #124):
+    `screenshots-check NAME --json` for each plugin the branch touches. That tooling cannot regenerate without an agent,
+    so a stale gallery is a refusal that names the command, never something sm captures itself."""
+    for name in touched_plugins(commands, worktree):
+        argv = [*pg.FROZEN, "screenshots-check", name, "--json"]
+        done = commands.run(argv, cwd=str(worktree), timeout=CHECK_TIMEOUT, env=env)
+        report = next((json.loads(line) for line in reversed(str(done.out).splitlines()) if line.startswith("{") and line.endswith("}")), None)
+        if not isinstance(report, dict) or "ok" not in report:
+            raise Refuse(f"the gallery check of {name} in {worktree} gave no readable answer (exit {done.rc})", f"cd {worktree} && {' '.join(argv)}")
+        if not report["ok"]:
+            raise Refuse(f"the gallery of {name} is stale or broken ({str(report.get('error'))[:200]}), and this plugins checkout's hz-plugin has no `--all` "
+                         "(it predates the deterministic capture of plugins #124), so sm cannot regenerate it; nothing was pushed",
+                         f"cd {worktree} && make screenshots NAME={name}, commit the result, then sm ship {worktree} again")
+    return []
 
 
 def dirty(commands: Any, worktree: Path) -> list[str]:
