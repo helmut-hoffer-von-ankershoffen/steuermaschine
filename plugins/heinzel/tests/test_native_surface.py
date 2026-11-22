@@ -117,6 +117,14 @@ def test_the_document_cap_moves_old_checkpoints_then_log_lines():
     assert cap.apply("y" * 500, cap.Cap(limit=10)) == ("y" * 500, "")
 
 
+def test_the_cap_keeps_the_state_block_that_sits_inside_the_last_checkpoints_range():
+    block = "<!-- sm status --write: begin (generated; do not edit) -->\n## State now\n- x\n<!-- sm status --write: end -->\n"
+    text = "# Doc\n## 5. State\n" + "".join(f"### c{n}\n" + "x" * 50 + "\n" for n in range(6)) + block + "## 6. Work\nrules\n"
+    capped, moved = cap.apply(text, cap.Cap(limit=300, keep=3))
+    assert block in capped and "### c2" in capped and "### c3" not in capped and "## 6. Work" in capped
+    assert "### c5" in moved and "State now" not in moved and "- x" not in moved
+
+
 def test_status_write_renders_the_state_section_and_caps_the_document(tmp_path, monkeypatch):
     from steuermaschine.native import NativeRuntime, using
     from steuermaschine_heinzel.native import alarm
