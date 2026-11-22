@@ -241,3 +241,20 @@ def test_the_tick_records_a_failed_ios_upload_without_crashing(rt, gh, monkeypat
     out, tick = doc(rt, train_area.TrainTick, "daemon", "train")  # the real `sm release ios`, no Core repository set here
     assert out.exit_code == 1 and tick.lines[-1] == "follow: iOS upload of 0.9.54: failed"
     assert any(line.startswith("IOS NOT-CLEAN 0.9.54: ") and "ios_core_repo" in line for line in tick.lines)
+
+
+def test_the_result_models_render_their_lines_and_report_their_exit_code():
+    chain = area.ChainRun(lines=["a run"], exit=1)
+    assert chain.render() == ["a run"] and chain.exit_code == 1
+    follow = area.Follow(version="1.2.3", lines=["followed"])
+    assert follow.render() == ["followed"] and follow.exit_code == 0
+    assert area.vkey("1.2.10") > area.vkey("1.2.9")
+
+
+def test_a_release_run_that_cannot_be_read_is_a_refusal_naming_the_command(monkeypatch):
+    from steuermaschine.engine import Refuse
+
+    monkeypatch.setattr(area, "core_repo", lambda: "o/core")
+    gh = type("G", (), {"try_json": lambda self, argv: (None, "no such run")})()
+    with pytest.raises(Refuse, match="cannot read the Release run 7"):
+        area.read_run(gh, 7)
