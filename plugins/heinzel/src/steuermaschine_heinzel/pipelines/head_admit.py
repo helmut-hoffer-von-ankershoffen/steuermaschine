@@ -119,7 +119,7 @@ def protected_review(ctx: Ctx) -> tuple[str, str, str]:
     path.write_text(record)
     brief = (f"Review the protected paths changed by {ctx.subject.label} at {head[:12]}: {', '.join(changed)}.\n"
              f"Read the diff of exactly these paths (git -C {wt} diff origin/main...HEAD -- PATH). Approve the digest {digest[:12]}... only if they weaken no "
-             "gate, test, threshold or publish step. The digest is sha256 of the record: each protected file with the id of its content at this head; it follows the content, so an update of the branch that leaves these files alone keeps your verdict.")
+             "gate, test, threshold or publish step. The digest is sha256 of the record: each protected file with the id of its content at this head; your verdict counts for exactly this head (--head): a new head needs a new verdict.")
     return digest, brief, str(path)
 
 
@@ -193,7 +193,7 @@ def queue(ctx: Ctx) -> str:
 def pipeline() -> Pipeline:
     steps = [
         Step("check", check, probe=check_probe, binds=BINDS, trap=TRAPS["check"], changes="the check receipt of this head on this machine (sm check)"),
-        ReviewStop("protected review", protected_review, trap=TRAPS["protected review"]),
+        ReviewStop("protected review", protected_review, trap=TRAPS["protected review"], head=lambda ctx: ctx.subject.key),
         Step("pr", pr, probe=pr_probe, external=True, trap=TRAPS["pr"], changes="one push of the checked commit, the PR, the guard (sm head pr --live)",
              plan=lambda ctx: f"sm head pr {ctx.inputs.get('bead', 'BEAD')} TITLE --worktree {ctx.subject.facts['worktree']} --live"),
         Step("queue", queue, probe=queue_probe, external=True, trap=TRAPS["queue"], changes="one entry in the merge queue (sm queue add)",

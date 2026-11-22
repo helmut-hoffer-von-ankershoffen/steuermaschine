@@ -355,6 +355,17 @@ def test_review_verdict_in_json_prints_one_document_and_exits_0():
     assert r.providers.store.get_receipt("verdicts", digest)["verdict"] == "approve"
 
 
+def test_review_verdict_with_a_head_is_recorded_for_that_commit_only_and_the_same_reviewer_may_replace_it():
+    r = rt()
+    digest, head = "e" * 64, "a" * 40
+    r.providers.store.save("runs.head.demo", "k", {"author": "builder-1", "steps": {"review": {"digest": digest}}})
+    for flag in ("--reject", "--approve"):
+        out = invoke(r, ["review", "verdict", digest, flag, "--reviewer", "reviewer-1", "--head", head])
+        assert out.exit_code == 0, out.stdout + out.stderr
+    assert verdicts.head_verdict(r.providers.store, digest, head)["verdict"] == "approve"
+    assert verdicts.head_verdict(r.providers.store, digest, "b" * 40) is None and r.providers.store.get_receipt("verdicts", digest) is None
+
+
 def test_an_approve_of_a_digest_bound_to_a_head_needs_the_green_check_receipt_of_that_commit():
     r = rt()
     digest, head = "f" * 64, "a" * 40

@@ -13,6 +13,7 @@ import json
 import pytest
 from test_pipeline_head_admit import native, runtime
 
+from steuermaschine import verdicts
 from steuermaschine_heinzel.native import protected
 from steuermaschine_heinzel.native.queue_lib import hzlib, main_plan
 
@@ -92,12 +93,11 @@ def gap(monkeypatch, tmp_path, real_main_plan):
     return run
 
 
-def approve(rt, paths, version="1", reviewer="reviewer-1", verdict="approve", authors=()):
+def approve(rt, paths, version="1", reviewer="reviewer-1", verdict="approve", authors=(), head=HEAD):
+    """Record a verdict for the digest of PATHS at HEAD (the verdict belongs to one commit: `sm review verdict --head`)."""
     digest, _ = protected.record({p: blob(p, version) for p in paths})
-    rt.providers.store.put_receipt("verdicts", digest, {"verdict": verdict, "reviewer": reviewer})
+    verdicts.record_head_verdict(rt.providers.store, digest, head, {"verdict": verdict, "reviewer": reviewer})
     for author in authors:
-        from steuermaschine import verdicts
-
         verdicts.register(rt.providers.store, digest, "sm head admit", author=author)
     return digest
 
@@ -171,10 +171,12 @@ def test_a_protected_path_needs_the_recorded_verdict_of_its_content(gap, path):
     assert gap(world) == ""
 
 
-def test_an_update_of_the_branch_that_leaves_the_protected_files_alone_keeps_the_verdict(gap):
+def test_an_update_of_the_branch_needs_a_new_verdict_for_its_new_head(gap):
     approve(gap.rt, ["uv.lock"])
     assert gap(World(files=["uv.lock", "src/heinzel/a.py"], head=HEAD), head=HEAD) == ""
-    moved = "c" * 40  # the branch was updated: another head, the same protected content
+    moved = "c" * 40  # the branch was updated: another head, the same protected content: the old verdict does not count
+    assert "no verdict is recorded" in gap(World(files=["uv.lock", "src/heinzel/other.py"], head=moved), head=moved)
+    approve(gap.rt, ["uv.lock"], head=moved)
     assert gap(World(files=["uv.lock", "src/heinzel/other.py"], head=moved), head=moved) == ""
 
 

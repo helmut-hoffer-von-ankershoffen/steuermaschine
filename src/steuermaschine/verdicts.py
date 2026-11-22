@@ -16,13 +16,14 @@ from __future__ import annotations
 from typing import Any
 
 from .config import environment
-from .engine import CHECKS, DIGEST_KIND, Refuse, check_receipt, deferred_for_digest, deferred_note, missing_check, need_check, record_check
+from .engine import CHECKS, DIGEST_KIND, Refuse, check_receipt, deferred_for_digest, deferred_note, head_verdict, missing_check, need_check, record_check, record_head_verdict
 
 KIND = DIGEST_KIND
 CI_CHANGE = "ci_change"  # a verdict on a commit whose CI paths changed since the last release: the release gate needs it
 KINDS = ("", CI_CHANGE)  # "": a verdict on prepared bytes (the 04ro gate)
 __all__ = ["CHECKS", "CI_CHANGE", "KIND", "KINDS", "authors_of", "check_receipt", "current_agent", "deferred_for_digest",
-           "deferred_note", "missing_check", "need_check", "record_check", "register", "require_independent"]
+           "deferred_note", "head_verdict", "missing_check", "need_check", "record_check", "record_head_verdict", "register",
+           "require_independent"]
 
 
 def current_agent() -> str:
@@ -49,10 +50,11 @@ def authors_of(store: Any, digest: str, run_states: list[dict[str, Any]]) -> set
     return {a for a in found if a}
 
 
-def require_independent(store: Any, digest: str, run_states: list[dict[str, Any]], recorded: str, kind: str = "") -> dict[str, Any]:
+def require_independent(store: Any, digest: str, run_states: list[dict[str, Any]], recorded: str, kind: str = "", head: str = "") -> dict[str, Any]:
     """The approving verdict receipt for `digest`, or a Refuse naming the command that records it. With `kind`
-    (`CI_CHANGE`), only a receipt of that kind counts: a verdict on prepared bytes never covers a CI change."""
-    receipt = store.get_receipt("verdicts", digest)
+    (`CI_CHANGE`), only a receipt of that kind counts: a verdict on prepared bytes never covers a CI change. With `head`, only
+    a verdict recorded for exactly that commit counts (`head_verdict`)."""
+    receipt = head_verdict(store, digest, head) if head else store.get_receipt("verdicts", digest)
     if not receipt:
         raise Refuse(f"no verdict is recorded for {digest}: the digest alone is not a review", recorded)
     if kind and receipt.get("kind", "") != kind:

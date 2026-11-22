@@ -3,14 +3,15 @@
 import pytest
 
 from steuermaschine import OK, REFUSED, USAGE, WAITING
-from steuermaschine.engine import Engine, Gate, Options, Pipeline, Refuse, ReviewStop, Step, Subject, Wait
+from steuermaschine.engine import Engine, Gate, Options, Pipeline, Refuse, ReviewStop, Step, Subject, Wait, record_head_verdict
+from steuermaschine.engine import head_verdict as head_verdict_of
 from steuermaschine.testing import fake_providers
 from steuermaschine.testing.fakes import external_calls
 
 DIGEST = "d" * 64
 
 
-def make(p, review=True, gates=()):
+def make(p, review=True, gates=(), per_head=False):
     """build -> review (STOP) -> publish* -> settle"""
     calls = []
 
@@ -35,7 +36,8 @@ def make(p, review=True, gates=()):
 
     steps = [Step("build", build, binds=("head", "base"))]
     if review:
-        steps.append(ReviewStop("review", lambda ctx: (DIGEST, "Review the build."), binds=("head", "base")))
+        steps.append(ReviewStop("review", lambda ctx: (DIGEST, "Review the build."), binds=("head", "base"),
+                                 head=(lambda ctx: ctx.subject.key) if per_head else None))
     steps += [Step("publish", publish, "creates a tag", external=True, plan=lambda c: "tag t", gates=gates,
                    probe=lambda c: "tag exists" if "t" in c.providers.forge.tags else None),
               Step("settle", settle)]
@@ -48,6 +50,48 @@ def engine(p, **kw):
 
 def approve(p, reviewer="reviewer-1", verdict="approve"):
     p.store.put_receipt("verdicts", DIGEST, {"digest": DIGEST, "verdict": verdict, "reviewer": reviewer, "notes": ""})
+
+
+def head_verdict(p, head, reviewer="reviewer-1", verdict="approve", at="1"):
+    record_head_verdict(p.store, DIGEST, head, {"digest": DIGEST, "verdict": verdict, "reviewer": reviewer, "at": at})
+
+
+def test_a_reject_for_one_head_and_an_approve_for_the_new_head_admits_the_new_head():
+    p = fake_providers()
+    pl, _ = make(p, per_head=True)
+    e = engine(p)
+    old = p.vcs.h
+    e.advance(pl, "/wt", Options())
+    head_verdict(p, old, verdict="reject")
+    assert "reject" in e.advance(pl, "/wt", Options(approved=DIGEST)).phase
+    p.vcs.h = "f" * 40  # the fix is a new head; the digest of the protected bytes is the same
+    e.advance(pl, "/wt", Options())
+    assert "no verdict is recorded" in e.advance(pl, "/wt", Options(approved=DIGEST)).phase  # the old head's reject is not this head's verdict
+    head_verdict(p, "f" * 40)
+    assert e.advance(pl, "/wt", Options(approved=DIGEST)).exit_code != REFUSED
+
+
+def test_an_approve_for_an_old_head_does_not_admit_a_new_head():
+    p = fake_providers()
+    pl, _ = make(p, per_head=True)
+    e = engine(p)
+    head_verdict(p, p.vcs.h)
+    p.vcs.h = "f" * 40
+    e.advance(pl, "/wt", Options())
+    r = e.advance(pl, "/wt", Options(approved=DIGEST))
+    assert r.exit_code == REFUSED and "no verdict is recorded" in r.phase and "f" * 12 in r.phase
+
+
+def test_two_reviewers_on_one_head_the_reject_wins_and_a_later_verdict_of_the_same_reviewer_replaces():
+    p = fake_providers()
+    head = p.vcs.h
+    head_verdict(p, head, reviewer="a", verdict="approve", at="1")
+    head_verdict(p, head, reviewer="b", verdict="reject", at="2")
+    assert head_verdict_of(p.store, DIGEST, head)["verdict"] == "reject"
+    head_verdict(p, head, reviewer="b", verdict="approve", at="3")  # b changed their mind: it replaces b's own reject
+    assert head_verdict_of(p.store, DIGEST, head)["verdict"] == "approve" and head_verdict_of(p.store, DIGEST, "e" * 40) is None
+    head_verdict(p, head, reviewer="a", verdict="reject", at="4")
+    assert head_verdict_of(p.store, DIGEST, head)["reviewer"] == "a"
 
 
 def test_stops_at_the_review_with_the_digest_and_one_next_command():
