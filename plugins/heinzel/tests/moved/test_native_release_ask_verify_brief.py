@@ -64,6 +64,10 @@ class World:
         if a[0] == "api" and "/contents/.github/workflows/acceptance.yml?ref=" in a[1]:
             source = (Path(__file__).parent / "fixtures/acceptance-snapshot.yml").read_bytes()
             return 0, base64.b64encode(source).decode()
+        if a[0] == "api" and "/contents/release/pins.toml?ref=" in a[1]:
+            source = (Path(__file__).parent / "fixtures/acceptance-snapshot.yml").read_bytes()
+            pins = f'[sha256]\n".github/workflows/acceptance.yml" = "{hashlib.sha256(source).hexdigest()}"\n'
+            return 0, base64.b64encode(pins.encode()).decode()
         if a[:2] == ("release", "view"):
             return 0, "https://x/heinzel-0.9.12-py3-none-any.whl\n"
         if a[:2] == ("workflow", "run"):

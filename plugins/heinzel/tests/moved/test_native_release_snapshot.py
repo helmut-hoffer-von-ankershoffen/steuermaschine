@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -343,18 +344,94 @@ def test_started_acceptance_is_resumed_by_id_after_newer_runs_push_it_out_of_lis
     assert rel.ours(rel.CORE, "acceptance.yml", "acceptance")["status"] == "completed"
 
 
-def test_workflow_capability_requires_the_entire_reviewed_workflow(monkeypatch):
+REVIEWED = Path(__file__).parent / "fixtures/acceptance-snapshot.yml"
+
+
+def core_pins(source: bytes) -> bytes:
+    return f'[sha256]\n"{snapshot.WORKFLOW}" = "{hashlib.sha256(source).hexdigest()}"\n'.encode()
+
+
+def serve(monkeypatch, workflow: bytes | None, pins: bytes | None, calls: list | None = None):
+    """Core at one commit: the acceptance workflow and release/pins.toml, each absent when None."""
     import base64
 
-    reviewed = (Path(__file__).parent / "fixtures/acceptance-snapshot.yml").read_bytes()
-    def provide(source):
-        monkeypatch.setattr(snapshot.hzlib, "gh", lambda *a: (0, base64.b64encode(source).decode()))
-    provide(reviewed)
+    def fetch(*args):
+        if calls is not None:
+            calls.append(args)
+        body = {snapshot.WORKFLOW: workflow, snapshot.PINS: pins}[args[1].split("/contents/")[1].split("?")[0]]
+        return (1, "Not Found") if body is None else (0, base64.b64encode(body).decode())
+    monkeypatch.setattr(snapshot.hzlib, "gh", fetch)
+
+
+def test_workflow_capability_requires_the_workflow_core_pinned_at_the_same_commit(monkeypatch):
+    reviewed = REVIEWED.read_bytes()
+    serve(monkeypatch, reviewed, core_pins(reviewed))
     assert snapshot.workflow_supports_snapshot("c" * 40)
     disabled = reviewed.replace(b'--accept-wheel-sha256 "$EXPECTED_WHEEL_SHA256"', b'--accept-wheel-sha256 "" # --accept-wheel-sha256 "$EXPECTED_WHEEL_SHA256"')
-    provide(disabled)
+    serve(monkeypatch, disabled, core_pins(reviewed))
     assert not snapshot.workflow_supports_snapshot("c" * 40)
-    provide(b"# " + b"\n# ".join(reviewed.splitlines()))
+    serve(monkeypatch, b"# " + b"\n# ".join(reviewed.splitlines()), core_pins(reviewed))
+    assert not snapshot.workflow_supports_snapshot("c" * 40)
+    # A workflow change that Core reviewed together with its pin needs no change in sm.
+    serve(monkeypatch, disabled, core_pins(disabled))
+    assert snapshot.workflow_supports_snapshot("c" * 40)
+
+
+def test_sm_holds_no_acceptance_workflow_digest():
+    source = Path(snapshot.__file__).read_text()
+    assert not hasattr(snapshot, "APPROVED_ACCEPTANCE_SHA256")
+    assert hashlib.sha256(REVIEWED.read_bytes()).hexdigest() not in source
+    assert not re.search(r"['\"][a-f0-9]{64}['\"]", source)
+
+
+@pytest.mark.parametrize("pins", [
+    None,  # a tag from before Core pinned the workflow
+    b"",
+    b"[sha256]\n",
+    b'[sha256]\n"scripts/acceptance/run_acceptance.py" = "' + b"a" * 64 + b'"\n',
+    b"[sha256\n",
+    b"\xff\xfe",
+    b'[sha256]\n".github/workflows/acceptance.yml" = 1\n',
+    b'[sha256]\n".github/workflows/acceptance.yml" = "' + b"A" * 64 + b'"\n',
+    b'sha256 = "x"\n',
+], ids=["missing", "empty", "no-entry", "other-file", "malformed", "not-utf8", "not-a-string", "not-lower-hex", "not-a-table"])
+def test_missing_or_malformed_core_pin_refuses(monkeypatch, pins):
+    serve(monkeypatch, REVIEWED.read_bytes(), pins)
+    assert not snapshot.workflow_supports_snapshot("c" * 40)
+
+
+def test_missing_workflow_or_undecodable_content_refuses(monkeypatch):
+    reviewed = REVIEWED.read_bytes()
+    serve(monkeypatch, None, core_pins(reviewed))
+    assert not snapshot.workflow_supports_snapshot("c" * 40)
+    monkeypatch.setattr(snapshot.hzlib, "gh", lambda *args: (0, "not base64!"))
+    assert not snapshot.workflow_supports_snapshot("c" * 40)
+
+
+def test_workflow_and_pin_downloads_are_bound_to_the_captured_commit(monkeypatch):
+    reviewed = REVIEWED.read_bytes()
+    calls = []
+    serve(monkeypatch, reviewed, core_pins(reviewed), calls)
+    assert snapshot.workflow_supports_snapshot("c" * 40)
+    assert sorted(call[1].split("/contents/")[1] for call in calls) == sorted(
+        f"{path}?ref={'c' * 40}" for path in (snapshot.PINS, snapshot.WORKFLOW))
+    assert not snapshot.workflow_supports_snapshot("v1.2.3")
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize("argument", [
+    b'--expect-version "$EXPECTED_VERSION"',
+    b'--expect-app-version "$EXPECTED_APP_VERSION"',
+    b'--accept-wheel-sha256 "$EXPECTED_WHEEL_SHA256"',
+    b'--accept-profile-sha256 "$EXPECTED_PROFILE_SHA256"',
+    b'--bridge-quota-wait-seconds 3900',
+])
+def test_workflow_that_drops_digest_or_quota_wiring_without_its_pin_refuses(monkeypatch, argument):
+    reviewed = REVIEWED.read_bytes()
+    assert reviewed.count(argument) == 1
+    changed = reviewed.replace(b"          " + argument + b"\n", b"")
+    assert changed != reviewed
+    serve(monkeypatch, changed, core_pins(reviewed))
     assert not snapshot.workflow_supports_snapshot("c" * 40)
 
 
@@ -441,34 +518,6 @@ def test_snapshot_capability_is_checked_at_captured_commit_not_mutable_tag(tool,
     assert checked == [captured["commit"]]
 
 
-def test_workflow_fingerprint_download_is_bound_to_the_captured_commit(monkeypatch):
-    import base64
-
-    source = (Path(__file__).parent / "fixtures/acceptance-snapshot.yml").read_bytes()
-    calls = []
-    def fetch(*args):
-        calls.append(args)
-        return 0, base64.b64encode(source).decode()
-    monkeypatch.setattr(snapshot.hzlib, "gh", fetch)
-    assert snapshot.workflow_supports_snapshot("c" * 40)
-    assert calls[0][1].endswith("?ref=" + "c" * 40)
-    assert not snapshot.workflow_supports_snapshot("v1.2.3")
-    assert len(calls) == 1
-
-
-def test_superseded_direct_uv_workflow_is_not_the_reviewed_current_contract(monkeypatch):
-    import base64
-
-    current = (Path(__file__).parent / "fixtures/acceptance-snapshot.yml").read_bytes()
-    assert current.count(b"uses: ./.github/actions/setup-uv") == 3  # pins, shard and reducer jobs
-    previous = current.replace(
-        b"uses: ./.github/actions/setup-uv",
-        b"uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2",
-    )
-    monkeypatch.setattr(snapshot.hzlib, "gh", lambda *args: (0, base64.b64encode(previous).decode()))
-    assert not snapshot.workflow_supports_snapshot("c" * 40)
-
-
 def test_tagged_adoption_without_owned_hold_preserves_foreign_holds(tool, home, monkeypatch):
     rel = tool("hz-release")
     rel.remember(version="1.2.3")
@@ -505,31 +554,3 @@ def test_tagged_adoption_rejects_orphan_hold_history(tool, home, monkeypatch):
         rel.release_snapshot_freeze()
 
 
-@pytest.mark.parametrize("argument", [
-    b'--expect-version "$EXPECTED_VERSION"',
-    b'--expect-app-version "$EXPECTED_APP_VERSION"',
-    b'--accept-wheel-sha256 "$EXPECTED_WHEEL_SHA256"',
-    b'--accept-profile-sha256 "$EXPECTED_PROFILE_SHA256"',
-    b'--bridge-quota-wait-seconds 3900',
-])
-def test_reviewed_snapshot_workflow_rejects_removed_input_or_quota_wiring(monkeypatch, argument):
-    import base64
-
-    reviewed = (Path(__file__).parent / "fixtures/acceptance-snapshot.yml").read_bytes()
-    assert reviewed.count(argument) == 1
-    changed = reviewed.replace(b"          " + argument + b"\n", b"")
-    if argument == b"--bridge-quota-wait-seconds 3900":
-        assert hashlib.sha256(changed).hexdigest() == "67e9423542d5d32740c48ef50796faebaddb65b7370da8a8551a90fb1ad9b1b2"
-    monkeypatch.setattr(snapshot.hzlib, "gh", lambda *args: (0, base64.b64encode(changed).decode()))
-    assert not snapshot.workflow_supports_snapshot("c" * 40)
-
-
-@pytest.mark.parametrize("wait", [b"120", b"0", b"3901"])
-def test_unreviewed_quota_budget_still_requires_workflow_review(monkeypatch, wait):
-    import base64
-
-    reviewed = (Path(__file__).parent / "fixtures/acceptance-snapshot.yml").read_bytes()
-    changed = reviewed.replace(b"--bridge-quota-wait-seconds 3900", b"--bridge-quota-wait-seconds " + wait)
-    assert changed != reviewed
-    monkeypatch.setattr(snapshot.hzlib, "gh", lambda *args: (0, base64.b64encode(changed).decode()))
-    assert not snapshot.workflow_supports_snapshot("c" * 40)
