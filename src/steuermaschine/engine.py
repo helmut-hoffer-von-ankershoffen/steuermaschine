@@ -75,21 +75,30 @@ class Step:
 
 
 VERDICT_LEDGER = "review.verdicts"  # state: the verdicts of one digest at one head, per reviewer (`sm review verdict --head`)
+REJECT_LEDGER = "review.rejects"  # state: every reject of a digest at any head; it blocks until the protected content (the digest) changes
 
 
 def record_head_verdict(store: Any, digest: str, head: str, data: dict[str, Any]) -> None:
-    """Add a verdict for (digest, head): a newer one of the same reviewer replaces the older one."""
-    with store.lock(f"{VERDICT_LEDGER}.{digest}.{head}"):
-        entries = [e for e in (store.load(VERDICT_LEDGER, f"{digest}.{head}") or {}).get("entries", []) if e.get("reviewer") != data.get("reviewer")]
+    """Add a verdict for (digest, head). Write-once per (digest, head, reviewer): FileExistsError when that reviewer has one
+    there already, so a reject can never be overwritten. A reject also blocks the digest at every head."""
+    with store.lock(f"{VERDICT_LEDGER}.{digest}"):
+        entries = (store.load(VERDICT_LEDGER, f"{digest}.{head}") or {}).get("entries", [])
+        if any(e.get("reviewer") == data.get("reviewer") for e in entries):
+            raise FileExistsError(f"{data.get('reviewer')} already has a verdict for {digest[:12]} at {head[:12]}")
         store.save(VERDICT_LEDGER, f"{digest}.{head}", {"entries": [*entries, dict(data, head=head)]})
+        if data.get("verdict") != "approve":
+            rejects = (store.load(REJECT_LEDGER, digest) or {}).get("entries", [])
+            store.save(REJECT_LEDGER, digest, {"entries": [*rejects, dict(data, head=head)]})
 
 
 def head_verdict(store: Any, digest: str, head: str) -> dict[str, Any] | None:
-    """The verdict that counts for exactly (digest, head): a rejection of any reviewer wins, else the newest approval; a verdict
-    recorded for another head never counts."""
+    """The verdict that counts for (digest, head): a reject of the digest at ANY head blocks (until the protected content, so the
+    digest, changes); else the newest approval recorded for exactly this head. An approval for another head never counts."""
+    rejects = (store.load(REJECT_LEDGER, digest) or {}).get("entries", [])
+    if rejects:
+        return dict(rejects[0])
     entries = (store.load(VERDICT_LEDGER, f"{digest}.{head}") or {}).get("entries", [])
-    rejects = [e for e in entries if e.get("verdict") != "approve"]
-    return dict(rejects[0]) if rejects else (dict(max(enumerate(entries), key=lambda ie: (str(ie[1].get("at", "")), ie[0]))[1]) if entries else None)
+    return dict(max(enumerate(entries), key=lambda ie: (str(ie[1].get("at", "")), ie[0]))[1]) if entries else None
 
 
 DIGEST_KIND = "review.digests"  # state: what is known about a digest under review (its authors; "check": the receipt an approval of it needs)

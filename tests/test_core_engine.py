@@ -56,7 +56,7 @@ def head_verdict(p, head, reviewer="reviewer-1", verdict="approve", at="1"):
     record_head_verdict(p.store, DIGEST, head, {"digest": DIGEST, "verdict": verdict, "reviewer": reviewer, "at": at})
 
 
-def test_a_reject_for_one_head_and_an_approve_for_the_new_head_admits_the_new_head():
+def test_a_reject_stays_across_heads_until_the_protected_bytes_change():
     p = fake_providers()
     pl, _ = make(p, per_head=True)
     e = engine(p)
@@ -66,9 +66,8 @@ def test_a_reject_for_one_head_and_an_approve_for_the_new_head_admits_the_new_he
     assert "reject" in e.advance(pl, "/wt", Options(approved=DIGEST)).phase
     p.vcs.h = "f" * 40  # the fix is a new head; the digest of the protected bytes is the same
     e.advance(pl, "/wt", Options())
-    assert "no verdict is recorded" in e.advance(pl, "/wt", Options(approved=DIGEST)).phase  # the old head's reject is not this head's verdict
-    head_verdict(p, "f" * 40)
-    assert e.advance(pl, "/wt", Options(approved=DIGEST)).exit_code != REFUSED
+    head_verdict(p, "f" * 40, reviewer="reviewer-2")
+    assert "reject" in e.advance(pl, "/wt", Options(approved=DIGEST)).phase  # a reject of the digest blocks at every head
 
 
 def test_an_approve_for_an_old_head_does_not_admit_a_new_head():
@@ -82,16 +81,18 @@ def test_an_approve_for_an_old_head_does_not_admit_a_new_head():
     assert r.exit_code == REFUSED and "no verdict is recorded" in r.phase and "f" * 12 in r.phase
 
 
-def test_two_reviewers_on_one_head_the_reject_wins_and_a_later_verdict_of_the_same_reviewer_replaces():
+def test_a_verdict_is_write_once_per_reviewer_and_head_and_a_reject_wins_over_every_approval():
     p = fake_providers()
     head = p.vcs.h
     head_verdict(p, head, reviewer="a", verdict="approve", at="1")
+    assert head_verdict_of(p.store, DIGEST, head)["verdict"] == "approve" and head_verdict_of(p.store, DIGEST, "e" * 40) is None
     head_verdict(p, head, reviewer="b", verdict="reject", at="2")
     assert head_verdict_of(p.store, DIGEST, head)["verdict"] == "reject"
-    head_verdict(p, head, reviewer="b", verdict="approve", at="3")  # b changed their mind: it replaces b's own reject
-    assert head_verdict_of(p.store, DIGEST, head)["verdict"] == "approve" and head_verdict_of(p.store, DIGEST, "e" * 40) is None
-    head_verdict(p, head, reviewer="a", verdict="reject", at="4")
-    assert head_verdict_of(p.store, DIGEST, head)["reviewer"] == "a"
+    with pytest.raises(FileExistsError):
+        head_verdict(p, head, reviewer="b", verdict="approve", at="3")  # b cannot take the reject back, nor can anyone use b's name
+    assert head_verdict_of(p.store, DIGEST, head)["verdict"] == "reject"
+    assert head_verdict_of(p.store, DIGEST, "e" * 40)["reviewer"] == "b"  # and it blocks the digest at every head
+    assert head_verdict_of(p.store, "9" * 64, head) is None  # other protected bytes (another digest) start clean
 
 
 def test_stops_at_the_review_with_the_digest_and_one_next_command():

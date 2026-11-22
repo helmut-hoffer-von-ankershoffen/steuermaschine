@@ -355,15 +355,17 @@ def test_review_verdict_in_json_prints_one_document_and_exits_0():
     assert r.providers.store.get_receipt("verdicts", digest)["verdict"] == "approve"
 
 
-def test_review_verdict_with_a_head_is_recorded_for_that_commit_only_and_the_same_reviewer_may_replace_it():
+def test_review_verdict_with_a_head_is_write_once_per_reviewer_and_a_reject_blocks_every_head():
     r = rt()
     digest, head = "e" * 64, "a" * 40
     r.providers.store.save("runs.head.demo", "k", {"author": "builder-1", "steps": {"review": {"digest": digest}}})
-    for flag in ("--reject", "--approve"):
-        out = invoke(r, ["review", "verdict", digest, flag, "--reviewer", "reviewer-1", "--head", head])
-        assert out.exit_code == 0, out.stdout + out.stderr
-    assert verdicts.head_verdict(r.providers.store, digest, head)["verdict"] == "approve"
-    assert verdicts.head_verdict(r.providers.store, digest, "b" * 40) is None and r.providers.store.get_receipt("verdicts", digest) is None
+    out = invoke(r, ["review", "verdict", digest, "--reject", "--reviewer", "reviewer-1", "--head", head])
+    assert out.exit_code == 0, out.stdout + out.stderr
+    again = invoke(r, ["review", "verdict", digest, "--approve", "--reviewer", "reviewer-1", "--head", head])
+    assert again.exit_code != 0 and "cannot be changed" in again.stdout + again.stderr
+    assert verdicts.head_verdict(r.providers.store, digest, head)["verdict"] == "reject"
+    assert verdicts.head_verdict(r.providers.store, digest, "b" * 40)["verdict"] == "reject"  # another head: the reject still stands
+    assert r.providers.store.get_receipt("verdicts", digest) is None
 
 
 def test_an_approve_of_a_digest_bound_to_a_head_needs_the_green_check_receipt_of_that_commit():
