@@ -12,12 +12,13 @@ from coord_kit import app_runtime
 from steuermaschine.engine import Refuse
 from steuermaschine.protocols import Result
 from steuermaschine.testing import FakeCommands, invoke
-from steuermaschine_heinzel.native import alarm, ci_ops, ci_read, ship, ship_driver, why_subject
+from steuermaschine_heinzel.native import alarm, ci_ops, ci_read, plugin_gallery, ship, ship_driver, why_subject
 from steuermaschine_heinzel.native.alarm import AlarmRow, Alarms
 from steuermaschine_heinzel.native.ci_read import CiWhy
 from steuermaschine_heinzel.native.queue import QueueWhy
 from steuermaschine_heinzel.native.release_read import ReleaseStatus
 from steuermaschine_heinzel.native.ship import HeadResult
+from steuermaschine_heinzel.native.ship_lib import prepare
 from steuermaschine_heinzel.native.tasks_lib.beads import TaskShown
 from steuermaschine_heinzel.native.why import CheckState, PullRequestWhy
 
@@ -93,19 +94,21 @@ def test_ship_pr_needs_live_and_queues_through_the_old_ship(tmp_path, monkeypatc
 
 def test_ship_of_another_repository_opens_its_pr_through_the_old_route(tmp_path, monkeypatch):
     c = FakeCommands()
-    c.on(["git", "-C", "/wt", "remote", "get-url", "origin"], Result(0, "git@github.com:owner/heinzel-plugins.git\n"))
-    c.on(["git", "-C", "/wt", "log", "-1", "--format=%s"], Result(0, "fix(audio): louder\n"))
+    c.on(["git", "-C", "/wt", "remote", "get-url", "origin"], Result(0, "git@github.com:helmut-hoffer-von-ankershoffen/heinzel-plugins.git\n"))
+    c.on(["git", "-C", "/wt", "log", "--no-merges", f"--format=%s{prepare.FIELD}%b{prepare.RECORD}", "origin/main..HEAD"],
+         Result(0, f"fix(audio): louder{prepare.FIELD}{prepare.RECORD}"))  # the commits of the branch: the title is derived from them
+    c.on([*plugin_gallery.FROZEN, "screenshots-check", "--all", "--json"], Result(0, '{"ok": true, "fresh": [], "stale": [], "failed": []}\n'))  # every gallery fresh
     seen = []
     monkeypatch.setattr(ship, "head_pr", lambda **kw: seen.append(kw) or HeadResult(action="pr", target="x", verdict="queued", lines=["opened PR #38"]))
     out = invoke(app_runtime(tmp_path, c), ["--format", "json", "ship", "/wt", "--live", "--set", "bead=abc"])
     doc = json.loads(out.stdout)
-    assert doc["pr"] == 38 and doc["phase"] == "owner/heinzel-plugins: queued" and seen[0]["title"] == "fix(audio): louder" and seen[0]["bead"] == "abc"
+    assert doc["pr"] == 38 and doc["phase"] == "helmut-hoffer-von-ankershoffen/heinzel-plugins: queued" and seen[0]["title"] == "fix(audio): louder" and seen[0]["bead"] == "abc"
     assert seen[0]["live"] is True
 
 
 def test_ship_of_another_repository_needs_a_title(tmp_path, monkeypatch):
     c = FakeCommands()
-    c.on(["git", "-C", "/wt", "remote", "get-url", "origin"], Result(0, "https://github.com/owner/heinzel-plugins\n"))
+    c.on(["git", "-C", "/wt", "remote", "get-url", "origin"], Result(0, "https://github.com/helmut-hoffer-von-ankershoffen/heinzel-plugins\n"))
     c.on(["git", "-C", "/wt", "log", "-1", "--format=%s"], Result(1, ""))
     out = invoke(app_runtime(tmp_path, c), ["ship", "/wt"])
     assert out.exit_code == 2 and "no title" in out.stderr

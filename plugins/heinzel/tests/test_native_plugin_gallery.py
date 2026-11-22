@@ -1,6 +1,7 @@
 """sm plugin gallery and gallery-check (bead jbgo): the drift checks read from a fixture heinzel-plugins worktree, the
 frozen argv and allowlisted environment that reach the run lock, the push block, the remote-ref comparison and the
-changed-image diff. No browser, make, uv or agent runs; the review's three bypass probes are tests here."""
+changed-image diff. No browser, make, uv or agent runs; the review's three bypass probes are tests here.
+The no-agent drift check refuses any tooling module that names an agent CLI (bead heinzel-management-0tkk8)."""
 
 import os
 import subprocess
@@ -27,7 +28,8 @@ screenshots:
 screenshots-check:
 \t@$(PLUGIN) screenshots-check
 """
-CAPTURE = "\n".join(needle for _, needle in pg.REQUIRED) + "\nimport heinzel_plugin_tools.vendor\n"
+CAPTURE = "\n".join(needle for _, path, needle in pg.REQUIRED if path == pg.CAPTURE) + "\nimport heinzel_plugin_tools.vendor\n"
+GUARDS = "\n".join(needle for _, path, needle in pg.REQUIRED if path == pg.GUARDS) + "\n"
 
 
 def tree(tmp_path, makefile=MAKEFILE, capture=CAPTURE, vendor="def fetch(): pass\n", plan=True):
@@ -35,6 +37,7 @@ def tree(tmp_path, makefile=MAKEFILE, capture=CAPTURE, vendor="def fetch(): pass
     (root / "src/heinzel_plugin_tools").mkdir(parents=True)
     (root / "Makefile").write_text(makefile)
     (root / pg.CAPTURE).write_text(capture)
+    (root / pg.GUARDS).write_text(GUARDS)
     (root / pg.TOOLING / "vendor.py").write_text(vendor)
     shots = root / "plugins/heinzel-clock/docs/assets/screenshots"
     shots.mkdir(parents=True)
@@ -42,7 +45,7 @@ def tree(tmp_path, makefile=MAKEFILE, capture=CAPTURE, vendor="def fetch(): pass
     (shots / "same.png").write_bytes(b"same")
     (shots / "gone.png").write_bytes(b"gone")
     if plan:
-        (root / "plugins/heinzel-clock/docs/screenshots.toml").write_text("[[scenes]]\n")
+        (root / "plugins/heinzel-clock/docs/screenshot-definition.json").write_text("{}\n")
     return root
 
 
@@ -69,7 +72,7 @@ def test_recipe_and_assignments():
 
 def test_conditions_met(tmp_path):
     met, problems = pg.conditions(tree(tmp_path), "clock")
-    assert problems == [] and len(met) == 6 and met[0].startswith("command:")
+    assert problems == [] and len(met) == 8 and met[0].startswith("command:")
 
 
 @pytest.mark.parametrize("makefile, why", [
@@ -91,9 +94,22 @@ def test_capture_drift_refuses(tmp_path):
     _, problems = pg.conditions(tree(tmp_path, capture=capture), "clock")
     assert problems == ["headless: src/heinzel_plugin_tools/capture.py no longer contains 'headless=not headed'"]
     _, problems = pg.conditions(tree(tmp_path / "c", plan=False), "clock")
-    assert problems == ["heinzel-clock has no screenshot plan (plugins/heinzel-clock/docs/screenshots.toml)"]
+    assert problems == ["heinzel-clock has no screenshot definition (plugins/heinzel-clock/docs/screenshot-definition.json)"]
     _, problems = pg.conditions(tmp_path / "nothing", "clock")
     assert problems[0].startswith("not a heinzel-plugins worktree")
+
+
+@pytest.mark.parametrize("vendor", ['subprocess.run(["codex", "exec", "-"])\n', "shutil.which('claude')\n"])
+def test_an_agent_cli_in_any_tooling_module_refuses(tmp_path, vendor):  # owner rule: screenshots need no AI
+    _, problems = pg.conditions(tree(tmp_path, vendor=vendor), "clock")
+    assert problems == ["no agent: src/heinzel_plugin_tools/vendor.py mentions an agent CLI"]
+
+
+def test_the_text_guards_must_stay(tmp_path):
+    root = tree(tmp_path)
+    (root / pg.GUARDS).write_text("def page_text(): pass\n")
+    _, problems = pg.conditions(root, "clock")
+    assert problems == ["text guards: src/heinzel_plugin_tools/privacy.py no longer contains 'def scan_text('"]
 
 
 @pytest.mark.parametrize("vendor", ['subprocess.run(["git", "push"])\n', "os.system('git push origin')\n",
@@ -175,8 +191,8 @@ def test_changed_images_and_capture_error(tmp_path):
     assert pg.images(tmp_path / "missing") == {}
     log = tmp_path / "log"
     assert pg.capture_error(log) == ""
-    log.write_text('progress\n{"ok": false, "error": "Agent review did not complete"}\n')
-    assert pg.capture_error(log) == "Agent review did not complete"
+    log.write_text('progress\n{"ok": false, "error": "Scene today failed"}\n')
+    assert pg.capture_error(log) == "Scene today failed"
     log.write_text('{"ok": true}\n{broken\n')
     assert pg.capture_error(log) == ""
 
@@ -208,7 +224,7 @@ def fake_capture(code=0, why="", error=""):
     return run, calls
 
 
-def test_gallery_lists_changed_images_and_requires_the_review(tmp_path, monkeypatch):
+def test_gallery_lists_changed_images_for_the_pr_diff(tmp_path, monkeypatch):
     root = tree(tmp_path)
     run, calls = fake_capture()
     monkeypatch.setattr(pg, "run_capture", run)
@@ -218,8 +234,8 @@ def test_gallery_lists_changed_images_and_requires_the_review(tmp_path, monkeypa
     base = "plugins/heinzel-clock/docs/assets/screenshots/"
     assert out.changed == [base + "added.png added", base + "gone.png removed", base + "old.png changed"]
     text = "\n".join(out.render())
-    assert "REVIEW privacy review of 3 image(s) required before merge" in text and f"RAN    {FROZEN} screenshots clock --json" in text
-    assert out.next.startswith("an independent privacy review")
+    assert "REVIEW" not in text and f"RAN    {FROZEN} screenshots clock --json" in text
+    assert out.next.startswith("commit the changed gallery")
 
 
 def test_moved_remote_refs_fail_the_run(tmp_path, monkeypatch):
@@ -241,11 +257,11 @@ def test_unreadable_refs_run_nothing(tmp_path, monkeypatch):
 def test_gallery_failure_and_lock(tmp_path, monkeypatch):
     root = tree(tmp_path)
     with_runtime(monkeypatch)
-    run, _ = fake_capture(code=1, error="Agent review did not complete")
+    run, _ = fake_capture(code=1, error="Scene today failed")
     monkeypatch.setattr(pg, "run_capture", run)
     out = pg.plugin_gallery("clock", root)
-    assert out.exit_code == 1 and out.error == "Agent review did not complete" and out.review_required
-    assert "ERROR  Agent review did not complete" in out.render()
+    assert out.exit_code == 1 and out.error == "Scene today failed"
+    assert "ERROR  Scene today failed" in out.render()
     monkeypatch.setattr(pg, "run_capture", lambda repo, plugin, log: (75, "load too high"))
     with pytest.raises(Wait):
         pg.plugin_gallery("clock", root)

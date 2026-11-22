@@ -7,8 +7,8 @@
 every check is green at that exact head. A red or conflicted PR is reported and skipped; nothing is forced.
 
 The core queue may use queue_core to merge a green, behind PR without updating it; direct and non-core calls still update.
-The advisory `review` check is ignored, and so are `merge-gate` and `coverage-floor` only until main requires them; GitHub
-refuses the merge itself once they are required. BEHIND is updated again, UNKNOWN is waited out, and while
+Only the checks the ruleset of main requires hold a PR (queue_lib/ruleset.py: read from GitHub, no list of names here);
+a repository without such rules is judged on all its checks but the advisory review. BEHIND is updated again, UNKNOWN is waited out, and while
 ~/.cache/hz-merge-freeze exists nothing merges to core main. A repository with no aggregate check is judged on all its checks.
 
 One narrow waiver (research/release-pr-acceptance-advisory.md): on a core release/vX.Y.Z PR, the pull_request-triggered
@@ -34,7 +34,6 @@ from ... import environment  # moved: the process context is a typed model
 from . import hzlib  # noqa: E402
 from steuermaschine.config import child_environment
 from ... import state as statedir  # the plugin's state paths
-from . import core_facts  # noqa: E402
 
 CORE = "helmut-hoffer-von-ankershoffen/heinzel"
 FREEZE = statedir.path("merge-freeze")
@@ -43,7 +42,6 @@ RELEASE_DIR = statedir.path("release")  # hz-release tail receipts vX.Y.Z.json
 INTERVENTIONS = edge.records_dir() / "research/mini-onboarding-2026-11-07/interventions.log"
 RELEASE_BRANCH = re.compile(r"release/v([0-9]+)\.([0-9]+)\.([0-9]+)")
 LOGGED: set[tuple[str, str, frozenset]] = set()  # (pr, head, checks) already logged: once per decision, not per poll
-NEVER_WAIVED = core_facts.CONTEXTS  # the ruleset's required checks (Core's release policy); candidate CI jobs are never named Acceptance (
 MAX_MERGE_DIAGNOSTIC_BYTES = 512
 TERMINAL_ESCAPE = re.compile(r"\x1b(?:\][^\x07\x1b]*(?:\x07|\x1b\\)|\[[0-?]*[ -/]*[@-~])")
 MERGE_CREDENTIAL = re.compile(
@@ -131,7 +129,10 @@ def previous_release(version: tuple[int, int, int]) -> tuple[str, dict] | None:
 def published_dry_run(repo: str, check: dict, head: str) -> bool:
     """An `Acceptance (<os>)` check of a pull_request run at this head: acceptance.yml then runs EXPECTED_VERSION=published."""
     name = check.get("name") or ""
-    if name in NEVER_WAIVED or not name.startswith("Acceptance (") or check.get("workflowName") != "Acceptance":
+    if not name.startswith("Acceptance (") or check.get("workflowName") != "Acceptance":
+        return False
+    required = hzlib.required_checks(repo)  # a check the ruleset requires is never waived; unread rules waive nothing
+    if required is None or name in required:
         return False
     match = re.search(r"/actions/runs/([0-9]+)", check.get("detailsUrl") or "")
     if not match:
@@ -222,6 +223,10 @@ def train(repo: str, pr: str, ignore_freeze: bool = False, queue_core: bool = Fa
             continue
         passed = {c.get("name") for c in info.get("statusCheckRollup", []) if c.get("conclusion") == "SUCCESS"}
         absent = hzlib.tool_required_checks(repo) - passed
+        if unreported := hzlib.missing_required(advisory, info.get("statusCheckRollup", [])):
+            print(f"#{pr} required by the ruleset, not reported yet: {', '.join(unreported)}", flush=True)
+            time.sleep(45)
+            continue
         if absent:
             print(f"#{pr} required by the tools, not passed: {', '.join(sorted(absent))}", flush=True)
         elif status in ("CLEAN", "UNSTABLE") and not bad:

@@ -20,9 +20,9 @@ from steuermaschine import USAGE, verdicts
 from steuermaschine.engine import Refuse, Wait
 from steuermaschine.helpdoc import H
 from steuermaschine.native import native, runtime
-from steuermaschine.preflight import SKIP, PreflightReport
+from steuermaschine.preflight import SKIP, PreflightReport, Step
 
-from . import affected, lock
+from . import affected, gallery_sync, lock
 from . import preflight as _preflight
 from .affected_lib import select
 from .check_lib import budget, cheap, slots
@@ -90,6 +90,26 @@ def extra_tests(sel: Path | None) -> list[str]:
     return [str(test).split("::")[0] for test in listed]
 
 
+def plugins_check(rt: Any, wt: Path) -> HeadCheck:
+    """A heinzel-plugins worktree: regenerate every stale screenshot gallery (gallery_sync.py); its hooks run the rest."""
+    commands = rt.providers.commands
+    step = Step("gallery")
+    items = gallery_sync.stale(commands, wt)
+    if not items:
+        step.detail = "every screenshot gallery is fresh (its UI inputs did not change)"
+    else:
+        lines, failures = gallery_sync.regenerate(rt, wt, items)
+        for message, command in failures:
+            step.fail(message, command)
+        step.detail = "; ".join(lines) + ("; sm ship takes the regenerated gallery into the head commit" if lines else "")
+    sha = gallery_sync.head(commands, wt)
+    branch = str(commands.run(["git", "-C", str(wt), "rev-parse", "--abbrev-ref", "HEAD"], timeout=30).out).strip()
+    report = HeadCheck.of(f"sm check {sha[:9]} ({branch or 'detached'}) in the plugins repository", [step], [], [],
+                          worktree=str(wt), head=sha, branch=branch)
+    report.receipt_note = "none: a plugins head has no check receipt; its commit and push hooks run the owning checks"
+    return report
+
+
 @native("check", writes=True, help=H(
     "The fast checks of exactly what a Core head changes, in one pass: READY and a receipt for the commit, or every failure with its fix.",
     "Use before you ask for a review and before any push, on your committed head; again after every new commit.",
@@ -135,6 +155,9 @@ def extra_tests(sel: Path | None) -> list[str]:
     "The receipt is bound to the commit and names the base it was measured from: any new commit needs a new run, and\n"
     "an approval needs the receipt's base to be the base the reviewed packet builds the head on. A run with --skip or\n"
     "with another --base than the setting preflight_base, a red run and a dirty tree write none.\n"
+    "A worktree of the plugins repository: the gallery check only. Every screenshot gallery whose UI inputs changed (the\n"
+    "repository's own `screenshots-check --all`) is regenerated with the frozen capture of `sm plugin gallery`;\n"
+    "deterministic, no agent. `sm ship` then takes exactly the regenerated files into the head commit.\n"
     "Exit 0 READY, 1 NOT READY, 2 usage, 75 wait."))
 def check(worktree: Path | None = typer.Argument(None, metavar="WORKTREE", help="Core worktree whose HEAD is the head to check (default: the current directory)."),
           base: str | None = typer.Option(None, "--base", metavar="REV", help="The ref the head branched from (default: the setting preflight_base)."),
@@ -150,6 +173,9 @@ def check(worktree: Path | None = typer.Argument(None, metavar="WORKTREE", help=
     registry = cheap.checks()
     if unknown := registry.unknown(skipped):
         raise Refuse(f"--skip takes one of {', '.join(cheap.STEPS)}; unknown: {', '.join(unknown)}", usage, code=USAGE)
+    target = (worktree or Path.cwd()).expanduser().resolve()
+    if (target / ".git").exists() and gallery_sync.is_plugins(gallery_sync.origin_repo(providers.commands, target)):
+        return plugins_check(rt, target)
     default = str(_preflight.setting(rt, "preflight_base"))
     ref = base or default
     extra = extra_tests(sel)
