@@ -291,3 +291,31 @@ def test_the_hook_never_raises_and_records_any_error(tmp_path, monkeypatch):
     assert lines == ["IOS NOT-CLEAN 0.9.53: RuntimeError: xcodebuild vanished"]
     assert m.receipt()["clean"] is False and "xcodebuild vanished" in m.receipt()["reason"]
     assert rules.ios_alarm(ios.latest_receipt(m.state), 0)["cls"] == "ALERT"
+
+
+def test_the_tool_comes_from_origin_main_by_default(tmp_path):
+    m = Mini(tmp_path)
+    tools = []
+
+    def record(argv):
+        tools.append(argv[4])
+        return Mini.testflight(m, argv)
+    m.commands.on(["uv", "run", "--quiet", "--script"], record)
+    assert m.run().exit_code == 0
+    assert tools and all(tool.endswith("/work/testflight") for tool in tools)
+
+
+def test_the_verbs_used_exist_in_the_real_tool():
+    import os
+    import pwd
+    import re
+    import subprocess
+    core = Path(pwd.getpwuid(os.getuid()).pw_dir) / "Code/heinzel"
+    shown = subprocess.run(["git", "-C", str(core), "show", f"origin/main:{ios.TESTFLIGHT}"], capture_output=True, text=True)
+    if shown.returncode:
+        pytest.skip("no Core checkout with origin/main")
+    real = set(re.findall(r'sub\.add_parser\("(\w+)"', shown.stdout))
+    for group in re.findall(r'for name in \(((?:"\w+",?\s*)+)\)', shown.stdout):
+        real |= set(re.findall(r'"(\w+)"', group))
+    used = set(re.findall(r'testflight\("(\w+)"', Path(ios.__file__).read_text()))
+    assert used and used <= real, (used, real)
