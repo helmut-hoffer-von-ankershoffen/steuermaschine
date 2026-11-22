@@ -543,15 +543,12 @@ def behind_branch_squash(repo: Path, extra: bool = False) -> tuple[str, str]:
     return git(repo, "rev-parse", "HEAD"), head
 
 
-def test_a_squash_of_a_branch_behind_main_is_what_was_reviewed(repo):
-    sha, head = behind_branch_squash(repo)
-    assert git(repo, "rev-parse", f"{sha}^{{tree}}") != git(repo, "rev-parse", f"{head}^{{tree}}")  # the old identity refused it
-    assert rc.verify(repo, sha, fake_api(sha, head=head, repo=repo), rc.sh) == (7, head, "rita")
-
-
-def test_a_squash_that_adds_what_the_head_did_not_hold_is_refused(repo):
-    sha, head = behind_branch_squash(repo, extra=True)
-    with pytest.raises(rc.Refused, match=r"is neither the head .* nor that head merged onto the squash's base"):
+@pytest.mark.parametrize("extra", [False, True])
+def test_a_squash_of_a_branch_behind_main_is_refused_whatever_it_adds(repo, extra):
+    """Only the exact tree of the reviewed head is a release: the ruleset requires up-to-date branches, so the merged tree is that head."""
+    sha, head = behind_branch_squash(repo, extra=extra)
+    assert git(repo, "rev-parse", f"{sha}^{{tree}}") != git(repo, "rev-parse", f"{head}^{{tree}}")
+    with pytest.raises(rc.Refused, match=r"is not what was reviewed: its tree .* differs from the head"):
         rc.verify(repo, sha, fake_api(sha, head=head, repo=repo), rc.sh)
 
 

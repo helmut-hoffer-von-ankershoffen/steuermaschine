@@ -141,28 +141,10 @@ def verify(repo: Path, sha: str, api_get: Callable[[str], object] | None = None,
     reviewed = get(f"repos/{REPO}/git/commits/{head}")
     tree = reviewed["tree"]["sha"] if isinstance(reviewed, dict) and isinstance(reviewed.get("tree"), dict) else ""
     merged = run("git", "rev-parse", f"{sha}^{{tree}}", cwd=repo).strip()
-    if not tree:
-        raise Refused(f"{sha[:12]} is not what was reviewed: the tree of the head {head[:12]} of PR #{number} is unknown")
-    if tree != merged:
-        replayed = replay(repo, sha, head, tree, number, run)
-        if replayed != merged:
-            raise Refused(f"{sha[:12]} is not what was reviewed: its tree {merged[:12]} is neither the head {head[:12]} of PR #{number} "
-                          f"({tree[:12]}) nor that head merged onto the squash's base {sha[:12]}~1 ({replayed[:12] or 'conflict'})")
+    if not tree or tree != merged:
+        raise Refused(f"{sha[:12]} is not what was reviewed: its tree {merged[:12]} differs from the head {head[:12]} of PR #{number} ({tree[:12] or 'unknown'})")
     independent(repo, sha, reviewer)
     return number, head, reviewer
-
-
-def replay(repo: Path, sha: str, head: str, tree: str, number: int, run: Run = sh) -> str:
-    """The tree GitHub's squash merge of HEAD onto the base SHA~1 must have: git's own three-way merge of the reviewed head
-    into that base (`git merge-tree --write-tree`). A branch behind main is squashed exactly so (the ruleset does not demand
-    an up-to-date branch), so the reviewed change, merged onto what main held, is what was released. "" on a conflict, or
-    when the local head is not the commit whose tree GitHub names (TREE)."""
-    if run("git", "cat-file", "-t", head, cwd=repo, check=False).strip() != "commit":
-        run("git", "fetch", "--quiet", "origin", f"refs/pull/{number}/head", cwd=repo, check=False)
-    if run("git", "rev-parse", f"{head}^{{tree}}", cwd=repo, check=False).strip() != tree:
-        return ""
-    out = run("git", "merge-tree", "--write-tree", f"{sha}~1", head, cwd=repo, check=False).strip().splitlines()
-    return out[0].strip() if len(out) == 1 and re.fullmatch(r"[0-9a-f]{40}", out[0].strip()) else ""
 
 
 def independent(repo: Path, sha: str, reviewer: str) -> None:
