@@ -13,8 +13,8 @@ spec.loader.exec_module(hosted)
 
 FILES = {"src/steuermaschine/a.py", "plugins/heinzel/src/steuermaschine_heinzel/a.py",
          "plugins/heinzel/src/steuermaschine_heinzel/native/x_lib/a.py"}
-BASELINE = {"coverage core %": 95, "coverage plugin new code %": 98,
-            "coverage plugin moved libraries %": 95}
+BASELINE = {"coverage core % [linux]": 95, "coverage plugin new code % [linux]": 98,
+            "coverage plugin moved libraries % [linux]": 95}
 
 
 def xml(files=FILES, hits=1):
@@ -24,6 +24,12 @@ def xml(files=FILES, hits=1):
 
 def test_complete_coverage_passes():
     assert hosted.coverage(xml(), FILES, BASELINE) == {"core": 100, "plugin": 100, "new": 100, "moved": 100}
+
+
+def test_hosted_coverage_needs_a_linux_baseline_and_never_borrows_another_platform():
+    darwin_only = {key.replace("[linux]", "[darwin]"): value for key, value in BASELINE.items()}
+    with pytest.raises(hosted.Refused, match="debt ratchet"):
+        hosted.coverage(xml(), FILES, darwin_only)
 
 
 def test_missing_or_duplicate_file_refused():

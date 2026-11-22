@@ -10,6 +10,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "bin"))
 
 import debt
@@ -52,7 +54,8 @@ def test_the_recorded_file_names_every_number_the_ratchet_measures():
     import json
 
     recorded = json.loads(debt.RATCHET.read_text())
-    assert set(recorded) == {"coverage core %", "coverage plugin new code %", "coverage plugin moved libraries %", "mypy strict findings core",
+    assert set(recorded) == {f"coverage {group} % [{platform}]" for group in ("core", "plugin new code", "plugin moved libraries")
+                             for platform in ("darwin", "linux")} | {"mypy strict findings core",
                              "mypy strict findings plugin", "ruff findings moved libraries and plugin tests", "environment reads plugin",
                              "old names in plugin strings"}
 
@@ -68,3 +71,44 @@ def test_old_names_count_output_and_paths_but_not_maps_docstrings_or_replaces(tm
     assert debt.env_reads() == 0
     (src / "b.py").write_text('import os\nA = os.environ.get("X")\nB = "os.environ"\n')
     assert debt.env_reads() == 1
+
+
+LINUX = {"coverage core % [darwin]": 95.0, "coverage core % [linux]": 93.0}
+
+
+def test_each_platform_is_gated_against_its_own_baseline():
+    assert debt.problems({"coverage core % [linux]": 93.0}, LINUX) == []  # below darwin's 95, equal to its own
+    assert debt.problems({"coverage core % [linux]": 92.0}, LINUX) == ["coverage core % [linux]: 92.0 is WORSE than recorded 93.0"]
+    assert debt.problems({"coverage core % [darwin]": 94.0}, LINUX) != []
+
+
+def test_a_platform_without_a_baseline_is_not_gated_on_coverage_but_other_numbers_still_are():
+    now = {"coverage core % [win]": 10.0, "mypy strict findings plugin": 11}
+    assert debt.problems(now, BEFORE | {"coverage core % [darwin]": 95.0}) == ["mypy strict findings plugin: 11 is WORSE than recorded 10"]
+    assert debt.ungated(now, LINUX) == ["coverage core % [win]"]
+    assert debt.problems({"coverage core % [win]": None}, LINUX) != []  # unreadable stays red
+    assert debt.problems({"coverage core % [win]": 10.0}, LINUX, strict=True) == ["coverage core % [win]: not recorded in docs/debt.json (record it: bin/debt.py --record)"]
+
+
+def test_the_metrics_carry_the_platform_of_the_run(monkeypatch):
+    monkeypatch.setattr(debt, "coverage", lambda include, omit="": 90.0)
+    assert set(debt.coverage_metrics()) == {f"coverage {group} % [{debt.PLATFORM}]" for group in ("core", "plugin new code", "plugin moved libraries")}
+
+
+def test_record_keeps_other_platforms_and_refuses_to_lower_a_number(tmp_path, monkeypatch, capsys):
+    import json
+
+    ratchet = tmp_path / "debt.json"
+    ratchet.write_text(json.dumps({"coverage core % [other]": 80.0, "coverage core % [" + debt.PLATFORM + "]": 95.0, "mypy strict findings plugin": 10}))
+    monkeypatch.setattr(debt, "RATCHET", ratchet)
+    monkeypatch.setattr(debt, "ROOT", tmp_path)
+    monkeypatch.setattr(debt, "coverage_metrics", lambda: {f"coverage core % [{debt.PLATFORM}]": 94.0})
+    monkeypatch.setattr(debt, "source_metrics", lambda: {"mypy strict findings plugin": 10})
+    monkeypatch.setattr(sys, "argv", ["debt.py", "--record"])
+    with pytest.raises(SystemExit):
+        debt.main()
+    assert json.loads(ratchet.read_text())[f"coverage core % [{debt.PLATFORM}]"] == 95.0  # nothing lowered silently
+    monkeypatch.setattr(sys, "argv", ["debt.py", "--record", "--lower"])
+    debt.main()
+    recorded = json.loads(ratchet.read_text())
+    assert recorded[f"coverage core % [{debt.PLATFORM}]"] == 94.0 and recorded["coverage core % [other]"] == 80.0
