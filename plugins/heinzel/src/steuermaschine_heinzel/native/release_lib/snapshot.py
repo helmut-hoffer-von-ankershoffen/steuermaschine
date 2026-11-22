@@ -1,16 +1,19 @@
 """Bind public release acceptance to immutable GitHub assets and its source commit."""
 
-import hashlib
 import base64
+import hashlib
 import json
 import re
+import tomllib
 import urllib.request
 
 from ..queue_lib import hzlib
 
 SHA = re.compile(r"[a-f0-9]{64}")
 COMMIT = re.compile(r"[a-f0-9]{40}")
-APPROVED_ACCEPTANCE_SHA256 = 'cfd716d8934d6204dbe5da62f756f9c76e88b7a493871b33ab96a0822f41fefe'
+WORKFLOW = ".github/workflows/acceptance.yml"
+PINS = "release/pins.toml"
+"""Core pins the reviewed workflow digest here; a Core contract test fails the PR that changes one without the other."""
 
 VERSION = re.compile(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)")
 
@@ -116,19 +119,32 @@ def capture(version: str) -> dict:
     return {"version": version, "tag": tag, "commit": commit, "wheel_sha256": wheel_digest, "profile_sha256": profile_digest}
 
 
-def workflow_supports_snapshot(commit: str) -> bool:
-    """Only an independently approved complete workflow may release the merge hold early.
+def _core_file(path: str, commit: str) -> bytes | None:
+    """The exact bytes of one Core file at one commit, or None."""
+    code, encoded = hzlib.gh("api", f"repos/{hzlib.CORE}/contents/{path}?ref={commit}", "--jq", ".content")
+    if code != 0:
+        return None
+    try:
+        return base64.b64decode("".join(encoded.split()), validate=True)
+    except (ValueError, TypeError):
+        return None
 
-    This intentionally fails closed after any workflow edit. Review its full digest wiring and update the approved
-    fingerprint together; comments or disabled shell commands cannot impersonate a supported contract.
+
+def workflow_supports_snapshot(commit: str) -> bool:
+    """The acceptance workflow at this commit is the one Core pinned at the same commit.
+
+    The receipt check alone can fail open: the workflow writes the receipt, so a workflow that ignores the dispatched
+    digests can still echo them. Core reviews the workflow and its digest in `release/pins.toml` in one PR (its
+    contract test fails a workflow change without the pin), and sm reads both at the commit, never a copy of its own.
+    A commit without the pin, a malformed pin or a different workflow fails closed.
     """
     if not COMMIT.fullmatch(commit):
         return False
-    code, encoded = hzlib.gh("api", f"repos/{hzlib.CORE}/contents/.github/workflows/acceptance.yml?ref={commit}", "--jq", ".content")
-    if code != 0:
+    pins, source = _core_file(PINS, commit), _core_file(WORKFLOW, commit)
+    if pins is None or source is None:
         return False
     try:
-        source = base64.b64decode("".join(encoded.split()), validate=True)
-    except (ValueError, TypeError):
+        pinned = tomllib.loads(pins.decode("utf-8"))["sha256"][WORKFLOW]
+    except (UnicodeError, tomllib.TOMLDecodeError, KeyError, TypeError):
         return False
-    return hashlib.sha256(source).hexdigest() == APPROVED_ACCEPTANCE_SHA256
+    return isinstance(pinned, str) and SHA.fullmatch(pinned) is not None and hashlib.sha256(source).hexdigest() == pinned
