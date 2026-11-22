@@ -23,6 +23,7 @@ from typing import Any
 import typer
 from pydantic import BaseModel, Field, field_validator
 
+from steuermaschine.config import child_environment
 from steuermaschine.engine import Refuse
 from steuermaschine.helpdoc import H
 from steuermaschine.models import Model
@@ -43,6 +44,8 @@ DENIED_TOOLS = "Edit,Write,MultiEdit,NotebookEdit,Bash,WebFetch,WebSearch,Task"
 PERMISSION_MODE = "dontAsk"  # anything not allowed is denied; never the user's defaultMode (auto)
 DIFF_LIMIT = 200_000  # bytes of diff given to the reviewer; a larger one is not reviewed by an agent
 ATTEMPTS, DAYS, PASS_LOCK = "heinzel.auto-review.attempts", "heinzel.auto-review.days", "heinzel.auto-review.pass"
+AUTH_NOTE = "headless review cannot authenticate"
+AUTH_FAILED = re.compile(r"not logged in|please run /login|invalid api key|oauth token|authentication[_ ]error|failed to authenticate|\b401\b|credit balance|unauthorized", re.I)
 REVIEWER_MODEL = re.compile(r"\breviewer-model=(\S+)")
 
 
@@ -195,6 +198,13 @@ def spend(store: Any, clock: Any, key: str, settings: AutoReviewSettings) -> str
     return ""
 
 
+def refund(store: Any, clock: Any, key: str) -> None:
+    """Give back the attempt and the day's count `spend` took: the review never ran."""
+    for kind, name in ((ATTEMPTS, key), (DAYS, today(clock))):
+        n = int((store.load(kind, name) or {}).get("n", 0))
+        store.save(kind, name, {"n": max(0, n - 1)})
+
+
 def settings_of(w: Any) -> AutoReviewSettings:
     return AutoReviewSettings.model_validate({k: v for k, v in dict(w.settings).items() if k in AutoReviewSettings.model_fields})
 
@@ -256,9 +266,14 @@ def run_review(rt: Any, out: Dispatched, settings: AutoReviewSettings, full: str
                 out.note = "the diff is unreadable or larger than the reviewer is given; review it by hand"
                 return out
             argv = [*settings.review_agent_command, "--model", out.reviewer_model, "--permission-mode", PERMISSION_MODE, "--tools", NO_TOOLS,
-                    "--disallowedTools", DENIED_TOOLS, brief(full, number, out.head, out.reasons, diff.out)]
-            with tempfile.TemporaryDirectory(prefix="sm-review-") as scratch:
-                res = commands.run(argv, cwd=scratch, timeout=float(settings.review_agent_timeout_seconds))
+                    f"--disallowedTools={DENIED_TOOLS}", "--", brief(full, number, out.head, out.reasons, diff.out)]  # `--`: the prompt is a positional, never a tool name
+            with tempfile.TemporaryDirectory(prefix="sm-review-") as scratch:  # the child gets CLAUDE_CODE_OAUTH_TOKEN when this process has it
+                res = commands.run(argv, cwd=scratch, timeout=float(settings.review_agent_timeout_seconds), env=child_environment())
+            if res.rc != 0 and AUTH_FAILED.search(f"{res.out}\n{res.err}"):
+                refund(store, rt.providers.clock, key)  # a login problem is not a review attempt: nothing is burned
+                out.note = f"{AUTH_NOTE}: log in (claude /login) or set CLAUDE_CODE_OAUTH_TOKEN, then run it again"
+                rt.providers.notifier.notify("alert", "review:auth", f"{AUTH_NOTE}; reviews of gate-touching PRs wait until it can")
+                return out
             verdict = verdict_of(res.out) if res.rc == 0 else ""
             if not verdict:
                 out.note = f"the reviewer gave no verdict (exit {res.rc}); nothing was posted"

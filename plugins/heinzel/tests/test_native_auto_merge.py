@@ -155,3 +155,13 @@ def test_a_pr_of_anyone_else_is_never_acted_on(world_of_prs):
     out = invoke(rt, ["queue", "auto", "--live"]).stdout
     assert "#9" not in out and "steuermaschine #10: merged" in out and [c for c in gh.lines() if c.startswith("pr merge")] == [
         f"pr merge 10 -R {OWNER}/steuermaschine --squash --match-head-commit {HEAD}"]
+
+
+def test_no_login_ends_the_reviews_of_the_pass(world_of_prs):
+    from steuermaschine.protocols import Result
+
+    gh = FakeGh().on("pr diff", "diff --git a/x b/x\n+x\n").on("--model opus", Result(1, "", "Please run /login"))
+    rows = [row(repo="steuermaschine", number=n) for n in (9, 10, 11)]
+    rt = world_of_prs(rows, gh, reasons=["diff guard: timeout"])
+    out = invoke(rt, ["queue", "auto", "--live", "--dispatch"]).stdout
+    assert len([c for c in gh.calls if c[0] == "claude"]) == 1 and out.count("cannot authenticate") == 1 and "reviews were started in this pass" in out

@@ -6,6 +6,7 @@ from test_native_ci_triage import HEAD, runtime_for
 
 from steuermaschine.engine import Refuse
 from steuermaschine.github.testing import FakeGh
+from steuermaschine.protocols import Result
 from steuermaschine.testing import invoke
 from steuermaschine_heinzel.native import auto_review as area
 
@@ -86,7 +87,8 @@ def test_live_dispatch_runs_the_other_model_read_only_and_posts_the_verdict(gate
     assert out.exit_code == 0 and done.posted and done.verdict == "APPROVE" and done.reviewer_model == "opus" and done.author_model == "sonnet"
     run = next(c for c in gh.calls if c[0] == "claude")
     assert run[run.index("--permission-mode") + 1] == "dontAsk" and run[run.index("--tools") + 1] == "" and "--allowedTools" not in run
-    denied = run[run.index("--disallowedTools") + 1].split(",")
+    denied = next(a for a in run if a.startswith("--disallowedTools=")).removeprefix("--disallowedTools=").split(",")  # one argument: a list flag must not swallow the prompt
+    assert run[-2] == "--" and run[-1].startswith("Independent review of PR #5") and "--disallowedTools" not in run
     assert {"Edit", "Write", "Bash"} <= set(denied) and "+timeout: 99" in run[-1]  # no tool at all: the diff is in the prompt
     posted = next(c for c in gh.calls if c[:3] == ["gh", "pr", "comment"])
     assert posted[3] == "5" and "--body-file" in posted
@@ -145,3 +147,34 @@ def test_an_unreadable_or_huge_diff_is_not_given_to_an_agent(gated, tmp_path):
     gh = FakeGh().on("pr view", view()).on("pr diff", "x" * (area.DIFF_LIMIT + 1))
     out = invoke(runtime_for(tmp_path, gh), ["review", "dispatch", "5", "--live"])
     assert "larger than the reviewer is given" in out.stdout and not runs_of(gh)
+
+
+class Spy(FakeGh):
+    """FakeGh that remembers the environment each call got."""
+
+    def __init__(self):
+        super().__init__()
+        self.envs = []
+
+    def run(self, argv, cwd=None, timeout=None, env=None):
+        self.envs.append((list(argv), env))
+        return super().run(argv, cwd, timeout, env)
+
+
+def test_the_reviewer_gets_the_oauth_token_of_this_process(gated, tmp_path, monkeypatch):
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "tok-abc")
+    gh = Spy().on("pr view", view()).on("pr diff", DIFF).on("--model opus", "ok\nVERDICT: APPROVE fine").on("pr comment", "")
+    out = invoke(runtime_for(tmp_path, gh), ["review", "dispatch", "5", "--live"])
+    env = next(e for argv, e in gh.envs if argv[0] == "claude")
+    assert out.exit_code == 0 and env["CLAUDE_CODE_OAUTH_TOKEN"] == "tok-abc" and "tok-abc" not in out.stdout + out.stderr
+
+
+def test_an_expired_login_is_an_alarm_not_a_burned_attempt(gated, tmp_path):
+    login = Result(1, "", "Invalid API key. Please run /login")
+    gh = FakeGh().on("pr view", view()).on("pr diff", DIFF).on("--model opus", login)
+    rt = runtime_for(tmp_path, gh, review_max_attempts=1)
+    for _ in range(3):  # the single attempt is never used up
+        out = invoke(rt, ["review", "dispatch", "5", "--live"])
+        assert "headless review cannot authenticate" in out.stdout and "given up" not in out.stdout
+    assert len(runs_of(gh)) == 3
+    assert [k for level, k, _ in rt.providers.notifier.sent if level == "alert"] == ["review:auth"] * 3

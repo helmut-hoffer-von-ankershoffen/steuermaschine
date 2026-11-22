@@ -183,6 +183,8 @@ def handle(rt: Any, w: Any, module: Any, owner: str, pr: prtable.PrRow, mode: tu
             except Refuse as refused:
                 return row("waiting", str(refused)[:120])
             verdict = res.verdict
+            if auto_review.AUTH_NOTE in res.note:
+                budget[0] = 0  # no login: the rest of the pass starts no review
             if not verdict:
                 return row("waiting", res.note or "review started, no verdict yet")
     if stop := review_gate(verdict, reasons):
