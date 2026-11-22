@@ -455,6 +455,8 @@ def daemon_queue(
             wake = "queue changed"
         elif _LOOP["frozen"] and not now_frozen:
             wake = "merge hold released"
+        elif now_frozen and not _LOOP["frozen"]:
+            wake = "merge freeze started"  # armed PRs are disarmed at once, not on the next interval
         _LOOP["frozen"] = now_frozen
         if not wake and module.time.monotonic() < _LOOP["due"]:
             return None

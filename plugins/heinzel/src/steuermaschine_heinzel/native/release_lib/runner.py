@@ -1729,6 +1729,16 @@ def owned_hold_exists(version: str) -> bool:
     return True
 
 
+def disarm_core_auto_merge() -> None:
+    """8i4oi with auto-merge: after the freeze is taken and before the cut goes on, no Core PR may still have GitHub
+    auto-merge on, or it would merge onto the candidate's base. Synchronous here, not on the queue's next tick."""
+    from ..queue_lib import auto_arm
+
+    if remaining := auto_arm.disarm_all(CORE):
+        raise Stop("auto-merge is still on for Core PR(s) " + ", ".join(remaining) + " after the freeze; nothing proceeds "
+                   "until it is off (gh pr merge N --disable-auto), then run the same release command again")
+
+
 def acquire_snapshot_freeze(version: str) -> None:
     """Use a unique owned hold; incident and other release holds have different names."""
     root = hzlib.release_holds()
@@ -1952,6 +1962,7 @@ def resume_paused_hold() -> None:
     if events and events[-1]["action"] in ("pause-request", "pause"):
         # Reacquire before any remote read or readiness mutation, even after a partially completed pause.
         acquire_snapshot_freeze(data["version"])
+        disarm_core_auto_merge()
         request = pause_request(events)
         if request is None:
             raise Stop("paused release has no durable pause request")
@@ -2246,11 +2257,13 @@ def release_core(request: str, intro: str, timeout: float, snapshot_acceptance: 
     # freezes main again, because PyPI, compose and acceptance are pinned to the tag, not to main.
     if has_tag(CORE, tag):
         hzlib.say("ok   freeze (not needed: tag exists, main stays open)")
-    elif owned_hold:
-        acquire_snapshot_freeze(version)
-        hzlib.say("ok   freeze (release-owned)")
     else:
-        step("freeze", freeze.exists, lambda: freeze.touch(), 60)
+        if owned_hold:
+            acquire_snapshot_freeze(version)
+            hzlib.say("ok   freeze (release-owned)")
+        else:
+            step("freeze", freeze.exists, lambda: freeze.touch(), 60)
+        disarm_core_auto_merge()  # 8i4oi: before the gate reads main, no Core PR can still merge by itself
     if candidate_gate:
         step("main gate (train path)", lambda: has_tag(CORE, tag) or main_candidate_gate(version), None, timeout)
     else:

@@ -67,6 +67,29 @@ def hold(q: Any, why: str, excepted: Callable[[dict[str, Any]], bool]) -> None:
             q.log(f"{item['key']}: queue held ({why}), and auto-merge could not be switched off; the next tick tries again")
 
 
+def authors() -> set[str]:
+    """The logins whose PRs the queue may arm (the setting auto_queue_authors; default the owner)."""
+    from . import edge
+
+    return {str(a).lower() for a in (edge.setting("auto_queue_authors") or [hzlib.OWNER])}
+
+
+def disarm_all(repo: str = hzlib.CORE) -> list[str]:
+    """Switch auto-merge off on every open PR of REPO that has it, then read again: the PRs still armed (empty when none).
+    The release cut calls this before it proceeds (8i4oi); an unreadable list is one entry that says so (fails closed)."""
+    fields = ("pr", "list", "-R", repo, "--state", "open", "--limit", "200", "--json", "number,autoMergeRequest")
+    rows = hzlib.ghj(*fields, default=None)
+    if not isinstance(rows, list):
+        return [f"the open pull requests of {repo} cannot be read"]
+    for row in rows:
+        if isinstance(row, dict) and row.get("autoMergeRequest"):
+            disarm(repo, str(row.get("number")))
+    rows = hzlib.ghj(*fields, default=None)
+    if not isinstance(rows, list):
+        return [f"the open pull requests of {repo} cannot be read again"]
+    return [f"#{r.get('number')}" for r in rows if isinstance(r, dict) and r.get("autoMergeRequest")]
+
+
 def one(q: Any, item: dict[str, Any], items: list[dict[str, Any]]) -> None:
     """One queued entry through the rules above; `q` is the queue module (state, log, records)."""
     if not q.deps_met(item, items):
@@ -75,13 +98,19 @@ def one(q: Any, item: dict[str, Any], items: list[dict[str, Any]]) -> None:
     if not SHA.fullmatch(pinned):
         q.stuck_or_merged(item, "needs work", "no guarded head recorded; ship it again so the diff guard reads the head that merges")
         return
-    info = hzlib.ghj("pr", "view", item["pr"], "-R", item["repo"], "--json", "state,headRefOid,autoMergeRequest", default=None)
+    info = hzlib.ghj("pr", "view", item["pr"], "-R", item["repo"], "--json", "state,headRefOid,autoMergeRequest,author", default=None)
     if not isinstance(info, dict) or not info.get("state"):
         q.log(f"{item['key']}: the PR cannot be read; the next tick reads it again")
         return
     if info["state"] == "MERGED":
         q.stuck_or_merged(item, "merged", pinned[:8])
         q.record_merge(item)
+        return
+    login = str((info.get("author") or {}).get("login") or "")
+    if info["state"] == "OPEN" and login.lower() not in authors():
+        if info.get("autoMergeRequest"):
+            disarm(item["repo"], item["pr"])
+        q.stuck_or_merged(item, "needs work", f"author {login or 'unknown'} is not on auto_queue_authors: the queue never arms it")
         return
     if info["state"] != "OPEN":
         q.stuck_or_merged(item, "needs work", f"the PR is {str(info['state']).lower()}")

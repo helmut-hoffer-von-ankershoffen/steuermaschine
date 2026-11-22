@@ -1540,6 +1540,8 @@ def wait_for_tick(interval: float, started: float) -> str:
         now_frozen = hzlib.merge_frozen()
         if frozen and not now_frozen:
             return "merge hold released"
+        if now_frozen and not frozen:
+            return "merge freeze started"
         frozen = now_frozen
     return ""
 

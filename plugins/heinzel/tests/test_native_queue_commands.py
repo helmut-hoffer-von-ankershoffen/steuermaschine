@@ -27,7 +27,7 @@ MAIN = "1" * 40
 DIFF = "diff --git a/src/x.py b/src/x.py\n--- a/src/x.py\n+++ b/src/x.py\n@@ -1,1 +1,2 @@\n x = 1\n+y = 2\n"
 WEAKER = "diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml\n--- a/.github/workflows/ci.yml\n+++ b/.github/workflows/ci.yml\n@@ -10,1 +10,2 @@\n   steps:\n+    continue-on-error: true\n"
 GREEN = [{"name": n, "status": "COMPLETED", "conclusion": "SUCCESS", "completedAt": "2026-11-12T20:00:00Z"} for n in ("CI OK", "merge-gate", "coverage-floor")]
-PR = {"state": "OPEN", "isDraft": False, "headRefOid": HEAD, "headRefName": "fix/x", "mergeStateStatus": "CLEAN", "statusCheckRollup": GREEN, "title": "fix: x", "body": "one fix"}
+PR = {"state": "OPEN", "isDraft": False, "headRefOid": HEAD, "headRefName": "fix/x", "mergeStateStatus": "CLEAN", "statusCheckRollup": GREEN, "title": "fix: x", "body": "one fix", "author": {"login": "helmut-hoffer-von-ankershoffen"}}
 RULES = [{"type": "required_status_checks", "parameters": {"required_status_checks": [{"context": c} for c in ("CI OK", "merge-gate", "coverage-floor")]}}]
 MAIN_RUNS = [{"status": "completed", "conclusion": "success", "databaseId": 500, "headSha": MAIN, "attempt": 1, "displayTitle": "feat: x (#700)", "createdAt": "2026-11-12T19:00:00Z"}]
 
@@ -334,6 +334,29 @@ def test_the_freeze_holds_only_core(rt, gh):
     assert invoke(rt, ["daemon", "queue"]).exit_code == 0
     assert [line for line in gh.lines() if line.startswith("pr merge")] == [
         "pr merge 801 -R helmut-hoffer-von-ankershoffen/heinzel-plugins --squash --auto --match-head-commit " + HEAD]
+
+
+def test_a_pr_of_an_author_not_on_auto_queue_authors_is_never_armed(rt, gh):
+    """Review of sm #70: a hand-queued PR of anyone else is not armed (and an armed one is switched off)."""
+    queue_one(rt)
+    gh.on("pr list", []).on("pr view 801", {**PR, "author": {"login": "someone"}, "autoMergeRequest": {"mergeMethod": "SQUASH"}}).on("pr merge 801", "")
+    assert invoke(rt, ["daemon", "queue"]).exit_code == 0
+    assert [line for line in gh.lines() if line.startswith("pr merge")] == [f"pr merge 801 -R {CORE} --disable-auto"]
+    row = items(rt)[-1]
+    assert row["status"] == "needs work" and "author someone is not on auto_queue_authors" in row["detail"], row
+
+
+def test_the_loop_wakes_when_a_freeze_starts_and_disarms_at_once(rt, gh):
+    """8i4oi: a freeze that starts during the interval wakes the loop; it does not wait for the next 300 s tick."""
+    queue_one(rt)
+    gh.on("pr list", []).on("pr view 801", PR, {**PR, "autoMergeRequest": {"mergeMethod": "SQUASH"}}).on("pr merge 801", "")
+    assert invoke(rt, ["daemon", "queue"]).exit_code == 0
+    assert json.loads(invoke(rt, ["--format", "json", "daemon", "queue"]).stdout) == {}  # not due, nothing changed
+    (statedir.root() / "merge-freeze").touch()
+    gh.calls.clear()
+    woke = area.QueueTick.model_validate(json.loads(invoke(rt, ["--format", "json", "daemon", "queue"]).stdout))
+    assert woke.ran and woke.wake == "merge freeze started"
+    assert [line for line in gh.lines() if line.startswith("pr merge")] == [f"pr merge 801 -R {CORE} --disable-auto"]
 
 
 def test_a_refused_arm_is_kept_queued_with_gh_s_reason(rt, gh):
