@@ -28,6 +28,7 @@ from steuermaschine.native import native
 from . import updater_hold
 from .go import world
 from .go_lib import probes
+from .mini_lib import serve
 
 VERSION = r"[0-9]+\.[0-9]+\.[0-9]+"
 PLUGINS_SHOWN = ("heinzel-google", "heinzel-github", "heinzel-slack")
@@ -66,6 +67,7 @@ class MiniVerify(Model):
     plugins: str = ""
     held: str = ""  # the version the Mini's updater holds back for want of an acceptance marker
     updated: list[str] = []  # what `sm mini update` did before the proof (empty: nothing was changed)
+    warnings: list[str] = []  # extra or stale `ui serve` processes beyond the owned backend; they never change `live`
 
     def render(self) -> list[str]:
         out = [f"update: {step}" for step in self.updated]
@@ -77,6 +79,7 @@ class MiniVerify(Model):
             out.append(f"local={self.local} tail={self.remote} doctor={self.doctor}")
         if self.live:
             out.append(f"plugins: {self.plugins}")
+        out += [f"WARN  {line}" for line in self.warnings]
         out.append(f"LIVE-OK {self.version}" if self.live else f"NOT-LIVE: {self.reason}")
         return out
 
@@ -269,6 +272,7 @@ def verify(w: probes.World, minimum: str | None = None) -> MiniVerify:
         out.live, out.version = True, cli
     except Unverified as exc:
         out.reason = str(exc)
+    out.warnings = serve.warnings(w.commands, port, out.cli, os.getpid(), env)
     return out
 
 

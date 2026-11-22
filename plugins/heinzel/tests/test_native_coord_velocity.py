@@ -6,6 +6,7 @@ import json
 from coord_kit import app_runtime
 from test_native_coord_velocity_moved import FakeGh
 
+from steuermaschine import localtime
 from steuermaschine.protocols import Result
 from steuermaschine.testing import invoke
 from steuermaschine_heinzel.native import velocity
@@ -54,7 +55,7 @@ def test_record_keeps_the_first_observation_in_the_state_home_by_default(tmp_pat
     first = invoke(rt, ["--format", "json", "doc", "velocity-record", f"466:{head}"])
     doc = velocity.EligibleRecorded.model_validate(json.loads(first.stdout))
     again = invoke(rt, ["doc", "velocity-record", f"466:{head}"])
-    assert again.stdout == f"#466 aaaaaaaa: eligible observed {doc.eligible_observed_at} ({doc.source})\n"
+    assert again.stdout == localtime.localize(f"#466 aaaaaaaa: eligible observed {doc.eligible_observed_at} ({doc.source})") + "\n"  # shown in local time
     journal = rt.project.home / "velocity" / "eligibility.jsonl"
     assert len(journal.read_text().splitlines()) == 1
 
