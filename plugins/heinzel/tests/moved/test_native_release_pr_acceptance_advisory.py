@@ -60,6 +60,12 @@ def run(tool, monkeypatch, tmp_path, fake):
 
 
 def test_advisory_when_previous_release_absorbed(tool, monkeypatch, tmp_path, capsys):
+    import time
+
+    from steuermaschine_heinzel.native.queue_lib import hzlib
+
+    # The ruleset of main as read from GitHub: it requires the three aggregates, not the Acceptance dry runs (unread rules waive nothing).
+    monkeypatch.setattr(hzlib, "_RULES", {CORE: (time.monotonic(), frozenset({"CI OK", "merge-gate", "coverage-floor"}))})
     receipt(tmp_path, **ABSORBED)
     fake = FakeGh([*GREEN, acceptance("ubuntu-24.04"), acceptance("macos-latest")])
     merged, log = run(tool, monkeypatch, tmp_path, fake)

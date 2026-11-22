@@ -86,8 +86,14 @@ def test_previous_release(tmp_path, monkeypatch):
 def test_published_dry_run(monkeypatch):
     good = {"name": "Acceptance (linux)", "workflowName": "Acceptance", "detailsUrl": "https://x/actions/runs/55/job/1"}
     answers = []
+    monkeypatch.setattr(mt.hzlib, "required_checks", lambda repo: frozenset({"CI OK"}))
     monkeypatch.setattr(mt, "gh", lambda *a: answers.append(a) or (0, "pull_request\t" + HEAD + "\n"))
     assert mt.published_dry_run("o/r", good, HEAD) is True
+    monkeypatch.setattr(mt.hzlib, "required_checks", lambda repo: frozenset({"CI OK", "Acceptance (linux)"}))
+    assert mt.published_dry_run("o/r", good, HEAD) is False  # a check the ruleset requires is never waived
+    monkeypatch.setattr(mt.hzlib, "required_checks", lambda repo: None)
+    assert mt.published_dry_run("o/r", good, HEAD) is False  # unread rules waive nothing
+    monkeypatch.setattr(mt.hzlib, "required_checks", lambda repo: frozenset({"CI OK"}))
     assert mt.published_dry_run("o/r", good, "b" * 40) is False
     assert mt.published_dry_run("o/r", {**good, "name": "CI OK"}, HEAD) is False
     assert mt.published_dry_run("o/r", {**good, "name": "Other"}, HEAD) is False
