@@ -20,6 +20,8 @@ from steuermaschine.native import native, runtime, switch_pending
 
 from ..pipelines.common import run
 from ..pipelines.head_admit import identify, pipeline
+from .release_lib.binding import core_repo
+from .ship_lib import prepare
 
 POLL_SECONDS = 60  # between two reads of the PR and the queue while waiting for the merge
 
@@ -137,7 +139,6 @@ def queue_pr(number: str, live: bool, reason: str | None) -> ShipResult:
 
 def other_repo(rt: Any, worktree: str) -> str | None:
     """The `owner/name` of the worktree's origin when it is not the core repository, else None (also when unreadable)."""
-    from .release_lib.binding import core_repo
 
     found = rt.providers.commands.run(["git", "-C", worktree, "remote", "get-url", "origin"], timeout=30)
     url = str(found.out).strip() if found.rc == 0 else ""
@@ -151,17 +152,16 @@ def open_elsewhere(rt: Any, worktree: str, repo: str, live: bool, given: dict[st
 
     from . import ship as head
 
-    title = given.get("title") or ""
+    plan = prepare.prepare(rt.providers.commands, worktree, given, configured=core_repo(), live=live)  # merges main when behind, derives bead and title, refuses once, before anything else
+    title, bead = plan.inputs.get("title", ""), plan.inputs.get("bead", "none")
     if not title:
-        found = rt.providers.commands.run(["git", "-C", worktree, "log", "-1", "--format=%s"], timeout=30)
-        title = str(found.out).strip() if found.rc == 0 else ""
-    if not title:
-        raise Refuse("no title: the last commit subject could not be read", f"sm ship {worktree} --set title=\"type(scope): title\"", code=2)
-    done = head.head_pr(bead=given.get("bead") or "none", title=title, body_file=Path(given["body"]) if given.get("body") else None,
+        raise Refuse("no title: the commit subjects of the branch could not be read", f"sm ship {worktree} --set title=\"type(scope): title\"", code=2)
+    done = head.head_pr(bead=bead, title=title, body_file=Path(given["body"]) if given.get("body") else None,
                         reason=given.get("reviewed") or None, worktree=Path(worktree), live=live)
     number = next((int(m.group(1)) for line in done.lines if (m := re.search(r"PR #(\d+)", line))), None)
     return ShipResult(worktree=worktree, status=done.verdict, phase=f"{repo}: {done.verdict}", pr=number, exit=done.exit_code,
-                      next=f"sm why {number}" if number else f"sm ship {worktree} --live", lines=[*done.lines, *done.errors])
+                      next=f"sm why {number}" if number else f"sm ship {worktree} --live", derived=plan.derived,
+                      lines=[*done.lines, *done.errors, *([f"DERIVED  {', '.join(plan.derived)}"] if plan.derived else [])])
 
 
 @native("ship", writes=True, help=H(
@@ -174,6 +174,12 @@ def open_elsewhere(rt: Any, worktree: str, repo: str, live: bool, given: dict[st
     "example the plugins repository): checks, one push, the PR and the queue entry, with the title from --set title or the last\n"
     "commit subject and the bead from --set bead. A PR number instead of a worktree: queue that open PR (with --live; a\n"
     "flagged PR needs --set reviewed=\"review: FILE\").\n"
+    "Before the first check, in one pass: the repository is read from the origin (core, plugins, acme, sf, the public steuermaschine,\n"
+    "heinzel-management); a branch behind origin/main gets main merged in by sm (subject \"chore: merge origin/main\"; a conflict is\n"
+    "aborted and named); the bead comes from --set bead, a `Bead:` trailer of a commit, or a bead id in the branch name, else `none`;\n"
+    "the title from --set title or the newest conventional commit subject. What cannot be found is ONE refusal naming the exact\n"
+    "--set, before any check. DERIVED in the output says what was found. steuermaschine and heinzel-management have no merge queue:\n"
+    "their PR merges when its required checks are green.\n"
     "No packet, no plan slot: Core's CI runs the full matrix on every PR. One blocking stop is kept: a head that changes .github/, the\n"
     "release, publish, PyPI or acceptance scripts, quarantine.toml, the coverage config or a conftest.py stops with the digest of exactly\n"
     "those paths; a different agent records `sm review verdict DIGEST --approve`, then run this again with --approved DIGEST.\n"
@@ -193,17 +199,19 @@ def ship(worktree: str = typer.Argument(..., metavar="WORKTREE", help="The clean
     if (origin := other_repo(rt, worktree)) is not None:
         return open_elsewhere(rt, worktree, origin, live, given)
     pl = pipeline()
-    subject = identify(rt.providers, rt.settings, worktree)
+    _given(rt.providers.store, pl, "", set_)  # refuses a --set of a name the pipeline does not take, before anything is touched
+    plan = prepare.prepare(rt.providers.commands, worktree, given, configured=core_repo(), live=live)  # main merged when behind; repository, bead, title found; ONE refusal, before the check
+    subject = identify(rt.providers, rt.settings, worktree)  # after the merge: the head of this run
     store = rt.providers.store
-    _given(store, pl, subject.key, set_)  # refuses a --set of a name the pipeline does not take
-    now = {pair.partition("=")[0]: pair.partition("=")[2] for pair in set_ or []}
-    report = engine().advance(pl, worktree, Options(live=live, approved=approved, author=author or config.environment().steuermaschine_agent or "coordinator", inputs=now))
+    kept = _given(store, pl, subject.key, set_)
+    inputs = {**plan.inputs, **kept}  # --set wins, then what this head remembers, then what was derived
+    report = engine().advance(pl, worktree, Options(live=live, approved=approved, author=author or config.environment().steuermaschine_agent or "coordinator", inputs=inputs))
     number = _pr(store, pl, subject.key)
     if wait is None or report.status != "finished" or report.exit_code:
-        return _summary(worktree, report, [], number, False)
+        return _summary(worktree, report, plan.derived, number, False)
     if number is None:
         raise Refuse("the run finished but no PR is recorded for this head: nothing to wait for", "sm queue list")
     for line in report.lines():
         rt.say(line)
     wait_for_merge(number, wait)
-    return _summary(worktree, report, [], number, True)
+    return _summary(worktree, report, plan.derived, number, True)
