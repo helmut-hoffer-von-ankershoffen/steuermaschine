@@ -189,9 +189,14 @@ def test_one_ship_call_from_a_behind_branch_ends_in_a_pr_call_in_each_repository
     git = Git(repo=ORIGINS[name], behind=True, branch="fix/bead-q7x2k-x")
     opened: list[dict[str, Any]] = []
     fake = FakeEngine()
+    from steuermaschine_heinzel.native import gallery_sync
+
+    galleries: list[str] = []
+    monkeypatch.setattr(gallery_sync, "into_head", lambda rt, worktree: galleries.append(str(worktree)) or ["GALLERY  fresh"])
     monkeypatch.setattr(head, "head_pr", lambda **kw: opened.append(kw) or head.HeadResult(action="pr", target=kw["bead"], verdict="done", lines=["head pr: PR #801 opened"], exit=0))
     _, result = drive(tmp_path, monkeypatch, git, engine=fake)
     assert git.ran(" merge --no-edit") and result.exit_code == 0
+    assert bool(galleries) == (name == "plugins")  # only a plugins head gets its gallery regenerated into the shipped commit
     if name == "core":
         assert fake.calls and fake.calls[0][2].inputs["bead"] == "q7x2k"  # the pipeline: check, pr, queue
     else:  # another repository: the PR route directly, with everything derived

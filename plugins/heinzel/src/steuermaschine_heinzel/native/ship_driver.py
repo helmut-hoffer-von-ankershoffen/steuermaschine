@@ -151,18 +151,23 @@ def open_elsewhere(rt: Any, worktree: str, repo: str, live: bool, given: dict[st
     """Another repository: the old `sm head pr` (checks, one push, the PR, the queue entry)."""
     from pathlib import Path
 
+    from . import gallery_sync
     from . import ship as head
 
+    plugins, where = gallery_sync.is_plugins(repo), Path(worktree).expanduser().resolve()
+    gallery = gallery_sync.fold(rt, where) if plugins else []  # what sm check regenerated, committed before main is merged in
     plan = prepare.prepare(rt.providers.commands, worktree, given, configured=core_repo(), live=live)  # merges main when behind, derives bead and title, refuses once, before anything else
     title, bead = plan.inputs.get("title", ""), plan.inputs.get("bead", "none")
     if not title:
         raise Refuse("no title: the commit subjects of the branch could not be read", f"sm ship {worktree} --set title=\"type(scope): title\"", code=2)
+    if plugins:
+        gallery += gallery_sync.into_head(rt, where)  # a fresh gallery in the shipped commit, or a refusal naming the command
     done = head.head_pr(bead=bead, title=title, body_file=Path(given["body"]) if given.get("body") else None,
                         reason=given.get("reviewed") or None, worktree=Path(worktree), live=live)
     number = next((int(m.group(1)) for line in done.lines if (m := re.search(r"PR #(\d+)", line))), None)
     return ShipResult(worktree=worktree, status=done.verdict, phase=f"{repo}: {done.verdict}", pr=number, exit=done.exit_code,
                       next=f"sm why {number}" if number else f"sm ship {worktree} --live", derived=plan.derived,
-                      lines=[*done.lines, *done.errors, *([f"DERIVED  {', '.join(plan.derived)}"] if plan.derived else [])])
+                      lines=[*gallery, *done.lines, *done.errors, *([f"DERIVED  {', '.join(plan.derived)}"] if plan.derived else [])])
 
 
 @native("ship", writes=True, help=H(
@@ -179,8 +184,11 @@ def open_elsewhere(rt: Any, worktree: str, repo: str, live: bool, given: dict[st
     "heinzel-management); a branch behind origin/main gets main merged in by sm (subject \"chore: merge origin/main\"; a conflict is\n"
     "aborted and named); the bead comes from --set bead, a `Bead:` trailer of a commit, or a bead id in the branch name, else `none`;\n"
     "the title from --set title or the newest conventional commit subject. What cannot be found is ONE refusal naming the exact\n"
-    "--set, before any check. DERIVED in the output says what was found. The queue loop arms GitHub auto-merge (squash, pinned to\n"
-    "the guarded head; off during a Core release freeze); no branch has to be up to date with main, a red main is reverted.\n"
+    "--set, before any check. DERIVED in the output says what was found. A plugins worktree first gets every stale screenshot\n"
+    "gallery regenerated (deterministic capture, no agent) and the regenerated files into the head commit (amended while unpushed,\n"
+    "else one docs(screenshots) commit); a gallery that cannot be regenerated refuses, naming the exact command.\n"
+    "The queue loop arms GitHub auto-merge (squash, pinned to the guarded head; off during a Core release freeze); no branch has to\n"
+    "be up to date with main, a red main is reverted.\n"
     "steuermaschine and heinzel-management have no queue entry: their PR merges when its required checks are green.\n"
     "No packet, no plan slot: Core's CI runs the full matrix on every PR. One blocking stop is kept: a head that changes .github/, the\n"
     "release, publish, PyPI or acceptance scripts, quarantine.toml, the coverage config or a conftest.py stops with the digest of exactly\n"

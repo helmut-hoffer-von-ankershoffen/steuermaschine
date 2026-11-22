@@ -92,6 +92,22 @@ def check_receipt(store: Any, head: str) -> tuple[dict[str, Any] | None, str]:
     return dict(receipt), ""
 
 
+def deferred_note(receipt: dict[str, Any] | None) -> str:
+    """"deferred to CI: ..." when the check receipt says part of the checks were left to CI, else "". Never mistake it for a full local run."""
+    if not receipt or not receipt.get("deferred"):
+        return ""
+    ran, selected = receipt.get("tests_ran"), receipt.get("tests_selected")
+    if isinstance(ran, int) and isinstance(selected, int) and ran < selected:
+        return f"{ran} of {selected} test files ran locally; {selected - ran} deferred to PR CI (required check)"
+    return f"deferred to CI: {', '.join(str(x) for x in receipt.get('ci_must_run') or []) or 'part of the checks'}"
+
+
+def deferred_for_digest(store: Any, digest: str) -> str:
+    """The deferred note of the check receipt of the commit `digest` binds ("" when it binds none or nothing was deferred)."""
+    head = str(((store.load(DIGEST_KIND, digest) or {}).get("check") or {}).get("head") or "")
+    return deferred_note(check_receipt(store, head)[0]) if head else ""
+
+
 def record_check(store: Any, head: str, data: dict[str, Any]) -> str:
     """Write the check receipt of the commit `head`: its cheap checks were green, measured from `data["base"]`.
     -> "written"; "kept" when the commit already has a green receipt that can be read (the first stays); else why the

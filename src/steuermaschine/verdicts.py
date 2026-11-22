@@ -16,12 +16,13 @@ from __future__ import annotations
 from typing import Any
 
 from .config import environment
-from .engine import CHECKS, DIGEST_KIND, Refuse, check_receipt, missing_check, need_check, record_check
+from .engine import CHECKS, DIGEST_KIND, Refuse, check_receipt, deferred_for_digest, deferred_note, missing_check, need_check, record_check
 
 KIND = DIGEST_KIND
 CI_CHANGE = "ci_change"  # a verdict on a commit whose CI paths changed since the last release: the release gate needs it
 KINDS = ("", CI_CHANGE)  # "": a verdict on prepared bytes (the 04ro gate)
-__all__ = ["CHECKS", "CI_CHANGE", "KIND", "KINDS", "authors_of", "check_receipt", "current_agent", "missing_check", "need_check", "record_check", "register", "require_independent"]
+__all__ = ["CHECKS", "CI_CHANGE", "KIND", "KINDS", "authors_of", "check_receipt", "current_agent", "deferred_for_digest",
+           "deferred_note", "missing_check", "need_check", "record_check", "register", "require_independent"]
 
 
 def current_agent() -> str:

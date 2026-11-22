@@ -51,10 +51,10 @@ def test_brief_counts_agent_processes_by_cwd(tmp_path):
 
 
 def test_brief_full_names_the_measure():
-    agents = [(i, f"heinzel-t{i}") for i in range(5)]
-    assert brief.full(12.0, agents[:4]) == ""
+    agents = [(i, f"heinzel-t{i}") for i in range(6)]
+    assert brief.full(12.0, agents[:5]) == ""
     assert "load 41.0 is over 40" in brief.full(41.0, [])
-    assert "5 agents are working" in brief.full(3.0, agents) and "heinzel-t0" in brief.full(3.0, agents)
+    assert "6 agents are working, the limit is 6" in brief.full(3.0, agents) and "heinzel-t0" in brief.full(3.0, agents)
     assert brief.full(40.0, []) == ""
 
 
@@ -84,10 +84,10 @@ def test_brief_names_the_bead_and_the_other_repository(tmp_path):
 
 
 def test_brief_refuses_when_full_and_force_goes_ahead_and_logs(tmp_path):
-    c = world(tmp_path, agents=5)
+    c = world(tmp_path, agents=6)
     rt = app_runtime(tmp_path, **rt_of(tmp_path, c, load=3.0))
     done = invoke(rt, ["work", "brief", "logo", "feat/logo", "--task", "Bigger logo."])
-    assert done.exit_code == 1 and "5 agents are working" in done.stderr and "--force" in done.stderr
+    assert done.exit_code == 1 and "6 agents are working, the limit is 6" in done.stderr and "--force" in done.stderr
     assert not (tmp_path / "Code/heinzel-logo").exists() and not [call for call in c.calls if call[0] == "git"]
     done = invoke(rt, ["work", "brief", "logo", "feat/logo", "--task", "Bigger logo.", "--force", "owner asked"])
     assert done.exit_code == 0 and (tmp_path / "Code/heinzel-logo").exists() and "Bigger logo." in done.stdout
@@ -231,3 +231,25 @@ def test_a_failed_fetch_is_a_refusal_and_no_worktree_is_added(tmp_path):
     done = invoke(app_runtime(tmp_path, **rt_of(tmp_path, c)), ["work", "brief", "logo", "feat/logo"])
     assert done.exit_code == 1 and "fetch" in done.stderr and "unable to access" in done.stderr
     assert not [call for call in c.calls if "worktree" in call and "add" in call]
+
+
+QUIET = {name: {"unknown": "not probed"} for name in ("main", "releases", "release", "queue", "train", "active_runs", "holds", "rehearse", "mini")}
+
+
+def test_the_builder_cap_is_six_and_bare_sm_shows_the_count_against_it():
+    from types import SimpleNamespace
+
+    from steuermaschine_heinzel.native.go_lib import decide
+
+    assert brief.BriefSettings.model_fields["brief_max_agents"].default == 6
+    assert decide.facts({**QUIET, "builders": {"working": 4, "cap": 6}}, {"state": "green", "run": None}, None, [])[-1] == "builders: 4 of 6 working"
+    assert decide.facts({**QUIET, "builders": {"working": 6, "cap": 6}}, {"state": "green", "run": None}, None, [])[-1] == "builders: 6 of 6 working: at the cap, brief no new builder until one ends"
+    assert not [line for line in decide.facts({**QUIET, "builders": {"unknown": "ps failed"}}, {"state": "green", "run": None}, None, []) if line.startswith("builders")]
+    assert SimpleNamespace  # the probe reads the same count `sm beads brief` refuses by
+
+
+def test_working_count_counts_what_the_brief_refuses_by(tmp_path):
+    c = world(tmp_path)
+    rt = app_runtime(tmp_path, **rt_of(tmp_path, c))
+    working, cap = brief.working_count(rt.providers.commands, rt.settings)
+    assert cap == 6 and working == 0
