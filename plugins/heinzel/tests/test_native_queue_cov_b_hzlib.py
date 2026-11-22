@@ -74,7 +74,7 @@ def test_advisory_checks(monkeypatch):
                                  "parameters": {"required_status_checks": [{"context": "merge-gate"}]}}]
     monkeypatch.setattr(hzlib, "ghj", lambda *a, **k: rules)
     ruled = hzlib.advisory_checks("r")
-    assert "review" in ruled and "merge-gate" not in ruled and "coverage-floor" in ruled and "any other check" not in ruled  # the gate's checks only until main requires them
+    assert "review" in ruled and "merge-gate" not in ruled and "coverage-floor" not in ruled and "any other check" not in ruled  # a red check holds, required or not
     assert hzlib.required_names(ruled) == ["merge-gate"] and hzlib.missing_required(ruled, [{"name": "x"}]) == ["merge-gate"]
 
 

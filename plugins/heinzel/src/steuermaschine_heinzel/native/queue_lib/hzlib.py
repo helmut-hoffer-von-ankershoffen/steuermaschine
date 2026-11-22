@@ -110,11 +110,9 @@ def required_checks(repo: str) -> frozenset[str] | None:
 
 
 def advisory_checks(repo: str) -> ruleset.Advisory:
-    """The checks that do not hold a PR of REPO: `review`, and the merge gate's checks until main requires them (a red
-    check holds, required or not; the ruleset, queue_lib/ruleset.py, only adds that a required one must have reported).
-    Unreadable rules: only `review`, so the gate holds: never a looser gate."""
-    required = required_checks(repo)
-    return ruleset.Advisory(required, frozenset(set(GATE_CHECKS) - required) if required is not None else frozenset())
+    """The checks that do not hold a PR of REPO: only `review` (and what a caller waives by name). A red check holds,
+    required or not; the ruleset (queue_lib/ruleset.py) only adds that a required check must have reported."""
+    return ruleset.Advisory(required_checks(repo))
 
 
 def missing_required(advisory: object, rollup: list[dict]) -> list[str]:

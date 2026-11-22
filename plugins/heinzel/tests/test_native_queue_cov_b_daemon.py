@@ -211,8 +211,7 @@ def test_restored_by_rerun_records_once(monkeypatch, home):
 
 def test_a_pr_red_on_a_check_holds_whether_or_not_the_ruleset_requires_it(monkeypatch):
     """CI OK and Sonar green, coverage-floor red: the PR needs work with a ruleset that requires CI OK and Sonar only (a red
-    check holds, we fix the check not the queue) and with one that requires coverage-floor too. (The merge gate's own
-    checks are waived by hzlib.advisory_checks until main requires them; here the predicate is built by hand.)"""
+    check holds, we fix the check not the queue) and with one that requires coverage-floor too. (no check is waived by name.)"""
     from steuermaschine_heinzel.native.queue_lib.ruleset import Advisory
 
     qd.save({"items": [item("5")]})
