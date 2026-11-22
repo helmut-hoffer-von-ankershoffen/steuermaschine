@@ -233,6 +233,43 @@ def test_superseding_takes_the_older_runs_lock_and_waits_while_it_is_held():
     assert p.store.load("runs.head.demo", old)["status"] == "superseded"
 
 
+def test_superseding_never_waits_on_another_worktrees_run():
+    p = fake_providers()
+    pl = two_stops(p, ("1" * 64, "2" * 64))
+    eng = Engine("proj", p, out=lambda line: None)
+    eng.advance(pl, "/other", Options())
+    other = p.vcs.h
+    p.vcs.h = "d" * 40
+    p.store.held.add(f"{pl.id}.{other}")  # a long step of another worktree's run holds its lock
+    report = eng.advance(pl, "/wt", Options())
+    assert report.exit_code != 75 and p.store.load("runs.head.demo", "d" * 40) is not None
+
+
+def test_a_waiter_names_the_live_holder_and_takes_over_a_dead_one(tmp_path):
+    import fcntl
+    import os
+    import subprocess
+
+    from steuermaschine.defaults import FileStore
+    from steuermaschine.protocols import Busy
+
+    store = FileStore(tmp_path)
+    with store.lock("x"):
+        with pytest.raises(Busy) as live:
+            FileStore(tmp_path).lock("x").__enter__()
+        assert f"pid {os.getpid()}" in live.value.holder and "in " in live.value.holder
+    # a holder that died while a child kept the lock: the file names a dead pid, the lock is still held
+    child = subprocess.Popen([sys.executable, "-c", "pass"])
+    child.wait()
+    (tmp_path / "locks" / "y.lock").parent.mkdir(parents=True, exist_ok=True)
+    with open(tmp_path / "locks" / "y.lock", "w") as keeper:
+        fcntl.flock(keeper, fcntl.LOCK_EX)
+        keeper.write(json.dumps({"pid": child.pid, "command": "sm ship .", "since": 0, "cwd": "/wt"}))
+        keeper.flush()
+        with store.lock("y"):
+            pass
+
+
 def test_a_pipeline_with_a_unit_runs_without_a_review_file_and_is_a_write_unit():
     p = fake_providers()
     pl = two_stops(p, ("1" * 64, "2" * 64))

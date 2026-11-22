@@ -30,6 +30,32 @@ class SystemClock:
         time.sleep(seconds)
 
 
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _read_holder(path: Path) -> dict[str, Any] | None:
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def describe_holder(holder: dict[str, Any] | None, now: float | None = None) -> str:
+    """`pid 123 (sm ship . --live, 4 min, in /wt)`, or empty when the lock file names nobody."""
+    if not holder or not holder.get("pid"):
+        return ""
+    age = max(0, int((now if now is not None else time.time()) - float(holder.get("since") or 0)))
+    return f"pid {holder['pid']} ({holder.get('command', '?')}, {age // 60} min {age % 60} s, in {holder.get('cwd', '?')})"
+
+
 class FileStore:
     """JSON files under one directory: <root>/state/<kind>/<key>.json, <root>/receipts/..., <root>/locks/..."""
 
@@ -60,17 +86,32 @@ class FileStore:
 
     @contextmanager
     def lock(self, name: str) -> Any:
+        """An exclusive lock file. The holder writes who it is into the file (pid, command, start, worktree) so a waiter can
+        name it. A holder whose pid is gone but whose lock is still held (a child kept the descriptor) is taken over: the
+        file is replaced, never edited by hand."""
         path = self.root / "locks" / f"{safe(name)}.lock"
         path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "w") as handle:
+        for attempt in (0, 1):
+            handle = open(path, "a+")  # noqa: SIM115 - held across the yield, closed in the finally below
             try:
                 fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except OSError:
-                raise Busy(name) from None
+                holder = _read_holder(path)
+                handle.close()
+                if attempt == 0 and holder and holder.get("pid") and not _alive(int(holder["pid"])):
+                    path.unlink(missing_ok=True)  # the next open makes a new file nobody holds
+                    continue
+                raise Busy(name, describe_holder(holder)) from None
             try:
+                handle.seek(0)
+                handle.truncate()
+                handle.write(json.dumps({"pid": os.getpid(), "command": " ".join(sys.argv)[:200], "since": time.time(), "cwd": os.getcwd()}))
+                handle.flush()
                 yield
             finally:
                 fcntl.flock(handle, fcntl.LOCK_UN)
+                handle.close()
+            return
 
     def put_receipt(self, kind: str, key: str, data: dict[str, Any]) -> None:
         path = self._path("receipts", kind, key)

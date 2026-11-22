@@ -91,7 +91,11 @@ class Result:
 
 
 class Busy(Exception):
-    """A lock is held by another process."""
+    """A lock is held by another process; `holder` says which one when the lock file names it."""
+
+    def __init__(self, name: str = "", holder: str = "") -> None:
+        super().__init__(name)
+        self.holder = holder
 
 
 # ----------------------------------------------------------------------------- protocols
