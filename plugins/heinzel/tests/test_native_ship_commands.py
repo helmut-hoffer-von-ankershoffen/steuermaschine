@@ -602,18 +602,36 @@ def test_the_ship_step_of_a_plugins_pr_gets_the_plugins_key():
     assert repos.known_repo("https://github.com/Helmut-Hoffer-von-Ankershoffen/heinzel-plugins.git") == PLUGINS
     assert repos.known_repo("git@github.com:someone/plugins.git") is None
     with pytest.raises(ValueError, match="not supported by the merge queue"):
-        repos.pr_key("helmut-hoffer-von-ankershoffen/steuermaschine", 11)
+        repos.pr_key("helmut-hoffer-von-ankershoffen/steuermaschine", 11)  # no queue key: the PR merges on green checks (repos.queued)
+    assert repos.known_repo("git@github.com:helmut-hoffer-von-ankershoffen/steuermaschine.git") == "helmut-hoffer-von-ankershoffen/steuermaschine"
+    assert repos.known_repo("https://github.com/helmut-hoffer-von-ankershoffen/heinzel-management.git") == "helmut-hoffer-von-ankershoffen/heinzel-management"
+    assert not repos.queued("helmut-hoffer-von-ankershoffen/steuermaschine") and repos.queued(CORE) and repos.queued(PLUGINS)
+    assert repos.known_repo("git@github.com:helmut-hoffer-von-ankershoffen/steuermaschine.git", ship=False) is None  # a bare PR number keeps the queue's meaning
 
 
 @pytest.mark.parametrize("live", [False, True])
 def test_pr_refuses_an_unsupported_repository_before_publication(rt, gh, worktree, live, monkeypatch):
-    repo = "helmut-hoffer-von-ankershoffen/steuermaschine"
+    repo = "helmut-hoffer-von-ankershoffen/some-other-repository"
     gh.on("remote get-url origin", f"git@github.com:{repo}.git\n")
     configure = deps.configure
     monkeypatch.setattr(deps, "configure", lambda: {**configure(), "repo": repo})
     out = invoke(rt, ["head", "pr", "abc", "fix: keep the draft", "--body-file", str(worktree), *(["--live"] if live else [])])
     assert out.exit_code == 2 and "not supported by the merge queue" in out.stderr
     assert not published(gh) and keys(rt) == []
+
+
+def test_a_steuermaschine_worktree_opens_its_pr_and_ends_without_a_queue_entry(rt, gh, worktree, monkeypatch):
+    """The public tool repository ships like the others, but has no merge queue: the PR merges when its required checks are green."""
+    sm = "helmut-hoffer-von-ankershoffen/steuermaschine"
+    configure = deps.configure
+    monkeypatch.setattr(deps, "configure", lambda: {**configure(), "repo": sm})
+    gh.on("remote get-url origin", f"git@github.com:{sm}.git\n")
+    opened = {**OPENED, "headRepository": {"name": "steuermaschine"}}
+    gh.on("pr list -R " + sm + " --head fix/x", [], [], [opened])
+    gh.on("gate run --max-wait", "pushed\n").on("pr create", "https://example.invalid/pull/801\n").on("pr view 801 -R " + sm + " --json number", opened)
+    out = invoke(rt, ["head", "pr", "abc", "fix(web): keep the draft", "--body-file", str(worktree), "--live"])
+    assert out.exit_code == 0 and "has no merge queue: PR #801 merges when its required checks are green" in out.stdout, out
+    assert out.stdout.splitlines()[-1] == "801" and not any("pr diff 801" in line for line in gh.lines()) and keys(rt) == []  # no guard, no queue entry
 
 
 def test_head_pr_refuses_another_agents_branch_naming_the_owner_and_nothing_is_published(rt, gh, worktree, monkeypatch, tmp_path):

@@ -19,7 +19,7 @@ from steuermaschine_heinzel.native.queue_lib import hzlib, main_plan
 HEAD = "a" * 40
 MAIN = "b" * 40
 GREEN = [{"name": n, "status": "COMPLETED", "conclusion": "SUCCESS"} for n in ("CI OK", "SonarCloud Code Analysis")]
-# the legacy checks are not required by the ruleset and are red on real PRs today: they must not hold a merge
+# the legacy checks are not required by the ruleset, but a red one still holds a merge (coverage-floor was red while CI OK was green)
 LEGACY_RED = [{"name": n, "status": "COMPLETED", "conclusion": "FAILURE"} for n in ("coverage-floor", "merge-gate")]
 # main's ruleset today (`rules/branches/main`)
 RULESET = [{"type": "required_status_checks", "ruleset_id": 25762292,
@@ -49,7 +49,7 @@ class World:
     """Core on GitHub, as `gh` answers: the PR, main's ref and ruleset, the compare, the changed files and raw file texts at a ref."""
 
     def __init__(self, files=("src/heinzel/a.py",), rollup=None, status="ahead", head=HEAD, texts=None, ruleset=None, version="1"):
-        self.files, self.rollup, self.status, self.head = list(files), GREEN + LEGACY_RED if rollup is None else rollup, status, head
+        self.files, self.rollup, self.status, self.head = list(files), GREEN if rollup is None else rollup, status, head
         self.texts, self.ruleset, self.version = texts or {}, RULESET if ruleset is None else ruleset, version
 
     def __call__(self, *args):

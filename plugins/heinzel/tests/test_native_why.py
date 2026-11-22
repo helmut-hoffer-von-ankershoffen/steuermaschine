@@ -19,10 +19,12 @@ from steuermaschine_heinzel.toolmap import ROWS
 FIXTURES = Path(__file__).parent / "fixtures" / "why"
 REPO = "helmut-hoffer-von-ankershoffen/heinzel"
 MAIN_RUNS = [{"databaseId": 43307443399, "headSha": "f19a3782232cb24b682b3e0f5b094abb96da18fd", "attempt": 1, "status": "completed", "conclusion": "success"}]
-GREEN = [CheckState(name=n, latest="SUCCESS") for n in ("CI OK", "merge-gate", "coverage-floor")]  # the kit policy's contexts
+REQUIRED = ("CI OK", "merge-gate", "coverage-floor")  # what main's ruleset required when the fixtures were recorded
+RULES = json.dumps([{"type": "deletion"}, {"type": "required_status_checks", "parameters": {"required_status_checks": [{"context": n} for n in REQUIRED]}}])
+GREEN = [CheckState(name=n, latest="SUCCESS") for n in ("CI OK", "merge-gate", "coverage-floor")]
 
 
-def runtime_for(tmp_path, view: str, check_runs: str, queue: dict | None = None, members: bool = True, main_runs=MAIN_RUNS):
+def runtime_for(tmp_path, view: str, check_runs: str, queue: dict | None = None, members: bool = True, main_runs=MAIN_RUNS, rules: str = RULES):
     state = tmp_path / "state"
     state.mkdir(exist_ok=True)
     if queue is not None:
@@ -30,6 +32,7 @@ def runtime_for(tmp_path, view: str, check_runs: str, queue: dict | None = None,
     c = FakeCommands()
     c.on(["gh", "pr", "view"], Result(0, view))
     c.on(["gh", "api"], Result(0, check_runs))
+    c.on(["gh", "api", f"repos/{REPO}/rules/branches/main"], Result(0, rules))
     c.on(["gh", "run", "list"], Result(0, json.dumps(main_runs)))
     table = {"legacy_state_dir": str(state), **({"why_combine_members_glob": str(tmp_path / "combine-*-members.txt")} if members else {})}
     stack = stack_of(plugin)
@@ -43,7 +46,8 @@ def test_the_recorded_pr_is_explained_line_for_line_as_the_old_tool_did(tmp_path
     old = (FIXTURES / "pr-797-old.txt").read_text().splitlines()
     assert out.exit_code == 0 and out.stdout.splitlines() == [legacy.sweep(line, ROWS) for line in old], out
     assert out.stdout.splitlines()[-1] == "  WHY: not in the queue: sm queue add 797"
-    assert {tuple(argv[:3]) for argv in commands.calls} == {("gh", "pr", "view"), ("gh", "api", f"repos/{REPO}/commits/5e409527037b01f4fd7ad525bbfc13a39f37b7ae/check-runs"), ("gh", "run", "list")}
+    assert {tuple(argv[:3]) for argv in commands.calls} == {("gh", "pr", "view"), ("gh", "api", f"repos/{REPO}/commits/5e409527037b01f4fd7ad525bbfc13a39f37b7ae/check-runs"),
+                                                             ("gh", "api", f"repos/{REPO}/rules/branches/main"), ("gh", "run", "list")}
 
 
 def test_a_pr_without_the_required_checks_names_them_like_the_old_tool(tmp_path):
@@ -76,8 +80,18 @@ def test_per_name_takes_the_latest_run_and_keeps_older_failures():
     runs = [{"name": "CI OK", "status": "completed", "conclusion": "failure", "completed_at": "2026-11-12T10:00:00Z"},
             {"name": "CI OK", "status": "completed", "conclusion": "success", "completed_at": "2026-11-12T11:00:00Z"},
             {"name": "merge-gate", "status": "in_progress", "conclusion": None, "completed_at": None}]
-    assert per_name(runs) == [CheckState(name="CI OK", latest="SUCCESS", older_not_green=["FAILURE"]), CheckState(name="merge-gate", latest="IN_PROGRESS"),
-                              CheckState(name="coverage-floor", latest="MISSING")]
+    assert per_name(runs, ["CI OK", "merge-gate", "coverage-floor"]) == [
+        CheckState(name="CI OK", latest="SUCCESS", older_not_green=["FAILURE"]), CheckState(name="merge-gate", latest="IN_PROGRESS"),
+        CheckState(name="coverage-floor", latest="MISSING")]
+
+
+def test_the_required_checks_are_the_rulesets_and_a_check_it_does_not_require_is_not_shown(tmp_path):
+    rules = json.dumps([{"type": "required_status_checks", "parameters": {"required_status_checks": [{"context": "check"}, {"context": "Gate review"}]}}])
+    runs = "\n".join(json.dumps(r) for r in [{"name": "check", "status": "completed", "conclusion": "success", "completed_at": "2026-11-22T08:00:00Z"},
+                                               {"name": "coverage-floor", "status": "completed", "conclusion": "failure", "completed_at": "2026-11-22T08:00:00Z"}])
+    _, rt = runtime_for(tmp_path, (FIXTURES / "pr-797-view.json").read_text(), runs, queue={"items": []}, rules=rules)
+    doc = why_mod.PullRequestWhy.model_validate_json(invoke(rt, ["--format", "json", "why", "797"]).stdout)
+    assert [(c.name, c.latest) for c in doc.checks] == [("check", "SUCCESS"), ("Gate review", "MISSING")]
 
 
 def test_the_verdict_in_the_order_a_person_would_test_it():

@@ -61,7 +61,7 @@ ROWS = [
     ToolMapRow(tool="hz-chores", path="release after", owner="heinzel-native-queue-release", note="post-publish checklist", also=["beads triage"]),
     ToolMapRow(tool="hz-stamp", path="beads stamp", owner="heinzel-native-coord", note="release stamp on beads; the sweep after a publish is beads stamp-released", also=["beads stamp-released"]),
     ToolMapRow(tool="hz-alarm", path="alarm check", owner="heinzel-native-readonly", note="stall and failure alarms; launchd runs check too", also=["alarm ack", "alarm list", "alarm clear", "alarm raise"]),
-    ToolMapRow(tool="make screenshots", path="plugin gallery", owner="heinzel-native-ops", note="a heinzel-plugins gallery recapture: checks the target and capture script, runs it under the run lock, lists changed images, requires the privacy review"),
+    ToolMapRow(tool="make screenshots", path="plugin gallery", owner="heinzel-native-ops", note="a heinzel-plugins gallery recapture: checks the target and capture script, runs it under the run lock, lists changed images; deterministic, no agent; sm check regenerates a stale gallery and sm ship commits it"),
     ToolMapRow(tool="hz-verify-mini", path="mini verify", owner="heinzel-native-readonly", note="prove the Mini runs an accepted release", also=["release verify --mini"]),
     ToolMapRow(tool="hz-leakwatch", path="mini leakwatch check", owner="heinzel-native-status", note="report and check read; sample appends to the samples file (reviewed write; launchd calls it)", also=["mini leakwatch report", "mini leakwatch sample"]),
     ToolMapRow(tool="hz-governor", path="mini governor", owner="heinzel-native-readonly", note="agent load"),
