@@ -45,13 +45,18 @@ jobs:
           python3 bin/release_ci.py gate --sha "${{ github.event.workflow_run.head_sha }}"
       - name: Set the version (the tag is the source; no commit to main)
         if: steps.gate.outputs.release == 'true'
-        run: uv version "${{ steps.gate.outputs.version }}" --frozen
+        run: |
+          uv version "${{ steps.gate.outputs.version }}" --frozen
+          uv version --package steuermaschine-heinzel "${{ steps.gate.outputs.version }}" --frozen
       - name: Build
         if: steps.gate.outputs.release == 'true'
         run: make build
       - name: The files carry the version
         if: steps.gate.outputs.release == 'true'
-        run: ls dist | grep -q "${{ steps.gate.outputs.version }}" || { echo "::error::dist has no ${{ steps.gate.outputs.version }}"; ls dist; exit 1; }
+        run: |
+          for name in steuermaschine steuermaschine_heinzel; do
+            ls dist | grep -q "^${name}-${{ steps.gate.outputs.version }}[-.]" || { echo "::error::dist has no ${name} ${{ steps.gate.outputs.version }}"; ls dist; exit 1; }
+          done
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: steps.gate.outputs.release == 'true'
         with:

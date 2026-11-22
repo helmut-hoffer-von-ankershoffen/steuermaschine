@@ -102,6 +102,36 @@ def latest_receipt(state_dir: Path) -> dict[str, Any] | None:
     return None
 
 
+def vtuple(version: str) -> tuple[int, ...]:
+    return tuple(int(x) for x in version.split("."))
+
+
+def all_receipts(state_dir: Path) -> list[dict[str, Any]]:
+    """Every receipt, the highest version first."""
+    try:
+        names = [p.name[1:-5] for p in receipt_dir(state_dir).iterdir() if re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+\.json", p.name)]
+    except OSError:
+        return []
+    found = (read_receipt(state_dir, v) for v in sorted(names, key=vtuple, reverse=True))
+    return [d for d in found if d is not None]
+
+
+def superseded_by(state_dir: Path, data: dict[str, Any] | None) -> dict[str, Any] | None:
+    """The receipt of a newer version that has a build assigned, when `data` is a NOT-CLEAN one that it replaces; else None."""
+    if not data or data.get("clean") or data.get("running"):
+        return None
+    mine = vtuple(str(data.get("version")))
+    return next((d for d in all_receipts(state_dir) if vtuple(str(d["version"])) > mine and d.get("build") and (d.get("clean") or d.get("running"))), None)
+
+
+def superseded_line(state_dir: Path) -> str:
+    """`ios: v0.9.54 NOT-CLEAN superseded by v0.9.55 build 7`, for the newest older NOT-CLEAN receipt that a newer build replaced; else empty."""
+    for data in all_receipts(state_dir):
+        if (newer := superseded_by(state_dir, data)) is not None:
+            return f"ios: v{data['version']} NOT-CLEAN superseded by v{newer['version']} build {newer['build']}"
+    return ""
+
+
 def summary(data: dict[str, Any] | None) -> str:
     """One line for `sm release status` and `sm why`; empty before the first run."""
     if not data:

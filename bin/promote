@@ -170,7 +170,10 @@ mkdir -p "$HOME/.local/bin"
 ln -sfn "$stable/bin/sm" "$HOME/.local/bin/sm"
 loops="$(grep -lE "steuermaschine-stable|\.local/bin/sm<|/sm</string>" "$HOME"/Library/LaunchAgents/*.plist 2>/dev/null)"
 if [ -n "$loops" ]; then
-  say "loops that run sm (a --loop daemon ends by itself at its next tick and is restarted; to restart now):"
-  for f in $loops; do say "    launchctl kickstart -k gui/$(id -u)/$(basename "$f" .plist)"; done
+  say "loops that run sm: restarting them on the new release"
+  for f in $loops; do
+    label="$(basename "$f" .plist)"
+    if launchctl kickstart -k "gui/$(id -u)/$label" >/dev/null 2>&1; then say "    kickstarted $label"; else say "    could not kickstart $label (launchctl kickstart -k gui/$(id -u)/$label)"; fi
+  done
 fi
 say "LIVE: $id   (previous: $(readlink "$stable/previous" 2>/dev/null || echo none); undo with bin/rollback)"

@@ -6,6 +6,7 @@ After a run the subject journals follow the working files (journal_view.mirrored
 
 from __future__ import annotations
 
+import contextlib
 import inspect
 import re
 from typing import Any
@@ -14,11 +15,14 @@ from steuermaschine.engine import Refuse, Wait
 from steuermaschine.helpdoc import H
 from steuermaschine.native import native
 
+from . import release_ios
+from .coord_lib import journal
 from .go import world
 from .journal_view import mirrored
 from .release import ReleaseRun, release_resume
 
 VERSION = re.compile(r"(\d+)\.(\d+)\.(\d+)")
+GAP_EXITS = (1, 70)  # a refusal or a tool error: the driver writes the `sm gap` note itself
 WORDS = ("patch",)  # the unfinished release, else the next patch: the runner resolves it
 
 
@@ -68,7 +72,29 @@ def release_drive(**options: Any) -> ReleaseRun:
         except Refuse:
             in_flight = ""
         guard(version, rows, in_flight)
-    return release_resume(**options)
+    try:
+        done = release_resume(**options)
+    except Refuse as refusal:
+        if refusal.code in GAP_EXITS:
+            gap_note(version, refusal.code, refusal.message)
+        raise
+    except Exception as error:  # a tool error ends with exit 70: the gap is written before it propagates
+        gap_note(version, 70, f"{type(error).__name__}: {str(error)[:200]}")
+        raise
+    if not isinstance(done, ReleaseRun):  # the train's stand-ins and tests hand back other shapes: nothing to add
+        return done
+    if done.exit == 0 and done.finished and done.accepted and not done.ios:
+        done.ios = release_ios.after_accepted(world(), done.version)  # the iOS build of the version just released is a tail stage
+    if done.exit in GAP_EXITS:
+        gap_note(version, done.exit, done.stopped or next((line for line in reversed(done.lines) if line.strip()), "no reason shown"))
+    return done
+
+
+def gap_note(version: str, code: int, reason: str) -> None:
+    """What `sm note` does: one line `sm gap: ...` in the log of the day. It never raises: the run's own exit stays."""
+    text = " ".join(f"sm gap: `sm release {version}` exited {code}: {reason}".split())
+    with contextlib.suppress(Exception):
+        journal.note(text)
 
 
 release_drive.__signature__ = inspect.signature(release_resume, eval_str=True)  # type: ignore[attr-defined]  # every option of `release resume`
@@ -76,7 +102,9 @@ release_drive.__annotations__ = {name: p.annotation for name, p in release_drive
 release_drive = native("release drive", writes=True, help=H(
     "Release one version: the release driver of `sm release VERSION`, with a guard against a mistyped version.",
     "Use when you type `sm release VERSION`; the release train calls `sm release resume`, which has no guard.",
-    "what `sm release resume` changes: the freeze, the release PR and its merge, the tag, PyPI, compose and acceptance.",
+    "what `sm release resume` changes: the freeze, the release PR and its merge, the tag, PyPI, compose, acceptance and the iOS build (TestFlight).",
     "sm release 0.9.55 --live", "sm why 0.9.55",
     "VERSION must be X.Y.Z or `patch`, and the release in flight, the latest release or the next patch or minor after it;\n"
-    "anything else refuses with exit 2 before anything runs. Every option of `sm release resume` works here."))(mirrored(release_drive))
+    "anything else refuses with exit 2 before anything runs. Every option of `sm release resume` works here.\n"
+    "After ACCEPTED it runs the iOS stage for that version (NOT-CLEAN is an alarm, never an un-publish). Exit 75: a fact is\n"
+    "not true yet (the wheel asset or PyPI), run the same command again. Every exit 1 or 70 writes its own `sm gap` note."))(mirrored(release_drive))

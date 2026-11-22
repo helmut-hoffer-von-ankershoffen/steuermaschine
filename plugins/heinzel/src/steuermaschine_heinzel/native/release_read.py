@@ -105,7 +105,8 @@ def release_status(line: bool = typer.Option(False, "--line", help="One line for
 
     chain = chain_status(github().gh)
     running = any(" in_progress" in text or " queued" in text or " waiting" in text for text in chain[:1])
-    tests = ios.summary(ios.latest_receipt(statedir.dashboard_dir(conf())))
+    ios_dir = statedir.dashboard_dir(conf())
+    tests = "; ".join(filter(None, [ios.summary(ios.latest_receipt(ios_dir)), ios.superseded_line(ios_dir)]))
     if not summary.get("active"):
         if line:
             return ReleaseStatus(active=running, ci_chain=chain, ios=tests, lines=chain[:1] if running else [])
