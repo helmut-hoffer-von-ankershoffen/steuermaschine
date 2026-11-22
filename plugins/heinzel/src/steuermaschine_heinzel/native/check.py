@@ -20,12 +20,12 @@ from steuermaschine import USAGE, verdicts
 from steuermaschine.engine import Refuse
 from steuermaschine.helpdoc import H
 from steuermaschine.native import native, runtime
-from steuermaschine.preflight import SKIP, PreflightReport
+from steuermaschine.preflight import SKIP, PreflightReport, Step
 
 from . import affected, lock
 from . import preflight as _preflight
 from .affected_lib import select
-from .check_lib import cheap, queue
+from .check_lib import budget, cheap, slots
 from .preflight_lib import head
 
 SUMMARY_KIND = "heinzel.check.summary"  # state store: the last report per head, green or not, keyed by the commit
@@ -44,9 +44,14 @@ class HeadCheck(PreflightReport):
     changed: int = 0
     receipt: bool = False
     receipt_note: str = ""
+    deferred: str = ""  # why part of the run, or all of it, is left to CI ("": nothing is)
+    ci_must_run: list[str] = []  # what PR CI must run because it did not run here
 
     def render(self) -> list[str]:
-        return [*super().render(), f"receipt: {self.receipt_note}"]
+        out = [*super().render()]
+        if self.deferred or self.ci_must_run:
+            out.append(f"deferred to CI: {self.deferred or 'part of the run'}; CI must run: {', '.join(self.ci_must_run) or 'nothing more'}")
+        return [*out, f"receipt: {self.receipt_note}"]
 
 
 def command_of(worktree: object) -> str:
@@ -111,10 +116,15 @@ def extra_tests(sel: Path | None) -> list[str]:
     "and is stopped after 150 s. The whole unit suite, integration and e2e never run here; PR CI runs them.\n"
     "Coverage and the whole-project type checks never run here: owner decision 2026-11-21, fast local checks and CI is the\n"
     "gate (PR CI enforces 90 % coverage and whole-project mypy/pyright before merge). Types run over the changed\n"
-    "files only. Every step runs or fails: no slot (75) or a timeout (124) in any step, types included, fails, never skips.\n"
+    "files only. Every step runs, fails or is deferred to CI by name: no slot (75) or a timeout (124) of a command, types included, fails.\n"
     "A src/ change with no selected test fails. The receipt lists the steps that ran and says coverage and whole-project\n"
     "types are CI-enforced.\n"
-    "Runs queue: one sm check at a time per machine, the others wait (exit 75 after 20 minutes: run it again).\n"
+    "Slot pool: at most 4 checks run at once on a machine (a shared pool of file locks), at background priority; a run waits up\n"
+    "60 s for a slot. No slot in that time, or a 1-minute load over 30: the run is DEFERRED TO CI, exit 0, nothing ran and nothing\n"
+    "failed; the output says what CI must run and no receipt is written (run again for one).\n"
+    "Budget: the whole local run has 90 s of wall time; a step that does not start in time, and the ones after it, are deferred to CI\n"
+    "the same way, and a selection of more than 40 test files is left to CI with a receipt that names it. A type check stopped at\n"
+    "its own limit (124) or without a slot (75) still fails: only the budget defers.\n"
     "E2E lanes never run here. --sel FILE adds tests ({\"python\": [files]}).\n"
     "The receipt is bound to the commit and names the base it was measured from: any new commit needs a new run, and\n"
     "an approval needs the receipt's base to be the base the reviewed packet builds the head on. A run with --skip or\n"
@@ -137,16 +147,26 @@ def check(worktree: Path | None = typer.Argument(None, metavar="WORKTREE", help=
     default = str(_preflight.setting(rt, "preflight_base"))
     ref = base or default
     extra = extra_tests(sel)
-    with queue.queued(lock.policy(rt.settings, providers.commands, providers.clock).directory, rt.say):  # one run at a time: the rest wait
-        c = bound(rt, wt, ref, allow_full, full or allow_full)
-        try:
-            selection = affected.selection(select.Repo(wt), c.changed())
-        except select.RepoError as why:
-            raise Refuse(f"the selector of {wt} cannot be read: {why}", f"sm head select --repo {wt} --base {ref}", code=USAGE) from None
-        c.plan = cheap.plan(c, selection, extra)
-        steps, left_out, not_run = registry.run(c, set(skipped), say=rt.say)
+    c = bound(rt, wt, ref, allow_full, full or allow_full)
+    clock = providers.clock
+    with slots.pool(lock.policy(rt.settings, providers.commands, clock).directory, "check", rt.say, sleep=clock.sleep, clock=clock.now,
+                    demote=lambda: slots.lower_priority(providers.commands)) as grant:
+        if grant.granted:
+            if not (full or allow_full):  # the local run is a signal with a wall budget (check_lib/budget.py); --full is the coordinator's call
+                c.budget = budget.Budget(clock.now)
+                c.gate = budget.gated(c.budget, lambda seconds: _preflight.gated(False, False, seconds), cheap.FAST_SECONDS)
+            try:
+                selection = affected.selection(select.Repo(wt), c.changed())
+            except select.RepoError as why:
+                raise Refuse(f"the selector of {wt} cannot be read: {why}", f"sm head select --repo {wt} --base {ref}", code=USAGE) from None
+            c.plan = cheap.plan(c, selection, extra)
+            steps, left_out, not_run = registry.run(c, set(skipped), say=rt.say)
+        else:  # no slot, or a loaded machine: nothing runs here and nothing fails; the receipt line says what CI must run
+            c.plan = cheap.Plan(changed=c.changed())
+            c.deferred, c.ci = grant.deferred, [f"every check of the {len(c.plan.changed)} changed path(s): {', '.join(cheap.STEPS)}"]
+            steps, left_out, not_run = [Step(name, SKIP, f"deferred to CI: {grant.deferred}") for name in cheap.STEPS], [], []
     report = HeadCheck.of(f"sm check {c.sha[:9]} ({c.branch or 'detached'}) vs {ref} {c.base_sha[:9]}", steps, left_out, not_run, worktree=str(wt), head=c.sha,
-                          branch=c.branch, base=c.base_sha, selector=c.plan.selector, changed=len(c.plan.changed),
+                          branch=c.branch, base=c.base_sha, selector=c.plan.selector, changed=len(c.plan.changed), deferred=c.deferred, ci_must_run=c.ci,
                           generated_at=datetime.fromtimestamp(providers.clock.now()).astimezone().isoformat(timespec="seconds"))
     if not report.ready:
         report.receipt_note = "none: fix every numbered failure in one commit, then run sm check again"
@@ -154,12 +174,15 @@ def check(worktree: Path | None = typer.Argument(None, metavar="WORKTREE", help=
         report.receipt_note = f"none: {', '.join(left_out)} left out by --skip; a receipt needs every check"
     elif ref != default:  # checks measured from another base cover a part of the head: no proof of the head
         report.receipt_note = f"none: measured from --base {ref}, not from {default} (the setting preflight_base); run sm check without --base for the receipt"
+    elif c.deferred:  # a receipt is written once per commit: one that says "deferred" would keep the real check out, so none is written
+        report.receipt_note = f"none: deferred to CI ({c.deferred}); CI must run: {', '.join(c.ci)}. Run sm check again to get the receipt"
     else:
         state = verdicts.record_check(providers.store, c.sha, {"worktree": str(wt), "branch": c.branch, "base": c.base_sha, "at": providers.clock.now(), "command": report.command,
                                                                "checks": [{"name": s.name, "status": s.status, "detail": s.detail} for s in report.steps]})
         report.receipt = state in ("written", "kept")
         report.receipt_note = (f"{verdicts.CHECKS} {c.sha} ({'written' if state == 'written' else 'this commit already had one'}), measured from {c.base_sha[:12]}: "
                                "an approval of this exact commit on that base can be recorded. Steps run: " + ", ".join(s.name for s in report.steps if s.status != SKIP)
-                               + "; coverage and whole-project types did not run here: PR CI enforces them" if report.receipt else f"none that counts: {state}")
+                               + "; coverage and whole-project types did not run here: PR CI enforces them"
+                               + (f"; deferred to CI: {', '.join(c.ci)}" if c.ci else "") if report.receipt else f"none that counts: {state}")
     providers.store.save(SUMMARY_KIND, c.sha, report.model_dump(mode="json"))
     return report
