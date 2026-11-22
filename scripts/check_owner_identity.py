@@ -2,7 +2,7 @@
 """Refuse a commit whose author or committer is not the owner's identity (owner rule: every commit is the owner's).
 
     check_owner_identity.py               the author and committer git will record for the next commit (pre-commit)
-    check_owner_identity.py --pre-push    the commits being pushed that are on no remote yet (pre-push; pushed refs on stdin)
+    check_owner_identity.py --pre-push    the pushed commits that are on no remote yet (pre-push)
     check_owner_identity.py --range A..B  the commits of a range
 
 Fix a refusal with `git config user.name` and `git config user.email` in this repository (the values are printed),
@@ -52,8 +52,10 @@ def commits(rev_range: str) -> list[tuple[str, str, str]]:
 
 
 def pushed_tips(stdin_text: str) -> list[str]:
-    """The commits a push brings, from the pre-push hook's stdin (`<local ref> <local sha> <remote ref> <remote sha>` per line).
-    A deletion brings none. Without stdin (a hook runner that does not forward it): the runner's PRE_COMMIT_TO_REF, else HEAD."""
+    """The commits a push brings, from the hook's stdin: `<local ref> <local sha> <remote ref> <remote sha>` per line.
+
+    A deletion brings none. Without stdin (prek does not forward it): the runner's PRE_COMMIT_TO_REF, else HEAD.
+    """
     tips = []
     for line in stdin_text.splitlines():
         fields = line.split()
@@ -65,8 +67,10 @@ def pushed_tips(stdin_text: str) -> list[str]:
 
 
 def unpublished(tips: list[str]) -> list[tuple[str, str, str]]:
-    """The identities of every commit reachable from the tips that no remote-tracking ref has yet. A commit GitHub made
-    (`gh pr update-branch`: committer GitHub) is already on the remote, so it is never read."""
+    """The identities of every commit reachable from the tips that no remote-tracking ref has yet.
+
+    A commit GitHub made (`gh pr update-branch`: committer GitHub) is already on the remote, so it is never read.
+    """
     pairs: list[tuple[str, str, str]] = []
     for tip in tips:
         pairs += commits(f"{tip} --not --remotes")
