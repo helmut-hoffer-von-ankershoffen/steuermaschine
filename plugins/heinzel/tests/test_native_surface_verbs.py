@@ -254,3 +254,27 @@ def test_note_goes_to_the_log_of_the_day_not_the_tracking_document(tmp_path):
     out = invoke(rt, ["--format", "json", "note", "0.9.54 dropped"])
     path = Path(json.loads(out.stdout)["document"])
     assert out.exit_code == 0 and path.parent == tmp_path / "log" and "0.9.54 dropped" in path.read_text() and doc.read_text() == "# Doc\n"
+
+
+def test_the_driver_writes_its_own_gap_note_for_exit_1_and_70_and_runs_the_ios_stage_after_accepted(tmp_path, monkeypatch):
+    from steuermaschine_heinzel.native import release_drive, release_read
+    from steuermaschine_heinzel.native.release import ReleaseRun
+
+    notes, stages = [], []
+    monkeypatch.setattr(release_read, "release_status", lambda line=False: ReleaseStatus(active=False))
+    monkeypatch.setattr(release_drive.journal, "note", lambda text: notes.append(text))
+    monkeypatch.setattr(release_drive, "world", lambda: SimpleNamespace(repo="o/r", gh_json=lambda argv: [{"tagName": "v0.9.53"}]))
+    monkeypatch.setattr(release_drive.release_ios, "after_accepted", lambda w, v: stages.append(v) or ["IOS-OK"])
+    monkeypatch.setattr(release_drive, "release_resume", lambda **kw: ReleaseRun(action="resume", version="0.9.54", exit=1, stopped="compose failed"))
+    release_drive.release_drive(version="0.9.54", absorb=False)
+    assert notes == ["sm gap: `sm release 0.9.54` exited 1: compose failed"] and not stages
+    monkeypatch.setattr(release_drive, "release_resume", lambda **kw: (_ for _ in ()).throw(RuntimeError("boom")))
+    with pytest.raises(RuntimeError):
+        release_drive.release_drive(version="0.9.54", absorb=False)
+    assert notes[-1] == "sm gap: `sm release 0.9.54` exited 70: RuntimeError: boom"
+    monkeypatch.setattr(release_drive, "release_resume", lambda **kw: ReleaseRun(action="resume", version="0.9.54", exit=75, stopped="WAITING"))
+    release_drive.release_drive(version="0.9.54", absorb=False)
+    assert len(notes) == 2  # exit 75 is not a gap
+    ok = ReleaseRun(action="resume", version="0.9.54", exit=0, finished=True, accepted=True)
+    monkeypatch.setattr(release_drive, "release_resume", lambda **kw: ok)
+    assert release_drive.release_drive(version="0.9.54", absorb=False).ios == ["IOS-OK"] and stages == ["0.9.54"]

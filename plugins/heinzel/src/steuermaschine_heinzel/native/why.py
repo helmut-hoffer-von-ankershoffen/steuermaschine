@@ -185,6 +185,6 @@ def explain(w: probes.World, number: int) -> PullRequestWhy:
     return PullRequestWhy(number=number, state=str(pr.get("state") or ""), head=sha, merge_state=str(pr.get("mergeStateStatus") or ""), title=str(pr.get("title") or ""),
                           checks=checks, queue=f"{item['status']} {str(item.get('detail', ''))[:50]}" if item else "not queued", freeze=frozen, release_holds=holds,
                           main_run=main, queue_waits_on=blocked, roles=found, roles_known=known, gate_notes=notes.info,
-                          advisory_failing=notes.advisory_failing, ios=ios.summary(ios.latest_receipt(w.state_dir)), threads=found_threads, threads_unread=unread,
+                          advisory_failing=notes.advisory_failing, ios="; ".join(filter(None, [ios.summary(ios.latest_receipt(w.state_dir)), ios.superseded_line(w.state_dir)])), threads=found_threads, threads_unread=unread,
                           why=verdict(number, pr.get("state", "?"), pr.get("mergeStateStatus", "?"), checks, item, frozen, holds, main_ok, found_threads))
 

@@ -237,3 +237,38 @@ def test_parity_runs_the_lock_template_and_contract_checks_for_the_paths_each_re
     c, calls = context(tmp_path, {}, [".github/workflows/ci.yml"])
     c.plan = cheap.Plan(changed=[".github/workflows/ci.yml"])
     assert cheap.step_parity(c).detail.startswith("no path changed") and calls == []
+
+
+PYPROJECT = '[tool.mypy]\nstrict = true\nfiles = ["src"]\n\n[tool.pyright]\ninclude = ["src/", "scripts/typed.py"]\n'
+
+
+def test_the_type_checks_get_only_the_changed_files_inside_their_own_configured_scope(tmp_path):
+    """Core strict-checks src only: a changed test or script passed by name was checked anyway (mypy exit 2)."""
+    for name in ("src/heinzel/x.py", "scripts/contexts.py", "scripts/typed.py", "tests/unit/contexts_test.py"):
+        (tmp_path / name).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / name).write_text("")
+    (tmp_path / "pyproject.toml").write_text(PYPROJECT)
+    changed = ["src/heinzel/x.py", "scripts/contexts.py", "scripts/typed.py", "tests/unit/contexts_test.py"]
+    c, calls = context(tmp_path, {}, changed)
+    s = cheap.step_types(c)
+    assert not s.failures
+    assert [line for line in calls if line.startswith("uv run mypy")] == ["uv run mypy src/heinzel/x.py"]
+    assert [line for line in calls if line.startswith("uv run pyright")] == ["uv run pyright src/heinzel/x.py scripts/typed.py"]
+    assert s.detail.startswith("mypy, pyright clean over 2 changed Python file(s) in their scope")
+
+
+def test_the_type_checks_skip_when_no_changed_file_is_in_scope_and_pass_everything_without_a_scope(tmp_path):
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests/a_test.py").write_text("")
+    (tmp_path / "pyproject.toml").write_text(PYPROJECT)
+    c, calls = context(tmp_path, {}, ["tests/a_test.py"])
+    s = cheap.step_types(c)
+    assert not s.failures and "nothing to type-check here" in s.detail and not [x for x in calls if "mypy" in x or "pyright" in x]
+    (tmp_path / "pyproject.toml").write_text("[tool.mypy]\nstrict = true\n")  # no scope named: every changed file
+    c, calls = context(tmp_path, {}, ["tests/a_test.py"])
+    cheap.step_types(c)
+    assert [x for x in calls if x.startswith("uv run mypy")] == ["uv run mypy tests/a_test.py"]
+    (tmp_path / "pyproject.toml").write_text("not toml [")
+    assert cheap.typed_scope(tmp_path, "mypy") is None and cheap.typed_scope(tmp_path, "other") is None
+    c, calls = context(tmp_path, {"uv run mypy": (1, "a.py:1: error")}, ["tests/a_test.py"])
+    assert cheap.step_types(c).failures[0][0].startswith("mypy failed on the changed files (exit 1)")

@@ -291,3 +291,26 @@ def test_the_hook_never_raises_and_records_any_error(tmp_path, monkeypatch):
     assert lines == ["IOS NOT-CLEAN 0.9.53: RuntimeError: xcodebuild vanished"]
     assert m.receipt()["clean"] is False and "xcodebuild vanished" in m.receipt()["reason"]
     assert rules.ios_alarm(ios.latest_receipt(m.state), 0)["cls"] == "ALERT"
+
+
+# ----------------------------------------------------------------------------- the verbs sm calls against the recorded tool help
+def test_every_testflight_verb_sm_calls_is_in_the_recorded_help():
+    """tests/fixtures/testflight-help.txt is `testflight -h` of the Core tag v0.9.54; no Core checkout is read."""
+    import inspect
+    import re
+
+    helptext = (Path(__file__).parent / "fixtures" / "testflight-help.txt").read_text()
+    offered = set(re.search(r"\{([a-z,]+)\}", helptext)[1].split(","))
+    source = inspect.getsource(ios)
+    called = set(re.findall(r"testflight\(\s*\"([a-z]+)\"", source)) | set(re.findall(r"\.testflight\(\s*\"([a-z]+)\"", source))
+    assert {"status", "assign", "beta", "notes", "upload"} <= called  # the scan sees every verb the step uses
+    assert called <= offered, f"sm calls testflight verbs the tool does not have: {sorted(called - offered)}"
+
+
+def test_an_older_not_clean_is_superseded_once_a_newer_build_is_assigned(tmp_path):
+    state = tmp_path / "state"
+    ios.write_receipt(state, ios.IosResult(version="0.9.54", reason="stuck"), 1.0)
+    assert ios.superseded_line(state) == ""
+    ios.write_receipt(state, ios.IosResult(version="0.9.55", build="33", clean=True, beta="IN_BETA_TESTING"), 2.0)
+    assert ios.superseded_line(state) == "ios: v0.9.54 NOT-CLEAN superseded by v0.9.55 build 33"
+    assert ios.superseded_by(state, ios.read_receipt(state, "0.9.55")) is None

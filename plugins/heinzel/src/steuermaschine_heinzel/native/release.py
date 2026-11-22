@@ -30,7 +30,7 @@ from steuermaschine.models import Model
 from steuermaschine.native import native, runtime
 from steuermaschine.protocols import Busy
 
-from . import mini, release_ios
+from . import mini, release_ios, release_stages
 from .go import world
 from .queue_lib import hzlib
 from .release_lib.binding import moved
@@ -249,6 +249,8 @@ def release_resume(
     if live and done.exit == 0 and done.finished and done.accepted:
         proof = mini.update(world(), done.version)
         done.live, done.exit = proof.render(), proof.exit_code
+        if proof.live:
+            release_stages.mark_live(world().state_dir, done.version, world().now())
         done.ios = release_ios.after_accepted(world(), done.version)
     return done
 
