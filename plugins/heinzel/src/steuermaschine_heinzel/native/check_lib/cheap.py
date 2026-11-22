@@ -31,7 +31,9 @@ from __future__ import annotations
 import json
 import re
 import shlex
+import tomllib
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from steuermaschine.preflight import FAIL, SKIP, Preflight, Step
@@ -303,6 +305,32 @@ def step_tests(c: Ctx) -> Step:
     return s
 
 
+SCOPE_KEYS = {"mypy": ("mypy", "files"), "pyright": ("pyright", "include")}
+"""Where each type checker's own configuration names what it checks: an explicit file list overrides that scope."""
+
+
+def typed_scope(wt: Path, name: str) -> list[str] | None:
+    """The paths the project's configuration has `name` check (pyproject.toml `[tool.mypy] files`, `[tool.pyright]
+    include`); None when it names none, or the configuration cannot be read (then every changed file is passed)."""
+    if name not in SCOPE_KEYS:
+        return None
+    try:
+        tool = tomllib.loads((wt / "pyproject.toml").read_text(encoding="utf-8")).get("tool", {})
+    except (OSError, tomllib.TOMLDecodeError):
+        return None
+    section, key = SCOPE_KEYS[name]
+    found = tool.get(section, {}).get(key)
+    paths = [found] if isinstance(found, str) else found
+    return [str(path).rstrip("/") for path in paths] if isinstance(paths, list) and paths else None
+
+
+def in_scope(files: list[str], scope: list[str] | None) -> list[str]:
+    """The files inside the checker's own scope: passed by name, a file outside it would be checked anyway."""
+    if scope is None:
+        return files
+    return [f for f in files if any(f == root or f.startswith(root + "/") for root in scope)]
+
+
 def step_types(c: Ctx) -> Step:
     """The hook's type checks over the changed Python files only (PR CI's lint job runs them over the whole project:
     an owner decision, 2026-11-21). A gating step: a command with no slot (75) or at its time limit (124) FAILS, so a busy
@@ -319,17 +347,25 @@ def step_types(c: Ctx) -> Step:
     commands, read = head.hook_types(c.wt)
     if not read:
         s.warn(f"could not read TYPES from {head.HOOK_SCRIPT}: the default mypy and pyright commands ran")
+    checked, typed = [], set()
     for name, cmd in commands:
-        rc, out = c.gate([*cmd, *files], cwd=c.wt)
+        scoped = in_scope(files, typed_scope(c.wt, name))
+        if not scoped:
+            continue  # nothing it would check over the project changed: it checks none of these files either
+        checked.append(name)
+        typed.update(scoped)
+        rc, out = c.gate([*cmd, *scoped], cwd=c.wt)
         if rc in (75, TIMED_OUT):
             s.fail(f"{name} {'got no slot' if rc == 75 else 'ran out of time'} (exit {rc}): the type check did not run",
                    NO_SLOT if rc == 75 else "run sm check again when the machine is less busy; a type check that did not run is never a pass")
         elif rc != 0:
             log = c.log(name, out)
             s.fail(f"{name} failed on the changed files (exit {rc}){'; log ' + log if log else ''}\n{head.tail(out)}",
-                   f"fix the reported errors (`{' '.join([*cmd, *files])}` reproduces; pyright reportPrivateUsage: no access to a `_name` of another module)")
-    if s.status != FAIL:
-        s.detail = f"{', '.join(name for name, _ in commands)} clean over {len(files)} changed Python file(s); the whole project is PR CI's job"
+                   f"fix the reported errors (`{' '.join([*cmd, *scoped])}` reproduces; pyright reportPrivateUsage: no access to a `_name` of another module)")
+    if s.status != FAIL and not checked:
+        s.detail = f"no changed Python file is in the type checkers' configured scope ({len(files)} outside it): nothing to type-check here"
+    elif s.status != FAIL:
+        s.detail = f"{', '.join(checked)} clean over {len(typed)} changed Python file(s) in their scope; the whole project is PR CI's job"
     return s
 
 
