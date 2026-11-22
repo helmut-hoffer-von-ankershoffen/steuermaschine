@@ -1190,7 +1190,7 @@ def plan_guard(item: dict, earlier, refusal: list[str]):
     def guard() -> bool:
         if earlier is not None and not earlier():
             return False
-        reason = main_plan.gap(item["pr"], item.get("reviewed_head") or item.get("guarded_head") or "")  # the pin that merges
+        reason = main_plan.gap(item["pr"], item.get("reviewed_head") or item.get("guarded_head") or "", bool(item.get("gate_decides")))  # the pin that merges
         if reason:
             refusal[:] = [reason]
         return not reason
@@ -1667,7 +1667,7 @@ def add(args) -> int:
             hzlib.note(f"sm queue: {key if repo != hzlib.CORE else '#' + key} queued past the diff guard ({what}), "
                        + ("the CI Gate review decides" if gate_decides else f"reviewed: {reviewed}"))
         queued = [i for i in queued if i["key"] != key]
-        queued.append({"key": key, "repo": repo, "pr": number, "after": after, "status": "queued", "detail": "", "reruns": 0, "noted": "", "added": int(time.time()), "fixes_main": bool(getattr(args, "fixes_main", False)), "diagnostics_main": diagnostics, "safety_fix_main": safety_fix, "mitigation_main": mitigation, "mitigation_evidence": evidence, "reviewed_progress_main": progress, "progress_anchor": progress_anchor, "reviewed_head": reviewed_head, "guarded_head": guarded_head, "bead": (getattr(args, "bead", "") or "").strip()})
+        queued.append({"key": key, "repo": repo, "pr": number, "after": after, "status": "queued", "detail": "", "reruns": 0, "noted": "", "added": int(time.time()), "fixes_main": bool(getattr(args, "fixes_main", False)), "diagnostics_main": diagnostics, "safety_fix_main": safety_fix, "mitigation_main": mitigation, "mitigation_evidence": evidence, "reviewed_progress_main": progress, "progress_anchor": progress_anchor, "reviewed_head": reviewed_head, "guarded_head": guarded_head, "bead": (getattr(args, "bead", "") or "").strip(), "gate_decides": gate_decides})
         print(f"queued {key}" + (f" after {', '.join(after)}" if after else ""))
     if queued:
         with state_lock():
@@ -1802,7 +1802,7 @@ def why() -> int:
              if i.get("status") == "needs work" and str(i.get("detail", "")).startswith(main_plan.PREFIX)]
     for item in data["items"]:  # bead q9kh: a queued core PR whose merge would land a tree without a plan
         if item.get("status") == "queued" and item.get("repo") == hzlib.CORE:
-            if reason := main_plan.gap(item["pr"], item.get("reviewed_head", "")):
+            if reason := main_plan.gap(item["pr"], item.get("reviewed_head", ""), bool(item.get("gate_decides"))):
                 stale.append((item["key"], reason))
     for key, reason in stale:
         print(f"item {key}: {reason}")

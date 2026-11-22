@@ -95,10 +95,32 @@ def _verdict(head: str, blobs: dict[str, str]) -> str:
     return ""
 
 
-def gap(pr: str, head: str = "") -> str:
+GATE_WORKFLOW = ".github/workflows/gate-review.yml"
+
+
+def gate_review_genuine(head: str) -> bool:
+    """Whether the `Gate review` on HEAD is the real one: an app check run of github-actions whose workflow run is the base
+    branch's gate-review.yml on pull_request_target for exactly this head, green (the way bin/release_ci.py reads it). A
+    required check is matched by name, and a PR that edits the workflows can add a job of that name: that one never counts."""
+    runs = hzlib.ghj("api", f"repos/{hzlib.CORE}/commits/{head}/check-runs?per_page=100", default={})
+    mine = [r for r in (runs.get("check_runs", []) if isinstance(runs, dict) else [])
+            if isinstance(r, dict) and r.get("name") == ruleset.GATE_REVIEW and (r.get("app") or {}).get("slug") == "github-actions"]
+    if not mine:
+        return False
+    latest = max(mine, key=lambda r: int(r.get("id", 0)))
+    suite = (latest.get("check_suite") or {}).get("id")
+    if latest.get("conclusion") != "success" or not suite:
+        return False
+    found = hzlib.ghj("api", f"repos/{hzlib.CORE}/actions/runs?check_suite_id={suite}", default={})
+    return any(isinstance(w, dict) and w.get("path") == GATE_WORKFLOW and w.get("event") == "pull_request_target"
+               and w.get("head_sha") == head and w.get("conclusion") == "success"
+               for w in (found.get("workflow_runs", []) if isinstance(found, dict) else []))
+
+
+def gap(pr: str, head: str = "", gate_decides: bool = False) -> str:
     """'' when the merge rule holds for the pinned head of PR, else the refusal reason (always starting with PREFIX).
-    The recorded verdict for protected paths is never skipped: a required check is matched by name, and a PR that edits
-    the workflows can add a job of that name."""
+    The recorded verdict for protected paths is skipped only for a genuine CI Gate review green on the head (gate_review_genuine);
+    GATE_DECIDES marks a queue entry whose diff-guard flag was left to that review: without it the PR is refused here."""
     try:
         info = hzlib.ghj("pr", "view", pr, "-R", hzlib.CORE, "--json", "headRefOid,statusCheckRollup", default={}) or {}
         current = info.get("headRefOid", "") if isinstance(info, dict) else ""
@@ -132,7 +154,10 @@ def gap(pr: str, head: str = "") -> str:
             found.add("pyproject.toml")
     except Exception as error:  # noqa: BLE001 - fail closed: every error is a named refusal
         return f"{PREFIX}: cannot check #{pr}: {error}"
-    if found and ruleset.GATE_REVIEW in required:  # the CI Gate review is required and green on this head (above): it alone decides
+    genuine = ruleset.GATE_REVIEW in required and gate_review_genuine(head)  # required and green by name above; here, from the real workflow
+    if gate_decides and not genuine:
+        return f"{PREFIX}: #{pr} ({head[:8]}): the diff guard flagged it and the CI Gate review is not the base branch's gate-review.yml run green on this head"
+    if found and genuine:
         return ""
     if found and (reason := _verdict(head, {name: changed[name] for name in found})):
         return f"{PREFIX}: #{pr} ({head[:8]}): {reason}"

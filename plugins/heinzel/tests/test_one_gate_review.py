@@ -6,6 +6,7 @@ or cannot be read, the local review stays (the other tests of the stop and the g
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from test_native_queue_merge_rule import GREEN, RULESET, World, gap  # noqa: F401 - gap is a fixture
@@ -19,7 +20,7 @@ from test_native_ship_commands import (  # noqa: F401 - fixtures
 from test_pipeline_head_admit import HEAD, DiffCommands, context, native, runtime
 
 from steuermaschine.testing import invoke
-from steuermaschine_heinzel.native.queue_lib import ruleset
+from steuermaschine_heinzel.native.queue_lib import hzlib, main_plan, ruleset
 from steuermaschine_heinzel.native.ship import HeadResult
 from steuermaschine_heinzel.pipelines import common, head_admit
 
@@ -88,7 +89,44 @@ def test_the_merge_rule_refuses_while_gate_review_is_missing_or_red_on_the_head(
     assert "required checks not green: Gate review" in red
 
 
-def test_the_merge_rule_needs_no_local_verdict_when_gate_review_is_green_on_the_head(gap):  # noqa: F811
-    files = ["src/heinzel/a.py", ".github/workflows/ci.yml"]
-    assert gap(World(files=files, ruleset=GATE_RULESET, rollup=[*GREEN, check("Gate review", "SUCCESS")])) == ""
-    assert "no verdict is recorded" in gap(World(files=files))  # the ruleset without Gate review: the local verdict stays
+class GateWorld(World):
+    """A World that also answers the check runs of the head and the workflow runs of a check suite."""
+
+    def __init__(self, *args, workflow=".github/workflows/gate-review.yml", event="pull_request_target", slug="github-actions", **kw):
+        super().__init__(*args, **kw)
+        self.workflow, self.event, self.slug = workflow, event, slug
+
+    def __call__(self, *args):
+        text = " ".join(args)
+        if "/check-runs" in text:
+            return 0, json.dumps({"check_runs": [{"id": 5, "name": "Gate review", "conclusion": "success", "app": {"slug": self.slug}, "check_suite": {"id": 9}}]})
+        if "actions/runs?check_suite_id=9" in text:
+            return 0, json.dumps({"workflow_runs": [{"path": self.workflow, "event": self.event, "head_sha": self.head, "conclusion": "success"}]})
+        return super().__call__(*args)
+
+
+FILES = ["src/heinzel/a.py", ".github/workflows/ci.yml"]
+SEEN = [*GREEN, check("Gate review", "SUCCESS")]
+
+
+def test_the_merge_rule_needs_no_local_verdict_when_the_real_gate_review_is_green_on_the_head(gap):  # noqa: F811
+    assert gap(GateWorld(files=FILES, ruleset=GATE_RULESET, rollup=SEEN)) == ""
+    assert "no verdict is recorded" in gap(World(files=FILES))  # the ruleset without Gate review: the local verdict stays
+
+
+def test_a_gate_review_job_the_pull_request_added_itself_does_not_replace_the_verdict(gap):  # noqa: F811
+    for forged in (GateWorld(files=FILES, ruleset=GATE_RULESET, rollup=SEEN, workflow=".github/workflows/ci.yml"),
+                   GateWorld(files=FILES, ruleset=GATE_RULESET, rollup=SEEN, event="pull_request"),
+                   GateWorld(files=FILES, ruleset=GATE_RULESET, rollup=SEEN, slug="some-app"),
+                   World(files=FILES, ruleset=GATE_RULESET, rollup=SEEN)):  # no such check run at all
+        assert "no verdict is recorded" in gap(forged)
+
+
+def test_a_flagged_pr_left_to_gate_review_merges_only_on_the_real_one(monkeypatch, tmp_path, real_main_plan):  # noqa: F811
+    rt = runtime(tmp_path)
+    for world, expected in ((GateWorld(ruleset=GATE_RULESET, rollup=SEEN), ""),
+                            (GateWorld(ruleset=GATE_RULESET, rollup=SEEN, event="pull_request"), "not the base branch's gate-review.yml")):
+        monkeypatch.setattr(hzlib, "gh", world)
+        with native(rt):
+            reason = main_plan.gap("803", "a" * 40, True)
+        assert (reason == "") if not expected else (expected in reason), reason

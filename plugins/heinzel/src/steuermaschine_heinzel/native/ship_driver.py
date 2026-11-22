@@ -190,7 +190,7 @@ def open_elsewhere(rt: Any, worktree: str, repo: str, live: bool, given: dict[st
     "merge rule (main an ancestor of a Core head, the protected-path verdict) and the red-main hold pass, one Core PR at a time; a red main is reverted.\n"
     "steuermaschine and heinzel-management have no queue entry: their PR merges when its required checks are green.\n"
     "No packet, no plan slot: Core's CI runs the full matrix on every PR. The one blocking review of a gate-touching change is CI's\n"
-    "`Gate review` check where main's ruleset requires it: sm prints \"gate paths changed: CI Gate review decides\", pushes, opens the\n"
+    "`Gate review` check where main's ruleset requires it: it says \"gate paths changed: CI Gate review decides\", pushes, opens the\n"
     "PR and queues it, and the queue merges only with every required check, Gate review included, green on the exact head.\n"
     "Only in a repository whose ruleset does not require Gate review does sm keep its local review: a head that changes .github/,\n"
     "the release, publish, PyPI or acceptance scripts, quarantine.toml, the coverage config or a conftest.py stops with a digest\n"
