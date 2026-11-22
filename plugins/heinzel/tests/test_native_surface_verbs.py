@@ -12,7 +12,7 @@ from coord_kit import app_runtime
 from steuermaschine.engine import Refuse
 from steuermaschine.protocols import Result
 from steuermaschine.testing import FakeCommands, invoke
-from steuermaschine_heinzel.native import alarm, ci_ops, ci_read, ship, ship_driver, why_subject
+from steuermaschine_heinzel.native import alarm, ci_ops, ci_read, plugin_gallery, ship, ship_driver, why_subject
 from steuermaschine_heinzel.native.alarm import AlarmRow, Alarms
 from steuermaschine_heinzel.native.ci_read import CiWhy
 from steuermaschine_heinzel.native.queue import QueueWhy
@@ -97,6 +97,7 @@ def test_ship_of_another_repository_opens_its_pr_through_the_old_route(tmp_path,
     c.on(["git", "-C", "/wt", "remote", "get-url", "origin"], Result(0, "git@github.com:helmut-hoffer-von-ankershoffen/heinzel-plugins.git\n"))
     c.on(["git", "-C", "/wt", "log", "--no-merges", f"--format=%s{prepare.FIELD}%b{prepare.RECORD}", "origin/main..HEAD"],
          Result(0, f"fix(audio): louder{prepare.FIELD}{prepare.RECORD}"))  # the commits of the branch: the title is derived from them
+    c.on([*plugin_gallery.FROZEN, "screenshots-check", "--all", "--json"], Result(0, '{"ok": true, "fresh": [], "stale": [], "failed": []}\n'))  # every gallery fresh
     seen = []
     monkeypatch.setattr(ship, "head_pr", lambda **kw: seen.append(kw) or HeadResult(action="pr", target="x", verdict="queued", lines=["opened PR #38"]))
     out = invoke(app_runtime(tmp_path, c), ["--format", "json", "ship", "/wt", "--live", "--set", "bead=abc"])
