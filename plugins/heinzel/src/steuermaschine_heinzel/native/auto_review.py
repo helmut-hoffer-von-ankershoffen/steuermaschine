@@ -38,7 +38,7 @@ MARK = re.compile(r"^sm-review head=([0-9a-f]{40})\b.*$", re.M)
 VERDICT = re.compile(r"^VERDICT:\s*(APPROVE|REJECT)\b", re.M)
 TRAILER = re.compile(r"^Co-Authored-By:\s*(.+?)\s*(?:<[^>]*>)?\s*$", re.M | re.I)
 FAMILIES = ("opus", "sonnet", "haiku", "fable", "gpt", "codex")
-ALLOWED_TOOLS = "Read,Grep,Glob"
+NO_TOOLS = ""  # `--tools ""`: the reviewer gets no tool at all, so an injected diff cannot make it read local files
 DENIED_TOOLS = "Edit,Write,MultiEdit,NotebookEdit,Bash,WebFetch,WebSearch,Task"
 PERMISSION_MODE = "dontAsk"  # anything not allowed is denied; never the user's defaultMode (auto)
 DIFF_LIMIT = 200_000  # bytes of diff given to the reviewer; a larger one is not reviewed by an agent
@@ -54,6 +54,7 @@ class AutoReviewSettings(BaseModel):
     review_models: dict[str, str] = Field({"opus": "sonnet", "sonnet": "opus", "haiku": "opus", "": "opus"},
                                           description="Author model family -> reviewer model: always a different one (a mapping to the same family is refused). The empty key is for an author that is not recognized.")
     review_comment_authors: list[str] = Field(["helmut-hoffer-von-ankershoffen"], description="GitHub logins whose `sm-review` comment counts as a recorded review (GATE_REVIEW_CREATORS): the owner's login, under which `sm review dispatch` posts.")
+    auto_queue_authors: list[str] = Field(["helmut-hoffer-von-ankershoffen"], description="GitHub logins whose pull requests `sm queue auto` acts on; the repositories are public and need no approval, so a green PR of anyone else is never queued or merged by it.")
     review_max_per_pass: int = Field(3, ge=1, description="At most this many headless reviews start in one `sm queue auto` pass.")
     review_max_per_day: int = Field(10, ge=1, description="At most this many headless reviews start per day (UTC).")
     review_max_attempts: int = Field(2, ge=1, description="A head whose reviews end without a verdict this many times is given up on, and an alarm names it.")
@@ -201,7 +202,7 @@ def settings_of(w: Any) -> AutoReviewSettings:
 @native("review dispatch", writes=True, help=H(
     "Start an independent headless reviewer for a gate-touching PR and post its verdict on the exact head.",
     "Use when `sm queue auto` or `sm why PR` says a PR needs a review; it runs by itself in the auto-queue.",
-    "with --live: one headless agent run (no tools that write; the diff is in the prompt), one comment on the PR, and the attempt and day counters; without it: only what would run.",
+    "with --live: one headless agent run (no tools at all; the diff is in the prompt), one comment on the PR, and the attempt and day counters; without it: only what would run.",
     "sm review dispatch 931 --live", "sm queue auto --live  (reads the verdict from the comment and queues an approved PR)",
     "A PR needs a review when the diff guard flags it or it changes CI. The reviewer model is another family than every author's\n"
     "(trailers of all the PR's commits): Opus for a Sonnet author, Sonnet for an Opus author (setting review_models, which refuses a mapping to\n"
@@ -254,7 +255,7 @@ def run_review(rt: Any, out: Dispatched, settings: AutoReviewSettings, full: str
             if diff.rc or not diff.out.strip() or len(diff.out) > DIFF_LIMIT:
                 out.note = "the diff is unreadable or larger than the reviewer is given; review it by hand"
                 return out
-            argv = [*settings.review_agent_command, "--model", out.reviewer_model, "--permission-mode", PERMISSION_MODE, "--allowedTools", ALLOWED_TOOLS,
+            argv = [*settings.review_agent_command, "--model", out.reviewer_model, "--permission-mode", PERMISSION_MODE, "--tools", NO_TOOLS,
                     "--disallowedTools", DENIED_TOOLS, brief(full, number, out.head, out.reasons, diff.out)]
             with tempfile.TemporaryDirectory(prefix="sm-review-") as scratch:
                 res = commands.run(argv, cwd=scratch, timeout=float(settings.review_agent_timeout_seconds))

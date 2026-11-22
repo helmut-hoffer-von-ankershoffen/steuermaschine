@@ -101,10 +101,11 @@ def hold_reason(w: Any, repo_full: str, number: int) -> str:
 
 
 @native("queue auto", writes=True, help=H(
-    "Queue every ready pull request of every repository: CI ok, Sonar ok, no open thread, a recorded review when it touches a gate.",
+    "Queue every ready pull request of the allowed authors: CI ok, Sonar ok, no open thread, a review if gated.",
     "Use when green pull requests wait to be checked and queued by hand; run it each tick.",
     "with --live: queue entries (Core, plugins, acme), a squash merge in a repository without a queue, and with --dispatch a headless reviewer run and its comment; without --live: only the list.",
     "sm queue auto --live --dispatch", "sm queue list; sm why N for a pull request it skipped",
+    "Only PRs of auto_queue_authors (default: the owner) are acted on; a public repository needs no approval.\n"
     "A PR that touches a gate (diff guard flag, CI change) is queued only with an APPROVE comment of `sm review dispatch` for exactly its head. --dispatch starts that\n"
     "review when none is recorded. A merge freeze or a hold in the action table keeps the PR where it is; the queue hold stops the whole pass."))
 def queue_auto(live: bool = typer.Option(False, "--live", help="Queue and merge; without it only list what would happen."),
@@ -152,6 +153,8 @@ def handle(rt: Any, w: Any, module: Any, owner: str, pr: prtable.PrRow, mode: tu
         return AutoRow(repo=pr.repo, number=pr.number, action=action, why=why)
 
     full = f"{owner}/{pr.repo}"
+    if pr.author.lower() not in {a.lower() for a in settings.auto_queue_authors}:
+        return row("idle", f"author {pr.author} is not on auto_queue_authors")  # a public repository: a green PR of anyone else is not ours to merge
     if bad := eligible(pr):
         return row("idle", bad)
     words = queue_words(pr.repo, pr.number, owner)

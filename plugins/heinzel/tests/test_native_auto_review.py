@@ -85,9 +85,9 @@ def test_live_dispatch_runs_the_other_model_read_only_and_posts_the_verdict(gate
     done = area.Dispatched.model_validate_json(out.stdout)
     assert out.exit_code == 0 and done.posted and done.verdict == "APPROVE" and done.reviewer_model == "opus" and done.author_model == "sonnet"
     run = next(c for c in gh.calls if c[0] == "claude")
-    assert run[run.index("--permission-mode") + 1] == "dontAsk" and run[run.index("--allowedTools") + 1] == "Read,Grep,Glob"
+    assert run[run.index("--permission-mode") + 1] == "dontAsk" and run[run.index("--tools") + 1] == "" and "--allowedTools" not in run
     denied = run[run.index("--disallowedTools") + 1].split(",")
-    assert {"Edit", "Write", "Bash"} <= set(denied) and "+timeout: 99" in run[-1]  # the diff is in the prompt, no tool reads anything else
+    assert {"Edit", "Write", "Bash"} <= set(denied) and "+timeout: 99" in run[-1]  # no tool at all: the diff is in the prompt
     posted = next(c for c in gh.calls if c[:3] == ["gh", "pr", "comment"])
     assert posted[3] == "5" and "--body-file" in posted
 

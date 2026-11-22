@@ -17,7 +17,7 @@ OWNER = REPO.split("/")[0]
 
 
 def row(**over):
-    base = dict(repo="heinzel", number=7, title="t", state="CLEAN", ci="ok", sonar="ok", threads=0, author="a", head=HEAD)
+    base = dict(repo="heinzel", number=7, title="t", state="CLEAN", ci="ok", sonar="ok", threads=0, author=OWNER, head=HEAD)
     return prtable.PrRow(**{**base, **over})
 
 
@@ -147,3 +147,11 @@ def test_a_second_pass_is_refused_while_one_runs(world_of_prs):
     with rt.providers.store.lock(area.PASS_LOCK):
         out = invoke(rt, ["queue", "auto", "--live"])
     assert out.exit_code == 1 and "another `sm queue auto` pass is running" in out.stderr
+
+
+def test_a_pr_of_anyone_else_is_never_acted_on(world_of_prs):
+    gh = FakeGh().on("pr merge", "")
+    rt = world_of_prs([row(repo="steuermaschine", number=9, author="a-stranger"), row(repo="steuermaschine", number=10, author=OWNER.upper())], gh)
+    out = invoke(rt, ["queue", "auto", "--live"]).stdout
+    assert "#9" not in out and "steuermaschine #10: merged" in out and [c for c in gh.lines() if c.startswith("pr merge")] == [
+        f"pr merge 10 -R {OWNER}/steuermaschine --squash --match-head-commit {HEAD}"]
