@@ -286,9 +286,11 @@ class Engine:
         try:
             with self.p.store.lock(f"{pipeline.id}.{subject.key}") if not opts.plan else _nolock():
                 return self._advance(pipeline, subject, cmd, opts, subject.facts.get("worktree", arg))
-        except Busy:
+        except Busy as busy:
+            who = f": {busy.holder}" if busy.holder else ""
             return self._end(Report(self.project, pipeline.id, subject.key, subject.label, "waiting",
-                                    "another process is advancing this subject or the run it supersedes", cmd, "that process to finish", exit_code=WAITING))
+                                    f"another process is advancing this subject or the run it supersedes{who}", cmd,
+                                    "that process to finish", exit_code=WAITING))
 
     def _advance(self, pipeline: Pipeline, subject: Subject, cmd: str, opts: Options, arg: str) -> Report:
         store, kind, now = self.p.store, self.kind(pipeline), self.p.clock.now()
@@ -467,6 +469,9 @@ class Engine:
         store, kind = self.p.store, self.kind(pipeline)
         for key in store.keys(kind):
             if key == subject.key:
+                continue
+            peek = store.load(kind, key)  # only a run of this very argument is touched: another worktree's run is not our business
+            if not peek or peek.get("arg") != arg or peek.get("status") in ("finished", "superseded"):
                 continue
             with store.lock(f"{pipeline.id}.{key}"):  # the older run's own lock: no advance of it writes in between (Busy: wait)
                 old = store.load(kind, key)

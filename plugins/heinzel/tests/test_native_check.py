@@ -4,6 +4,7 @@ No network, no real git, uv or node; the lock files live under tmp_path."""
 
 import json
 
+import pytest
 from test_native_preflight import HEAD, MAIN, Machine, core, rt  # noqa: F401  (core and rt are fixtures)
 
 from steuermaschine import verdicts
@@ -58,7 +59,7 @@ def test_a_web_change_runs_the_hooks_web_steps_and_the_selected_vitest_file_and_
     assert "  [PASS] web: 1 changed web file(s): web-prepare, web-lint, web-types, web-tests green" in lines
     assert "  [PASS] types: only documents, web/, desktop/ or plugins/ changed: the hook runs no type check" in lines and "  [PASS] docs: no document(s) changed" in lines
     assert "         warning: e2e lanes the selector names are not run here: web-1" in lines and "READY" in lines
-    assert lines[-1] == f"receipt: checks {HEAD} (written), measured from {MAIN[:12]}: an approval of this exact commit on that base can be recorded"
+    assert lines[-1].startswith(f"receipt: checks {HEAD} (written), measured from {MAIN[:12]}: an approval of this exact commit on that base can be recorded. Steps run: tree, ruff,")
     assert "  [PASS] hook: scripts/scoped_checks.py answered: 1 web file(s), 0 document(s), 0 early guard command(s)" in lines
     # the hook was asked with the changed paths and the Vitest files the checkout's selector named
     (probe, where, _), = machine.ran("core_scoped_checks")
@@ -112,16 +113,23 @@ def src_change(core, **rules):  # noqa: F811
     return machine
 
 
-def test_a_types_timeout_is_skipped_busy_and_the_run_stays_ready(core, rt):  # noqa: F811
-    found = report(invoke(rt(src_change(core, **{"uv run pyright": Result(124, "", "")})), ["--format", "json", "check", str(core)]))
-    types = step(found, "types")
-    assert found.ready and found.receipt and types.status == "SKIP" and types.detail.startswith("skipped: busy (pyright") and "PR CI" in types.detail
+@pytest.mark.parametrize("rc", [75, 124])
+def test_a_types_step_with_no_slot_or_a_timeout_fails_and_writes_no_receipt(core, rt, rc):  # noqa: F811
+    found = report(invoke(rt(src_change(core, **{"uv run pyright": Result(rc, "", "")})), ["--format", "json", "check", str(core)]))
+    assert not found.ready and not found.receipt and [f.step for f in found.failures] == ["types"]
+    assert "pyright" in found.failures[0].message and f"(exit {rc})" in found.failures[0].message and step(found, "types").status != "SKIP"
 
 
-def test_a_real_type_error_fails_even_when_the_other_type_check_is_busy(core, rt):  # noqa: F811
+def test_the_receipt_names_the_steps_that_ran_and_says_coverage_and_types_are_ci_enforced(core, rt):  # noqa: F811
+    found = report(invoke(rt(src_change(core)), ["--format", "json", "check", str(core)]))
+    assert found.ready and found.receipt and "Steps run: " in found.receipt_note and "types" in found.receipt_note and "PR CI enforces" in found.receipt_note
+
+
+def test_a_real_type_error_and_a_busy_type_check_both_fail(core, rt):  # noqa: F811
     machine = src_change(core, **{"uv run mypy": Result(1, "x.py:1: error: bad\n", ""), "uv run pyright": Result(124, "", "")})
     found = report(invoke(rt(machine), ["--format", "json", "check", str(core)]))
-    assert not found.ready and [f.step for f in found.failures] == ["types"] and "mypy failed on the changed files (exit 1)" in found.failures[0].message
+    assert not found.ready and [f.step for f in found.failures] == ["types", "types"]
+    assert "mypy failed on the changed files (exit 1)" in found.failures[0].message and "pyright ran out of time" in found.failures[1].message
 
 
 def test_a_timeout_of_a_gating_step_fails_and_is_never_skipped(core, rt):  # noqa: F811
@@ -247,8 +255,8 @@ def test_a_full_selection_the_import_graph_narrows_runs_those_tests_and_the_ones
     assert found.ready and step(found, "tests").data["tests"] == ["tests/unit/x_test.py"] and not machine.ran("unit and not perf")
     assert "scripts/related_tests.py narrows the unit tests to 1 file(s)" in step(found, "tests").data["warnings"][0]
     machine = checkout(core).on("git diff --name-only", "pyproject.toml\nsrc/heinzel/x.py").on("scripts/related_tests.py", "ALL\n")
-    found = report(invoke(rt(machine), ["--format", "json", "check", str(core)]))  # src/ changed and no test named: the whole suite is PR CI's job, with a warning
-    assert found.ready and "coverage" not in [s.name for s in found.steps] and "the whole unit suite runs on PR CI" in step(found, "tests").data["warnings"][0]
+    found = report(invoke(rt(machine), ["--format", "json", "check", str(core)]))  # src/ changed and no test named: fails, as before
+    assert not found.ready and [f.step for f in found.failures] == ["tests"] and "no test is selected" in found.failures[0].message and "--sel FILE" in found.failures[0].fix
 
 
 def test_a_hook_that_does_not_answer_fails_the_run_whatever_changed(core, rt, tmp_path):  # noqa: F811
