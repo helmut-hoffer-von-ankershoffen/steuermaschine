@@ -69,6 +69,7 @@ coordinator dispatching a different agent. Write commands check nothing at run t
 code first, then the write paths the diff since the live release reaches.
 
 - Never record a verdict on your own commits.
+- 2026-11-22 owner/SDLC: exactly one blocking review for gate-touching changes = CI Gate review; sm skips its local protected-path stop and diff-guard review file only where the repo's ruleset requires Gate review and the check passes the provenance rule.
 - No command declares a review file or its files: `@native` takes `writes=`, `tick=` and `replaces=` only. `sm self reviews` computes what a write path reaches from its imports, and takes a `*_lib` package whole.
 
 ## Hard rules
