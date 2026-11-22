@@ -29,7 +29,7 @@ def home(tmp_path, monkeypatch):
                                              ({"reviewed_head": "", "guarded_head": PIN}, PIN), ({}, "")])
 def test_plan_guard_checks_the_pinned_head(monkeypatch, row, pinned):
     seen = []
-    monkeypatch.setattr(main_plan, "gap", lambda pr, head="", gate_in_ruleset=False: seen.append((pr, head)) or "")
+    monkeypatch.setattr(main_plan, "gap", lambda pr, head="": seen.append((pr, head)) or "")
     refusal: list[str] = []
     assert qd.plan_guard({"pr": "7", **row}, None, refusal)() is True
     assert seen == [("7", pinned)] and refusal == []

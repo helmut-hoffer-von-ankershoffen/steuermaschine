@@ -2757,7 +2757,7 @@ def release_plugin(name: str, timeout: float, redispatch: bool = False) -> int:
             raise Stop(f"the plugin receipt holds only a dispatch time for {dist} {version} (an older sm) and no run of its own; "
                        f"no other run is adopted. Look at the release runs; if none releases {tag}: {again}")
         elif not redispatch:  # owner 2026-11-22: CI publishes a plugin when its bump merges; this command only reads
-            raise StatusOnly(f"{dist} {version} is not on PyPI yet: the plugins CI publishes it after the green main run of its bump "
+            raise StatusOnly(f"NOT RELEASED: {dist} {version} is not on PyPI yet: the plugins CI publishes it after the green main run of its bump "
                              f"(workflow Release bumped plugins): gh run list -R {PLUGINS} --workflow release.yml. "
                              f"Only when that run failed and the cause is fixed: {again}")
         plugin_dispatch(key, dist)

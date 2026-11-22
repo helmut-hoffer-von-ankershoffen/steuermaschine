@@ -32,10 +32,10 @@ def test_the_merge_rule_gates_the_arm(rt, gh, monkeypatch, reason, status):  # n
     queue_one(rt)
     gh.on("pr list", []).on("pr merge 801", "")
     seen = []
-    monkeypatch.setattr(main_plan, "gap", lambda pr, head="", gate_in_ruleset=False: seen.append((pr, head, gate_in_ruleset)) or reason)
+    monkeypatch.setattr(main_plan, "gap", lambda pr, head="": seen.append((pr, head)) or reason)
     assert tick(rt).exit_code == 0
     row = items(rt)[-1]
-    assert not merges(gh) and row["status"] == status and reason in row["detail"] and seen == [("801", HEAD, True)]
+    assert not merges(gh) and row["status"] == status and reason in row["detail"] and seen == [("801", HEAD)]
 
 
 def test_a_pr_that_meets_the_merge_rule_is_armed(rt, gh):  # noqa: F811
@@ -73,3 +73,12 @@ def test_a_hold_switches_off_every_pr_armed_on_github_not_only_the_recorded_ones
     assert invoke(rt, ["daemon", "queue"]).exit_code == 0
     assert sorted(merges(gh)) == [f"pr merge 801 -R {CORE} --disable-auto", f"pr merge 999 -R {CORE} --disable-auto"]
     assert items(rt)[-1]["detail"] == "merge freeze: auto-merge off until it lifts"
+
+
+def test_an_armed_pr_that_falls_behind_main_is_switched_off_again(rt, gh, monkeypatch):  # noqa: F811
+    """Gate review finding 2 of PR 70: the merge rule is read on every tick, not only at the arm."""
+    queue_one(rt, detail="auto-merge armed")
+    gh.on("pr list", []).on("pr merge", "").on("pr view 801", {**PR, "autoMergeRequest": {"mergeMethod": "SQUASH"}})
+    monkeypatch.setattr(main_plan, "gap", lambda pr, head="": "merge rule: #801 is behind against main: update the branch and let CI test it again")
+    assert tick(rt).exit_code == 0
+    assert merges(gh) == [f"pr merge 801 -R {CORE} --disable-auto"] and items(rt)[-1]["status"] == "needs work"

@@ -14,8 +14,8 @@ One tick, for each queued entry whose `after` PRs merged:
     otherwise                 -> `gh pr merge N --squash --auto --match-head-commit PINNED`
 
 The merge rule is `main_plan.gap`, applied before every arm of a Core PR: the ruleset's required checks green on the
-pinned head, main an ancestor of it, and, where the ruleset does not require Gate review, a recorded independent
-verdict for protected paths. The red-main hold is the old `gate()`: main's latest run not green or unknown holds all
+pinned head, main an ancestor of it, and a recorded independent verdict for protected paths (always, whatever the
+ruleset requires). The rule is read again every tick on an armed PR: one that no longer meets it is switched off. The red-main hold is the old `gate()`: main's latest run not green or unknown holds all
 Core arming except a PR that fixes main (fixes_main, fix-forward, or a reviewed safety fix, mitigation, diagnostic).
 
 The freeze is the release freeze (8i4oi): a release hold, the incident sentinel, or an open release/* PR of Core.
@@ -137,7 +137,7 @@ def merge_rule(item: dict[str, Any], pinned: str) -> tuple[str, bool]:
         return "", False
     from . import main_plan
 
-    reason = main_plan.gap(item["pr"], pinned, gate_in_ruleset=True)
+    reason = main_plan.gap(item["pr"], pinned)
     return reason, bool(reason) and ("required checks not green" in reason or "cannot" in reason)
 
 
@@ -188,18 +188,21 @@ def one(q: Any, item: dict[str, Any], items: list[dict[str, Any]]) -> None:
             q.update(item["key"], detail=f"not armed: {why}")
             q.log(f"{item['key']}: not armed: {why}")
         return
-    if armed:
-        if item.get("detail") != ARMED:
-            q.update(item["key"], detail=ARMED)
-        return
     reason, wait = merge_rule(item, pinned)
-    if reason:
+    if reason and not (armed and wait):  # an armed PR whose checks are pending or unreadable keeps its arm: GitHub waits for the checks itself
+        if armed and not disarm(item["repo"], item["pr"]):
+            q.log(f"{item['key']}: {reason}, and auto-merge could not be switched off; the next tick tries again")
+            return
         if wait:
             if item.get("detail") != f"not armed: {reason}":
                 q.update(item["key"], detail=f"not armed: {reason}")
                 q.log(f"{item['key']}: not armed: {reason}")
         else:
             q.stuck_or_merged(item, "needs work", reason)
+        return
+    if armed:
+        if item.get("detail") != ARMED:
+            q.update(item["key"], detail=ARMED)
         return
     done, error = arm(item["repo"], item["pr"], pinned)
     if done:
