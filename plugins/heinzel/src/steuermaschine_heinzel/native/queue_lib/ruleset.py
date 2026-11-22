@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 # The Claude review runs as `review`; its inner job `attempt` (heinzel #454) can time out or be cancelled. Advisory only
-# where no ruleset says what is required; where one does, they are advisory because it does not name them.
+# always: the review informs, it never holds.
 ADVISORY_REVIEW = frozenset({"review", "attempt", "Claude review"})
 
 
@@ -36,10 +36,9 @@ def required_from(rules: Any) -> frozenset[str] | None:
 
 @dataclass(frozen=True)
 class Advisory:
-    """The checks that do not hold a pull request, as a predicate: `name in advisory`. With a ruleset that requires
-    checks: every name it does not require (`awaited` names are waited for anyway, `waived` ones never hold unless
-    required). Without one (none, or unread): only the advisory review and `waived`. `advisory | names` waives names,
-    `advisory - names` awaits them."""
+    """The checks that do not hold a pull request, as a predicate: `name in advisory`: the advisory review and `waived`
+    names, the same with or without a ruleset (`awaited` names are waited for anyway). `advisory | names` waives names,
+    `advisory - names` awaits them. The rules only say which checks must have reported (`missing`)."""
 
     required: frozenset[str] | None
     waived: frozenset[str] = field(default_factory=frozenset)
@@ -53,8 +52,6 @@ class Advisory:
     def __contains__(self, name: object) -> bool:
         if not isinstance(name, str) or name in self.awaited:
             return False
-        if self.ruled:
-            return name not in (self.required or ())
         return name in ADVISORY_REVIEW or name in self.waived
 
     def __or__(self, other: Iterable[str]) -> Advisory:

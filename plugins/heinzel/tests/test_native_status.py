@@ -169,7 +169,7 @@ def test_gate_without_answers_never_passes():
 def test_gate_checks_are_advisory_until_main_requires_them():
     rules = [{"type": "deletion"}, {"type": "required_status_checks", "parameters": {"required_status_checks": [{"context": "merge-gate"}, {"context": "CI OK"}]}}]
     ruled = gate.advisory_checks_from(rules)
-    assert "coverage-floor" in ruled and "Sonar" in ruled and "merge-gate" not in ruled and "CI OK" not in ruled
+    assert "review" in ruled and "coverage-floor" not in ruled and "Sonar" not in ruled and "merge-gate" not in ruled  # the rules waive nothing
     unread = gate.advisory_checks_from(None)  # unreadable rules: never a looser gate
     assert "review" in unread and "coverage-floor" not in unread and "merge-gate" not in unread
 

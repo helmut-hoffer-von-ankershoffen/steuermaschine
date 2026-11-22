@@ -209,9 +209,10 @@ def test_restored_by_rerun_records_once(monkeypatch, home):
     assert qd.restored_by_rerun() is False
 
 
-def test_a_pr_red_only_on_a_check_the_ruleset_does_not_require_merges(monkeypatch):
-    """The proof of 'required checks have one source': CI OK and Sonar green, coverage-floor red, and the ruleset of main
-    requires CI OK and Sonar only. The PR is ready; once the ruleset requires coverage-floor too it needs work."""
+def test_a_pr_red_on_a_check_holds_whether_or_not_the_ruleset_requires_it(monkeypatch):
+    """CI OK and Sonar green, coverage-floor red: the PR needs work with a ruleset that requires CI OK and Sonar only (a red
+    check holds, we fix the check not the queue) and with one that requires coverage-floor too. (The merge gate's own
+    checks are waived by hzlib.advisory_checks until main requires them; here the predicate is built by hand.)"""
     from steuermaschine_heinzel.native.queue_lib.ruleset import Advisory
 
     qd.save({"items": [item("5")]})
@@ -220,7 +221,8 @@ def test_a_pr_red_only_on_a_check_the_ruleset_does_not_require_merges(monkeypatc
               {"name": "coverage-floor", "status": "COMPLETED", "conclusion": "FAILURE"}]
     view(monkeypatch, statusCheckRollup=rollup)
     monkeypatch.setattr(hzlib, "advisory_checks", lambda repo: Advisory(frozenset({"CI OK", "SonarCloud Code Analysis"})))
-    assert qd.assess(item(), Merge()) == "ready"
+    monkeypatch.setattr(hzlib, "failed_runs", lambda rollup: [])
+    assert qd.assess(item(), Merge()) == "done" and "checks coverage-floor" in qd.load()["items"][0]["detail"]
     monkeypatch.setattr(hzlib, "advisory_checks", lambda repo: Advisory(frozenset({"CI OK", "coverage-floor"})))
     monkeypatch.setattr(hzlib, "failed_runs", lambda rollup: [])
     assert qd.assess(item(), Merge()) == "done" and "checks coverage-floor" in qd.load()["items"][0]["detail"]

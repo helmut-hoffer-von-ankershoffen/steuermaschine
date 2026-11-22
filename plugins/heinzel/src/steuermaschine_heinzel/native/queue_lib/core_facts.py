@@ -132,6 +132,11 @@ def api_checks() -> tuple[str, ...]:
     return tuple(gates[role] for role in ("sonar", "coverage") if role in gates)
 
 
+def contexts() -> tuple[str, ...]:
+    """Every required status context: the aggregate, then the merge-gate workflow's checks."""
+    return (aggregate(), *api_checks())
+
+
 class Names:
     """A tuple of names read from the policy when it is used, never at import (a module constant that stays one)."""
 
@@ -169,3 +174,4 @@ class Names:
 
 
 API_CHECKS = Names(api_checks)  # the merge-gate workflow's checks
+CONTEXTS = Names(contexts)  # every required status context

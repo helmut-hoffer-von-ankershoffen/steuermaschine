@@ -74,7 +74,7 @@ def test_advisory_checks(monkeypatch):
                                  "parameters": {"required_status_checks": [{"context": "merge-gate"}]}}]
     monkeypatch.setattr(hzlib, "ghj", lambda *a, **k: rules)
     ruled = hzlib.advisory_checks("r")
-    assert "merge-gate" not in ruled and "coverage-floor" in ruled and "review" in ruled and "any other check" in ruled
+    assert "review" in ruled and "merge-gate" not in ruled and "coverage-floor" in ruled and "any other check" not in ruled  # the gate's checks only until main requires them
     assert hzlib.required_names(ruled) == ["merge-gate"] and hzlib.missing_required(ruled, [{"name": "x"}]) == ["merge-gate"]
 
 
@@ -88,14 +88,14 @@ def test_the_rules_are_read_once_per_tick_and_unread_rules_are_not_cached(monkey
     assert len(calls) == 2 and calls[0] == ("api", "repos/o/r/rules/branches/main")
 
 
-def test_only_required_checks_hold_a_pr_with_a_ruleset_even_the_old_macos_and_gate_names():
+def test_a_ruleset_changes_which_checks_must_report_never_which_red_check_holds():
     from steuermaschine_heinzel.native.queue_lib.ruleset import Advisory
 
-    ruled = Advisory(frozenset({"check", "Gate review", "Test (macos-15)"}))
-    assert not hzlib.non_blocking("Test (macos-15)", ruled)  # required: it holds, the old macOS exception does not apply
-    assert hzlib.non_blocking("coverage-floor", ruled) and hzlib.non_blocking("SonarCloud Code Analysis", ruled)
-    assert hzlib.non_blocking("coverage-floor", ruled | {"x"}) and not hzlib.non_blocking("coverage-floor", ruled - {"coverage-floor"})
-    none = Advisory(frozenset())  # rules that require nothing (a private repository without Pro): every check but the review
+    ruled = Advisory(frozenset({"check", "Gate review"}))
+    assert not hzlib.non_blocking("coverage-floor", ruled) and not hzlib.non_blocking("SonarCloud Code Analysis", ruled)  # red holds, required or not
+    assert hzlib.non_blocking("review", ruled) and hzlib.non_blocking("Test (macos-15)", ruled)  # the review and the macOS exception stay
+    assert hzlib.non_blocking("coverage-floor", ruled | {"x"}) is False and hzlib.non_blocking("x", ruled | {"x"})  # a waiver names the check
+    none = Advisory(frozenset())
     assert not hzlib.non_blocking("coverage-floor", none) and hzlib.non_blocking("review", none) and hzlib.non_blocking("Test (macos-15)", none)
 
 

@@ -345,7 +345,7 @@ def test_the_rules_decide_what_is_advisory_and_unreadable_rules_hold_the_gate(mo
     assert {"review", "attempt", "Claude review"} == {n for n in ("review", "attempt", "Claude review", "coverage-floor", "merge-gate") if n in unread}
     monkeypatch.setattr(hzlib, "gh", lambda *_: (0, json.dumps(rules)))
     ruled = hzlib.advisory_checks("o/r")
-    assert "coverage-floor" in ruled and "merge-gate" not in ruled and "review" in ruled
+    assert {n for n in ("review", "attempt", "Claude review", "coverage-floor", "merge-gate", "anything else") if n in ruled} == {"review", "attempt", "Claude review", "coverage-floor"}  # the gate's checks only until main requires them; any other red check holds
 
 
 def test_flip_requires_proof_the_check_passed_on_a_pull_request(tool, monkeypatch):

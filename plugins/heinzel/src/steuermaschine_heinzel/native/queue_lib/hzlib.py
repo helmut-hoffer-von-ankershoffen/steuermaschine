@@ -110,9 +110,11 @@ def required_checks(repo: str) -> frozenset[str] | None:
 
 
 def advisory_checks(repo: str) -> ruleset.Advisory:
-    """The checks that do not hold a PR of REPO: every check the ruleset of main does not require (queue_lib/ruleset.py).
-    Unreadable rules, or rules that require nothing: only the advisory review, so the gate holds: never a looser gate."""
-    return ruleset.Advisory(required_checks(repo))
+    """The checks that do not hold a PR of REPO: `review`, and the merge gate's checks until main requires them (a red
+    check holds, required or not; the ruleset, queue_lib/ruleset.py, only adds that a required one must have reported).
+    Unreadable rules: only `review`, so the gate holds: never a looser gate."""
+    required = required_checks(repo)
+    return ruleset.Advisory(required, frozenset(set(GATE_CHECKS) - required) if required is not None else frozenset())
 
 
 def missing_required(advisory: object, rollup: list[dict]) -> list[str]:
@@ -150,10 +152,7 @@ def only_never_started_macos_jobs_failed(repo: str, run_id: int) -> bool:
 
 
 def non_blocking(name: str | None, advisory: "set[str] | ruleset.Advisory") -> bool:
-    """A check that doesn't hold a merge. With a ruleset that requires checks: every check it does not require, and only
-    those. Without one: advisory, or macOS until the full suite has 3 green runs (owner, 2026-11-01); still shown."""
-    if isinstance(advisory, ruleset.Advisory) and advisory.ruled:
-        return name in advisory
+    """A check that doesn't hold a merge: advisory, or macOS until the full suite has 3 green runs (owner, 2026-11-01); still shown."""
     lowered = (name or "").lower()
     if lowered.startswith("focused "):  # hz-ci-one dispatches (focused-job.yml) attach to the head; a diagnostic, never a gate
         return True

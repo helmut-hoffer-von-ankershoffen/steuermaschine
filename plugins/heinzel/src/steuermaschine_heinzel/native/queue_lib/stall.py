@@ -12,6 +12,8 @@ import time
 from pathlib import Path
 from . import edge  # moved: records, processes and what used to be separate scripts
 from ... import state as statedir  # the plugin's state paths
+from . import core_facts  # noqa: E402
+REQUIRED = core_facts.CONTEXTS  # contexts main requires (Core's release policy); the caller drops what the rules do not demand
 GREEN = ("SUCCESS", "SKIPPED", "NEUTRAL")
 STALL_MIN = 15
 QUEUE_GATES = ("merge freeze", "main's latest run is not green", "main CI evidence is unknown", "batch cadence", "release")

@@ -11,7 +11,6 @@ from steuermaschine_heinzel import state as statedir
 from steuermaschine_heinzel.native.queue_lib import stall
 
 NOW = 1_800_000_000.0
-REQUIRED = ("CI OK", "merge-gate", "coverage-floor")  # a ruleset's required contexts (the caller reads them from GitHub)
 
 
 def run(name, status="COMPLETED", conclusion="SUCCESS", **more):
@@ -53,19 +52,19 @@ def test_green_and_green_since():
 
 def test_required_missing_and_not_green():
     rows = [run("CI OK"), run("merge-gate", conclusion="FAILURE")]
-    assert stall.required_missing(REQUIRED, rows) == ["coverage-floor"]
-    assert stall.required_not_green(REQUIRED, rows) == ["merge-gate=FAILURE"]
+    assert stall.required_missing(stall.REQUIRED, rows) == ["coverage-floor"]
+    assert stall.required_not_green(stall.REQUIRED, rows) == ["merge-gate=FAILURE"]
 
 
 def test_wait_reason_three_cases_and_not_blocked():
     since = NOW - 1200
     ok = [run("CI OK"), run("merge-gate"), run("coverage-floor")]
-    assert stall.wait_reason("CLEAN", ok, REQUIRED, since, NOW) == ""
-    assert stall.wait_reason("BLOCKED", [run("x", conclusion="FAILURE")], REQUIRED, since, NOW) == ""
-    assert "missing from the PR rollup: merge-gate, coverage-floor" in stall.wait_reason("BLOCKED", [run("CI OK")], REQUIRED, since, NOW)
+    assert stall.wait_reason("CLEAN", ok, stall.REQUIRED, since, NOW) == ""
+    assert stall.wait_reason("BLOCKED", [run("x", conclusion="FAILURE")], stall.REQUIRED, since, NOW) == ""
+    assert "missing from the PR rollup: merge-gate, coverage-floor" in stall.wait_reason("BLOCKED", [run("CI OK")], stall.REQUIRED, since, NOW)
     weak = stall.wait_reason("BLOCKED", [run("CI OK")], ("CI OK",), since, NOW, everything=[run("CI OK", conclusion="NEUTRAL")])
     assert "present but not SUCCESS: CI OK=NEUTRAL" in weak and "20 min" in weak
-    assert "every required context is green" in stall.wait_reason("BLOCKED", ok, REQUIRED, since, NOW)
+    assert "every required context is green" in stall.wait_reason("BLOCKED", ok, stall.REQUIRED, since, NOW)
 
 
 def test_pending_reason():
@@ -79,15 +78,15 @@ def test_pending_reason():
 def test_stall_alarm_branches():
     ok = [run("CI OK"), run("merge-gate"), run("coverage-floor")]
     old = NOW - 3600
-    assert stall.stall_alarm("5", "BLOCKED", [run("a", conclusion="FAILURE")], REQUIRED, old, NOW) is None
-    assert stall.stall_alarm("5", "BLOCKED", ok, REQUIRED, NOW - 60, NOW) is None
-    blocked = stall.stall_alarm("5", "BLOCKED", ok, REQUIRED, old, NOW)
+    assert stall.stall_alarm("5", "BLOCKED", [run("a", conclusion="FAILURE")], stall.REQUIRED, old, NOW) is None
+    assert stall.stall_alarm("5", "BLOCKED", ok, stall.REQUIRED, NOW - 60, NOW) is None
+    blocked = stall.stall_alarm("5", "BLOCKED", ok, stall.REQUIRED, old, NOW)
     assert blocked["cls"] == "ALERT" and blocked["key"] == "stall:5" and blocked["text"].startswith("STALL #5 BLOCKED")
-    warn = stall.stall_alarm("abc", "CLEAN", ok, REQUIRED, old, NOW, "merge freeze on")
+    warn = stall.stall_alarm("abc", "CLEAN", ok, stall.REQUIRED, old, NOW, "merge freeze on")
     assert warn["cls"] == "WARN" and warn["text"].startswith("STALL abc green") and "merge freeze on" in warn["text"]
-    alert = stall.stall_alarm("7", None, ok, REQUIRED, old, NOW, "something odd")
+    alert = stall.stall_alarm("7", None, ok, stall.REQUIRED, old, NOW, "something odd")
     assert alert["cls"] == "ALERT" and "state unknown" in alert["text"] and "`something odd`" in alert["text"]
-    assert "no block" in stall.stall_alarm("7", "CLEAN", ok, REQUIRED, old, NOW)["text"]
+    assert "no block" in stall.stall_alarm("7", "CLEAN", ok, stall.REQUIRED, old, NOW)["text"]
 
 
 def test_state_load_save_roundtrip_and_bad_files(state):

@@ -33,7 +33,7 @@ def test_the_policy_at_main_is_read_once_per_commit(github):
     policy = core_facts.at_main()
     assert policy.commit == MAIN and core_facts.aggregate() == "CI OK" and core_facts.ci_file() == kit.WORKFLOW.rsplit("/", 1)[-1]
     assert core_facts.judge_path() == kit.JUDGE and core_facts.judge_file() == kit.JUDGE.rsplit("/", 1)[-1]
-    assert core_facts.ci_path() == kit.WORKFLOW
+    assert core_facts.ci_path() == kit.WORKFLOW and set(core_facts.api_checks()) | {"CI OK"} == set(core_facts.contexts())
     assert calls.count(f"contents/{kit.PATH}?ref={MAIN}") == 1 and calls.count("commits/main") == 1  # cached
     assert core_facts.safe() is policy and core_facts.safe(MAIN) is policy
 
@@ -63,7 +63,7 @@ def test_names_are_read_on_use_never_at_import(github):
     assert list(names) == ["a", "b"] and "a" in names and len(names) == 2 and names[1] == "b"
     assert names + ("c",) == ("a", "b", "c") and ("z",) + names == ("z", "a", "b") and names == ("a", "b")  # noqa: RUF005
     assert (names == 3) is False and "Names" in repr(names)
-    assert "merge-gate" in core_facts.API_CHECKS and not hasattr(core_facts, "CONTEXTS")  # required checks: the ruleset only
+    assert "merge-gate" in core_facts.API_CHECKS and "CI OK" in core_facts.CONTEXTS
 
 
 def test_the_github_read_fails_soft(monkeypatch):
