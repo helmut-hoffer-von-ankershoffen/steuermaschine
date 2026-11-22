@@ -64,6 +64,7 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 from . import edge  # moved: siblings are imported relatively, no sys.path entry
 from . import combine_notes as hz_combine_notes  # noqa: E402
@@ -1221,7 +1222,22 @@ def record_asks(now: float) -> None:
 
 
 def tick(now: float | None = None) -> None:
-    """Run one tick under the runner's queue lock."""
+    """Run one tick under the runner's queue lock: main's known-flake rerun, the owner asks, then GitHub auto-merge on
+    every queued PR and the auto-revert of a red main (auto_arm.py; owner decision 2026-11-22)."""
+    from . import auto_arm
+
+    now = time.time() if now is None else now
+    try:  # one rerun of main's failed KNOWN jobs (policy 2026-11-07); a failure here never stops merges
+        _main_rerun(auto=True)
+    except Exception as error:
+        log(f"main-rerun failed: {error!r}")
+    record_asks(now)
+    auto_arm.tick(SimpleNamespace(**globals()))  # this module, also when loaded under another name
+
+
+def train_tick(now: float | None = None) -> None:
+    """RETIRED 2026-11-22 (auto-merge replaced it; no loop calls it): the serial train that updated, waited for and merged
+    each queued PR itself. Kept with its tests only until the follow-up that deletes it and merge_train.py."""
     now = time.time() if now is None else now
     merge = hzlib.load("merge_train")
     try:  # one rerun of main's failed KNOWN jobs (policy 2026-11-07); a failure here never stops merges

@@ -34,7 +34,7 @@ from .queue_lib import edge, main_plan
 GROUP = Group("queue", H(
     "queue: the merge queue; what is in it, why it does not merge, add and drop.",
     "Use when a PR should merge, or did not.",
-    "list and why only read; add and drop edit the queue's state file. The loop (`sm daemon queue`) does the merging.",
+    "list and why only read; add and drop edit the queue's state file. The loop (`sm daemon queue`) arms GitHub auto-merge; GitHub merges on green.",
     "sm queue why", "sm queue list"))
 
 
@@ -425,9 +425,10 @@ def _program_words() -> int:
 
 
 @native("daemon queue", writes=True, tick=True, replaces=("hz-queue",), help=H(
-    "One tick of the merge queue: assess queued PRs, gate on main and holds, squash-merge the ready batch; no tick while `sm queue hold` holds.",
+    "One tick of the merge queue: arm GitHub auto-merge on queued PRs (off during a Core release freeze), revert a red main; no tick while `sm queue hold` holds.",
     "Use for the launchd job (`--loop 1`); by hand for a single tick only while that job is stopped.",
-    "merges ready PRs onto protected main, may rerun main's KNOWN failed jobs once, writes queue state, log, notes, alarms; "
+    "arms or disarms auto-merge (squash, pinned head), may rerun main's KNOWN failed jobs once, opens a revert PR when main turned red "
+    "on a merge with an unknown failure, writes queue state, log, notes, alarms; "
     "with the merge tier at main starts `sm queue main-proof` detached, once per green main commit (posts hz/main-proof).",
     "sm daemon queue --loop 1 --interval 300", "sm queue why"))
 @mirrored  # it runs a program that writes the working files: the subject journals follow (journal_view.py)

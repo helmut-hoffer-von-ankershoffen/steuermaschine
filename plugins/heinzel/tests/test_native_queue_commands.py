@@ -264,34 +264,86 @@ def test_two_named_state_files_are_refused_and_without_the_setting_the_environme
 
 
 # ----------------------------------------------------------------------------- the loop's tick
-def test_tick_merges_a_ready_pr_with_the_head_it_checked_and_records_it(rt, gh, tmp_path):
+ARM = f"pr merge 801 -R {CORE} --squash --auto --match-head-commit {HEAD}"
+
+
+def test_tick_arms_auto_merge_on_a_queued_pr_at_the_head_the_guard_read(rt, gh):
+    """Owner 2026-11-22: GitHub merges on green; the queue only arms auto-merge, pinned to the guarded head."""
+    queue_one(rt)
+    gh.on("pr list", []).on("pr merge 801", "")
+    doc = area.QueueTick.model_validate(json.loads(invoke(rt, ["--format", "json", "daemon", "queue"]).stdout))
+    assert doc.ran and doc.queued == ["801"]
+    assert [line for line in gh.lines() if line.startswith("pr merge")] == [ARM]
+    assert not [line for line in gh.lines() if "update-branch" in line]  # the serial update loop is retired
+    assert items(rt)[-1]["detail"] == "auto-merge armed"
+
+
+def test_tick_records_a_merge_github_made_and_stamps_its_bead(rt, gh):
     queue_one(rt, bead="abc")
-    gh.on("pr merge 801", "").on("state,mergeCommit,mergedAt", {"state": "MERGED", "mergeCommit": {"oid": MAIN}, "mergedAt": "2026-11-12T21:00:00Z"})
-    gh.on("--json mergeCommit", {"mergeCommit": {"oid": MAIN}})
+    gh.on("pr list", []).on("pr view 801", {**PR, "state": "MERGED"}).on("--json mergeCommit", {"mergeCommit": {"oid": MAIN}})
     gh.on("show heinzel-management-abc", {"labels": []}).on("update heinzel-management-abc", "").on("label add heinzel-management-abc", "")
-    out = invoke(rt, ["--format", "json", "daemon", "queue"])
-    doc = area.QueueTick.model_validate(json.loads(out.stdout))
-    assert out.exit_code == 0 and doc.ran and doc.queued == [] and any(line.endswith("batch: 801") for line in doc.lines), out
-    merges = [line for line in gh.lines() if line.startswith("pr merge")]
-    assert merges == [f"pr merge 801 -R {CORE} --squash --match-head-commit {HEAD}"]
+    assert invoke(rt, ["daemon", "queue"]).exit_code == 0
     row = items(rt)[-1]
-    assert (row["status"], row["detail"]) == ("merged", HEAD[:8])
-    assert row["merge_sha"] == MAIN[:8]
-    assert any(line.endswith("sm queue: #801 merged") for line in rt.notes.read_text().splitlines()) and rt.notes.read_text().rstrip().endswith("batch: 801")
-    stamp = [line for line in gh.lines() if "heinzel-management-abc" in line]
-    assert [s.split()[0] for s in stamp] == ["show", "update", "label"] and "merged_in: PR #801 sha=11111111" in stamp[1]
-    assert (statedir.root() / "queue.lock").exists() and "tick finished" in (statedir.root() / "queue.log").read_text()
+    assert (row["status"], row["detail"], row["merge_sha"]) == ("merged", HEAD[:8], MAIN[:8]) and not gh.writes()
+    assert any(line.endswith("sm queue: #801 merged") for line in rt.notes.read_text().splitlines())
 
 
-def test_tick_refuses_to_merge_a_head_the_guard_did_not_read(rt, gh):
+def test_tick_never_arms_a_head_the_guard_did_not_read(rt, gh):
     """Review F2: a push after queueing must not merge with a diff the guard never read."""
-    queue_one(rt, guarded_head="f" * 40)  # the guard read another head; the PR is now at HEAD
-    gh.on("pr merge 801", "")
-    out = invoke(rt, ["daemon", "queue"])
-    assert out.exit_code == 0, out
+    queue_one(rt, guarded_head="f" * 40)
+    gh.on("pr list", []).on("pr merge 801", "")
+    assert invoke(rt, ["daemon", "queue"]).exit_code == 0
     assert not [line for line in gh.lines() if line.startswith("pr merge")]
     row = items(rt)[-1]
-    assert row["status"] == "needs work" and row["detail"].startswith("head moved after the diff guard read it"), row
+    assert row["status"] == "needs work" and row["detail"].startswith("head moved from ffffffff after the diff guard read it"), row
+
+
+def test_a_moved_head_of_an_armed_pr_switches_auto_merge_off(rt, gh):
+    queue_one(rt, guarded_head="f" * 40)
+    gh.on("pr list", []).on("pr view 801", {**PR, "autoMergeRequest": {"mergeMethod": "SQUASH"}}).on("pr merge 801", "")
+    assert invoke(rt, ["daemon", "queue"]).exit_code == 0
+    assert [line for line in gh.lines() if line.startswith("pr merge")] == [f"pr merge 801 -R {CORE} --disable-auto"]
+
+
+@pytest.mark.parametrize("freeze", ["hold", "release-pr", "unreadable"])
+def test_a_freeze_keeps_auto_merge_off_and_it_is_armed_once_the_freeze_lifts(rt, gh, freeze):
+    """The release freeze (8i4oi): no auto-merge while a release hold, an open release/* PR, or unreadable evidence."""
+    queue_one(rt)
+    hold = statedir.root() / "merge-freeze"
+    if freeze == "hold":
+        hold.touch()
+        gh.on("pr list", [])
+    elif freeze == "release-pr":
+        gh.on("pr list", [{"number": 900, "headRefName": "release/0.9.56"}], [])
+    gh.on("pr view 801", {**PR, "autoMergeRequest": {"mergeMethod": "SQUASH"}}, PR).on("pr merge 801", "")
+    assert invoke(rt, ["daemon", "queue"]).exit_code == 0
+    assert [line for line in gh.lines() if line.startswith("pr merge")] == [f"pr merge 801 -R {CORE} --disable-auto"]
+    assert items(rt)[-1]["detail"] == "merge freeze: auto-merge off until it lifts"
+    hold.unlink(missing_ok=True)
+    gh.on("pr list", [])
+    gh.calls.clear()
+    area.reset()
+    assert invoke(rt, ["daemon", "queue"]).exit_code == 0
+    assert [line for line in gh.lines() if line.startswith("pr merge")] == [ARM] and items(rt)[-1]["detail"] == "auto-merge armed"
+
+
+def test_the_freeze_holds_only_core(rt, gh):
+    queue_one(rt, key="plugins #801", repo="helmut-hoffer-von-ankershoffen/heinzel-plugins")
+    (statedir.root() / "merge-freeze").touch()
+    gh.on("pr view 801", PR).on("pr merge 801", "")
+    assert invoke(rt, ["daemon", "queue"]).exit_code == 0
+    assert [line for line in gh.lines() if line.startswith("pr merge")] == [
+        "pr merge 801 -R helmut-hoffer-von-ankershoffen/heinzel-plugins --squash --auto --match-head-commit " + HEAD]
+
+
+def test_a_refused_arm_is_kept_queued_with_gh_s_reason(rt, gh):
+    from steuermaschine.protocols import Result
+
+    queue_one(rt)
+    gh.on("pr list", []).on("pr merge 801", Result(1, "", "GraphQL: Pull request is in clean status"))
+    assert invoke(rt, ["daemon", "queue"]).exit_code == 0
+    row = items(rt)[-1]
+    assert row["status"] == "queued" and row["detail"].startswith("auto-merge not armed"), row
 
 
 def test_tick_refuses_a_row_without_a_guarded_head(rt, gh):
@@ -303,46 +355,6 @@ def test_tick_refuses_a_row_without_a_guarded_head(rt, gh):
     assert row["status"] == "needs work" and "no guarded head" in row["detail"], row
 
 
-def test_tick_keeps_a_pr_whose_merge_state_is_unknown_and_records_it_once_it_reads_merged(rt, gh, monkeypatch):
-    """Review F4: a failed merge call whose state cannot be read back is neither merged nor needs work."""
-    from steuermaschine.protocols import Result
-    from steuermaschine_heinzel.native.queue_lib import edge
-
-    alarms = []
-    monkeypatch.setattr(edge, "raise_alarm", lambda key, level, text, source="queue": alarms.append((key, level)))
-    monkeypatch.setattr(edge, "clear_alarm", lambda key, source="queue": alarms.append((key, "cleared")))
-    queue_one(rt)
-    gh.on("pr merge 801", Result(1, "", "connection reset")).on("--json state,mergeCommit", Result(1, "", "connection reset"))
-    assert invoke(rt, ["daemon", "queue"]).exit_code == 0
-    row = items(rt)[-1]
-    assert (row["status"], row["merge_unknown"]) == ("queued", True) and row["detail"].startswith("merge state unknown"), row
-    assert alarms == [("merge-unknown:801", "ALERT")]
-    area.reset()
-    data = json.loads(rt.state_file.read_text())
-    rt.state_file.write_text(json.dumps({**data, "last_batch": 0}))  # the next batch is due
-    gh.calls.clear()
-    gh.on("pr view 801", {**PR, "state": "MERGED"}).on("--json mergeCommit", {"mergeCommit": {"oid": MAIN}})
-    assert invoke(rt, ["daemon", "queue"]).exit_code == 0
-    row = items(rt)[-1]
-    assert (row["status"], row["detail"], row["merge_sha"], row["merge_unknown"]) == ("merged", HEAD[:8], MAIN[:8], False), row
-    assert not [line for line in gh.lines() if line.startswith("pr merge")] and alarms[-1] == ("merge-unknown:801", "cleared")
-
-
-def test_tick_does_not_merge_while_a_merge_freeze_holds_and_wakes_when_it_is_released(rt, gh, tmp_path):
-    queue_one(rt)
-    hold = statedir.root() / "merge-freeze"
-    hold.touch()
-    first = area.QueueTick.model_validate(json.loads(invoke(rt, ["--format", "json", "daemon", "queue"]).stdout))
-    assert first.ran and first.blocked == "merge freeze is on" and not gh.writes()
-    idle = invoke(rt, ["--format", "json", "daemon", "queue"])
-    assert json.loads(idle.stdout) == {} and idle.exit_code == 0  # not due, nothing local changed: no tick, no GitHub call
-    calls = len(gh.calls)
-    hold.unlink()
-    gh.on("pr merge 801", "")
-    woke = area.QueueTick.model_validate(json.loads(invoke(rt, ["--format", "json", "daemon", "queue"]).stdout))
-    assert woke.ran and woke.wake == "merge hold released" and len(gh.calls) > calls and any("idle wake: merge hold released" in line for line in woke.lines)
-
-
 def test_tick_wakes_when_the_queue_file_changed_and_ticks_again_when_the_interval_passed(rt, gh):
     assert json.loads(invoke(rt, ["--format", "json", "daemon", "queue"]).stdout)["ran"] is True
     assert json.loads(invoke(rt, ["--format", "json", "daemon", "queue"]).stdout) == {}
@@ -350,15 +362,6 @@ def test_tick_wakes_when_the_queue_file_changed_and_ticks_again_when_the_interva
     assert json.loads(invoke(rt, ["--format", "json", "daemon", "queue", "--interval", "0"]).stdout)["wake"] == "queue changed"
     again = json.loads(invoke(rt, ["--format", "json", "daemon", "queue"]).stdout)  # the interval of the last tick has passed
     assert again["ran"] is True and again["wake"] == ""
-
-
-def test_tick_records_a_pr_the_forge_blocks_although_its_checks_are_green(rt, gh):
-    queue_one(rt, waiting_since=1)
-    gh.on("pr view 801", {**PR, "mergeStateStatus": "BLOCKED"})
-    doc = area.QueueTick.model_validate(json.loads(invoke(rt, ["--format", "json", "daemon", "queue"]).stdout))
-    assert doc.queued == ["801"] and not gh.writes()
-    why = area.QueueWhy.model_validate(json.loads(invoke(rt, ["--format", "json", "queue", "why"]).stdout))
-    assert why.stalled_with_green_checks == ["801"] and "BLOCKED with green checks" in items(rt)[-1]["wait_reason"]
 
 
 def test_a_second_loop_waits_for_the_lock_holder_and_a_negative_interval_is_a_usage_error(rt, tmp_path):
