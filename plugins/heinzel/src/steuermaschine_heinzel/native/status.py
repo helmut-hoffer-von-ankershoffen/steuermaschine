@@ -267,9 +267,15 @@ BEGIN = "<!-- sm status --write: begin (generated; do not edit) -->"
 END = "<!-- sm status --write: end -->"
 
 
-def state_block(found: Status, now: float) -> str:
-    """The state section of the tracking document: release in flight, open pull requests with their action, alarms
-    and what waits for the owner, from the same reads as `sm status`, `sm why` and `sm alarm list`."""
+CHECKPOINT_LINES = 25  # the most lines `sm status --write` puts into the tracking document; the full facts go to the log file
+LINE_WIDTH = 160
+SHOWN = 3  # lines of one list (release, alarms, owner asks) kept in the checkpoint
+
+
+def state_block(found: Status, now: float, archive: Path | None = None) -> tuple[str, str]:
+    """(the checkpoint for the tracking document, the full facts for the dated log file). The checkpoint is at most
+    CHECKPOINT_LINES lines of LINE_WIDTH characters: counts and the first lines of release, status view, alarms and
+    owner asks, and where the rest is. The facts come from the same reads as `sm status`, `sm why` and `sm alarm list`."""
     from steuermaschine.native import call
 
     from . import alarm
@@ -285,13 +291,18 @@ def state_block(found: Status, now: float) -> str:
 
     shown = found.model_copy(update={"view": "markdown", "check": False, "written": []})
     stamp = datetime.fromtimestamp(now, UTC).strftime("%Y-%m-%d %H:%M UTC")
-    out = [BEGIN, f"## State now (written by `sm status --write` at {stamp})", "", "**Release**", ""]
-    out += [f"- {line}" for line in lines(lambda: release_status(line=False).render())] or ["- no release in flight"]
-    out += ["", *shown.render(), "", "**Alarms**", ""]
-    out += [f"- {line}" for line in lines(lambda: alarm.alarm_list(check=False).render())]
-    asks = lines(alarm.owner_asks)
-    out += ["", "**For the owner**", "", *([f"- {line}" for line in asks] or ["- nothing open"]), END]
-    return "\n".join(out)
+    parts = {"Release": lines(lambda: release_status(line=False).render()) or ["no release in flight"],
+             "Status": [line for line in shown.render() if line.strip()],
+             "Alarms": lines(lambda: alarm.alarm_list(check=False).render()),
+             "For the owner": lines(alarm.owner_asks) or ["nothing open"]}
+    where = f"full facts: {archive.parent.name}/{archive.name}" if archive else "full facts: the dated log file"
+    full = "\n".join([f"### State facts {stamp}", *(f"**{name}**\n" + "\n".join(f"- {line}" for line in items) for name, items in parts.items())])
+    out = [BEGIN, f"## State now (written by `sm status --write` at {stamp}; {where})"]
+    for name, items in parts.items():
+        out += [f"- **{name}** ({len(items)})", *(f"  - {item.strip('- ')[:LINE_WIDTH]}" for item in items[:SHOWN])]
+        out += [f"  - ... {len(items) - SHOWN} more" for _ in range(len(items) - SHOWN > 0)]
+    out = [*out[:CHECKPOINT_LINES - 1], END]
+    return "\n".join(out), full
 
 
 def place(text: str, block: str) -> str:
@@ -316,12 +327,14 @@ def write_document(live: bool, found: Status | None = None) -> list[str]:
     limits = cap.Cap(limit=int(s.get("status_doc_cap_bytes") or 16 * 1024), keep=int(s.get("status_keep_checkpoints") or 3))
     now = rt.providers.clock.now()
     archive = log_file(s, now)
-    block = state_block(found or Status(), now)
+    block, facts = state_block(found or Status(), now, archive)
     out: list[str] = []
 
     def change(text: str) -> tuple[str, str]:
         placed = place(text, block)
         capped, moved = cap.apply(placed, limits)
+        if len(capped.encode()) > limits.limit and len(capped.encode()) > len(text.encode()):  # never grow a document past its cap
+            raise Refuse(f"{path.name} would grow to {len(capped.encode())} bytes, over the cap of {limits.limit}: nothing written", "sm status --write")
         return capped, moved or ("\n" if placed != text else "")  # a new state section is a change even when nothing moves
 
     def keep(moved: str) -> None:  # the moved text is safe before the document shrinks
@@ -331,6 +344,9 @@ def write_document(live: bool, found: Status | None = None) -> list[str]:
         with archive.open("a", encoding="utf-8") as handle:
             handle.write(f"\n## Moved from {path.name} by sm status --write\n\n{moved}\n")
 
+    archive.parent.mkdir(parents=True, exist_ok=True)
+    with archive.open("a", encoding="utf-8") as handle:  # the long facts live in the log, not in the tracking document
+        handle.write(f"\n{facts}\n")
     text, capped = core_journal.rewrite(path, change, keep, [journal_lock(s)])
     out.append(f"{path.name}: state section written; {len(text.encode())} -> {len(capped.encode())} bytes" +
                (f"; older checkpoints and log lines moved to {archive}" if len(capped) < len(place(text, block)) else ""))
