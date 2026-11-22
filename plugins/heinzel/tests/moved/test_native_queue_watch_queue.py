@@ -156,11 +156,11 @@ def setup(monkeypatch, lib, q, views, main_green=True):
 def test_a_green_pr_merges_once_and_notes_once(queue, lib, monkeypatch, capsys):
     add(queue, "393")
     setup(monkeypatch, lib, queue, [view()])
-    queue.tick(now=10_000)
+    queue.train_tick(now=10_000)
     assert queue.merges == [(lib.CORE, "393")]
     assert queue.notes == ["sm queue: #393 merged", "sm queue: batch: 393"]
     assert queue.load()["items"][0]["status"] == "merged"
-    queue.tick(now=10_001)
+    queue.train_tick(now=10_001)
     assert len(queue.merges) == 1
 
 
@@ -192,7 +192,7 @@ def test_reviewed_normal_admission_keeps_the_pin_through_the_queue(queue, lib, m
         return True, REVIEWED_HEAD[:8]
 
     monkeypatch.setattr(lib.load("hz-merge-train"), "train", merge)
-    queue.tick(now=10_000)
+    queue.train_tick(now=10_000)
     item = queue.load()["items"][0]
     if move:
         assert calls == []
@@ -205,7 +205,7 @@ def test_reviewed_normal_admission_keeps_the_pin_through_the_queue(queue, lib, m
 def test_reviewed_normal_pin_does_not_open_a_red_main_exception(queue, lib, monkeypatch):
     setup(monkeypatch, lib, queue, [{**view(), "headRefOid": REVIEWED_HEAD}], main_green=False)
     assert queue.main(REVIEWED_ADD) == 0
-    queue.tick(now=10_000)
+    queue.train_tick(now=10_000)
     assert not queue.merges
     assert queue.load()["items"][0]["status"] == "queued"
 
@@ -214,32 +214,32 @@ def test_one_batch_per_hour_and_after_waits_for_its_dependency(queue, lib, monke
     add(queue, "393")
     add(queue, "plugins 38", after=["393"])
     setup(monkeypatch, lib, queue, [view()])
-    queue.tick(now=10_000)
+    queue.train_tick(now=10_000)
     assert queue.merges == [(lib.CORE, "393")]
-    queue.tick(now=10_100)  # dependency met, but the hour is not over
+    queue.train_tick(now=10_100)  # dependency met, but the hour is not over
     assert len(queue.merges) == 1
-    queue.tick(now=10_000 + 3601)
+    queue.train_tick(now=10_000 + 3601)
     assert queue.merges[-1] == (lib.PLUGINS, "38")
 
 
 def test_freeze_and_red_main_hold_the_batch(queue, lib, monkeypatch, home):
     add(queue, "393")
     setup(monkeypatch, lib, queue, [view()], main_green=False)
-    queue.tick(now=10_000)
+    queue.train_tick(now=10_000)
     assert not queue.merges and "not green" in queue.load()["blocked"]
     setup(monkeypatch, lib, queue, [view()], main_green=True)
     (statedir.root() / "merge-freeze").touch()
-    queue.tick(now=10_000)
+    queue.train_tick(now=10_000)
     assert not queue.merges
     (statedir.root() / "merge-freeze").unlink()
-    queue.tick(now=10_000)
+    queue.train_tick(now=10_000)
     assert queue.merges
 
 
 def test_a_red_core_main_holds_only_core(queue, lib, monkeypatch):
     add(queue, "393", "plugins 38")
     setup(monkeypatch, lib, queue, [view()], main_green=False)
-    queue.tick(now=10_000)
+    queue.train_tick(now=10_000)
     assert queue.merges == [(lib.PLUGINS, "38")]
 
 
@@ -247,7 +247,7 @@ def test_the_fix_for_a_red_main_goes_alone_while_main_is_red(queue, lib, monkeyp
     add(queue, "393")
     add(queue, "394", fixes_main=True)
     setup(monkeypatch, lib, queue, [view(), view()], main_green=False)
-    queue.tick(now=10_000)
+    queue.train_tick(now=10_000)
     assert queue.merges == [(lib.CORE, "394")]
     items = {i["key"]: i["status"] for i in queue.load()["items"]}
     assert items == {"393": "queued", "394": "merged"}
@@ -257,7 +257,7 @@ def test_a_failure_is_needs_work_with_test_names_and_never_rerun(queue, lib, mon
     add(queue, "393")
     fake = setup(monkeypatch, lib, queue, [view([check("Unit", "FAILURE", run=9)], status="BLOCKED")])
     monkeypatch.setattr(lib, "failing_tests", lambda repo, run: ["tests/a_test.py::test_real"])
-    queue.tick(now=10_000)
+    queue.train_tick(now=10_000)
     item = queue.load()["items"][0]
     assert item["status"] == "needs work" and "tests/a_test.py::test_real" in item["detail"]
     assert not [c for c in fake.calls if c[:2] == ("run", "rerun")]
@@ -266,7 +266,7 @@ def test_a_failure_is_needs_work_with_test_names_and_never_rerun(queue, lib, mon
 def test_behind_core_is_not_updated_and_review_is_ignored(queue, lib, monkeypatch):
     add(queue, "393")
     fake = setup(monkeypatch, lib, queue, [view([check("CI OK"), check("review", "FAILURE")], status="BEHIND")])
-    queue.tick(now=10_000)
+    queue.train_tick(now=10_000)
     assert ("pr", "update-branch", "393", "-R", lib.CORE) not in fake.calls
     assert queue.merges == [(lib.CORE, "393")]
 
@@ -274,7 +274,7 @@ def test_behind_core_is_not_updated_and_review_is_ignored(queue, lib, monkeypatc
 def test_behind_non_core_is_still_updated(queue, lib, monkeypatch):
     add(queue, "plugins", "38")
     fake = setup(monkeypatch, lib, queue, [view(status="BEHIND")])
-    queue.tick(now=10_000)
+    queue.train_tick(now=10_000)
     assert ("pr", "update-branch", "38", "-R", lib.PLUGINS) in fake.calls
     assert not queue.merges
 
@@ -299,7 +299,7 @@ def test_a_batch_of_five_core_prs_is_capped_and_noted_for_bisect(queue, lib, mon
     add(queue, *add_all)
     setup(monkeypatch, lib, queue, [view()] * 7)
     monkeypatch.setattr(queue, "site_only", lambda item: False)
-    queue.tick(now=10_000)
+    queue.train_tick(now=10_000)
     assert [pr for _, pr in queue.merges] == add_all[:5]
     assert queue.load()["batch"]["prs"] == add_all[:5]
     assert queue.notes[-1] == "sm queue: batch: 400 401 402 403 404"
@@ -309,12 +309,12 @@ def test_batches_are_five_minutes_apart(queue, lib, monkeypatch):
     add(queue, "393", "394")
     setup(monkeypatch, lib, queue, [view()] * 2)
     monkeypatch.setattr(queue, "BATCH_SECONDS", 300)
-    queue.tick(now=10_000)
+    queue.train_tick(now=10_000)
     assert queue.BATCH_SECONDS == 300 and queue.MAX_CORE_BATCH == 5
     add(queue, "395")
-    queue.tick(now=10_299)
+    queue.train_tick(now=10_299)
     assert queue.merges == [(lib.CORE, "393"), (lib.CORE, "394")]
-    queue.tick(now=10_301)
+    queue.train_tick(now=10_301)
     assert queue.merges[-1] == (lib.CORE, "395")
 
 
@@ -338,7 +338,7 @@ def test_a_red_main_blocks_only_the_next_batch_and_records_it(queue, lib, monkey
     real_gate = queue.main_state
     add(queue, "393", "394")
     setup(monkeypatch, lib, queue, [view()] * 2)
-    queue.tick(now=10_000)
+    queue.train_tick(now=10_000)
     queue.save({**queue.load(), "batch": {**queue.load()["batch"], "shas": ["abc12345"]}})
     # main's one run for the batch finished red; a newer in-progress run is ignored
     add(queue, "395")
@@ -350,7 +350,7 @@ def test_a_red_main_blocks_only_the_next_batch_and_records_it(queue, lib, monkey
     runs = lib.ghj
     monkeypatch.setattr(lib, "ghj", lambda *a, default=None: runs(*a) if a[0] == "run" else pr_view(*a, default=default))
     monkeypatch.setattr(queue, "site_only", lambda item: False)
-    queue.tick(now=10_400)
+    queue.train_tick(now=10_400)
     assert [pr for _, pr in queue.merges] == ["393", "394"]
     state = queue.load()
     assert state["red_batch"]["prs"] == ["393", "394"] and "not green" in state["blocked"]
@@ -368,7 +368,7 @@ def test_the_fix_still_goes_alone_when_main_is_completed_red(queue, lib, monkeyp
     add(queue, "393")
     add(queue, "394", fixes_main=True)
     setup(monkeypatch, lib, queue, [view(), view()], main_green=False)
-    queue.tick(now=10_000)
+    queue.train_tick(now=10_000)
     assert queue.merges == [(lib.CORE, "394")]
 
 
@@ -448,7 +448,7 @@ def test_diagnostic_is_labeled_and_merges_alone_without_replacing_failed_batch(q
     queue.listing()
     assert f"{exception_kind} (not a main fix) at aaaaaaaa" in capsys.readouterr().out
     setup(monkeypatch, lib, queue, [{**view(), "headRefOid": DIAGNOSTIC_HEAD}], main_green=False)
-    queue.tick(now=10_000)
+    queue.train_tick(now=10_000)
     assert queue.merges == [(lib.CORE, "481")]
     assert queue.load()["batch"] == queue.load()["red_batch"] == original
     assert {i["key"]: i["status"] for i in queue.load()["items"]} == {"482": "queued", "481": "merged", "483": "queued"}
@@ -477,7 +477,7 @@ def test_diagnostic_retains_holds_dependencies_cadence_and_check_failures(queue,
     else:
         info["statusCheckRollup"] = [check(block, "FAILURE")]
         monkeypatch.setattr(lib, "failing_tests", lambda *a: [])
-    queue.tick(now=10_000)
+    queue.train_tick(now=10_000)
     assert not queue.merges
 
 
@@ -485,7 +485,7 @@ def test_diagnostic_retains_holds_dependencies_cadence_and_check_failures(queue,
 def test_diagnostic_changed_head_needs_new_review_and_never_reruns(queue, lib, monkeypatch, exception_kind):
     add_diagnostic(queue, lib, monkeypatch, exception_kind=exception_kind)
     fake = setup(monkeypatch, lib, queue, [{**view(), "headRefOid": "b" * 40}], main_green=False)
-    queue.tick(now=10_000)
+    queue.train_tick(now=10_000)
     assert not queue.merges
     assert queue.load()["items"][0]["status"] == "needs work"
     assert "independent review" in queue.load()["items"][0]["detail"]
@@ -498,7 +498,7 @@ def test_diagnostic_does_not_skip_pending_or_empty_checks(queue, lib, monkeypatc
     add_diagnostic(queue, lib, monkeypatch, exception_kind=exception_kind)
     setup(monkeypatch, lib, queue, [{**view(checks), "headRefOid": DIAGNOSTIC_HEAD}], main_green=False)
     monkeypatch.setattr(lib, "advisory_checks", lambda repo: {"review"})
-    queue.tick(now=10_000)
+    queue.train_tick(now=10_000)
     assert not queue.merges and queue.load()["items"][0]["status"] == "queued"
 
 
@@ -507,7 +507,7 @@ def test_actual_red_main_fix_takes_priority_over_diagnostics(queue, lib, monkeyp
     add_diagnostic(queue, lib, monkeypatch, exception_kind=exception_kind)
     add(queue, "484", fixes_main=True)
     setup(monkeypatch, lib, queue, [{**view(), "headRefOid": DIAGNOSTIC_HEAD}], main_green=False)
-    queue.tick(now=10_000)
+    queue.train_tick(now=10_000)
     assert queue.merges == [(lib.CORE, "484")]
 
 
@@ -548,7 +548,7 @@ def test_unknown_main_blocks_diagnostic_without_creating_or_clearing_red_attribu
     queue.update(batch=batch, red_batch=previous)
     real_main_evidence(monkeypatch, lib, evidence)
     assert queue.main_state() == "unknown"
-    queue.tick(now=10_000)
+    queue.train_tick(now=10_000)
     assert not queue.merges
     state = queue.load()
     assert state["blocked"] == "main CI evidence is unknown"
@@ -565,7 +565,7 @@ def test_proven_failed_main_allows_only_diagnostic_through_real_state_evaluation
     queue.update(batch=batch)
     real_main_evidence(monkeypatch, lib, [run(7, "completed", conclusion, "abc")])
     assert queue.main_state() == "red"
-    queue.tick(now=10_000)
+    queue.train_tick(now=10_000)
     assert queue.merges == [(lib.CORE, "481")]
     assert queue.load()["batch"] == queue.load()["red_batch"] == batch
     assert queue.load()["items"][1]["status"] == "queued"
@@ -598,7 +598,7 @@ def test_unknown_core_main_does_not_hold_other_repos_or_attribute_red_batch(queu
     add(queue, "plugins 38")
     queue.update(batch={"prs": ["480"], "shas": ["abc"], "at": 9000})
     real_main_evidence(monkeypatch, lib, None)
-    queue.tick(now=10_000)
+    queue.train_tick(now=10_000)
     assert queue.merges == [(lib.PLUGINS, "38")]
     assert not queue.load()["red_batch"]
 
@@ -621,14 +621,14 @@ def ten_new_green_runs():
 def test_diagnostic_does_not_let_failed_batch_age_out_of_ten_run_window(queue, lib, monkeypatch, exception_kind):
     add_diagnostic(queue, lib, monkeypatch, exception_kind=exception_kind)
     failed, batch = pin_failed_main(queue, lib, monkeypatch)
-    queue.tick(now=10_000)
+    queue.train_tick(now=10_000)
     assert queue.merges == [(lib.CORE, "481")]
     add(queue, "482")
     recent = ten_new_green_runs()
     assert len(recent) == 10 and all(r["databaseId"] != failed["databaseId"] for r in recent)
     real_main_evidence(monkeypatch, lib, recent)
     assert queue.main_state() == "red"
-    queue.tick(now=10_400)
+    queue.train_tick(now=10_400)
     assert queue.merges == [(lib.CORE, "481")]
     assert queue.load()["main_failure"] == failed
     assert queue.load()["batch"] == queue.load()["red_batch"] == batch
@@ -646,7 +646,7 @@ def test_unknown_history_keeps_pinned_failure_without_authorizing_diagnostics(qu
     add_diagnostic(queue, lib, monkeypatch, exception_kind=exception_kind)
     failed, batch = pin_failed_main(queue, lib, monkeypatch)
     real_main_evidence(monkeypatch, lib, None)
-    queue.tick(now=10_000)
+    queue.train_tick(now=10_000)
     assert not queue.merges
     assert queue.load()["main_failure"] == failed and queue.load()["red_batch"] == batch
     assert queue.load()["blocked"] == "main CI evidence is unknown"
@@ -655,7 +655,7 @@ def test_unknown_history_keeps_pinned_failure_without_authorizing_diagnostics(qu
 def test_non_core_only_batch_preserves_failed_main_pin_and_attribution(queue, lib, monkeypatch):
     failed, batch = pin_failed_main(queue, lib, monkeypatch)
     add(queue, "plugins 38")
-    queue.tick(now=10_000)
+    queue.train_tick(now=10_000)
     assert queue.merges == [(lib.PLUGINS, "38")]
     assert queue.load()["main_failure"] == failed and queue.load()["red_batch"] == batch
 
@@ -666,7 +666,7 @@ def test_only_merged_fix_and_its_successful_main_ci_can_supersede_failure(queue,
     add(queue, "482")
     fix_sha = "f1a12345".ljust(40, "0")
     real_main_evidence(monkeypatch, lib, [failed], merge_sha=fix_sha)
-    queue.tick(now=10_000)
+    queue.train_tick(now=10_000)
     assert queue.merges == [(lib.CORE, "484")]
     assert queue.load()["main_failure"] == {**failed, "fixed_by": [fix_sha[:8]]}
     # Neither unrelated successful history nor a pending fix run proves the fix.
@@ -676,7 +676,7 @@ def test_only_merged_fix_and_its_successful_main_ci_can_supersede_failure(queue,
     real_main_evidence(monkeypatch, lib, [run(111, "completed", "success", fix_sha), *ten_new_green_runs()[:9]])
     assert queue.main_state() == "green"
     assert not queue.load()["main_failure"]
-    queue.tick(now=10_400)
+    queue.train_tick(now=10_400)
     assert queue.merges == [(lib.CORE, "484"), (lib.CORE, "482")]
     assert not queue.load()["red_batch"]
 
@@ -686,7 +686,7 @@ def test_failed_fix_main_ci_replaces_pin_with_new_failure(queue, lib, monkeypatc
     add(queue, "484", fixes_main=True)
     fix_sha = "f1a12345".ljust(40, "0")
     real_main_evidence(monkeypatch, lib, [failed], merge_sha=fix_sha)
-    queue.tick(now=10_000)
+    queue.train_tick(now=10_000)
     fix_failure = run(111, "completed", "failure", fix_sha)
     real_main_evidence(monkeypatch, lib, [fix_failure, *ten_new_green_runs()[:9]])
     assert queue.main_state() == "red"
@@ -700,7 +700,7 @@ def test_unsuccessful_fix_merge_does_not_mark_failure_as_superseded(queue, lib, 
     add(queue, "484", fixes_main=True)
     merge = lib.load("hz-merge-train")
     monkeypatch.setattr(merge, "train", lambda *a, **kw: (False, "merge rejected"))
-    queue.tick(now=10_000)
+    queue.train_tick(now=10_000)
     assert queue.load()["main_failure"] == failed
     real_main_evidence(monkeypatch, lib, ten_new_green_runs())
     assert queue.main_state() == "red"
@@ -709,7 +709,7 @@ def test_unsuccessful_fix_merge_does_not_mark_failure_as_superseded(queue, lib, 
 def test_fix_merge_without_known_squash_commit_cannot_supersede_pin(queue, lib, monkeypatch):
     failed, _ = pin_failed_main(queue, lib, monkeypatch)
     add(queue, "484", fixes_main=True)
-    queue.tick(now=10_000)  # remote has no mergeCommit; the train's PR head is not proof of a main commit
+    queue.train_tick(now=10_000)  # remote has no mergeCommit; the train's PR head is not proof of a main commit
     assert queue.merges == [(lib.CORE, "484")]
     assert queue.load()["main_failure"] == failed
     real_main_evidence(monkeypatch, lib, ten_new_green_runs())
@@ -721,7 +721,7 @@ def test_new_failure_after_fix_stays_pinned_even_if_fix_itself_was_green(queue, 
     fix_sha = "f1a12345".ljust(40, "0")
     add(queue, "484", fixes_main=True)
     real_main_evidence(monkeypatch, lib, [failed], merge_sha=fix_sha)
-    queue.tick(now=10_000)
+    queue.train_tick(now=10_000)
     fresh_failure = run(113, "completed", "failure", "facade11")
     fixed = run(111, "completed", "success", fix_sha)
     real_main_evidence(monkeypatch, lib, [fresh_failure, fixed, *ten_new_green_runs()[:8]])
@@ -750,7 +750,7 @@ def test_legacy_red_batch_without_pinned_run_fails_closed_when_failure_aged_out(
     queue.update(batch=batch, red_batch=batch)
     real_main_evidence(monkeypatch, lib, ten_new_green_runs())
     assert queue.main_state() == "unknown"
-    queue.tick(now=10_000)
+    queue.train_tick(now=10_000)
     assert not queue.merges
     assert queue.load()["batch"] == queue.load()["red_batch"] == batch
 
@@ -781,7 +781,7 @@ def test_safety_fix_takes_priority_over_diagnostics_and_is_head_guarded(queue, l
 
     monkeypatch.setattr(merge, "train", reject_changed_head)
     setup(monkeypatch, lib, queue, [{**view(), "headRefOid": DIAGNOSTIC_HEAD}], main_green=False)
-    queue.tick(now=10_000)
+    queue.train_tick(now=10_000)
     assert seen == [(lib.CORE, "484", {"queue_core": True, "expected_head": DIAGNOSTIC_HEAD})]
     assert not queue.merges
     assert {i["key"]: i["status"] for i in queue.load()["items"]} == {"481": "queued", "484": "needs work"}
@@ -791,14 +791,14 @@ def test_safety_fix_takes_priority_over_diagnostics_and_is_head_guarded(queue, l
 def test_green_safety_main_run_keeps_failure_pin_and_cannot_authorize_normal_merges(queue, lib, monkeypatch, exception_kind):
     add_diagnostic(queue, lib, monkeypatch, "484", exception_kind=exception_kind)
     failed, batch = pin_failed_main(queue, lib, monkeypatch)
-    queue.tick(now=10_000)
+    queue.train_tick(now=10_000)
     assert queue.merges == [(lib.CORE, "484")]
     assert queue.load()["main_failure"] == failed
     assert queue.load()["batch"] == queue.load()["red_batch"] == batch
     assert not queue.load()["main_failure"].get("fixed_by")
     add(queue, "482")
     real_main_evidence(monkeypatch, lib, [run(6, "completed", "success", "f1a12345"), failed])
-    queue.tick(now=10_400)
+    queue.train_tick(now=10_400)
     assert queue.merges == [(lib.CORE, "484")]
     assert queue.load()["main_failure"] == failed
     assert queue.load()["red_batch"] == batch
@@ -849,11 +849,11 @@ def test_safety_then_mitigation_then_diagnostic_each_goes_alone(queue, lib, monk
     add_diagnostic(queue, lib, monkeypatch, "486", exception_kind="mitigation")
     add_diagnostic(queue, lib, monkeypatch, "484", exception_kind="safety fix")
     setup(monkeypatch, lib, queue, [{**view(), "headRefOid": DIAGNOSTIC_HEAD}], main_green=False)
-    queue.tick(now=10_000)
+    queue.train_tick(now=10_000)
     assert queue.merges == [(lib.CORE, "484")]
-    queue.tick(now=10_300)
+    queue.train_tick(now=10_300)
     assert queue.merges == [(lib.CORE, "484"), (lib.CORE, "486")]
-    queue.tick(now=10_600)
+    queue.train_tick(now=10_600)
     assert queue.merges == [(lib.CORE, "484"), (lib.CORE, "486"), (lib.CORE, "481")]
 
 @pytest.mark.parametrize('conclusion,attempt,relationship,expected', [
@@ -1037,13 +1037,13 @@ def test_recovery_merges_ordinary_pr_without_erasing_incident_then_holds_new_red
     recovered = {"value": True}
     monkeypatch.setattr(queue, "later_main_passes", lambda: recovered["value"])
     monkeypatch.setattr(queue, "core_batch", lambda ready: ready[:1])
-    queue.tick(now=10_000)
+    queue.train_tick(now=10_000)
     assert queue.merges == [(lib.CORE, "393")]
     assert queue.load()["main_failure"] == pin
     assert queue.load()["red_batch"] == original
     assert queue.load()["batch"]["prs"] == ["393"]
     recovered["value"] = False
-    queue.tick(now=10_300)
+    queue.train_tick(now=10_300)
     assert queue.merges == [(lib.CORE, "393")]
     assert queue.load()["main_failure"] == pin
     assert queue.load()["red_batch"] == original
@@ -1059,7 +1059,7 @@ def test_only_a_planned_multi_core_batch_publishes_intent(queue, lib, monkeypatc
     monkeypatch.setattr(queue, "publish_intent", lambda base, item: intentions.append(item["pr"]) or f"{int(item['pr']):040x}")
     monkeypatch.setattr(queue, "publish_batch", lambda base, members: True)
     monkeypatch.setattr(queue, "close_intents", lambda *args: pytest.fail("a proved batch was closed"))
-    queue.tick(now=10_000)
+    queue.train_tick(now=10_000)
     assert intentions == (list(numbers) if len(numbers) > 1 else [])
 
 
@@ -1073,7 +1073,7 @@ def test_partial_batch_closes_its_surviving_pending_intent(queue, lib, monkeypat
     monkeypatch.setattr(queue, "publish_batch", lambda *args: pytest.fail("a single survivor received a batch proof"))
     closures = []
     monkeypatch.setattr(queue, "close_intents", lambda base, commits: closures.append(commits))
-    queue.tick(now=10_000)
+    queue.train_tick(now=10_000)
     assert closures == [["b" * 40]]
 
 
@@ -1108,7 +1108,7 @@ def test_progress_merges_max_five_without_erasing_failure_attribution(queue, lib
     batch = {"prs": ["480"], "shas": ["bad12345"], "at": 9000}
     queue.update(main_failure=failed, batch=batch, red_batch=batch)
     setup(monkeypatch, lib, queue, [{**view(), "headRefOid": DIAGNOSTIC_HEAD}], main_green=False)
-    queue.tick(now=10_000)
+    queue.train_tick(now=10_000)
     assert len(queue.merges) == 5
     assert queue.load()["main_failure"] == failed
     assert queue.load()["batch"] == queue.load()["red_batch"] == batch
@@ -1140,7 +1140,7 @@ def test_progress_preserves_required_boundaries(queue, lib, monkeypatch, home, b
         info["statusCheckRollup"] = [check("CI OK", "", "IN_PROGRESS") if block == "CI OK" else check("CI OK"),
                                     check(block, "FAILURE") if block != "CI OK" else check("Lint")]
         monkeypatch.setattr(lib, "failing_tests", lambda *a: [])
-    queue.tick(now=10_000)
+    queue.train_tick(now=10_000)
     assert not queue.merges
 
 
@@ -1155,7 +1155,7 @@ def test_progress_rechecks_main_between_merges(queue, lib, monkeypatch):
         monkeypatch.setattr(queue, "completed_main_anchor", lambda: PROGRESS_ANCHOR | {"databaseId": 778})
         return result
     monkeypatch.setattr(merge, "train", change_main)
-    queue.tick(now=10_000)
+    queue.train_tick(now=10_000)
     assert queue.merges == [(lib.CORE, "490")]
     assert queue.load()["items"][1]["status"] == "needs work"
 
@@ -1252,7 +1252,7 @@ def test_progress_batch_publishes_in_merge_order_without_replacing_incidents(que
     monkeypatch.setattr(queue, "publish_intent", lambda base, item: events.append(("intent", item["pr"])) or item["pr"])
     monkeypatch.setattr(queue, "publish_batch", lambda base, numbers: events.append(("proof", numbers)) or True)
     monkeypatch.setattr(queue, "close_intents", lambda *a: pytest.fail("verified proof was closed"))
-    queue.tick(now=10_000)
+    queue.train_tick(now=10_000)
     assert events == [("merge", "490"), ("intent", "490"), ("merge", "491"), ("intent", "491"),
                       ("merge", "492"), ("intent", "492"), ("proof", ["490", "491", "492"])]
     state = queue.load()
@@ -1278,7 +1278,7 @@ def test_progress_guard_change_finalizes_only_the_actual_merged_prefix(queue, li
     intents, proofs = [], []
     monkeypatch.setattr(queue, "publish_intent", lambda base, item: intents.append(item["pr"]) or item["pr"])
     monkeypatch.setattr(queue, "publish_batch", lambda base, numbers: proofs.append(numbers) or True)
-    queue.tick(now=10_000)
+    queue.train_tick(now=10_000)
     assert queue.merges == [(lib.CORE, "490"), (lib.CORE, "491")]
     assert intents == ["490", "491"] and proofs == [["490", "491"]]
     assert queue.load()["items"][2]["status"] == "needs work"
@@ -1320,6 +1320,6 @@ def test_batch_publisher_requires_explicit_enablement(queue, lib, monkeypatch, e
     setup(monkeypatch, lib, queue, [view()])
     monkeypatch.setattr(queue, "publish_intent", lambda *a: pytest.fail("disabled intent published"))
     monkeypatch.setattr(queue, "publish_batch", lambda *a: pytest.fail("disabled proof published"))
-    queue.tick(now=10_000)
+    queue.train_tick(now=10_000)
     assert queue.merges == [(lib.CORE, "393"), (lib.CORE, "394")]
     assert not queue.load()["batch_proof"]

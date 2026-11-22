@@ -31,7 +31,7 @@ def test_a_plugin_release_writes_its_stamp_to_the_plugin_receipt_only(rel, monke
     seen = []
     monkeypatch.setattr(rel, "plugin_dispatch", lambda key, dist: rel.remember(**{key: "2026-11-13T14:22:57Z"}))
     monkeypatch.setattr(rel, "pypi_has", lambda *a: bool(seen) or bool(seen.append(1)))
-    assert rel.release_plugin("resource", 3600) == 0
+    assert rel.release_plugin("resource", 3600, redispatch=True) == 0
     assert not rel.global_receipt().exists()
     assert json.loads(rel.plugin_receipt().read_text()) == {"plugin-heinzel-resource-0.1.5": "2026-11-13T14:22:57Z"}
 

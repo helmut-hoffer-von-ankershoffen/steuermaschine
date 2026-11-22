@@ -75,8 +75,8 @@ release tails, what merged since a train was cut, the candidate list, and the de
 
 ## Plugins
 
-`sm release plugin NAME` releases a plugin whose version on the plugins repository's main is not on PyPI yet, and
-verifies PyPI.
+`sm release plugin NAME` verifies on PyPI a plugin whose version is on the plugins repository's main; the plugins CI publishes it on merge.
+Without `--redispatch` it only reads: exit 0 with a `NOT RELEASED` line while the version is not on PyPI yet; `--redispatch` re-runs the release.
 
 ## Repair: the steps by hand
 

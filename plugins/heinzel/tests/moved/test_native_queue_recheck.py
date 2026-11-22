@@ -54,14 +54,14 @@ def test_tick_does_not_change_repository_rulesets(queue, monkeypatch, home):
     original = queue.lib.load
     monkeypatch.setattr(queue.lib, "load", lambda name: loaded.append(name) or original(name))
     monkeypatch.setattr(queue, "_main_rerun", lambda **kw: None)
-    queue.tick(now=10_000)
+    queue.train_tick(now=10_000)
     assert "merge_gate" not in loaded
 
 
 def test_a_green_needs_work_row_at_its_pinned_head_is_requeued_and_merges(queue, monkeypatch, home):
     needs_work(queue)
     view(monkeypatch, queue)
-    queue.tick(now=10_000)
+    queue.train_tick(now=10_000)
     item = queue.load()["items"][0]
     assert item["status"] == "merged" and [(key, {k: v for k, v in kw.items() if k != "pre_merge_guard"}) for key, kw in queue.merges] == [("803", {"queue_core": True, "expected_head": PIN})]
     assert all(callable(kw.get("pre_merge_guard")) for _, kw in queue.merges)  # the main-plan guard rides along (stale-main-plan)
@@ -81,7 +81,7 @@ def test_a_green_needs_work_row_at_its_pinned_head_is_requeued_and_merges(queue,
 def test_a_row_stays_needs_work_unless_its_pin_holds_and_every_check_is_green(queue, monkeypatch, change, row):
     needs_work(queue, **row)
     view(monkeypatch, queue, **change)
-    queue.tick(now=10_000)
+    queue.train_tick(now=10_000)
     item = queue.load()["items"][0]
     assert item["status"] == "needs work" and not queue.merges
     assert json.dumps(item).count("requeued") == 0
@@ -94,6 +94,6 @@ def test_a_failing_recheck_never_stops_the_tick(queue, monkeypatch, home):
         raise RuntimeError("gh down")
 
     monkeypatch.setattr(queue.lib, "ghj", broken)
-    queue.tick(now=10_000)
+    queue.train_tick(now=10_000)
     assert "needs-work re-check failed: RuntimeError('gh down')" in (statedir.root() / "queue.log").read_text()
     assert queue.load()["items"][0]["status"] == "needs work"

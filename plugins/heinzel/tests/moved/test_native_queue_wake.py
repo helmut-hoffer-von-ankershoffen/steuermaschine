@@ -91,6 +91,7 @@ def test_release_of_last_hold_wakes_without_removing_other_holds(idle):
 
 
 def test_hold_created_and_released_during_idle_is_detected(idle):
+    """Both edges wake: a freeze that starts disarms armed PRs at once (8i4oi with auto-merge), one that lifts re-arms."""
     queue, clock = idle
     hold = statedir.root() / "merge-freeze"
 
@@ -101,6 +102,8 @@ def test_hold_created_and_released_during_idle_is_detected(idle):
             hold.unlink()
 
     clock["event"] = change
+    assert queue.wait_for_tick(300, 42) == "merge freeze started"
+    assert clock["now"] == 1
     assert queue.wait_for_tick(300, 42) == "merge hold released"
     assert clock["now"] == 2
 
