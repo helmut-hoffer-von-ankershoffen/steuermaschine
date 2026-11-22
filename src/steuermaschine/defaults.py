@@ -30,16 +30,6 @@ class SystemClock:
         time.sleep(seconds)
 
 
-def _alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
-
-
 def _read_holder(path: Path) -> dict[str, Any] | None:
     try:
         data = json.loads(path.read_text())
@@ -86,22 +76,15 @@ class FileStore:
 
     @contextmanager
     def lock(self, name: str) -> Any:
-        """An exclusive lock file. The holder writes who it is into the file (pid, command, start, worktree) so a waiter can
-        name it. A holder whose pid is gone but whose lock is still held (a child kept the descriptor) is taken over: the
-        file is replaced, never edited by hand."""
+        """An exclusive flock. The kernel is the only truth: it frees the lock when its holder dies, so there is no takeover.
+        The holder writes who it is (pid, command, start, directory) into the file only so a waiter can name it."""
         path = self.root / "locks" / f"{safe(name)}.lock"
         path.parent.mkdir(parents=True, exist_ok=True)
-        for attempt in (0, 1):
-            handle = open(path, "a+")  # noqa: SIM115 - held across the yield, closed in the finally below
+        with open(path, "a+") as handle:
             try:
                 fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except OSError:
-                holder = _read_holder(path)
-                handle.close()
-                if attempt == 0 and holder and holder.get("pid") and not _alive(int(holder["pid"])):
-                    path.unlink(missing_ok=True)  # the next open makes a new file nobody holds
-                    continue
-                raise Busy(name, describe_holder(holder)) from None
+                raise Busy(name, describe_holder(_read_holder(path))) from None
             try:
                 handle.seek(0)
                 handle.truncate()
@@ -110,8 +93,6 @@ class FileStore:
                 yield
             finally:
                 fcntl.flock(handle, fcntl.LOCK_UN)
-                handle.close()
-            return
 
     def put_receipt(self, kind: str, key: str, data: dict[str, Any]) -> None:
         path = self._path("receipts", kind, key)

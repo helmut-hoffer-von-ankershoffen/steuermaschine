@@ -245,7 +245,7 @@ def test_superseding_never_waits_on_another_worktrees_run():
     assert report.exit_code != 75 and p.store.load("runs.head.demo", "d" * 40) is not None
 
 
-def test_a_waiter_names_the_live_holder_and_takes_over_a_dead_one(tmp_path):
+def test_a_waiter_names_the_holder_and_the_lock_stays_busy_while_held(tmp_path):
     import fcntl
     import os
     import subprocess
@@ -258,16 +258,19 @@ def test_a_waiter_names_the_live_holder_and_takes_over_a_dead_one(tmp_path):
         with pytest.raises(Busy) as live:
             FileStore(tmp_path).lock("x").__enter__()
         assert f"pid {os.getpid()}" in live.value.holder and "in " in live.value.holder
-    # a holder that died while a child kept the lock: the file names a dead pid, the lock is still held
+    # the recorded pid looks dead, the flock is held: flock is the only truth, no takeover
     child = subprocess.Popen([sys.executable, "-c", "pass"])
     child.wait()
-    (tmp_path / "locks" / "y.lock").parent.mkdir(parents=True, exist_ok=True)
     with open(tmp_path / "locks" / "y.lock", "w") as keeper:
         fcntl.flock(keeper, fcntl.LOCK_EX)
         keeper.write(json.dumps({"pid": child.pid, "command": "sm ship .", "since": 0, "cwd": "/wt"}))
         keeper.flush()
-        with store.lock("y"):
-            pass
+        for _ in range(2):
+            with pytest.raises(Busy) as held:
+                store.lock("y").__enter__()
+            assert f"pid {child.pid}" in held.value.holder
+    with store.lock("y"):
+        pass
 
 
 def test_a_pipeline_with_a_unit_runs_without_a_review_file_and_is_a_write_unit():
