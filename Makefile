@@ -1,5 +1,5 @@
 # The single entry point for CI and release: standard tools only (uv, ruff, mypy, pyright, pytest, gitleaks, commitizen).
-.PHONY: install lint format typecheck test secrets audit build check release clean
+.PHONY: install lint format typecheck typos debt test secrets audit build check release clean
 
 # The core with mypy's default rules; the codes below fail on today's code (debt: drop one when its findings are fixed).
 # The repository's [tool.mypy] (strict) stays the debt measure of bin/debt.py, so the gate ignores it.
@@ -19,6 +19,14 @@ typecheck:
 	uv run mypy --config-file= --python-version 3.15 $(MYPY_DEBT:%=--disable-error-code %) src/steuermaschine
 	uv run pyright
 
+# The promote gate's typos and debt ratchet (bin/check runs these same two targets): a red one cannot merge. The ratchet
+# reads the .coverage file of `test`, so `debt` runs after it.
+typos:
+	uv run --quiet typos src plugins examples tests docs README.md bin
+
+debt:
+	uv run --quiet python bin/debt.py --gate
+
 # Coverage floor of the gate (line+branch, core+heinzel plugin, as CI measures it today); [tool.coverage] fail_under
 # = 90 stays the target that bin/check reports as debt.
 COV_FLOOR := 82
@@ -37,7 +45,7 @@ audit:
 build:
 	rm -rf dist && uv build --package steuermaschine --out-dir dist && uv build --package steuermaschine-heinzel --out-dir dist
 
-check: lint typecheck test secrets
+check: lint typecheck typos test debt secrets
 
 release:  # bump from Conventional Commits, write CHANGELOG.md, commit, tag v*; then: git push --follow-tags
 	uv run cz bump --yes

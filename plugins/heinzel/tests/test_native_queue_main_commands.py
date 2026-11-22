@@ -94,3 +94,12 @@ def test_checkpoint_refuses_evidence_it_cannot_accept_as_a_refusal_not_a_traceba
     assert not gh.writes()
 
 
+
+
+def test_a_checkpoint_whose_last_line_is_not_json_has_no_proof_and_the_model_renders_its_lines(monkeypatch):
+    monkeypatch.setattr(area.area, "_queue", lambda: object())
+    monkeypatch.setattr(area.area, "_run", lambda module, argv: (0, ["established", "not json"], []))
+    monkeypatch.setattr(area.area, "_translate", lambda lines: lines)
+    monkeypatch.setattr(area, "runtime", lambda: type("R", (), {"say": lambda self, line: None})())
+    result = area._call("checkpoint", ["checkpoint"])
+    assert result.proof is None and result.render() == ["established", "not json"] and result.exit_code == 0
