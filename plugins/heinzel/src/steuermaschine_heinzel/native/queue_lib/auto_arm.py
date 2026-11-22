@@ -134,7 +134,15 @@ def one(q: Any, item: dict[str, Any], items: list[dict[str, Any]]) -> None:
             q.update(item["key"], detail=ARMED)
         return
     done, error = arm(item["repo"], item["pr"], pinned)
-    if done:
+    if done and (late := frozen(item["repo"])):
+        # the freeze started between the check above and the arm, possibly after the cut's disarm_all: undo it now
+        if disarm(item["repo"], item["pr"]):
+            q.update(item["key"], detail=HELD)
+            q.log(f"{item['key']}: {late} began while it was armed; auto-merge is off again")
+        else:
+            q.update(item["key"], detail=ARMED)
+            q.log(f"{item['key']}: {late} began while it was armed, and auto-merge could not be switched off; the next tick tries again")
+    elif done:
         q.update(item["key"], detail=ARMED)
         q.log(f"{item['key']}: {ARMED} at {pinned[:8]}")
     else:

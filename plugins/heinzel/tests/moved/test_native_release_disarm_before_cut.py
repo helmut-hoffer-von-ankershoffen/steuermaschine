@@ -64,3 +64,38 @@ def test_the_cut_stops_while_a_core_pr_stays_armed_or_the_list_cannot_be_read(to
     with pytest.raises(rel.Stop, match=r"auto-merge is still on for Core PR\(s\) .* nothing proceeds"):
         rel.release_core("0.9.16", "", 0)
     assert order == ["freeze"]  # no gate, no release PR
+
+
+def test_a_resumed_hold_disarms_before_any_other_remote_step(tool, home, monkeypatch):
+    rel = tool(RELEASE)
+    order = []
+    rel.remember(version="0.9.16", freeze_token="a" * 32,
+                 hold_events=[{"action": "pause", "version": "0.9.16", "token": "a" * 32, "at": "2026-11-22T10:00:00Z"}])
+    monkeypatch.setattr(rel, "acquire_snapshot_freeze", lambda version: order.append("hold"))
+    monkeypatch.setattr(rel, "disarm_core_auto_merge", lambda: order.append("disarm"))
+    monkeypatch.setattr(rel, "pause_request", lambda events: order.append("pause request") or None)
+    with pytest.raises(rel.Stop, match="no durable pause request"):
+        rel.resume_paused_hold()
+    assert order == ["hold", "disarm", "pause request"]
+
+
+def test_a_resumed_hold_stops_while_a_core_pr_stays_armed(tool, home, monkeypatch, real_disarm):
+    rel = tool(RELEASE)
+    rel.remember(version="0.9.16", freeze_token="a" * 32,
+                 hold_events=[{"action": "pause", "version": "0.9.16", "token": "a" * 32, "at": "2026-11-22T10:00:00Z"}])
+    monkeypatch.setattr(rel, "acquire_snapshot_freeze", lambda version: None)
+    monkeypatch.setattr(rel, "pause_request", lambda events: pytest.fail("the resume went on with an armed PR"))
+    monkeypatch.setattr(real_disarm.hzlib, "gh", lambda *a: (0, json.dumps([{"number": 801, "autoMergeRequest": ARMED}])) if a[:2] == ("pr", "list") else (0, ""))
+    with pytest.raises(rel.Stop, match=r"auto-merge is still on for Core PR\(s\) #801"):
+        rel.resume_paused_hold()
+
+
+def test_the_release_pr_merge_disarms_once_more_first(tool, home, monkeypatch):
+    """A tick that armed a PR after the cut's disarm is caught right before the release PR merges."""
+    rel = tool(RELEASE)
+    order = []
+    monkeypatch.setattr(rel, "release_pr", lambda tag: order.append("release pr") or {"number": 900, "state": "OPEN"})
+    monkeypatch.setattr(rel, "disarm_core_auto_merge", lambda: order.append("disarm") or (_ for _ in ()).throw(rel.Stop("armed")))
+    with pytest.raises(rel.Stop, match="armed"):
+        rel.merge_release_pr("v0.9.16")
+    assert order == ["release pr", "disarm"]
