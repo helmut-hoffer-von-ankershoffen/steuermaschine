@@ -29,7 +29,7 @@ def home(tmp_path, monkeypatch):
                                              ({"reviewed_head": "", "guarded_head": PIN}, PIN), ({}, "")])
 def test_plan_guard_checks_the_pinned_head(monkeypatch, row, pinned):
     seen = []
-    monkeypatch.setattr(main_plan, "gap", lambda pr, head="": seen.append((pr, head)) or "")
+    monkeypatch.setattr(main_plan, "gap", lambda pr, head="", gate_in_ruleset=False: seen.append((pr, head)) or "")
     refusal: list[str] = []
     assert qd.plan_guard({"pr": "7", **row}, None, refusal)() is True
     assert seen == [("7", pinned)] and refusal == []
@@ -41,7 +41,7 @@ def test_queue_add_pins_the_guarded_head_and_does_not_evaluate_the_merge_rule(mo
     monkeypatch.setattr(qd, "pr_head", lambda repo, number: next(heads))
     monkeypatch.setattr(qd, "guard_findings", lambda repo, number: ([], "PASS"))
     monkeypatch.setattr(hzlib, "ghj", lambda *a, default=None: {"title": "fix(x): y", "body": ""})
-    monkeypatch.setattr(main_plan, "gap", lambda pr, head="": seen.append((pr, head)) or "")
+    monkeypatch.setattr(main_plan, "gap", lambda pr, head="", gate_in_ruleset=False: seen.append((pr, head)) or "")
     args = SimpleNamespace(pr=[["7"]], after=[])
     assert qd.add(args) == 0
     assert seen == []  # the merge-time guard decides, not `queue add`

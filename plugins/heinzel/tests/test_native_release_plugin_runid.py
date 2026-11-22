@@ -7,6 +7,7 @@ follows only that ID, success needs the run's RELEASE_TAG, and a failed run is d
 
 import base64
 import json
+import re
 import subprocess
 
 import pytest
@@ -130,8 +131,8 @@ def test_a_resume_follows_only_the_recorded_run_never_the_newest_of_another_plug
 
 def test_without_redispatch_it_only_reads_ci_publishes_on_merge(rel):
     """Owner 2026-11-22: the plugins CI publishes a bump on merge; the command is a status, --redispatch the re-run."""
-    with pytest.raises(rel.Stop, match=r"heinzel-google 0\.9\.4 is not on PyPI yet: the plugins CI publishes it .*--redispatch"):
-        rel.release_plugin("google", 3600)
+    assert rel.release_plugin("google", 3600) == 0  # a status with exit 0, not a stop (finding 6 of PR 70)
+    assert re.search(r"heinzel-google 0\.9\.4 is not on PyPI yet: the plugins CI publishes it .*--redispatch", "\n".join(rel.said))
     assert not rel.fake.dispatched() and not rel.plugin_receipt().exists()
 
 

@@ -9,7 +9,14 @@ One tick, for each queued entry whose `after` PRs merged:
     MERGED on GitHub          -> the row is merged (merge commit recorded, bead stamped)
     CLOSED, or the head moved -> needs work (the diff guard read another head: ship it again)
     merge freeze (Core only)  -> auto-merge switched off on the PR; armed again once the freeze lifts
+    main red or unknown       -> not armed (a PR that fixes main goes alone); an armed one is switched off
+    merge rule not met        -> not armed: checks pending or unreadable wait, any other refusal needs work
     otherwise                 -> `gh pr merge N --squash --auto --match-head-commit PINNED`
+
+The merge rule is `main_plan.gap`, applied before every arm of a Core PR: the ruleset's required checks green on the
+pinned head, main an ancestor of it, and, where the ruleset does not require Gate review, a recorded independent
+verdict for protected paths. The red-main hold is the old `gate()`: main's latest run not green or unknown holds all
+Core arming except a PR that fixes main (fixes_main, fix-forward, or a reviewed safety fix, mitigation, diagnostic).
 
 The freeze is the release freeze (8i4oi): a release hold, the incident sentinel, or an open release/* PR of Core.
 Unreadable evidence holds (fails closed). Other repositories are not held by Core's release, as before.
@@ -57,14 +64,34 @@ def disarm(repo: str, number: str) -> bool:
     return code == 0
 
 
+def armed_on_github(repo: str) -> list[str] | None:
+    """The numbers of the open PRs of REPO that have auto-merge on, read from GitHub; None when unreadable."""
+    rows = hzlib.ghj("pr", "list", "-R", repo, "--state", "open", "--limit", "200", "--json", "number,autoMergeRequest", default=None)
+    if not isinstance(rows, list):
+        return None
+    return [str(r.get("number")) for r in rows if isinstance(r, dict) and r.get("autoMergeRequest")]
+
+
 def hold(q: Any, why: str, excepted: Callable[[dict[str, Any]], bool]) -> None:
-    """`sm queue hold`: no tick runs, so switch auto-merge off on every armed entry but the hold's exceptions."""
-    for item in [i for i in q.load()["items"] if i["status"] == "queued" and i.get("detail") == ARMED and not excepted(i)]:
-        if disarm(item["repo"], item["pr"]):
-            q.update(item["key"], detail=HELD)
-            q.log(f"{item['key']}: queue held ({why}); auto-merge is off")
-        else:
-            q.log(f"{item['key']}: queue held ({why}), and auto-merge could not be switched off; the next tick tries again")
+    """`sm queue hold`: no tick runs, so switch auto-merge off on every PR armed ON GITHUB (queued or not, whatever sm
+    recorded) but the hold's exceptions."""
+    items = q.load()["items"]
+    queued = {(i["repo"], str(i["pr"])): i for i in items if i["status"] == "queued"}
+    for repo in sorted({hzlib.CORE, *(i["repo"] for i in queued.values())}):
+        armed = armed_on_github(repo)
+        if armed is None:
+            q.log(f"queue held ({why}), and the armed PRs of {repo} cannot be read; the next tick tries again")
+            armed = [pr for (r, pr), i in queued.items() if r == repo and i.get("detail") == ARMED]  # fall back to the record
+        for pr in armed:
+            item = queued.get((repo, pr))
+            if item is not None and excepted(item):
+                continue
+            if disarm(repo, pr):
+                if item is not None:
+                    q.update(item["key"], detail=HELD)
+                q.log(f"{repo}#{pr}: queue held ({why}); auto-merge is off")
+            else:
+                q.log(f"{repo}#{pr}: queue held ({why}), and auto-merge could not be switched off; the next tick tries again")
 
 
 def authors() -> set[str]:
@@ -88,6 +115,30 @@ def disarm_all(repo: str = hzlib.CORE) -> list[str]:
     if not isinstance(rows, list):
         return [f"the open pull requests of {repo} cannot be read again"]
     return [f"#{r.get('number')}" for r in rows if isinstance(r, dict) and r.get("autoMergeRequest")]
+
+
+def main_hold(q: Any, item: dict[str, Any]) -> str:
+    """Why Core's red or unknown main holds ITEM (the old `gate()`), or ''. A PR that fixes main is not held."""
+    if item["repo"] != hzlib.CORE:
+        return ""
+    state = q.main_state()
+    if state == "red" and not q.main_checkpoint.permits(q.state_path(), q.load().get("main_failure", {})) and not q.later_main_passes() and not q.restored_by_rerun():
+        if q.red_main_fixes([item]) or q.fix_forward_ready([item]) or q.red_main_exceptions([item]):
+            return ""
+        return "main's latest run is not green; only a PR that fixes it is armed"
+    if state not in ("green", "red"):
+        return "main CI evidence is unknown"
+    return ""
+
+
+def merge_rule(item: dict[str, Any], pinned: str) -> tuple[str, bool]:
+    """(refusal, wait) of the merge rule for a Core PR at PINNED; ('', False) when it holds. WAIT: pending or unreadable."""
+    if item["repo"] != hzlib.CORE:
+        return "", False
+    from . import main_plan
+
+    reason = main_plan.gap(item["pr"], pinned, gate_in_ruleset=True)
+    return reason, bool(reason) and ("required checks not green" in reason or "cannot" in reason)
 
 
 def one(q: Any, item: dict[str, Any], items: list[dict[str, Any]]) -> None:
@@ -129,9 +180,26 @@ def one(q: Any, item: dict[str, Any], items: list[dict[str, Any]]) -> None:
             q.update(item["key"], detail=HELD)
             q.log(f"{item['key']}: {why}; auto-merge is off")
         return
+    if why := main_hold(q, item):
+        if armed and not disarm(item["repo"], item["pr"]):
+            q.log(f"{item['key']}: {why}, and auto-merge could not be switched off; the next tick tries again")
+            return
+        if item.get("detail") != f"not armed: {why}":
+            q.update(item["key"], detail=f"not armed: {why}")
+            q.log(f"{item['key']}: not armed: {why}")
+        return
     if armed:
         if item.get("detail") != ARMED:
             q.update(item["key"], detail=ARMED)
+        return
+    reason, wait = merge_rule(item, pinned)
+    if reason:
+        if wait:
+            if item.get("detail") != f"not armed: {reason}":
+                q.update(item["key"], detail=f"not armed: {reason}")
+                q.log(f"{item['key']}: not armed: {reason}")
+        else:
+            q.stuck_or_merged(item, "needs work", reason)
         return
     done, error = arm(item["repo"], item["pr"], pinned)
     if done:

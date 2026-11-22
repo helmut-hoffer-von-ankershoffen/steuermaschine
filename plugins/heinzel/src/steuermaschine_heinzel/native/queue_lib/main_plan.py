@@ -93,8 +93,13 @@ def _verdict(head: str, blobs: dict[str, str]) -> str:
     return ""
 
 
-def gap(pr: str, head: str = "") -> str:
-    """'' when the merge rule holds for the pinned head of PR, else the refusal reason (always starting with PREFIX)."""
+GATE_REVIEW = "gate review"
+
+
+def gap(pr: str, head: str = "", gate_in_ruleset: bool = False) -> str:
+    """'' when the merge rule holds for the pinned head of PR, else the refusal reason (always starting with PREFIX).
+    GATE_IN_RULESET: a ruleset that requires the Gate review check carries the protected-path review itself, so the
+    recorded-verdict rule (3) applies only where the ruleset does not require it (the arm-time rule of auto-merge)."""
     try:
         info = hzlib.ghj("pr", "view", pr, "-R", hzlib.CORE, "--json", "headRefOid,statusCheckRollup", default={}) or {}
         current = info.get("headRefOid", "") if isinstance(info, dict) else ""
@@ -116,6 +121,8 @@ def gap(pr: str, head: str = "") -> str:
         if compare.get("status") not in ("ahead", "identical"):
             return (f"{PREFIX}: #{pr} ({head[:8]}) is {compare.get('status') or 'unreadable'} against main {main[:8]}: "
                     "update the branch and let CI test it again")
+        if gate_in_ruleset and any(GATE_REVIEW in str(name).lower() for name in required):
+            return ""
         changed = _changed(pr)
         if changed is None:
             return f"{PREFIX}: cannot read the files #{pr} changes"

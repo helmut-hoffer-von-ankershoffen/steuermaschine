@@ -221,3 +221,26 @@ def test_the_protected_matcher_and_digest_are_one_definition():
     one, text = protected.record({"b": "2", "a": "1"})
     assert one == protected.record({"a": "1", "b": "2"})[0] and '"a": "1"' in text
     assert protected.record({"a": "1", "b": "3"})[0] != one
+
+
+GATE_RULESET = [{"type": "required_status_checks", "parameters": {"required_status_checks": [{"context": "CI OK"}, {"context": "Gate review"}]}}]
+GATE_GREEN = [{"name": n, "status": "COMPLETED", "conclusion": "SUCCESS"} for n in ("CI OK", "Gate review")]
+
+
+def test_arm_time_rule_needs_the_verdict_only_where_the_ruleset_does_not_require_gate_review(monkeypatch, tmp_path, real_main_plan):
+    """Finding 1 of PR 70: auto_arm applies gap(gate_in_ruleset=True): a ruleset with Gate review carries the protected-path
+    review itself; any other ruleset still needs the recorded independent verdict."""
+    rt = runtime(tmp_path)
+    protected_files = ["src/heinzel/a.py", ".github/workflows/ci.yml"]
+
+    def run(world, **kw):
+        monkeypatch.setattr(hzlib, "gh", world)
+        with native(rt):
+            return main_plan.gap("803", HEAD, **kw)
+
+    assert "no verdict is recorded" in run(World(files=protected_files), gate_in_ruleset=True)  # no Gate review in the ruleset
+    gated = World(files=protected_files, ruleset=GATE_RULESET, rollup=GATE_GREEN)
+    assert run(gated, gate_in_ruleset=True) == ""
+    assert "no verdict is recorded" in run(gated)  # the old merge-time rule is unchanged
+    assert "required checks not green" in run(World(files=protected_files, ruleset=GATE_RULESET, rollup=[GATE_GREEN[0]]), gate_in_ruleset=True)
+    assert "update the branch" in run(World(files=protected_files, ruleset=GATE_RULESET, rollup=GATE_GREEN, status="behind"), gate_in_ruleset=True)
