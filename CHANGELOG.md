@@ -9,6 +9,8 @@ Entries are generated from [Conventional Commits](https://www.conventionalcommit
 
 ### Added
 
+- `sm review dispatch` reads `CLAUDE_CODE_OAUTH_TOKEN` from the macOS Keychain item `claude-code-oauth-token` when the
+  variable is unset; the token is held in memory only, never written to a file, plist or log.
 - The visible surface: twelve verbs (`sm`, check, ship, review, release, why, status, work, mini, alarm, note, self);
   everything else is hidden and keeps its path for jobs and hooks. Old visible names are stubs (`Renamed: sm NEW`):
   read-only ones run the new command, writing ones exit 2. `sm -h` is one page in the order of a working day.
