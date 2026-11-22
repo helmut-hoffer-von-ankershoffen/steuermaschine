@@ -15,6 +15,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import typer
@@ -29,7 +30,7 @@ from steuermaschine.plugins import old_variable
 from .. import environment
 from . import queue_hold
 from .journal_view import mirrored
-from .queue_lib import edge, main_plan
+from .queue_lib import auto_arm, edge, main_plan
 
 GROUP = Group("queue", H(
     "queue: the merge queue; what is in it, why it does not merge, add and drop.",
@@ -425,7 +426,7 @@ def _program_words() -> int:
 
 
 @native("daemon queue", writes=True, tick=True, replaces=("hz-queue",), help=H(
-    "One tick of the merge queue: arm GitHub auto-merge on queued PRs (off during a Core release freeze), revert a red main; no tick while `sm queue hold` holds.",
+    "One tick of the merge queue: arm GitHub auto-merge on queued PRs, revert a red main; no tick while `sm queue hold` holds.",
     "Use for the launchd job (`--loop 1`); by hand for a single tick only while that job is stopped.",
     "arms or disarms auto-merge (squash, pinned head), may rerun main's KNOWN failed jobs once, opens a revert PR when main turned red "
     "on a merge with an unknown failure, writes queue state, log, notes, alarms; "
@@ -466,6 +467,7 @@ def daemon_queue(
     if hold:  # sm queue hold: no tick at all, so nothing merges in any repository
         with contextlib.redirect_stdout(out):
             module.log(f"queue held, no tick: {hold.reason} (sm queue unhold lifts it)")
+            auto_arm.hold(SimpleNamespace(**vars(module)), hold.reason, lambda i: queue_hold.queued_key(i) in hold.excepted)  # an armed PR would still merge on GitHub
         _LOOP.update(due=module.time.monotonic() + interval, stamp=module.queue_stamp(), frozen=module.hzlib.merge_frozen())
         data = _load(module)
         return QueueTick(ran=False, wake=wake, held=hold.reason, queued=[i["key"] for i in data["items"] if i["status"] == "queued"],

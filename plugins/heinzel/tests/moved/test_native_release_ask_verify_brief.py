@@ -228,7 +228,7 @@ def test_plugin_release_verifies_pypi(rel, monkeypatch, lib, capsys):
     monkeypatch.setattr(lib, "gh", gh)
     monkeypatch.setattr(lib, "ghj", lambda *a, default=None: json.loads(gh(*a)[1]))  # only the run and its jobs are read as JSON here
     monkeypatch.setattr(rel, "pypi_has", lambda n, v: any(c[:3] == ("api", "-X", "POST") for c in rel.world.calls))
-    assert rel.release_plugin("clock", 60) == 0
+    assert rel.release_plugin("clock", 60, redispatch=True) == 0
     assert "RELEASED heinzel-clock 0.9.1" in capsys.readouterr().out
 
 

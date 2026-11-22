@@ -19,7 +19,6 @@ One check per queue tick (`auto_arm.tick`):
 from __future__ import annotations
 
 import re
-import subprocess
 import tempfile
 import time
 from pathlib import Path
@@ -98,14 +97,13 @@ def revert_exists(branch: str) -> bool:
     return not isinstance(rows, list) or bool(rows)
 
 
-def git(cwd: Path, *argv: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
-    return edge.run(["git", "-C", str(cwd), *argv], capture_output=True, text=True, timeout=600, env=env)
+def git(cwd: Path, *argv: str) -> Any:
+    """One git call in the disposable clone, through the plugin's process runner."""
+    return edge.run(["git", "-C", str(cwd), *argv], capture_output=True, text=True, timeout=600)
 
 
 def make_revert(sha: str, merge: dict[str, Any], branch: str, subject: str, body: str) -> str:
     """Push BRANCH with the one revert commit; '' when done, else why not. Nothing is forced."""
-    import os
-
     with tempfile.TemporaryDirectory(prefix="sm-revert-") as tmp:
         work = Path(tmp) / "core"
         cloned = edge.run(["git", "clone", "--quiet", "--filter=blob:none", f"--depth={DEPTH}", "--branch", "main", "--single-branch",
@@ -114,12 +112,10 @@ def make_revert(sha: str, merge: dict[str, Any], branch: str, subject: str, body
             return "the clone of Core failed"
         if git(work, "cat-file", "-e", f"{sha}^{{commit}}").returncode != 0:
             return f"{sha[:8]} is not within the last {DEPTH} commits of main"
-        who = {"GIT_AUTHOR_NAME": merge["name"], "GIT_AUTHOR_EMAIL": merge["email"],
-               "GIT_COMMITTER_NAME": merge["name"], "GIT_COMMITTER_EMAIL": merge["email"]}
-        env = {**os.environ, **who}
-        if git(work, "revert", "--no-commit", sha, env=env).returncode != 0:
+        who = ("-c", f"user.name={merge['name']}", "-c", f"user.email={merge['email']}")  # author and committer: the merge's author
+        if git(work, *who, "revert", "--no-commit", sha).returncode != 0:
             return f"{sha[:8]} does not revert cleanly on main"
-        if git(work, "commit", "-m", subject, "-m", body, env=env).returncode != 0:
+        if git(work, *who, "commit", "--author", f"{merge['name']} <{merge['email']}>", "-m", subject, "-m", body).returncode != 0:
             return "the revert commit failed"
         pushed = git(work, "push", "origin", f"HEAD:refs/heads/{branch}")
         return "" if pushed.returncode == 0 else f"the push of {branch} failed"
@@ -171,7 +167,7 @@ def finish(q: Any, red: dict[str, Any], key: str, text: str, record: dict[str, A
     """Record the run as handled (never twice), log, note and raise the alarm."""
     q.update(auto_reverts={**q.load().get("auto_reverts", {}), str(red["run"]): {"sha": red["sha"], **record}})
     q.log(f"auto-revert: {text}")
-    hzlib.note(f"sm queue auto-revert: {text}")
+    hzlib.note(f"sm queue: auto-revert: {text}")
     try:
         edge.raise_alarm(key, "ALERT", text)
     except Exception as error:  # noqa: BLE001 - the log and the note already say it

@@ -96,8 +96,8 @@ def test_main_turned_red_on_a_merge_with_an_unknown_failure_opens_one_revert_pr_
     push = next(a for a in argvs if " push " in a)
     assert push.endswith("push origin HEAD:refs/heads/revert/pr-801") and "--force" not in push and "-f " not in push
     assert all("--no-verify" not in a for a in argvs)
-    commit_env = next(env for argv, env in world.gits if "commit" in argv)
-    assert commit_env["GIT_AUTHOR_EMAIL"] == commit_env["GIT_COMMITTER_EMAIL"] == EMAIL
+    commit = next(a for a in argvs if " commit " in a)
+    assert f"user.email={EMAIL}" in commit and f"--author owner <{EMAIL}>" in commit
     row = q.state["items"][-1]
     assert (row["key"], row["status"], row["guarded_head"]) == ("950", "queued", "c" * 40)  # the queue arms auto-merge on it
     assert world.alarms and world.alarms[0][:2] == ("main-red:2", "ALERT")

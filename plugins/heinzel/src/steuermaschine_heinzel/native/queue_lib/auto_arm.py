@@ -18,6 +18,7 @@ Unreadable evidence holds (fails closed). Other repositories are not held by Cor
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from typing import Any
 
 from . import hzlib
@@ -54,6 +55,16 @@ def arm(repo: str, number: str, head: str) -> tuple[bool, str]:
 def disarm(repo: str, number: str) -> bool:
     code, _ = hzlib.gh("pr", "merge", number, "-R", repo, "--disable-auto")
     return code == 0
+
+
+def hold(q: Any, why: str, excepted: Callable[[dict[str, Any]], bool]) -> None:
+    """`sm queue hold`: no tick runs, so switch auto-merge off on every armed entry but the hold's exceptions."""
+    for item in [i for i in q.load()["items"] if i["status"] == "queued" and i.get("detail") == ARMED and not excepted(i)]:
+        if disarm(item["repo"], item["pr"]):
+            q.update(item["key"], detail=HELD)
+            q.log(f"{item['key']}: queue held ({why}); auto-merge is off")
+        else:
+            q.log(f"{item['key']}: queue held ({why}), and auto-merge could not be switched off; the next tick tries again")
 
 
 def one(q: Any, item: dict[str, Any], items: list[dict[str, Any]]) -> None:
