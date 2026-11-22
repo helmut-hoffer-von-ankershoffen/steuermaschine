@@ -460,7 +460,7 @@ def test_superseded_direct_uv_workflow_is_not_the_reviewed_current_contract(monk
     import base64
 
     current = (Path(__file__).parent / "fixtures/acceptance-snapshot.yml").read_bytes()
-    assert current.count(b"uses: ./.github/actions/setup-uv") == 1
+    assert current.count(b"uses: ./.github/actions/setup-uv") == 3  # pins, shard and reducer jobs
     previous = current.replace(
         b"uses: ./.github/actions/setup-uv",
         b"uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2",
@@ -519,7 +519,7 @@ def test_reviewed_snapshot_workflow_rejects_removed_input_or_quota_wiring(monkey
     assert reviewed.count(argument) == 1
     changed = reviewed.replace(b"          " + argument + b"\n", b"")
     if argument == b"--bridge-quota-wait-seconds 3900":
-        assert hashlib.sha256(changed).hexdigest() == "006799afd5c960ba396e59ea6f6987b093514f0f074dcdbc19066187391bfdc6"
+        assert hashlib.sha256(changed).hexdigest() == "67e9423542d5d32740c48ef50796faebaddb65b7370da8a8551a90fb1ad9b1b2"
     monkeypatch.setattr(snapshot.hzlib, "gh", lambda *args: (0, base64.b64encode(changed).decode()))
     assert not snapshot.workflow_supports_snapshot("c" * 40)
 
