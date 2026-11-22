@@ -124,6 +124,28 @@ def test_a_branch_behind_main_gets_main_merged_by_sm_with_a_conventional_subject
     assert not git.ran("--force") and not git.ran("rebase") and not git.ran(" push")
 
 
+def test_a_dry_run_never_creates_a_merge_commit(tmp_path, monkeypatch):
+    git = Git(behind=True)
+    fake, result = drive(tmp_path, monkeypatch, git, live=False)
+    assert not git.ran(" merge ") and fake.calls and not result.derived[0].startswith("merged")  # it ran on, checked, and wrote nothing
+
+
+@pytest.mark.parametrize("branch", ["release/0.9.56", "bump/0.9.57", "release/0.9.56-candidate"])
+@pytest.mark.parametrize("live", [False, True])
+def test_a_release_or_bump_branch_behind_main_is_refused_and_never_merged(tmp_path, monkeypatch, branch, live):
+    git = Git(behind=True, branch=branch)
+    fake = FakeEngine()
+    with pytest.raises(Refuse, match="never merges main into a") as stop:
+        drive(tmp_path, monkeypatch, git, live=live, engine=fake)
+    assert not git.ran(" merge ") and not fake.calls and "candidate base" in str(stop.value)
+
+
+def test_a_release_branch_that_is_not_behind_ships_as_it_is(tmp_path, monkeypatch):
+    git = Git(behind=False, branch="release/0.9.56")
+    fake, _ = drive(tmp_path, monkeypatch, git)
+    assert fake.calls and not git.ran(" merge ")
+
+
 def test_a_branch_not_behind_is_left_alone(tmp_path, monkeypatch):
     git = Git(behind=False)
     drive(tmp_path, monkeypatch, git)

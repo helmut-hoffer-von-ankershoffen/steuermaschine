@@ -35,6 +35,7 @@ TRAILER = re.compile(r"^(?:bead|closes|refs)\s*:\s*([A-Za-z][A-Za-z0-9]*(?:-[A-Z
 BRANCH_BEAD = re.compile(r"(?:^|[/_-])(?:bead|bd)[-_/]([a-z0-9]{3,})|(heinzel-management-[a-z0-9]{3,})", re.IGNORECASE)
 MERGE_SUBJECT = "chore: merge origin/main"
 NOT_WORK = ("main", "master", "HEAD", "")
+PROTECTED_BRANCHES = ("release/", "bump/")
 RECORD = "\x1e"
 FIELD = "\x1f"
 
@@ -55,12 +56,19 @@ def git(commands: Any, worktree: str, *args: str, timeout: float = 120) -> tuple
     return int(done.rc), str(done.out).strip()
 
 
-def merge_main(commands: Any, worktree: str) -> tuple[bool, str]:
-    """(merged, problem): bring origin/main into a branch that is behind it. Only a definite answer acts; a clean tree is needed."""
+def merge_main(commands: Any, worktree: str, branch: str = "", live: bool = True) -> tuple[bool, str]:
+    """(merged, problem): bring origin/main into a branch that is behind it. Only a definite answer acts; a clean tree is needed.
+    A release/* or bump/* branch is never merged (its head must stay on the candidate base): behind means refused. Without
+    `live` nothing is written: a dry run only says that it would merge."""
     if git(commands, worktree, "fetch", "--quiet", "origin", "main")[0]:
         return False, ""  # offline or scripted: the push step fetches again and says so
     if git(commands, worktree, "merge-base", "--is-ancestor", "origin/main", "HEAD")[0] != 1:
         return False, ""  # contained already (0), or not answerable
+    if branch.startswith(PROTECTED_BRANCHES):
+        return False, (f"the branch {branch} is behind origin/main, and sm never merges main into a {branch.split('/')[0]}/* branch (its head must stay on "
+                       "the candidate base): rebuild the branch from the current main by the release tool")
+    if not live:
+        return False, ""
     rc, dirty = git(commands, worktree, "status", "--porcelain")
     if rc == 0 and dirty:
         return False, f"the branch is behind origin/main and the tree has uncommitted changes ({len(dirty.splitlines())} paths): commit or remove them, sm merges main itself"
@@ -96,9 +104,10 @@ def title_of(rows: list[tuple[str, str]]) -> str:
     return next((subject for subject, _ in rows if CONVENTIONAL.fullmatch(subject) and len(subject) <= TITLE_MAX), "")
 
 
-def prepare(commands: Any, worktree: str, given: dict[str, str], *, known: dict[str, str] | None = None, configured: str = "") -> Plan:
+def prepare(commands: Any, worktree: str, given: dict[str, str], *, known: dict[str, str] | None = None, configured: str = "", live: bool = True) -> Plan:
     """Merge main when behind, derive repository, bead and title; refuse once, at the start, for what is missing.
-    `given`: the inputs of this call (--set); `known`: the ones an earlier run of this head remembers; `configured`: the repository of the setting `repo`, also one of ours."""
+    `given`: the inputs of this call (--set); `known`: the ones an earlier run of this head remembers
+    `configured`: the repository of the setting `repo`, also one of ours; `live`: without it main is never merged (a dry run writes nothing)."""
     known = known or {}
     plan, problems = Plan(), []
     rc, url = git(commands, worktree, "remote", "get-url", "origin")
@@ -111,7 +120,7 @@ def prepare(commands: Any, worktree: str, given: dict[str, str], *, known: dict[
     plan.branch = branch if rc == 0 else ""
     if rc == 0 and branch in NOT_WORK:
         problems.append(f"the branch is '{branch}', not a work branch: git switch -c TYPE/NAME, commit there, and run sm ship again")
-    merged, why = merge_main(commands, worktree)
+    merged, why = merge_main(commands, worktree, plan.branch, live)
     plan.merged = merged
     if merged:
         plan.derived.append("merged origin/main into the branch (it was behind)")

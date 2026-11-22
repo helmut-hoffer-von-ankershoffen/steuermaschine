@@ -152,7 +152,7 @@ def open_elsewhere(rt: Any, worktree: str, repo: str, live: bool, given: dict[st
 
     from . import ship as head
 
-    plan = prepare.prepare(rt.providers.commands, worktree, given, configured=core_repo())  # merges main when behind, derives bead and title, refuses once, before anything else
+    plan = prepare.prepare(rt.providers.commands, worktree, given, configured=core_repo(), live=live)  # merges main when behind, derives bead and title, refuses once, before anything else
     title, bead = plan.inputs.get("title", ""), plan.inputs.get("bead", "none")
     if not title:
         raise Refuse("no title: the commit subjects of the branch could not be read", f"sm ship {worktree} --set title=\"type(scope): title\"", code=2)
@@ -200,7 +200,7 @@ def ship(worktree: str = typer.Argument(..., metavar="WORKTREE", help="The clean
         return open_elsewhere(rt, worktree, origin, live, given)
     pl = pipeline()
     _given(rt.providers.store, pl, "", set_)  # refuses a --set of a name the pipeline does not take, before anything is touched
-    plan = prepare.prepare(rt.providers.commands, worktree, given, configured=core_repo())  # main merged when behind; repository, bead, title found; ONE refusal, before the check
+    plan = prepare.prepare(rt.providers.commands, worktree, given, configured=core_repo(), live=live)  # main merged when behind; repository, bead, title found; ONE refusal, before the check
     subject = identify(rt.providers, rt.settings, worktree)  # after the merge: the head of this run
     store = rt.providers.store
     kept = _given(store, pl, subject.key, set_)
