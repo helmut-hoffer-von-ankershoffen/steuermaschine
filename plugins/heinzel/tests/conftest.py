@@ -47,6 +47,15 @@ def _planned_main(request, monkeypatch):
     yield
 
 
+@pytest.fixture(autouse=True)
+def _fresh_rules(monkeypatch):
+    """Each test reads the rulesets afresh: the per-tick cache of hzlib.required_checks never carries over."""
+    from steuermaschine_heinzel.native.queue_lib import hzlib
+
+    monkeypatch.setattr(hzlib, "_RULES", {})
+    yield
+
+
 @pytest.fixture
 def real_state_root():
     """Opt out of the state directory under HOME: the test drives statedir.root itself."""

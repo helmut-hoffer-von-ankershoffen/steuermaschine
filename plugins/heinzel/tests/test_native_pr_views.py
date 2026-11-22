@@ -123,7 +123,7 @@ def why_runtime(tmp_path, view_state, graphql):
 
     from steuermaschine.protocols import Result
 
-    runs = "".join(json.dumps({"name": n, "status": "completed", "conclusion": "success", "completed_at": "2026-11-12T20:00:00Z"}) + "\n" for n in base.why_mod.REQUIRED)
+    runs = "".join(json.dumps({"name": n, "status": "completed", "conclusion": "success", "completed_at": "2026-11-12T20:00:00Z"}) + "\n" for n in base.REQUIRED)
     view = json.dumps({"state": "OPEN", "mergeStateStatus": view_state, "headRefOid": "a" * 40, "title": "fix: x"})
     commands, rt = base.runtime_for(tmp_path, view, runs, queue={"items": []})
     commands.on(["gh", "api", "graphql"], Result(0, json.dumps(graphql)))

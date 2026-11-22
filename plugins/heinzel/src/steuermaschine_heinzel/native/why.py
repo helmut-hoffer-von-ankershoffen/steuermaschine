@@ -19,11 +19,9 @@ from steuermaschine.models import Model
 
 from . import merge_tier
 from .go_lib import legacy, probes
-from .queue_lib import core_facts
+from .queue_lib import core_facts, ruleset
 from .release_lib import ios
 from .why_lib import threads as review_threads
-
-REQUIRED = core_facts.CONTEXTS  # the required contexts of Core's release policy at main
 
 
 class WhySettings(BaseModel):
@@ -88,7 +86,7 @@ class PullRequestWhy(Model):
         return out + self.more
 
 
-def per_name(runs: list[dict[str, Any]], names: Any = REQUIRED) -> list[CheckState]:
+def per_name(runs: list[dict[str, Any]], names: Any) -> list[CheckState]:
     """Per required check: the latest conclusion and the older ones that are not success, from the check runs of one SHA."""
     out = []
     for name in names:
@@ -161,12 +159,19 @@ def gate_notes(runs: list[dict[str, Any]]) -> merge_tier.Verdict:
     return merge_tier.verdict(str(floor[-1].get("summary") or "") if floor else "")
 
 
+def required_names(w: probes.World, runs: list[dict[str, Any]]) -> list[str]:
+    """The checks main's ruleset requires (queue_lib/ruleset.py, the one source); unreadable rules, or rules that require
+    nothing: every check run of the head."""
+    rules, _ = w.gh.try_json(["api", f"repos/{w.repo}/rules/branches/main"], timeout=30)
+    return ruleset.required_in_order(rules) or list(dict.fromkeys(str(r.get("name")) for r in runs if r.get("name")))
+
+
 def explain(w: probes.World, number: int) -> PullRequestWhy:
     pr, _ = w.gh.try_json(["pr", "view", str(number), "-R", w.repo, "--json", "state,mergeStateStatus,headRefOid,title"], timeout=30)
     pr = pr if isinstance(pr, dict) else {}
     sha = str(pr.get("headRefOid") or "")
     runs_of_head = check_runs(w, sha) if sha else []
-    checks = per_name(runs_of_head)
+    checks = per_name(runs_of_head, required_names(w, runs_of_head))
     data = legacy.queue_state(w.state_dir)
     items = [i for i in data["items"] if str(i.get("key")) == str(number)]
     item = next((i for i in items if i.get("status") != "merged"), None) or (items[0] if items else None)

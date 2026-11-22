@@ -66,12 +66,37 @@ def test_incident_frozen_oserror(tmp_path, monkeypatch):
 
 
 def test_advisory_checks(monkeypatch):
+    monkeypatch.setattr(hzlib, "_RULES", {})
     monkeypatch.setattr(hzlib, "ghj", lambda *a, **k: None)
-    assert hzlib.advisory_checks("r") == hzlib.ADVISORY_REVIEW
+    unread = hzlib.advisory_checks("r")
+    assert "review" in unread and "coverage-floor" not in unread and "anything" not in unread  # unread: only the review
     rules = [{"type": "other"}, {"type": "required_status_checks",
                                  "parameters": {"required_status_checks": [{"context": "merge-gate"}]}}]
     monkeypatch.setattr(hzlib, "ghj", lambda *a, **k: rules)
-    assert hzlib.advisory_checks("r") == hzlib.ADVISORY_REVIEW | {"coverage-floor"}
+    ruled = hzlib.advisory_checks("r")
+    assert "merge-gate" not in ruled and "coverage-floor" in ruled and "review" in ruled and "any other check" in ruled
+    assert hzlib.required_names(ruled) == ["merge-gate"] and hzlib.missing_required(ruled, [{"name": "x"}]) == ["merge-gate"]
+
+
+def test_the_rules_are_read_once_per_tick_and_unread_rules_are_not_cached(monkeypatch):
+    monkeypatch.setattr(hzlib, "_RULES", {})
+    calls: list = []
+    answers = [None, [{"type": "required_status_checks", "parameters": {"required_status_checks": [{"context": "check"}]}}]]
+    monkeypatch.setattr(hzlib, "ghj", lambda *a, **k: calls.append(a) or answers[min(len(calls), 2) - 1])
+    assert hzlib.required_checks("o/r") is None
+    assert hzlib.required_checks("o/r") == {"check"} and hzlib.required_checks("o/r") == {"check"}
+    assert len(calls) == 2 and calls[0] == ("api", "repos/o/r/rules/branches/main")
+
+
+def test_only_required_checks_hold_a_pr_with_a_ruleset_even_the_old_macos_and_gate_names():
+    from steuermaschine_heinzel.native.queue_lib.ruleset import Advisory
+
+    ruled = Advisory(frozenset({"check", "Gate review", "Test (macos-15)"}))
+    assert not hzlib.non_blocking("Test (macos-15)", ruled)  # required: it holds, the old macOS exception does not apply
+    assert hzlib.non_blocking("coverage-floor", ruled) and hzlib.non_blocking("SonarCloud Code Analysis", ruled)
+    assert hzlib.non_blocking("coverage-floor", ruled | {"x"}) and not hzlib.non_blocking("coverage-floor", ruled - {"coverage-floor"})
+    none = Advisory(frozenset())  # rules that require nothing (a private repository without Pro): every check but the review
+    assert not hzlib.non_blocking("coverage-floor", none) and hzlib.non_blocking("review", none) and hzlib.non_blocking("Test (macos-15)", none)
 
 
 def test_latest_checks_keeps_newest_per_name():

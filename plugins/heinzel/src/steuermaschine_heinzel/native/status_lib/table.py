@@ -8,8 +8,11 @@ Heinzelmännchen knowledge: the advisory `review` check never holds a pull reque
 from __future__ import annotations
 
 import re
+from collections.abc import Container, Mapping
 from datetime import datetime
 from typing import Any
+
+from ..queue_lib.ruleset import ADVISORY_REVIEW as REVIEW
 
 STALE_HOURS = 6
 GROUPS = ("ready", "needs work", "held", "draft")
@@ -41,7 +44,7 @@ def summary(body: str, title: str, limit: int = 70) -> str:
     return PREFIX.sub("", title)
 
 
-def failing(rollup: list[dict[str, Any]], ignore: frozenset[str] | set[str] = IGNORE) -> str:
+def failing(rollup: list[dict[str, Any]], ignore: Container[str] = IGNORE) -> str:
     # a dispatched `Focused ...` run attaches to the head; diagnostics never make a pull request "needs work"
     return ", ".join(c.get("name") or "" for c in rollup if c.get("conclusion") == "FAILURE" and c.get("name") not in ignore
                      and not (c.get("name") or "").lower().startswith("focused "))
@@ -54,7 +57,7 @@ def age(then: str, now: datetime) -> str:
     return f"{seconds // 3600}h" if seconds < 172800 else f"{seconds // 86400}d"
 
 
-def group_of(pr: dict[str, Any], held: bool, ignore: frozenset[str] | set[str] = IGNORE) -> str:
+def group_of(pr: dict[str, Any], held: bool, ignore: Container[str] = IGNORE) -> str:
     if pr["isDraft"]:
         return "draft"
     if held or any(label["name"] in ("hold", "do-not-merge") for label in pr["labels"]):
@@ -63,7 +66,7 @@ def group_of(pr: dict[str, Any], held: bool, ignore: frozenset[str] | set[str] =
 
 
 def rows(prs: dict[str, list[dict[str, Any]]], actions: dict[str, Any], now: datetime, prefixes: dict[str, str],
-         ignored: dict[str, set[str]] | None = None) -> list[dict[str, Any]]:
+         ignored: Mapping[str, Container[str]] | None = None) -> list[dict[str, Any]]:
     out = []
     for repo, items in prs.items():
         ignore = (ignored or {}).get(repo, {"review"})
@@ -73,7 +76,7 @@ def rows(prs: dict[str, list[dict[str, Any]]], actions: dict[str, Any], now: dat
             commits = pr["commits"]
             out.append({"pr": name, "number": pr["number"], "group": group_of(pr, bool(todo.get("hold")), ignore),
                         "summary": summary(pr["body"], pr["title"]), "state": pr["mergeStateStatus"],
-                        "failing": failing(pr["statusCheckRollup"], ignore),
+                        "failing": failing(pr["statusCheckRollup"], REVIEW),  # every red check is shown; only the required ones hold
                         "age": age(commits[-1]["committedDate"], now) if commits else "?",
                         "action": todo.get("action") or "", "owner": todo.get("owner") or "NO OWNER", "updated": pr["updatedAt"]})
     return out

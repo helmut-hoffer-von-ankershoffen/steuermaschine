@@ -339,10 +339,13 @@ def test_the_rules_decide_what_is_advisory_and_unreadable_rules_hold_the_gate(mo
     from steuermaschine_heinzel.native.queue_lib import hzlib
 
     rules = [{"type": "required_status_checks", "parameters": {"required_status_checks": [{"context": "merge-gate"}]}}]
-    monkeypatch.setattr(hzlib, "gh", lambda *_: (0, json.dumps(rules)))
-    assert hzlib.advisory_checks("o/r") == {"review", "attempt", "Claude review", "coverage-floor"}
+    monkeypatch.setattr(hzlib, "_RULES", {})
     monkeypatch.setattr(hzlib, "gh", lambda *_: (1, ""))
-    assert hzlib.advisory_checks("o/r") == {"review", "attempt", "Claude review"}
+    unread = hzlib.advisory_checks("o/r")
+    assert {"review", "attempt", "Claude review"} == {n for n in ("review", "attempt", "Claude review", "coverage-floor", "merge-gate") if n in unread}
+    monkeypatch.setattr(hzlib, "gh", lambda *_: (0, json.dumps(rules)))
+    ruled = hzlib.advisory_checks("o/r")
+    assert "coverage-floor" in ruled and "merge-gate" not in ruled and "review" in ruled
 
 
 def test_flip_requires_proof_the_check_passed_on_a_pull_request(tool, monkeypatch):

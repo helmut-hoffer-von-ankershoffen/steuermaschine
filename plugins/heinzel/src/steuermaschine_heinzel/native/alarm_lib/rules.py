@@ -5,9 +5,8 @@ from __future__ import annotations
 
 import datetime
 
-from ..queue_lib import core_facts
+from ..queue_lib import core_facts, ruleset
 
-REQUIRED = core_facts.CONTEXTS  # contexts main requires (Core's release policy); the caller drops what the rules do not demand
 GREEN = ("SUCCESS", "SKIPPED", "NEUTRAL")
 STALL_MIN = 15
 ADMISSION_MIN = 20
@@ -237,15 +236,8 @@ def ios_alarm(receipt: dict | None, now: float, stuck: int = 3600) -> dict | Non
 
 
 def required_contexts(rules) -> list[str]:
-    """REQUIRED narrowed to what main's rules demand; all of REQUIRED when the rules cannot be read."""
-    if not isinstance(rules, list):
-        return list(REQUIRED)
-    try:
-        demanded = {c["context"] for r in rules if r.get("type") == "required_status_checks"
-                    for c in r["parameters"]["required_status_checks"]}
-    except (KeyError, TypeError):
-        return list(REQUIRED)
-    return [name for name in REQUIRED if name in demanded] or list(REQUIRED)
+    """The contexts main's rules require (queue_lib/ruleset.py: the one source); [] when they cannot be read."""
+    return sorted(ruleset.required_from(rules) or ())
 
 
 def order(items: list[dict]) -> list[dict]:

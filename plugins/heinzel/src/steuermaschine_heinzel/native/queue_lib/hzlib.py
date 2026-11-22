@@ -12,6 +12,7 @@ import tomllib
 from collections.abc import Iterator
 from pathlib import Path
 from . import edge  # moved: records, processes and what used to be separate scripts
+from . import ruleset
 from ... import state as statedir  # the plugin's state paths
 
 TOOLS = Path(__file__).resolve().parent
@@ -52,8 +53,7 @@ def _ci_file() -> str:
     return core_facts.ci_file()
 
 
-# The Claude review runs as `review`; its inner job `attempt` (heinzel #454) can time out or be cancelled and must stay advisory too.
-ADVISORY_REVIEW = {"review", "attempt", "Claude review"}
+ADVISORY_REVIEW = set(ruleset.ADVISORY_REVIEW)  # advisory only where no ruleset requires checks (queue_lib/ruleset.py)
 
 
 def release_holds() -> Path:
@@ -94,19 +94,34 @@ def merge_frozen(legacy: Path | None = None) -> bool:
     return incident_frozen(legacy) or release_holds_present()
 
 
-def advisory_checks(repo: str) -> set[str]:
-    """Checks whose failure doesn't hold a PR: `review`, and the merge gate's checks until main requires them.
-    GitHub's rules decide. When they can't be read only `review` is advisory, so the gate holds: never a looser gate."""
-    rules = ghj("api", f"repos/{repo}/rules/branches/main")
-    if not isinstance(rules, list):
-        return ADVISORY_REVIEW
-    required = {
-        check["context"]
-        for rule in rules
-        if rule.get("type") == "required_status_checks"
-        for check in rule["parameters"]["required_status_checks"]
-    }
-    return ADVISORY_REVIEW | (set(GATE_CHECKS) - required)
+RULES_TTL = 120.0  # seconds: one queue tick reads each repository's rules once
+_RULES: dict[str, tuple[float, frozenset[str]]] = {}
+
+
+def required_checks(repo: str) -> frozenset[str] | None:
+    """The contexts the ruleset of main requires in REPO, from GitHub (cached for RULES_TTL); None when unreadable."""
+    hit = _RULES.get(repo)
+    if hit and time.monotonic() - hit[0] < RULES_TTL:
+        return hit[1]
+    found = ruleset.required_from(ghj("api", f"repos/{repo}/rules/branches/main"))
+    if found is not None:
+        _RULES[repo] = (time.monotonic(), found)
+    return found
+
+
+def advisory_checks(repo: str) -> ruleset.Advisory:
+    """The checks that do not hold a PR of REPO: every check the ruleset of main does not require (queue_lib/ruleset.py).
+    Unreadable rules, or rules that require nothing: only the advisory review, so the gate holds: never a looser gate."""
+    return ruleset.Advisory(required_checks(repo))
+
+
+def missing_required(advisory: object, rollup: list[dict]) -> list[str]:
+    """Required contexts not reported at all in ROLLUP (GitHub holds such a PR); [] without a ruleset."""
+    return advisory.missing(rollup) if isinstance(advisory, ruleset.Advisory) else []
+
+
+def required_names(advisory: object) -> list[str]:
+    return advisory.names() if isinstance(advisory, ruleset.Advisory) else []
 
 
 def latest_checks(rollup: list[dict]) -> list[dict]:
@@ -134,8 +149,11 @@ def only_never_started_macos_jobs_failed(repo: str, run_id: int) -> bool:
     )
 
 
-def non_blocking(name: str | None, advisory: set[str]) -> bool:
-    """A check that doesn't hold a merge: advisory, or macOS until the full suite has 3 green runs (owner, 2026-11-01); still shown."""
+def non_blocking(name: str | None, advisory: "set[str] | ruleset.Advisory") -> bool:
+    """A check that doesn't hold a merge. With a ruleset that requires checks: every check it does not require, and only
+    those. Without one: advisory, or macOS until the full suite has 3 green runs (owner, 2026-11-01); still shown."""
+    if isinstance(advisory, ruleset.Advisory) and advisory.ruled:
+        return name in advisory
     lowered = (name or "").lower()
     if lowered.startswith("focused "):  # hz-ci-one dispatches (focused-job.yml) attach to the head; a diagnostic, never a gate
         return True

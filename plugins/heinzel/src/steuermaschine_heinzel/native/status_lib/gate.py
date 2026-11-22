@@ -16,11 +16,12 @@ from steuermaschine.github.client import Gh
 from steuermaschine.github.sonar import Fetch, Sonar
 
 from ..queue_lib import core_facts
+from ..queue_lib.ruleset import ADVISORY_REVIEW as REVIEW
+from ..queue_lib.ruleset import Advisory, of_rules
 
 RATINGS = {"reliability_rating": "reliability", "security_rating": "security", "sqale_rating": "maintainability"}
 LETTERS = {"1.0": "A", "2.0": "B", "3.0": "C", "4.0": "D", "5.0": "E"}
-GATE_CHECKS = core_facts.API_CHECKS  # the merge-gate workflow's checks (Core's release policy)
-ADVISORY_REVIEW = frozenset({"review", "attempt", "Claude review"})
+ADVISORY_REVIEW = REVIEW
 BADGE = "https://raw.githubusercontent.com/{repo}/python-coverage-comment-action-data/endpoint.json"
 
 
@@ -97,16 +98,12 @@ def gate_line(row: dict[str, Any]) -> str:
             + (f"  <<< {', '.join(row['marks'])}" if row["marks"] else ""))
 
 
-def advisory_checks_from(rules: Any) -> set[str]:
-    """Checks whose failure does not hold a pull request: the review, and the gate checks until main requires them.
-    GitHub's rules decide. When they cannot be read only the review is advisory: never a looser gate."""
-    if not isinstance(rules, list):
-        return set(ADVISORY_REVIEW)
-    required = {check["context"] for rule in rules if rule.get("type") == "required_status_checks"
-                for check in rule["parameters"]["required_status_checks"]}
-    return set(ADVISORY_REVIEW) | (set(GATE_CHECKS) - required)
+def advisory_checks_from(rules: Any) -> Advisory:
+    """Checks whose failure does not hold a pull request: every check main's rules do not require (queue_lib/ruleset.py).
+    When they cannot be read, or require nothing, only the review is advisory: never a looser gate."""
+    return of_rules(rules)
 
 
-def advisory_checks(gh: Gh, full: str) -> set[str]:
+def advisory_checks(gh: Gh, full: str) -> Advisory:
     rules, _ = gh.try_json(["api", f"repos/{full}/rules/branches/main"])
     return advisory_checks_from(rules)

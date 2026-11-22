@@ -207,3 +207,29 @@ def test_restored_by_rerun_records_once(monkeypatch, home):
     assert qd.restored_by_rerun() is True and len(home) == count
     monkeypatch.setattr(qd, "rerun_restoration", lambda: {})
     assert qd.restored_by_rerun() is False
+
+
+def test_a_pr_red_only_on_a_check_the_ruleset_does_not_require_merges(monkeypatch):
+    """The proof of 'required checks have one source': CI OK and Sonar green, coverage-floor red, and the ruleset of main
+    requires CI OK and Sonar only. The PR is ready; once the ruleset requires coverage-floor too it needs work."""
+    from steuermaschine_heinzel.native.queue_lib.ruleset import Advisory
+
+    qd.save({"items": [item("5")]})
+    rollup = [{"name": "CI OK", "status": "COMPLETED", "conclusion": "SUCCESS"},
+              {"name": "SonarCloud Code Analysis", "status": "COMPLETED", "conclusion": "SUCCESS"},
+              {"name": "coverage-floor", "status": "COMPLETED", "conclusion": "FAILURE"}]
+    view(monkeypatch, statusCheckRollup=rollup)
+    monkeypatch.setattr(hzlib, "advisory_checks", lambda repo: Advisory(frozenset({"CI OK", "SonarCloud Code Analysis"})))
+    assert qd.assess(item(), Merge()) == "ready"
+    monkeypatch.setattr(hzlib, "advisory_checks", lambda repo: Advisory(frozenset({"CI OK", "coverage-floor"})))
+    monkeypatch.setattr(hzlib, "failed_runs", lambda rollup: [])
+    assert qd.assess(item(), Merge()) == "done" and "checks coverage-floor" in qd.load()["items"][0]["detail"]
+
+
+def test_a_required_check_that_has_not_reported_holds_the_pr(monkeypatch):
+    from steuermaschine_heinzel.native.queue_lib.ruleset import Advisory
+
+    qd.save({"items": [item("5")]})
+    view(monkeypatch)  # only CI OK reported
+    monkeypatch.setattr(hzlib, "advisory_checks", lambda repo: Advisory(frozenset({"CI OK", "Gate review"})))
+    assert qd.assess(item(), Merge()) == "wait"

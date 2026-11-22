@@ -42,10 +42,18 @@ def in_sm_words(value):
     return value
 
 
+# Answers that changed on purpose: the required contexts come from the ruleset alone (queue_lib/ruleset.py); unreadable or
+# malformed rules name none, where the old tool fell back to a list of names of its own.
+CHANGED = {33: [], 34: []}
+
+
 def test_every_rule_answers_as_the_old_tool_did():
     assert len(RECORDED) == len(alarm_cases.CASES) >= 29
     for row, (name, args, kwargs) in zip(RECORDED, alarm_cases.CASES, strict=True):
         mine = alarm_cases.call(rules, name, args, kwargs)
+        if row["case"] in CHANGED:
+            assert mine == CHANGED[row["case"]], (row["case"], name)
+            continue
         assert mine == in_sm_words(row["result"]), (row["case"], name)
         assert "hz-" not in json.dumps(mine), (row["case"], name)
 

@@ -309,6 +309,6 @@ def test_the_merge_gate_readers_tolerate_a_policy_without_the_gate(monkeypatch):
 
     slim = core_policy.at_commit_api(api(kit.files("new", policy=_slim(required_contexts=["CI OK"]))), C)
     monkeypatch.setattr(core_facts, "at_main", lambda: slim)
-    assert core_facts.api_checks() == () and core_facts.contexts() == ("CI OK",) and core_facts.judge_file() == ""
+    assert core_facts.api_checks() == () and core_facts.judge_file() == ""
     with pytest.raises(CandidateError, match="no coverage check"):
         core_facts.gate_check("coverage")
