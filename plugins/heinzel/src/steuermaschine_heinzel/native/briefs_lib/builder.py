@@ -31,10 +31,10 @@ class BriefSettings(BaseModel):
     """Settings of the briefs (mixin of the plugin's settings table)."""
 
     brief_code_dir: Path | None = Field(None, description="The directory that holds the clones and the builders' worktrees; none: the directory that contains the tracker's repository.")
-    brief_clones: dict[str, str] = Field({"core": "heinzel", "plugins": "heinzel-plugins", "acme": "heinzel-acme", "sf": "heinzel-sf"},
+    brief_clones: dict[str, str] = Field({"core": "heinzel", "plugins": "heinzel-plugins", "acme": "heinzel-acme", "sf": "heinzel-sf", "sm": "steuermaschine"},
                                          description="Short repository name -> directory of its main clone under brief_code_dir. The first one is the default.")
     brief_max_load: float = Field(40.0, description="No new builder above this 1-minute load average.")
-    brief_max_agents: int = Field(5, description="No new builder when this many agents are working.")
+    brief_max_agents: int = Field(6, description="The builder cap: no new builder when this many agents are working (bare `sm` shows the count).")
     brief_agent_commands: list[str] = Field(["claude", "codex"], description="Process names that count as a working agent.")
     brief_test_load: float | None = Field(None, description="A fixed load for tests; ignored unless HOME is a sandbox.")
 
@@ -102,7 +102,7 @@ def worktree_agents(cwds: dict[int, str], code: Path, prefix: str = "heinzel", n
     return found
 
 
-def full(load: float, agents: list[tuple[int, str]], max_load: float = 40, max_agents: int = 5) -> str:
+def full(load: float, agents: list[tuple[int, str]], max_load: float = 40, max_agents: int = 6) -> str:
     """Why no new builder now, or an empty string."""
     reasons = []
     if load > max_load:
@@ -126,6 +126,17 @@ def working_agents(rt: Any, code: Path, prefix: str, not_worktrees: Iterable[str
         elif line.startswith("n") and pid:
             cwds[pid] = line[1:]
     return worktree_agents(cwds, code, prefix, not_worktrees)
+
+
+def working_count(commands: Any, settings: Mapping[str, Any] | None) -> tuple[int, int]:
+    """(agents working now, the builder cap) for bare `sm`: the same count `brief` refuses a new builder by."""
+    from types import SimpleNamespace
+
+    clones: dict[str, str] = dict(get(settings, "brief_clones"))
+    tracker = tracker_dir(settings)
+    code = optional_path(settings, "brief_code_dir", BriefSettings) or tracker.parent
+    rt = SimpleNamespace(providers=SimpleNamespace(commands=commands), settings=settings)
+    return len(working_agents(rt, code, clones[next(iter(clones))], {*clones.values(), tracker.name})), int(get(settings, "brief_max_agents"))
 
 
 def shown(path: Path) -> str:

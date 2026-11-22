@@ -379,7 +379,8 @@ def _review(rt: Runtime, app: typer.Typer, hidden: bool = False) -> None:
             store.put_receipt("verdicts", digest, data)
         except FileExistsError:
             fail(f"a verdict for {digest[:12]} is already recorded and cannot be changed: {store.get_receipt('verdicts', digest)}")
-        emit(as_json, data, [f"recorded: {data['verdict']} {digest} by {reviewer}"], models.Verdict)
+        later = verdicts.deferred_for_digest(store, digest) if approve else ""
+        emit(as_json, data, [f"recorded: {data['verdict']} {digest} by {reviewer}", *([f"{later} (the check of the bound head was not a full local run)"] if later else [])], models.Verdict)
 
     @review.command("list", context_settings=CTX, short_help="Runs stopped at a review, and the verdict recorded for each digest.", help=H(
         "Runs stopped at a review, and the verdict recorded for each digest.",

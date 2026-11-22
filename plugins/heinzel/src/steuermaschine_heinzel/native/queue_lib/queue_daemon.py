@@ -9,7 +9,7 @@ One merge queue that runs by itself. `add 393 385 "plugins 38"` queues PRs (core
 `add --after 390 "plugins 38"` holds a PR until 390 has merged. `run` loops (launchd or a background job) and each tick:
 reads every queued PR, updates a BEHIND branch outside core, and marks a failing PR `needs work` with the failing checks and tests. Ready PRs merge as one
 batch (up to 5 core PRs) every 5 minutes through hz-merge-train, only onto a main whose latest completed run is green and while ~/.cache/hz-merge-freeze is
-absent. The advisory `review` check is ignored, and `merge-gate` and `coverage-floor` until main requires them. State: ~/.cache/hz-queue.json (HZ_QUEUE_STATE overrides), log:
+absent. Only the checks the ruleset of main requires hold a PR (queue_lib/ruleset.py). State: ~/.cache/hz-queue.json (HZ_QUEUE_STATE overrides), log:
 ~/.cache/hz-queue.log. The idle interval wakes early on a local queue edit, the last merge hold being released,
 or tool edits; this does not shorten the five-minute batch cadence. Only one `run` works at a time (flock on ~/.cache/hz-queue.lock); a second waits for the first to
 exit, so launchd's instance takes over when a session's ends. `hz-note` gets one line when a PR merges or is stuck. Add a PR again to retry it. `add` runs hz-diff-guard on each diff and refuses a PR that raises timeouts, skips or deletes tests, adds retries
@@ -250,7 +250,7 @@ def assess(item: dict, merge) -> str:
         return "done"
     advisory = hzlib.advisory_checks(repo)
     rollup = [c for c in hzlib.latest_checks(info.get("statusCheckRollup", [])) if not hzlib.non_blocking(c.get("name"), advisory)]
-    if not merge.settled(rollup):
+    if not merge.settled(rollup) or hzlib.missing_required(advisory, info.get("statusCheckRollup", [])):
         record_wait(item, "wait", info, rollup, advisory)
         return "wait"
     bad = [c for c in rollup if c.get("conclusion") in merge.FAILED]
@@ -295,7 +295,7 @@ def recheck_needs_work(items: list[dict], merge) -> None:
         log(f"{item['key']}: requeued: checks green again at the pinned head {item['reviewed_head'][:8]}")
 
 
-def record_wait(item: dict, verdict: str, info: dict, rollup: list, advisory: set, now: float | None = None) -> None:
+def record_wait(item: dict, verdict: str, info: dict, rollup: list, advisory: object, now: float | None = None) -> None:
     """Keep `ready_since` / `waiting_since` and the real reason on the item, name it in the log, and raise the stall
     alarm when GitHub holds a PR whose checks are all green (RCA 2026-11-12: #790 sat BLOCKED for three hours).
     Bookkeeping only: a failure here never changes what the tick does."""
@@ -308,7 +308,7 @@ def record_wait(item: dict, verdict: str, info: dict, rollup: list, advisory: se
             since = fields["ready_since"]
         else:
             since = item.get("waiting_since") or int(now)
-            required = [name for name in hz_alarm.REQUIRED if name not in advisory]
+            required = hzlib.required_names(advisory)  # the ruleset's, at this tick
             everything = hzlib.latest_checks(info.get("statusCheckRollup", []))
             green_at = hz_alarm.green_since(rollup) or since
             reason = hz_alarm.wait_reason(state, rollup, required, green_at, now, everything)

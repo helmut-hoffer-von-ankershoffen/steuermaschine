@@ -28,6 +28,7 @@ step either runs or fails.
 """
 from __future__ import annotations
 
+import functools
 import json
 import re
 import shlex
@@ -39,6 +40,7 @@ from typing import Any
 from steuermaschine.preflight import FAIL, SKIP, Preflight, Step
 
 from ..preflight_lib import head
+from .budget import MAX_TEST_FILES, OverBudget, too_many
 
 STEPS = ("tree", "ruff", "types", "hook", "parity", "web", "docs", "standards", "tests", "bound")
 TIMED_OUT = 124  # the exit code of a command the run lock stopped at its time limit
@@ -101,6 +103,10 @@ class Ctx(head.Ctx):
     plan: Plan = field(default_factory=Plan)
     dirty: str = ""  # `git status --porcelain` as the tree check saw it
     full: bool = False  # the hidden --full: the whole unit suite may run here, through the heavy lane
+    budget: Any = None  # check_lib.budget.Budget: the wall time of the local run (None: no budget, as with --full)
+    unrun: str = ""  # why a step that must run tests ran none of them: the run is never READY (exit 75)
+    deferred: str = ""  # why the rest of the run is left to CI (the budget is spent); "": nothing was
+    ci: list[str] = field(default_factory=list)  # what CI must run because it did not run here, one line each
 
 
 def steps_of(lines: list[str]) -> list[tuple[str, list[str]]]:
@@ -165,6 +171,33 @@ def narrow(c: Ctx, p: Plan) -> None:
         p.narrowed = f"the selector and {head.RELATED_SCRIPT} both select everything: the whole unit suite runs"
     else:
         p.pytest, p.narrowed = picked, f"the selector selects the full set; {head.RELATED_SCRIPT} narrows the unit tests to {len(picked)} file(s)"
+
+
+def module_names(path: str) -> tuple[str, str]:
+    """(stem, dotted name) of a changed source file: `src/heinzel/web/auth.py` is ("auth", "heinzel.web.auth"); a package's
+    `__init__.py` is named by its directory."""
+    parts = Path(path.removeprefix("src/")).with_suffix("").parts
+    parts = parts[:-1] if parts and parts[-1] == "__init__" else parts
+    return (parts[-1] if parts else "", ".".join(parts))
+
+
+def owning_tests(c: Ctx, files: list[str]) -> list[str]:
+    """The selected tests that directly own a changed source module: the test file is named for the module
+    (`test_x.py`, `x_test.py`, `test_x_*.py`) or imports it by its dotted name. Empty when no test owns a change."""
+    owners = [module_names(f) for f in production(c)]
+    found = []
+    for test in files:
+        stem = Path(test).stem
+        words = set(re.split(r"[_.]", stem))
+        try:
+            text = (c.wt / test).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            text = ""
+        named = any(name and (name in words or stem in (f"test_{name}", f"{name}_test")) for name, _ in owners)
+        imports = any(dotted and re.search(rf"(?<![\w.]){re.escape(dotted)}\b", text) for _, dotted in owners)
+        if named or imports:
+            found.append(test)
+    return found
 
 
 def production(c: Ctx) -> list[str]:
@@ -283,6 +316,7 @@ def step_tests(c: Ctx) -> Step:
         s.fail(f"{len(src)} file(s) under src/ changed and no test is selected for them ({c.plan.error or c.plan.narrowed or 'the selector names none'})",
                'write the tests of the changed files, or name the covering ones: --sel FILE with {"python": [test files]}')
     if whole and not c.full:  # nothing narrows the change: the whole suite is PR CI's job, never run on this machine without --full
+        c.ci.append("the whole unit suite")
         s.warn(f"{c.plan.narrowed}: the whole unit suite runs on PR CI, not here (a full local run is the coordinator's call: sm check --full)")
     elif whole:
         rc, out = c.gate(head.UNIT_SUITE, cwd=c.wt)
@@ -294,12 +328,25 @@ def step_tests(c: Ctx) -> Step:
         s.warn(c.plan.narrowed + "; integration tests of the change run on CI")
     elif c.plan.narrowed and c.full:
         s.warn(c.plan.narrowed)
-    if files:
-        head.run_tests(c, s, "selected", files)
+    files_run = files
+    if why := too_many(files):  # a wide selection: the tests that own the changed modules run here, the rest is PR CI's (a required check)
+        files_run = owning_tests(c, files)
+        if not files_run:  # nothing owns the change, or nothing fits: zero tests ran, so there is no receipt (exit 75)
+            c.unrun = f"{why}, and no test owns a changed module, so none could run here"
+            c.ci.append(f"{len(files)} selected test files")
+            s.warn(f"no receipt: {c.unrun}")
+        else:
+            rest = [f for f in files if f not in files_run]
+            c.ci.append(f"{len(rest)} of {len(files)} selected test files")
+            s.warn(f"{why}: the {len(files_run)} that own the changed modules run here, {len(rest)} are left to PR CI")
+    for start in range(0, len(files_run), MAX_TEST_FILES):  # batches: the budget stops the run between them (exit 75)
+        head.run_tests(c, s, "selected", files_run[start:start + MAX_TEST_FILES])
     if c.plan.lanes:
         s.warn(f"e2e lanes the selector names are not run here: {', '.join(c.plan.lanes)}")
     s.data.update(tests=files, guards=len(c.plan.guards), selector=c.plan.selector, unit_suite=whole and c.full)
-    where = f"{len(files)} selected test file(s)"
+    if len(files_run) != len(files):  # the receipt and the approval say how many ran here
+        s.data.update(tests_ran=len(files_run), tests_selected=len(files))
+    where = f"{len(files)} selected test file(s)" if len(files_run) == len(files) else f"{len(files_run)} of {len(files)} selected test file(s) ran, {len(files) - len(files_run)} deferred to PR CI (over {MAX_TEST_FILES})"
     suite = "the whole unit suite, " if whole and c.full else "the whole unit suite left to PR CI, " if whole else ""
     s.detail = f"{len(c.plan.guards)} early guard command(s), {suite}{where}" if s.status != FAIL else ""
     return s
@@ -380,6 +427,26 @@ def step_bound(c: Ctx) -> Step:
     return s
 
 
+def guarded(name: str, run: Any) -> Any:
+    """A step inside the run's budget: it starts only while the time lasts; once the budget is spent it and every later
+    step (the `bound` check excepted: it only reads git) is a SKIP row that says "deferred to CI"."""
+
+    @functools.wraps(run)
+    def step(c: Ctx) -> Step:
+        if c.budget is None or name == "bound":
+            return run(c)
+        try:
+            if not c.deferred:
+                c.budget.ensure()
+                return run(c)
+        except OverBudget as stop:
+            c.deferred = stop.reason
+        c.ci.append(f"{name}")
+        return Step(name, SKIP, f"deferred to CI: {c.deferred}")
+
+    return step
+
+
 def checks() -> Preflight:
     table = {"tree": step_tree, "ruff": step_ruff, "types": step_types, "hook": step_hook, "parity": step_parity,
              "web": hook_step("web", "web file(s)", "fix the reported lint or type errors; a stale generated client: regenerate it as the step's message says"),
@@ -387,5 +454,5 @@ def checks() -> Preflight:
              "standards": head.step_standards, "tests": step_tests, "bound": step_bound}
     registry = Preflight()
     for name in STEPS:
-        registry.add(name, table[name])
+        registry.add(name, guarded(name, table[name]))
     return registry

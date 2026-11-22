@@ -106,12 +106,13 @@ def test_the_checks_the_rule_needs_are_the_rulesets_not_the_legacy_ones(merge):
     assert not merged and not refused.merges()
 
 
-def test_a_pr_with_the_legacy_checks_red_but_ci_ok_and_sonar_green_merges(merge):
+def test_a_pr_with_the_legacy_checks_red_does_not_merge_though_ci_ok_and_sonar_are_green(merge):
+    """A red check holds whether the ruleset requires it or not: coverage-floor was red while CI OK was green."""
     from test_native_queue_merge_rule import LEGACY_RED
 
     github = Github(rollup=[*GREEN, *LEGACY_RED])
     merged, detail, refusal = merge(github)
-    assert merged and not refusal and github.merges()
+    assert not merged and not github.merges() and "coverage-floor" in detail
 
 
 # ----------------------------------------------------------------------------- the queue's own update-branch
