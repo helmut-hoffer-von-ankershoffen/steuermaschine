@@ -2,8 +2,28 @@
 name = "steuermaschine-heinzel"
 version = "0.0.1"
 description = "steuermaschine plugin for the Heinzelmännchen project: focused admission, lane caps, release recipe, Mini verification."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.15"
+keywords = ["cli", "agents", "release", "ci", "heinzel"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.15",
+    "Typing :: Typed",
+]
 dependencies = ["steuermaschine"]
+
+[project.urls]
+Homepage = "https://github.com/helmut-hoffer-von-ankershoffen/steuermaschine"
+Source = "https://github.com/helmut-hoffer-von-ankershoffen/steuermaschine/tree/main/plugins/heinzel"
+Changelog = "https://github.com/helmut-hoffer-von-ankershoffen/steuermaschine/blob/main/CHANGELOG.md"
+Issues = "https://github.com/helmut-hoffer-von-ankershoffen/steuermaschine/issues"
 
 [project.entry-points."steuermaschine.plugins"]
 heinzel = "steuermaschine_heinzel.plugin:plugin"

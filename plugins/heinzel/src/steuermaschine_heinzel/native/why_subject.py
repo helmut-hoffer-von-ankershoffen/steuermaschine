@@ -22,7 +22,7 @@ from steuermaschine.helpdoc import H
 from steuermaschine.models import Model
 from steuermaschine.native import native, runtime
 
-from . import ci_evidence, ci_read, queue, rejudge, release_read
+from . import ci_evidence, ci_read, queue, rejudge, release_read, release_stages
 from .ci_evidence import CiMain
 from .ci_read import CiWhy
 from .go import world
@@ -55,11 +55,15 @@ class WhyRelease(Model):
 
     version: str
     status: ReleaseStatus
+    stages: list[release_stages.Stage] = []
 
     def render(self) -> list[str]:
         if self.status.active and self.status.version and self.status.version != self.version:
             return [f"v{self.version} is not in flight; the release in flight is v{self.status.version}:", *self.status.render()]
-        return self.status.render() or [f"v{self.version}: no release in flight"]
+        return [*(self.status.render() or [f"v{self.version}: no release in flight"]), *self.stage_lines()]
+
+    def stage_lines(self) -> list[str]:
+        return ["STAGES", *(f"  {line}" for line in release_stages.render(self.stages))] if self.stages else []
 
 
 def kind(subject: str | None) -> str:
@@ -103,6 +107,16 @@ def branch(name: str) -> PullRequestWhy:
     return pull_request(int(rows[0]["number"]))
 
 
+def stage_table(version: str) -> list[release_stages.Stage]:
+    """The stage table of the version from GitHub run timings; empty when it cannot be read (the table is extra, never a failure)."""
+    from .release import receipt_of, runner
+
+    try:
+        return release_stages.gather(world(), version, receipt_of(runner(), version)[1])
+    except Exception:
+        return []
+
+
 def now() -> WhyNow:
     out = WhyNow()
     for field, read in (("queue", queue.queue_why), ("release", lambda: release_read.release_status(line=False))):
@@ -132,7 +146,8 @@ def why(subject: str | None = typer.Argument(None, metavar="[SUBJECT]", help="A 
         return ci_read.explain_ci(world(), int(str(subject)))
     if what == "version":
         found = VERSION.fullmatch(str(subject))
-        return WhyRelease(version=found.group(1) if found else str(subject), status=release_read.release_status(line=False))
+        version = found.group(1) if found else str(subject)
+        return WhyRelease(version=version, status=release_read.release_status(line=False), stages=stage_table(version))
     if what == "main":
         return ci_evidence.ci_main()
     if what == "branch":

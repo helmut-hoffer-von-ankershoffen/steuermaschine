@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import re
 import time
+from pathlib import Path
 from typing import Any
 
 from steuermaschine import USAGE
@@ -89,8 +90,10 @@ def dts(i: dict[str, Any]) -> float | None:
 class Tracker:
     def __init__(self, rt: Any):
         s = rt.settings
-        self.rt, self.commands, self.clock, self.env = rt, rt.providers.commands, rt.providers.clock, child_env(s)
+        self.rt, self.commands, self.clock = rt, rt.providers.commands, rt.providers.clock
         self.root, self.prefix = str(tracker_dir(s)), str(setting(s, "coord_bead_prefix"))
+        # bd finds its database by BEADS_DIR before the working directory: `sm work` then works from any directory.
+        self.env = {**child_env(s), "BEADS_DIR": str(Path(self.root) / ".beads")}
 
     def run(self, *args: str) -> str:
         """The tracker's output (stdout and stderr). A non-zero exit refuses with the tracker's message."""

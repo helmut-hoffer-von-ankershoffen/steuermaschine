@@ -2,6 +2,7 @@
 verbs `work add|list|show|note|done` the surface mounts (native/surface.py)."""
 
 import json
+from pathlib import Path
 
 from coord_kit import app_runtime, ok  # noqa: F401  (fixtures)
 from test_native_coord_tasks import bd, world
@@ -66,3 +67,10 @@ def test_work_add_is_beads_tasks_add(tmp_path):
     c = world()
     assert invoke(app_runtime(tmp_path, c), ["work", "add", "Logo cut off", "-l", "a,b", "-l", "c"]).stdout == "xy9\n"
     assert bd(c)[0][:4] == ["bd", "create", "--title", "Logo cut off"] and "a,b,c" in bd(c)[0]
+
+
+def test_the_tracker_sets_beads_dir_so_work_runs_from_any_directory(tmp_path):
+    from steuermaschine_heinzel.native.tasks_lib.beads import Tracker
+
+    tracker = Tracker(app_runtime(tmp_path, world()))
+    assert tracker.env["BEADS_DIR"] == str(Path(tracker.root) / ".beads")

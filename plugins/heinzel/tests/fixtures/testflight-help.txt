@@ -1,0 +1,16 @@
+usage: tf [-h] {setup,status,assign,beta,notes,upload} ...
+
+TestFlight without an Apple ID session: upload, status, assign, beta, notes,
+setup. Credentials come from the env file (default ~/.appstoreconnect/heinzel-
+mini.env, override with ASC_ENV_FILE): ASC_KEY_ID, ASC_ISSUER_ID,
+ASC_KEY_PATH. The key file is never read for display; it only signs the JWT.
+
+positional arguments:
+  {setup,status,assign,beta,notes,upload}
+    setup               enable automatic distribution on the internal group
+    beta                print a build's internal beta state
+    notes               set a build's What to Test text from a file
+    upload              export and upload an .xcarchive
+
+options:
+  -h, --help            show this help message and exit
