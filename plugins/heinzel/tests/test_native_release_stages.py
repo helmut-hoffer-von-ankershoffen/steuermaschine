@@ -11,11 +11,22 @@ def run(a, b, conclusion="success", jobs=None):
 
 
 FACTS = st.Facts(
-    ci=[run("03:00:00", "03:20:00"), run("03:01:00", "03:30:00")], merged_at="2026-11-22T03:35:00Z", released_at="2026-11-22T04:13:00Z",
-    pypi=run("04:15:00", "04:16:00"), compose=run("04:15:30", "04:20:00"),
-    acceptance=run("04:20:00", "04:46:00", jobs=[{"name": "web", "startedAt": "2026-11-22T04:21:00Z", "completedAt": "2026-11-22T04:40:00Z", "conclusion": "success"},
-                                                {"name": "core", "startedAt": "2026-11-22T04:21:00Z", "completedAt": "2026-11-22T04:46:00Z", "conclusion": "success"}]),
-    live_at="2026-11-22T04:50:00Z", ios={"started": 1795322400.0, "at": "2026-11-22T05:10:00+00:00", "clean": True})
+    ci=[run("03:00:00", "03:20:00"), run("03:01:00", "03:30:00")],
+    merged_at="2026-11-22T03:35:00Z",
+    released_at="2026-11-22T04:13:00Z",
+    pypi=run("04:15:00", "04:16:00"),
+    compose=run("04:15:30", "04:20:00"),
+    acceptance=run(
+        "04:20:00",
+        "04:46:00",
+        jobs=[
+            {"name": "web", "startedAt": "2026-11-22T04:21:00Z", "completedAt": "2026-11-22T04:40:00Z", "conclusion": "success"},
+            {"name": "core", "startedAt": "2026-11-22T04:21:00Z", "completedAt": "2026-11-22T04:46:00Z", "conclusion": "success"},
+        ],
+    ),
+    live_at="2026-11-22T04:50:00Z",
+    ios={"started": 1795322400.0, "at": "2026-11-22T05:10:00+00:00", "clean": True},
+)
 
 
 def test_every_stage_has_its_row_with_durations_and_one_row_per_shard():
@@ -59,7 +70,6 @@ def test_why_version_prints_the_stage_table(monkeypatch):
     assert why_subject.stage_table("0.9.54") == []
 
 
-<<<<<<< HEAD
 def test_the_core_release_window_opens_at_the_cut_and_closes_only_for_its_version(tmp_path):
     st.open_window("0.9.56", 1795320000.0, tmp_path)
     path = st.window_path(tmp_path)
@@ -108,7 +118,8 @@ def test_a_corrupt_window_file_is_rewritten_and_never_stops_a_resume(tmp_path):
         assert st.open_window("0.9.60", 1_000_000.0, tmp_path) is True
         assert json.loads(path.read_text())["version"] == "0.9.60"
     assert st.open_window("0.9.60", 2_000_000.0, tmp_path) is False  # a resume of the same release keeps its time
-=======
+
+
 class FakeWorld:
     """gh_json answers by the subcommand; a value that is an exception is raised."""
 
@@ -162,4 +173,3 @@ def test_gather_keeps_the_recorded_row_of_an_expired_run(tmp_path):
     by_name = {r.name: r for r in rows}
     assert by_name["PyPI"].start == "2026-11-22T04:15:00Z" and by_name["candidate CI"].end.endswith("03:30:00Z")
     assert st.read_record(tmp_path, "0.9.54")["live_at"] == "2026-11-22T04:50:00Z"
->>>>>>> origin/main
