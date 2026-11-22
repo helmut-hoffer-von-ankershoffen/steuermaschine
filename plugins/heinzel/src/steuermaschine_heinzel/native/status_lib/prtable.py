@@ -15,7 +15,7 @@ QUERY = """query($owner: String!, $repo: String!) { repository(owner: $owner, na
   pullRequests(states: OPEN, first: 100, orderBy: {field: CREATED_AT, direction: DESC}) { nodes {
     number title isDraft mergeStateStatus createdAt author { login }
     reviewThreads(first: 100) { nodes { isResolved } }
-    commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100) { nodes {
+    commits(last: 1) { nodes { commit { oid statusCheckRollup { contexts(first: 100) { nodes {
       __typename ... on CheckRun { name status conclusion } ... on StatusContext { context state } } } } } } } } } } }"""
 GOOD = {"SUCCESS", "NEUTRAL", "SKIPPED"}
 
@@ -31,6 +31,7 @@ class PrRow(Model):
     created: str = ""
     age: str = ""
     author: str = ""
+    head: str = ""  # the commit the CI, Sonar and thread columns were read for
 
     def cells(self) -> list[str]:
         return [self.repo, f"#{self.number}", self.state, self.ci, self.sonar, str(self.threads), self.age, self.author, self.title[:60]]
@@ -49,6 +50,12 @@ def contexts(node: dict[str, Any]) -> list[tuple[str, str]]:
             state = str(c.get("state") or "").upper()
             out.append((str(c.get("context") or ""), "RUNNING" if state in ("PENDING", "EXPECTED") else "SUCCESS" if state == "SUCCESS" else "FAILURE"))
     return out
+
+
+def head_of(node: dict[str, Any]) -> str:
+    """The commit whose checks `contexts` read: the last commit of the pull request."""
+    commit = (((node.get("commits") or {}).get("nodes") or [{}])[0] or {}).get("commit") or {}
+    return str(commit.get("oid") or "")
 
 
 def ci_of(checks: list[tuple[str, str]]) -> str:
@@ -70,7 +77,7 @@ def row(repo: str, node: dict[str, Any], now: datetime) -> PrRow:
     created = str(node.get("createdAt") or "")
     return PrRow(repo=repo, number=int(node["number"]), title=str(node.get("title") or ""), state="DRAFT" if node.get("isDraft") else str(node.get("mergeStateStatus") or "?"),
                  ci=ci_of(checks), sonar=sonar_of(checks), threads=len(threads), created=created, age=since(created, now) if created else "?",
-                 author=str((node.get("author") or {}).get("login") or "?"))
+                 author=str((node.get("author") or {}).get("login") or "?"), head=head_of(node))
 
 
 def fetch(gh: Any, owner: str, repo: str, now: datetime) -> tuple[list[PrRow], str]:

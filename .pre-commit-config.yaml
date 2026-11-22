@@ -29,3 +29,17 @@ repos:
         entry: uv run --script scripts/check_confidentiality.py --identity --commit-msg
         language: system
         stages: [commit-msg]
+      - id: owner-identity
+        name: every commit is the owner's (author and committer)
+        entry: python3 scripts/check_owner_identity.py
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+      - id: owner-identity-pre-push
+        name: every commit being pushed is the owner's
+        entry: python3 scripts/check_owner_identity.py --pre-push
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]

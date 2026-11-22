@@ -18,6 +18,7 @@ from .native.affected import SelectSettings
 from .native.agents import AgentsSettings
 from .native.alarm_asks import AskAlarmSettings
 from .native.asks import AsksSettings
+from .native.auto_review import AutoReviewSettings
 from .native.briefs import BriefSettings
 from .native.ci_classify import ClassifySettings
 from .native.ci_ops import CiOpsSettings
@@ -53,7 +54,7 @@ from .native.why import WhySettings
 from .native.window import WindowSettings
 
 
-class HeinzelSettings(AdmissionSettings, WindowSettings, AgentsSettings, AskAlarmSettings, AsksSettings, BriefSettings, CiOpsSettings, CiSettings, ClassifySettings, CombineSettings, CoordSettings, DispatchSettings, DocsSettings, FlakesSettings, GallerySettings, GoSettings, GuardsSettings, HandoffSettings, IosSettings, LeakwatchSettings, LoadguardSettings, LockSettings, LoopsSettings, MergeTierSettings, MiniSettings, PreflightSettings, QueueSettings, RefillSettings, ReleaseSettings, SelectSettings, ShipSettings, SkillsSettings, StatusSettings, TickSettings, TrainSettings, UpdaterHoldSettings, VelocitySettings, WhySettings, BaseModel):
+class HeinzelSettings(AdmissionSettings, WindowSettings, AgentsSettings, AskAlarmSettings, AsksSettings, AutoReviewSettings, BriefSettings, CiOpsSettings, CiSettings, ClassifySettings, CombineSettings, CoordSettings, DispatchSettings, DocsSettings, FlakesSettings, GallerySettings, GoSettings, GuardsSettings, HandoffSettings, IosSettings, LeakwatchSettings, LoadguardSettings, LockSettings, LoopsSettings, MergeTierSettings, MiniSettings, PreflightSettings, QueueSettings, RefillSettings, ReleaseSettings, SelectSettings, ShipSettings, SkillsSettings, StatusSettings, TickSettings, TrainSettings, UpdaterHoldSettings, VelocitySettings, WhySettings, BaseModel):
     """The table [heinzel]. Every field can also be set as SM_HEINZEL__<FIELD> in the environment.
     Each area adds its fields as a mixin in its own module and is listed in the bases here."""
 

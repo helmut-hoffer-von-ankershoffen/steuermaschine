@@ -4,6 +4,7 @@ No network, no real git, uv or node; the lock files live under tmp_path."""
 
 import json
 
+import pytest
 from test_native_preflight import HEAD, MAIN, Machine, core, rt  # noqa: F401  (core and rt are fixtures)
 
 from steuermaschine import verdicts
@@ -58,7 +59,7 @@ def test_a_web_change_runs_the_hooks_web_steps_and_the_selected_vitest_file_and_
     assert "  [PASS] web: 1 changed web file(s): web-prepare, web-lint, web-types, web-tests green" in lines
     assert "  [PASS] types: only documents, web/, desktop/ or plugins/ changed: the hook runs no type check" in lines and "  [PASS] docs: no document(s) changed" in lines
     assert "         warning: e2e lanes the selector names are not run here: web-1" in lines and "READY" in lines
-    assert lines[-1] == f"receipt: checks {HEAD} (written), measured from {MAIN[:12]}: an approval of this exact commit on that base can be recorded"
+    assert lines[-1].startswith(f"receipt: checks {HEAD} (written), measured from {MAIN[:12]}: an approval of this exact commit on that base can be recorded. Steps run: tree, ruff,")
     assert "  [PASS] hook: scripts/scoped_checks.py answered: 1 web file(s), 0 document(s), 0 early guard command(s)" in lines
     # the hook was asked with the changed paths and the Vitest files the checkout's selector named
     (probe, where, _), = machine.ran("core_scoped_checks")
@@ -91,26 +92,96 @@ def test_a_document_change_runs_the_docs_style_test_the_selector_names_and_the_h
     assert not machine.ran("biome") and not machine.ran("coverage run") and not machine.ran("ruff")
 
 
-def test_a_source_change_runs_ruff_and_types_on_it_and_measures_coverage_with_the_selected_tests_once(core, rt):  # noqa: F811
+def test_a_source_change_runs_ruff_types_and_the_selected_tests_on_it_and_no_coverage(core, rt):  # noqa: F811
     machine = checkout(core).on("git diff --name-only", "src/heinzel/x.py")
-
-    def analysed(argv):
-        from pathlib import Path
-
-        Path(argv[5]).write_text(json.dumps({"files": {"src/heinzel/x.py": {"executed_lines": list(range(19)), "missing_lines": [3], "executed_branches": [], "missing_branches": []}}}))
-        return ""
-
-    machine.on("-m coverage run", "1 passed\n").on("from scripts.focused_coverage import _analyse", analysed)
     found = report(invoke(rt(machine), ["--format", "json", "check", str(core)]))
     assert found.ready and found.receipt, found
     assert [call[0][2:] for call in machine.ran("uv run ruff")] == [["ruff", "format", "--check", "--force-exclude", "--", "src/heinzel/x.py"],
                                                                     ["ruff", "check", "--no-fix", "--force-exclude", "--", "src/heinzel/x.py"]]
-    assert machine.ran("uv run mypy") and machine.ran("uv run pyright")
-    (run, _, env), = machine.ran("-m coverage run")
-    assert run[-1] == "tests/unit/x_test.py" and env["COVERAGE_CORE"] == "ctrace" and env["COVERAGE_FILE"]
-    assert not [call for call in machine.ran("uv run pytest") if "tests/unit/x_test.py" in call[0]]  # not a second time outside coverage
-    coverage = step(found, "coverage")
-    assert coverage.data["percent"] == 95.0 and coverage.data["tests"] == ["tests/unit/x_test.py"] and step(found, "tests").detail == "0 early guard command(s), they run under coverage"
+    # the type checks name the changed files: never the whole project
+    assert [call[0][-3:] for call in machine.ran("uv run mypy")] == [["run", "mypy", "src/heinzel/x.py"]]
+    assert [call[0][-3:] for call in machine.ran("uv run pyright")] == [["run", "pyright", "src/heinzel/x.py"]]
+    assert not machine.ran("coverage") and "coverage" not in [s.name for s in found.steps]
+    assert [call for call in machine.ran("uv run pytest") if "tests/unit/x_test.py" in call[0]]
+    assert "clean over 1 changed Python file(s)" in step(found, "types").detail and step(found, "tests").detail == "0 early guard command(s), 1 selected test file(s)"
+
+
+def src_change(core, **rules):  # noqa: F811
+    machine = checkout(core).on("git diff --name-only", "src/heinzel/x.py")
+    for needle, answer in rules.items():
+        machine.on(needle, answer)
+    return machine
+
+
+@pytest.mark.parametrize("rc", [75, 124])
+def test_a_types_step_with_no_slot_or_a_timeout_fails_and_writes_no_receipt(core, rt, rc):  # noqa: F811
+    found = report(invoke(rt(src_change(core, **{"uv run pyright": Result(rc, "", "")})), ["--format", "json", "check", str(core)]))
+    assert not found.ready and not found.receipt and [f.step for f in found.failures] == ["types"]
+    assert "pyright" in found.failures[0].message and f"(exit {rc})" in found.failures[0].message and step(found, "types").status != "SKIP"
+
+
+def test_the_receipt_names_the_steps_that_ran_and_says_coverage_and_types_are_ci_enforced(core, rt):  # noqa: F811
+    found = report(invoke(rt(src_change(core)), ["--format", "json", "check", str(core)]))
+    assert found.ready and found.receipt and "Steps run: " in found.receipt_note and "types" in found.receipt_note and "PR CI enforces" in found.receipt_note
+
+
+def test_a_real_type_error_and_a_busy_type_check_both_fail(core, rt):  # noqa: F811
+    machine = src_change(core, **{"uv run mypy": Result(1, "x.py:1: error: bad\n", ""), "uv run pyright": Result(124, "", "")})
+    found = report(invoke(rt(machine), ["--format", "json", "check", str(core)]))
+    assert not found.ready and [f.step for f in found.failures] == ["types", "types"]
+    assert "mypy failed on the changed files (exit 1)" in found.failures[0].message and "pyright ran out of time" in found.failures[1].message
+
+
+def test_a_timeout_of_a_gating_step_fails_and_is_never_skipped(core, rt):  # noqa: F811
+    found = report(invoke(rt(src_change(core, **{"tests/unit/x_test.py": Result(124, "", "")})), ["--format", "json", "check", str(core)]))
+    assert not found.ready and [f.step for f in found.failures] == ["tests"] and "exit 124" in found.failures[0].message and not found.receipt
+
+
+def test_a_concurrent_check_waits_for_its_turn_and_gives_up_with_wait(tmp_path):
+    import fcntl
+    import os
+
+    import pytest
+
+    from steuermaschine.engine import Wait
+    from steuermaschine_heinzel.native.check_lib import queue
+
+    said, naps, now = [], [], [0.0]
+
+    def nap(seconds):
+        naps.append(seconds)
+        now[0] += seconds
+
+    with queue.queued(tmp_path):  # free: no wait, and the lock is released afterwards
+        pass
+    holder = os.open(tmp_path / queue.LOCK_NAME, os.O_RDWR)
+    fcntl.flock(holder, fcntl.LOCK_EX)
+    try:
+        with pytest.raises(Wait), queue.queued(tmp_path, said.append, wait=3.0, poll=1.0, sleep=nap, clock=lambda: now[0]):
+            raise AssertionError("the queue was held")
+        assert said == ["sm check: another check is running on this machine; waiting for my turn"] and naps == [1.0, 1.0, 1.0]
+    finally:
+        fcntl.flock(holder, fcntl.LOCK_UN)
+        os.close(holder)
+    with queue.queued(tmp_path, said.append, wait=3.0, sleep=nap):  # released: the next run gets in at once
+        pass
+
+
+def test_the_queue_hands_the_turn_on_when_the_holder_finishes(tmp_path):
+    import fcntl
+    import os
+
+    from steuermaschine_heinzel.native.check_lib import queue
+
+    holder = os.open(tmp_path / queue.LOCK_NAME, os.O_RDWR | os.O_CREAT)
+    fcntl.flock(holder, fcntl.LOCK_EX)
+
+    def release(_seconds):
+        fcntl.flock(holder, fcntl.LOCK_UN)
+
+    with queue.queued(tmp_path, wait=5.0, sleep=release):
+        pass
+    os.close(holder)
 
 
 def test_every_finding_comes_in_one_pass_and_a_red_run_writes_no_receipt(core, rt):  # noqa: F811
@@ -184,8 +255,8 @@ def test_a_full_selection_the_import_graph_narrows_runs_those_tests_and_the_ones
     assert found.ready and step(found, "tests").data["tests"] == ["tests/unit/x_test.py"] and not machine.ran("unit and not perf")
     assert "scripts/related_tests.py narrows the unit tests to 1 file(s)" in step(found, "tests").data["warnings"][0]
     machine = checkout(core).on("git diff --name-only", "pyproject.toml\nsrc/heinzel/x.py").on("scripts/related_tests.py", "ALL\n")
-    found = report(invoke(rt(machine), ["--format", "json", "check", str(core), "--allow-full"]))  # src/ changed and no test named: coverage has nothing to measure with
-    assert [f.step for f in found.failures] == ["coverage"] and "no test is selected" in found.failures[0].message and "--sel FILE" in found.failures[0].fix
+    found = report(invoke(rt(machine), ["--format", "json", "check", str(core)]))  # src/ changed and no test named: fails, as before
+    assert not found.ready and [f.step for f in found.failures] == ["tests"] and "no test is selected" in found.failures[0].message and "--sel FILE" in found.failures[0].fix
 
 
 def test_a_hook_that_does_not_answer_fails_the_run_whatever_changed(core, rt, tmp_path):  # noqa: F811

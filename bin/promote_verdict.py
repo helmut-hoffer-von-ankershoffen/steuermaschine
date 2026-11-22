@@ -42,6 +42,7 @@ Exit 2: bad arguments.
 from __future__ import annotations
 
 import datetime
+import json
 import os
 import re
 import subprocess
@@ -80,7 +81,13 @@ def promoted_base(stable: Path, repo: Path) -> str:
     if not current.is_symlink() and not current.exists():
         return "none"
     name = Path(os.readlink(current)).name if current.is_symlink() else current.resolve().name
-    if not re.fullmatch(r"[0-9a-f]{12}", name):
+    meta = current / "release.json"  # a release installed from its PyPI wheels (release_ci.py follow) names its commit
+    if meta.is_file():
+        try:
+            name = str(json.loads(meta.read_text(encoding="utf-8"))["commit"])
+        except (ValueError, KeyError, TypeError):
+            raise Refused(f"{meta} names no commit: the reviewed base cannot be checked") from None
+    if not re.fullmatch(r"[0-9a-f]{40}", name) and not re.fullmatch(r"[0-9a-f]{12}", name):
         raise Refused(f"{current} names {name!r}, not a release of a commit: the reviewed base cannot be checked")
     try:
         return full_sha(repo, name)

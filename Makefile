@@ -35,7 +35,7 @@ audit:
 	uv audit --locked --preview-features audit-command
 
 build:
-	rm -rf dist && uv build --package steuermaschine --out-dir dist
+	rm -rf dist && uv build --package steuermaschine --out-dir dist && uv build --package steuermaschine-heinzel --out-dir dist
 
 check: lint typecheck test secrets
 

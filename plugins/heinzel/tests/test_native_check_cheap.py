@@ -190,11 +190,11 @@ def test_ruff_and_tree_and_bound_steps(tmp_path):
     assert cheap.step_ruff(c3).detail == "no Python file changed"
 
 
-def test_the_checks_are_registered_in_their_order_and_reuse_the_preflights_type_and_standards_checks():
+def test_the_checks_are_registered_in_their_order_and_reuse_the_preflights_standards_check_and_run_no_coverage():
     registry = cheap.checks()
-    assert registry.names == cheap.STEPS == ("tree", "ruff", "types", "hook", "parity", "web", "docs", "standards", "tests", "coverage", "bound")
+    assert registry.names == cheap.STEPS == ("tree", "ruff", "types", "hook", "parity", "web", "docs", "standards", "tests", "bound")
     by_name = {check.name: check.run for check in registry.checks}
-    assert by_name["types"] is head.step_types and by_name["standards"] is head.step_standards
+    assert by_name["types"] is cheap.step_types and by_name["standards"] is head.step_standards and "coverage" not in registry.names
 
 
 @pytest.mark.parametrize("changed", [["web/src/a.ts"], ["docs/a.md"], ["src/heinzel/x.py"], []])
