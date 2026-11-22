@@ -1,12 +1,15 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  The sm release follower on the Mac mini. Every 5 minutes it looks at the latest GitHub release of steuermaschine and,
-  when that tag's commit carries the CI review verdict (`Gate review`) and descends from the live one, runs bin/promote
-  for exactly that commit in its own clone (~/Code/steuermaschine-follow, cloned on first run), then restarts the
-  launchd loops that run the stable sm. promote waits up to 30 minutes for running admission and release steps.
-  launchd starts no second run while one is still waiting. Install: copy it to ~/Library/LaunchAgents, replace USER,
-  `launchctl bootstrap gui/$(id -u) PATH`. It must not name the stable sm: the follower never restarts itself.
+  The sm release follower on the Mac mini: the Mini installs what a user installs. Every 5 minutes it reads the Latest
+  GitHub release of steuermaschine (Latest only after the release run's clean-container acceptance), checks the Gate
+  review of that tag's merge, takes the PyPI wheels of steuermaschine and steuermaschine-heinzel at that version (each
+  equal by sha256 to the release asset), installs them into ~/Code/steuermaschine-stable/releases/vX, smokes, switches
+  `current` between two admission or release steps (bin/promote_lib.sh of the release) and restarts the launchd loops
+  that run the stable sm. Its own code is ~/Code/steuermaschine-follow, checked out at the release tag on every run.
+  Install once: `gh repo clone helmut-hoffer-von-ankershoffen/steuermaschine ~/Code/steuermaschine-follow`, copy this
+  file to ~/Library/LaunchAgents, replace USER, `launchctl bootstrap gui/$(id -u) PATH`. It must not name the stable sm:
+  the follower never restarts itself. Rollback: bin/rollback. bin/promote stays the fallback until three clean releases.
 -->
 <plist version="1.0">
 <dict>

@@ -13,7 +13,8 @@ Nothing here knows which test belongs to which path. Three sources at the commit
 Checks, in the order they run (every one runs, so one pass names every finding):
   tree        clean tree, head ahead of the base: the receipt is bound to the commit, so the commit must be what ran
   ruff        format and lint of the changed Python files
-  types       the hook's type checks, when the change is not web, desktop, plugins or documents only
+  types       the hook's type checks over the changed Python files only (never the whole project), when the change is not
+              web, desktop, plugins or documents only; non-gating here: a timeout is "skipped: busy", PR CI's type job gates
   hook        Core's hook answered for the changed paths; if it did not, its steps and guards are unknown and the run fails
   parity      what PR CI fails on that the hook does not run: the lockfile (`uv lock --check`), the template
               (scripts/sync_template.py --check) and the import contracts (`uv run lint-imports`), each when a path it reads changed
@@ -21,8 +22,9 @@ Checks, in the order they run (every one runs, so one pass names every finding):
   docs        the hook's document steps when documents or the site's tooling changed
   standards   the repository-wide standards tests
   tests       the hook's early guards and the selector's tests of the changed paths
-  coverage    when src/ changed: scoped coverage of the whole changed files by the selector's tests (they run once, here)
   bound       HEAD and the tree are still what the checks began with
+Coverage and the whole-project type checks are not run here: PR CI's `coverage-floor` and its lint job ("Lint, contracts
+and types") gate them. Every gating step either runs or fails; only a non-gating one may be reported as skipped.
 """
 from __future__ import annotations
 
@@ -30,14 +32,14 @@ import json
 import re
 import shlex
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any
 
 from steuermaschine.preflight import FAIL, SKIP, Preflight, Step
 
 from ..preflight_lib import head
 
-STEPS = ("tree", "ruff", "types", "hook", "parity", "web", "docs", "standards", "tests", "coverage", "bound")
+STEPS = ("tree", "ruff", "types", "hook", "parity", "web", "docs", "standards", "tests", "bound")
+TIMED_OUT = 124  # the exit code of a command the run lock stopped at its time limit
 FAST_SECONDS = 150  # every command of a fast check is stopped after this long: about two minutes, and a little margin
 NO_SLOT = "a fast slot is free in a moment (`sm gate status` shows who holds them); run sm check again; do not bypass the run lock"
 # Runs in the worktree's own interpreter: Core's hook answers for the changed paths; this code only asks.
@@ -274,8 +276,7 @@ def step_tests(c: Ctx) -> Step:
     if c.plan.error:
         s.fail(c.plan.error, "run it by hand in the worktree and fix the cause; the tests of a change are never guessed")
     whole = c.plan.pytest is None
-    measured = bool(production(c)) and not whole
-    files = [] if measured else selected_tests(c)  # with src/ changed they run once, under coverage
+    files = selected_tests(c)
     if whole and not c.full:  # nothing narrows the change: the whole suite is PR CI's job, never run on this machine without --full
         s.warn(f"{c.plan.narrowed}: the whole unit suite runs on PR CI, not here (a full local run is the coordinator's call: sm check --full)")
     elif whole:
@@ -293,24 +294,41 @@ def step_tests(c: Ctx) -> Step:
     if c.plan.lanes:
         s.warn(f"e2e lanes the selector names are not run here: {', '.join(c.plan.lanes)}")
     s.data.update(tests=files, guards=len(c.plan.guards), selector=c.plan.selector, unit_suite=whole and c.full)
-    where = "they run under coverage" if measured else f"{len(files)} selected test file(s)"
+    where = f"{len(files)} selected test file(s)"
     suite = "the whole unit suite, " if whole and c.full else "the whole unit suite left to PR CI, " if whole else ""
     s.detail = f"{len(c.plan.guards)} early guard command(s), {suite}{where}" if s.status != FAIL else ""
     return s
 
 
-def step_coverage(c: Ctx) -> Step:
-    files = production(c)
+def step_types(c: Ctx) -> Step:
+    """The hook's type checks over the changed Python files only. Not gating here (PR CI's lint job runs them over the
+    project): a command stopped at its time limit is reported as "skipped: busy", a real finding still fails."""
+    s = Step("types")
+    changed = c.changed(filter_="ACMRD")
+    if not [f for f in changed if not head.TYPES_EXEMPT.match(f)]:
+        s.detail = "only documents, web/, desktop/ or plugins/ changed: the hook runs no type check"
+        return s
+    files = [f for f in c.changed(filter_="ACMR") if f.endswith(".py") and not head.TYPES_EXEMPT.match(f) and (c.wt / f).is_file()]
     if not files:
-        return head.step_coverage(c)
-    tests = selected_tests(c) if c.plan.pytest is not None else [t for t in c.plan.extra if (c.wt / t).exists()]
-    if not tests:
-        return Step("coverage").fail(f"{len(files)} file(s) under src/ changed and no test is selected for them ({c.plan.error or c.plan.narrowed or 'the selector names none'})",
-                                     'write the tests of the changed files, or name the covering ones: --sel FILE with {"python": [test files]}')
-    c.sel = {"python": tests}
-    c.sel_bytes, c.sel_path = json.dumps(c.sel).encode(), Path("selector")
-    s = head.step_coverage(c)
-    s.data["tests"] = tests
+        s.detail = "no Python file was added or changed (only deletions or other files): nothing to type-check here"
+        return s
+    commands, read = head.hook_types(c.wt)
+    if not read:
+        s.warn(f"could not read TYPES from {head.HOOK_SCRIPT}: the default mypy and pyright commands ran")
+    busy = []
+    for name, cmd in commands:
+        rc, out = c.gate([*cmd, *files], cwd=c.wt)
+        if rc in (75, TIMED_OUT):
+            busy.append(name)
+        elif rc != 0:
+            log = c.log(name, out)
+            s.fail(f"{name} failed on the changed files (exit {rc}){'; log ' + log if log else ''}\n{head.tail(out)}",
+                   f"fix the reported errors (`{' '.join([*cmd, *files])}` reproduces; pyright reportPrivateUsage: no access to a `_name` of another module)")
+    if busy and s.status != FAIL:
+        s.status = SKIP
+        s.detail = f"skipped: busy ({', '.join(busy)} got no slot or ran out of time); PR CI's lint job runs the type checks over the project"
+    elif s.status != FAIL:
+        s.detail = f"{', '.join(name for name, _ in commands)} clean over {len(files)} changed Python file(s); the whole project is PR CI's job"
     return s
 
 
@@ -326,10 +344,10 @@ def step_bound(c: Ctx) -> Step:
 
 
 def checks() -> Preflight:
-    table = {"tree": step_tree, "ruff": step_ruff, "types": head.step_types, "hook": step_hook, "parity": step_parity,
+    table = {"tree": step_tree, "ruff": step_ruff, "types": step_types, "hook": step_hook, "parity": step_parity,
              "web": hook_step("web", "web file(s)", "fix the reported lint or type errors; a stale generated client: regenerate it as the step's message says"),
              "docs": hook_step("docs", "document(s)", "fix the document or regenerate the generated file the step names"),
-             "standards": head.step_standards, "tests": step_tests, "coverage": step_coverage, "bound": step_bound}
+             "standards": head.step_standards, "tests": step_tests, "bound": step_bound}
     registry = Preflight()
     for name in STEPS:
         registry.add(name, table[name])

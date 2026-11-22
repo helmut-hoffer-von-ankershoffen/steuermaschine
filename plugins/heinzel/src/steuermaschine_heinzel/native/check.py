@@ -22,14 +22,13 @@ from steuermaschine.helpdoc import H
 from steuermaschine.native import native, runtime
 from steuermaschine.preflight import PreflightReport
 
-from . import affected
+from . import affected, lock
 from . import preflight as _preflight
 from .affected_lib import select
-from .check_lib import cheap
-from .preflight_lib import head, scoped_cov
+from .check_lib import cheap, queue
+from .preflight_lib import head
 
 SUMMARY_KIND = "heinzel.check.summary"  # state store: the last report per head, green or not, keyed by the commit
-COVERAGE_ENV = {"COVERAGE_CORE": "ctrace"}  # the C tracer: the default core of a new Python cannot record what the measurement needs
 
 
 class HeadCheck(PreflightReport):
@@ -67,7 +66,6 @@ def bound(rt: Any, wt: Path, base: str, allow_full: bool = False, full: bool = F
     head.bind(c.base_sha)
     branch = c.git("rev-parse", "--abbrev-ref", "HEAD")[1].strip()
     c.branch = "" if branch == "HEAD" else branch
-    c.scoped = lambda worktree, sel: scoped_cov.run(Path(worktree), Path(sel), c.sh, c.gate, c.base_sha, env=COVERAGE_ENV)
     return c
 
 
@@ -91,8 +89,9 @@ def extra_tests(sel: Path | None) -> list[str]:
     "Checks, in this order; every one runs, so one pass names every finding:\n"
     "  tree        clean tree, and the head has commits of its own over the base\n"
     "  ruff        format and lint of the changed Python files\n"
-    "  types       the push hook's type checks (read from Core's scripts/scoped_checks.py), unless only web, desktop,\n"
-    "              plugins or documents changed\n"
+    "  types       the push hook's type checks (read from Core's scripts/scoped_checks.py) over the changed Python files\n"
+    "              only, unless only web, desktop, plugins or documents changed; not gating here: a timeout reports\n"
+    "              \"skipped: busy\" (PR CI's lint job runs them over the project)\n"
     "  hook        Core's scripts/scoped_checks.py answered for the changed paths: which are web files and documents, their\n"
     "              steps and the early guards. A hook that is missing or fails is a failure, never a pass\n"
     "  parity      what PR CI fails on that the hook leaves out, each when a path it reads changed: the lockfile\n"
@@ -103,7 +102,6 @@ def extra_tests(sel: Path | None) -> list[str]:
     "  standards   the repository-wide standards tests (Core's scripts/preflight_standards.txt, else the setting)\n"
     "  tests       the hook's early guards (the contract tests of a changed path) and the tests `sm head select` names\n"
     "              for the changed paths, the docs style test for a document among them\n"
-    "  coverage    when src/ changed: scoped coverage of the whole changed files by those tests (>= 90 %)\n"
     "  bound       HEAD and the tree did not change while the checks ran\n"
     "Which test belongs to which path is never listed here: Core's selector, hook and standards list at the commit say it.\n"
     "The head is compared with its merge-base with the base. When the selector selects the full set, Core's\n"
@@ -111,6 +109,9 @@ def extra_tests(sel: Path | None) -> list[str]:
     "warning says so; --allow-full, the coordinator's call, runs it here through the heavy lane); when it fails, the run fails.\n"
     "Everything here is fast: each command runs in a fast slot of the run lock (up to three at once, any load, never exclusive)\n"
     "and is stopped after 150 s. The whole unit suite, integration and e2e never run here; PR CI runs them.\n"
+    "Coverage (CI's coverage-floor) and the whole-project type checks (CI's lint job) never run here. Only a non-gating\n"
+    "step (types) may report \"skipped: busy\"; a gating step that gets no slot or times out fails, never passes silently.\n"
+    "Runs queue: one sm check at a time per machine, the others wait (exit 75 after 20 minutes: run it again).\n"
     "E2E lanes never run here. --sel FILE adds tests ({\"python\": [files]}).\n"
     "The receipt is bound to the commit and names the base it was measured from: any new commit needs a new run, and\n"
     "an approval needs the receipt's base to be the base the reviewed packet builds the head on. A run with --skip or\n"
@@ -118,7 +119,7 @@ def extra_tests(sel: Path | None) -> list[str]:
     "Exit 0 READY, 1 NOT READY, 2 usage."))
 def check(worktree: Path | None = typer.Argument(None, metavar="WORKTREE", help="Core worktree whose HEAD is the head to check (default: the current directory)."),
           base: str | None = typer.Option(None, "--base", metavar="REV", help="The ref the head branched from (default: the setting preflight_base)."),
-          sel: Path | None = typer.Option(None, "--sel", metavar="FILE", help='More tests to run and to measure coverage with: JSON {"python": [test files]}.'),
+          sel: Path | None = typer.Option(None, "--sel", metavar="FILE", help='More tests to run: JSON {"python": [test files]}.'),
           skip: list[str] | None = typer.Option(None, "--skip", metavar="NAME", help="Leave one check out (repeatable); named in the verdict, and no receipt is written."),
           allow_full: bool = typer.Option(False, "--allow-full", help="Let the run lock run the whole unit suite when nothing narrows the change (the coordinator's call; logged)."),
           full: bool = typer.Option(False, "--full", hidden=True, help="A full local run: the whole unit suite when nothing narrows the change, "
@@ -132,13 +133,15 @@ def check(worktree: Path | None = typer.Argument(None, metavar="WORKTREE", help=
         raise Refuse(f"--skip takes one of {', '.join(cheap.STEPS)}; unknown: {', '.join(unknown)}", usage, code=USAGE)
     default = str(_preflight.setting(rt, "preflight_base"))
     ref = base or default
-    c = bound(rt, wt, ref, allow_full, full or allow_full)
-    try:
-        selection = affected.selection(select.Repo(wt), c.changed())
-    except select.RepoError as why:
-        raise Refuse(f"the selector of {wt} cannot be read: {why}", f"sm head select --repo {wt} --base {ref}", code=USAGE) from None
-    c.plan = cheap.plan(c, selection, extra_tests(sel))
-    steps, left_out, not_run = registry.run(c, set(skipped), say=rt.say)
+    extra = extra_tests(sel)
+    with queue.queued(lock.policy(rt.settings, providers.commands, providers.clock).directory, rt.say):  # one run at a time: the rest wait
+        c = bound(rt, wt, ref, allow_full, full or allow_full)
+        try:
+            selection = affected.selection(select.Repo(wt), c.changed())
+        except select.RepoError as why:
+            raise Refuse(f"the selector of {wt} cannot be read: {why}", f"sm head select --repo {wt} --base {ref}", code=USAGE) from None
+        c.plan = cheap.plan(c, selection, extra)
+        steps, left_out, not_run = registry.run(c, set(skipped), say=rt.say)
     report = HeadCheck.of(f"sm check {c.sha[:9]} ({c.branch or 'detached'}) vs {ref} {c.base_sha[:9]}", steps, left_out, not_run, worktree=str(wt), head=c.sha,
                           branch=c.branch, base=c.base_sha, selector=c.plan.selector, changed=len(c.plan.changed),
                           generated_at=datetime.fromtimestamp(providers.clock.now()).astimezone().isoformat(timespec="seconds"))
