@@ -101,8 +101,8 @@ def locked(store: Any, name: str) -> Iterator[None]:
     try:
         with store.lock(name):
             yield
-    except Busy:
-        fail(f"another process is changing {name}", WAITING, hint="run the same command again")
+    except Busy as busy:
+        fail(f"another process is changing {name}" + (f": {busy.holder}" if busy.holder else ""), WAITING, hint="run the same command again")
 
 
 def fail(message: str, code: int = REFUSED, hint: str = "") -> NoReturn:

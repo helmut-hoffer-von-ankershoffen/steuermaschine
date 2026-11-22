@@ -30,6 +30,22 @@ class SystemClock:
         time.sleep(seconds)
 
 
+def _read_holder(path: Path) -> dict[str, Any] | None:
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def describe_holder(holder: dict[str, Any] | None, now: float | None = None) -> str:
+    """`pid 123 (sm ship . --live, 4 min, in /wt)`, or empty when the lock file names nobody."""
+    if not holder or not holder.get("pid"):
+        return ""
+    age = max(0, int((now if now is not None else time.time()) - float(holder.get("since") or 0)))
+    return f"pid {holder['pid']} ({holder.get('command', '?')}, {age // 60} min {age % 60} s, in {holder.get('cwd', '?')})"
+
+
 class FileStore:
     """JSON files under one directory: <root>/state/<kind>/<key>.json, <root>/receipts/..., <root>/locks/..."""
 
@@ -60,14 +76,20 @@ class FileStore:
 
     @contextmanager
     def lock(self, name: str) -> Any:
+        """An exclusive flock. The kernel is the only truth: it frees the lock when its holder dies, so there is no takeover.
+        The holder writes who it is (pid, command, start, directory) into the file only so a waiter can name it."""
         path = self.root / "locks" / f"{safe(name)}.lock"
         path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "w") as handle:
+        with open(path, "a+") as handle:
             try:
                 fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except OSError:
-                raise Busy(name) from None
+                raise Busy(name, describe_holder(_read_holder(path))) from None
             try:
+                handle.seek(0)
+                handle.truncate()
+                handle.write(json.dumps({"pid": os.getpid(), "command": " ".join(sys.argv)[:200], "since": time.time(), "cwd": os.getcwd()}))
+                handle.flush()
                 yield
             finally:
                 fcntl.flock(handle, fcntl.LOCK_UN)
