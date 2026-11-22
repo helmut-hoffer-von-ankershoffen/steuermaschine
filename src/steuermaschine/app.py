@@ -894,7 +894,29 @@ def runtime(start: str | None = None, cli: dict[str, Any] | None = None) -> Runt
     return Runtime(project, plugin, settings, sources)
 
 
+def record_tool_error(code: object, pinned: str | None, now: float | None = None) -> None:
+    """A stable release's exit 70 (a tool error) is evidence for the sm follower's canary verdict and tool-stall alarm
+    (bin/release_ci.py): one line `EPOCH RELEASE 70` in STABLE/exits.log, STABLE being the install the launcher pinned
+    this process to (STABLE/releases/RELEASE). Outside a stable install, or on any OSError, nothing is written."""
+    if code != INTERNAL or not pinned:
+        return
+    rel = Path(pinned)
+    if rel.parent.name != "releases":
+        return
+    with contextlib.suppress(OSError), (rel.parent.parent / "exits.log").open("a", encoding="utf-8") as fh:
+        fh.write(f"{int(time.time() if now is None else now)} {rel.name} {INTERNAL}\n")
+
+
 def main(argv: list[str] | None = None) -> None:
+    try:
+        _main(argv)
+    except SystemExit as done:
+        with contextlib.suppress(Exception):  # evidence only: the original exit code is never replaced
+            record_tool_error(done.code, config_mod.environment().steuermaschine_pinned)
+        raise
+
+
+def _main(argv: list[str] | None = None) -> None:
     args = list(sys.argv[1:] if argv is None else argv)
     start, cli, i = None, {}, 0
     rest: list[str] = []
