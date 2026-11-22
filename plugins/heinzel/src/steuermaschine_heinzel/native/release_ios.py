@@ -26,7 +26,7 @@ class IosSettings(BaseModel):
     ios_core_repo: Path | None = Field(None, description="The Core git repository the release tag is checked out from (a worktree per run). None: the setting queue_core_repo.")
     ios_developer_dir: Path | None = Field(None, description="DEVELOPER_DIR for xcodebuild. None: the Xcode that xcode-select names.")
     ios_wait_minutes: int = Field(30, description="How long `sm release ios` waits for App Store Connect to process the build until testers can install it; longer is NOT-CLEAN (stuck).")
-    ios_tool_ref: str | None = Field("origin/main", description="A git ref of the Core repository for apple/scripts/testflight; default origin/main: an older tag lacks the notes and beta verbs. Empty: the tag's own.")
+    ios_tool_ref: str | None = Field("origin/main", description="Core git ref of apple/scripts/testflight (older tags lack the beta and notes verbs). Empty: the tag's own.")
 
 
 class ReleaseIos(Model):
