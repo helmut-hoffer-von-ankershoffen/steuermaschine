@@ -371,6 +371,19 @@ def test_an_approve_of_a_digest_bound_to_a_head_needs_the_green_check_receipt_of
     assert store.get_receipt("verdicts", digest)["verdict"] == "approve"
 
 
+def test_an_approve_on_a_receipt_that_deferred_checks_to_ci_says_so():
+    r = rt()
+    digest, head = "f" * 64, "a" * 40
+    store = r.providers.store
+    store.save("runs.head.demo", "k", {"author": "builder-1", "steps": {"review": {"digest": digest}}})
+    verdicts.need_check(store, digest, head, "sm check ../wt")
+    verdicts.record_check(store, head, {"deferred": True, "ci_must_run": ["41 selected test files"]})
+    done = invoke(r, ["review", "verdict", digest, "--approve", "--reviewer", "reviewer-1"])
+    assert done.exit_code == 0 and "deferred to CI: 41 selected test files" in done.stdout and "not a full local run" in done.stdout
+    assert verdicts.deferred_note(verdicts.check_receipt(store, head)[0]) == "deferred to CI: 41 selected test files"
+    assert verdicts.deferred_note({"green": True}) == "" and verdicts.deferred_note(None) == ""
+
+
 def test_a_reject_needs_no_check_receipt():
     r = rt()
     digest = "f" * 64

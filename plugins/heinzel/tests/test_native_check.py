@@ -185,7 +185,7 @@ def test_a_slot_freed_while_waiting_goes_to_the_waiting_run(tmp_path):
         assert grant.granted and grant.slot == 0
 
 
-def test_a_machine_over_load_30_defers_at_once_and_the_simulator_wants_a_load_under_25(tmp_path):
+def test_a_machine_over_load_30_is_refused_at_once_and_a_check_starts_at_30(tmp_path):
     from steuermaschine_heinzel.native.check_lib import slots
 
     naps = []
@@ -193,10 +193,7 @@ def test_a_machine_over_load_30_defers_at_once_and_the_simulator_wants_a_load_un
         assert not busy.granted and "load 31 is over 30" in busy.deferred and not naps  # no waiting for a load
     with slots.pool(tmp_path, load=lambda: 30.0, demote=lambda: None) as edge:
         assert edge.granted  # a check starts at 30, not over it
-    with slots.pool(tmp_path, "sim", load=lambda: 25.0) as sim_busy:
-        assert not sim_busy.granted and "at or over 25" in sim_busy.deferred
-    with slots.pool(tmp_path, "sim", load=lambda: 24.0, demote=lambda: None) as first, slots.pool(tmp_path, "sim", load=lambda: 24.0, wait=0.0) as second:
-        assert first.granted and not second.granted  # one simulator slot
+    assert not hasattr(slots, "SIM_SLOTS")  # no simulator slot: sm check starts no simulator
 
 
 def test_the_priority_is_lowered_to_background_on_a_grant_only(tmp_path, monkeypatch):
@@ -221,30 +218,26 @@ def test_the_priority_is_lowered_to_background_on_a_grant_only(tmp_path, monkeyp
     assert not commands.calls  # a deferred run is never demoted: it runs nothing
 
 
-def test_a_check_with_all_four_slots_held_is_deferred_to_ci_exit_0_with_nothing_run_and_no_receipt(core, rt, tmp_path):  # noqa: F811
+def test_a_check_with_all_four_slots_held_exits_75_runs_nothing_and_is_never_ready(core, rt, tmp_path):  # noqa: F811
     fds = hold(tmp_path / "locks", "check", 4)
     try:
         machine = src_change(core)
         runtime = rt(machine)
-        done = invoke(runtime, ["--format", "json", "check", str(core)])
+        done = invoke(runtime, ["check", str(core)])
     finally:
         release(fds)
-    found = report(done)
-    assert done.exit_code == 0 and found.ready and not found.receipt, done
-    assert "no check slot of 4 was free within 60 s" in found.deferred and found.ci_must_run and "tests" in found.ci_must_run[0]
-    assert all(row.status == "SKIP" and row.detail.startswith("deferred to CI") for row in found.steps)
+    assert done.exit_code == 75, done
+    assert "no check slot of 4 was free within 60 s" in done.stderr and "READY" not in done.stdout
     assert not machine.ran("ruff") and not machine.ran("mypy") and not machine.ran("pytest") and not machine.ran("scoped_checks")  # nothing ran
-    assert found.receipt_note.startswith("none: deferred to CI") and "CI must run" in found.receipt_note
     assert runtime.providers.store.get_receipt(verdicts.CHECKS, HEAD) is None
 
 
-def test_a_check_at_load_40_is_deferred_to_ci_not_failed_and_never_waits(core, rt, monkeypatch):  # noqa: F811
+def test_a_check_at_load_40_exits_75_and_never_waits(core, rt, monkeypatch):  # noqa: F811
     monkeypatch.setattr("steuermaschine_heinzel.native.check_lib.slots.os.getloadavg", lambda: (40.0, 30.0, 20.0))
     machine = src_change(core)
     runtime = rt(machine)
-    done = invoke(runtime, ["--format", "json", "check", str(core)])
-    found = report(done)
-    assert done.exit_code == 0 and "load 40 is over 30" in found.deferred and not machine.ran("ruff") and not runtime.providers.clock.slept
+    done = invoke(runtime, ["check", str(core)])
+    assert done.exit_code == 75 and "load 40 is over 30" in done.stderr and not machine.ran("ruff") and not runtime.providers.clock.slept
 
 
 def test_fifteen_checks_at_once_run_four_and_defer_eleven(tmp_path):
@@ -263,7 +256,7 @@ def many_tests(core, count):  # noqa: F811
     return checkout(core, **{"scripts/affected.py": selector}).on("git diff --name-only", "src/heinzel/x.py")
 
 
-def test_a_selection_over_40_test_files_is_deferred_to_ci_with_exit_0_and_the_receipt_names_it(core, rt):  # noqa: F811
+def test_a_selection_over_40_test_files_is_deferred_to_ci_and_the_receipt_stores_it(core, rt):  # noqa: F811
     for n in range(41):
         (core / "tests/unit" / f"t{n}_test.py").parent.mkdir(parents=True, exist_ok=True)
         (core / "tests/unit" / f"t{n}_test.py").write_text("")
@@ -276,6 +269,11 @@ def test_a_selection_over_40_test_files_is_deferred_to_ci_with_exit_0_and_the_re
     assert step(found, "tests").status == "WARN" and "deferred to CI (over 40)" in step(found, "tests").detail
     assert not [call for call in machine.ran("pytest") if "tests/unit/t0_test.py" in call[0]] and machine.ran("tests/unit/standards_test.py")  # not one of them ran here
     assert machine.ran("ruff") and machine.ran("mypy")  # the cheap checks of the change still did
+    receipt = runtime.providers.store.get_receipt(verdicts.CHECKS, HEAD)
+    assert receipt["deferred"] is True and receipt["ci_must_run"] == ["41 selected test files"]
+    stored, _ = verdicts.check_receipt(runtime.providers.store, HEAD)
+    assert verdicts.deferred_note(stored) == "deferred to CI: 41 selected test files"
+    assert "deferred to CI: 41 selected test files; CI must run" in "\n".join(found.render()) or "deferred to CI: 41 selected test files" in "\n".join(found.render())
 
 
 def test_40_test_files_still_run_here(core, rt):  # noqa: F811
@@ -299,7 +297,7 @@ def test_a_150_file_mechanical_change_is_checked_cheaply_and_ships_without_a_fai
     assert found.ready and found.changed == 150 and found.ci_must_run == ["41 selected test files"]
 
 
-def test_a_budget_spent_between_steps_defers_the_rest_to_ci_and_keeps_earlier_results(core, rt):  # noqa: F811
+def test_a_budget_spent_between_steps_exits_75_and_is_never_ready(core, rt):  # noqa: F811
     machine = src_change(core)
     runtime = rt(machine)
     clock = runtime.providers.clock
@@ -309,14 +307,10 @@ def test_a_budget_spent_between_steps_defers_the_rest_to_ci_and_keeps_earlier_re
         return Result(0, "", "")
 
     machine.on("ruff format", slow_ruff)
-    done = invoke(runtime, ["--format", "json", "check", str(core)])
-    found = report(done)
-    assert done.exit_code == 0 and found.ready and not found.receipt, done
-    assert step(found, "ruff").status == "PASS" and step(found, "tree").status == "PASS"
-    assert step(found, "types").status == "SKIP" and step(found, "types").detail == "deferred to CI: the local budget of 90 s is spent"
-    assert step(found, "bound").status == "PASS"  # only reads git: still proves the head did not move
-    assert found.ci_must_run == ["types", "hook", "parity", "web", "docs", "standards", "tests"] and not machine.ran("mypy")
-    assert found.receipt_note.startswith("none: deferred to CI (the local budget of 90 s is spent); CI must run: types, hook")
+    done = invoke(runtime, ["check", str(core)])
+    assert done.exit_code == 75, done
+    assert "local budget of 90 s is spent" in done.stderr and "types, hook, parity, web, docs, standards, tests" in done.stderr
+    assert not machine.ran("mypy") and runtime.providers.store.get_receipt(verdicts.CHECKS, HEAD) is None
 
 
 def test_a_failure_before_the_budget_ends_still_fails_the_run(core, rt):  # noqa: F811
@@ -328,13 +322,12 @@ def test_a_failure_before_the_budget_ends_still_fails_the_run(core, rt):  # noqa
     assert done.exit_code == 1 and not found.ready and [f.step for f in found.failures] == ["ruff"] and found.deferred
 
 
-def test_a_type_check_stopped_at_the_budgets_end_is_deferred_but_one_stopped_at_its_own_limit_fails(core, rt):  # noqa: F811
+def test_a_type_check_stopped_at_the_budgets_end_exits_75_but_one_stopped_at_its_own_limit_fails(core, rt):  # noqa: F811
     machine = src_change(core)
     runtime = rt(machine)
     clock = runtime.providers.clock
     machine.on("uv run mypy", lambda argv: (setattr(clock, "t", clock.t + 91), Result(124, "", ""))[1])  # stopped when the 90 s were up
-    found = report(invoke(runtime, ["--format", "json", "check", str(core)]))
-    assert found.ready and step(found, "types").status == "SKIP" and "budget" in step(found, "types").detail
+    assert invoke(runtime, ["check", str(core)]).exit_code == 75
     plain = report(invoke(rt(src_change(core, **{"uv run mypy": Result(124, "", "")})), ["--format", "json", "check", str(core)]))
     assert not plain.ready and [f.step for f in plain.failures] == ["types"] and "ran out of time" in plain.failures[0].message
 

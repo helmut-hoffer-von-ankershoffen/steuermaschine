@@ -1,15 +1,15 @@
-"""The machine-wide slot pool of the local checks: how many `sm check` runs (and simulator runs) share one machine.
+"""The machine-wide slot pool of the local checks: how many `sm check` runs share one machine.
 
 The old queue let one check run at a time and made the others wait twenty minutes, then fail with 75. Fifteen builders
 that finish at once either stalled for hours or, run without a lock, pushed the load past 500. The pool replaces it:
 
   check slots      `CHECK_SLOTS` (4) files `<dir>/sm-check.slot.N`, each an exclusive `flock` (kernel-held: a crashed run frees it)
-  simulator slot   `SIM_SLOTS` (1) file, and only while the 1-minute load is under `SIM_MAX_LOAD` (25)
   start bar        no check starts at a load over `START_MAX_LOAD` (30)
   wait             a run waits for a free slot at most `WAIT_SECONDS` (60)
 
-A run that gets no slot, or meets the load bar, is not an error and never times out: it is DEFERRED to CI. `pool` yields a
-`Grant` that says so (`grant.deferred` holds the reason), and the caller writes the receipt that names what CI must run.
+A run that gets no slot, or meets the load bar, never times out and is never READY: `pool` yields a `Grant` whose
+`deferred` holds the reason, and `sm check` ends with exit 75 (the same command again later). Only a selection of more than
+40 test files is left to CI, and that receipt says so. There is no simulator slot: sm check starts none.
 A granted run lowers its own priority to background (`taskpolicy -b` on macOS, `nice` elsewhere): the checks of builders
 never starve the live services of the machine, and every child process inherits it.
 """
@@ -29,12 +29,10 @@ from typing import Any
 from steuermaschine.config import environment
 
 CHECK_SLOTS = 4
-SIM_SLOTS = 1
-SIM_MAX_LOAD = 25.0  # the simulator starts only below this 1-minute load
 START_MAX_LOAD = 30.0  # no check starts above this 1-minute load
 WAIT_SECONDS = 60.0
 POLL_SECONDS = 1.0
-KINDS = {"check": CHECK_SLOTS, "sim": SIM_SLOTS}
+KINDS = {"check": CHECK_SLOTS}
 
 
 @dataclass(frozen=True)
@@ -64,15 +62,13 @@ def lower_priority(commands: Any) -> None:
 
 
 def bar(kind: str) -> float:
-    return SIM_MAX_LOAD if kind == "sim" else START_MAX_LOAD
+    return START_MAX_LOAD
 
 
 def over(kind: str, load: float) -> str:
-    """Why the load forbids a start now, or an empty string. The simulator wants a load under its bar, a check not over it."""
+    """Why the load forbids a start now, or an empty string: a check does not start over the bar."""
     limit = bar(kind)
-    if (load >= limit) if kind == "sim" else (load > limit):
-        return f"the 1-minute load {load:.0f} is {'at or ' if kind == 'sim' else ''}over {limit:g}"
-    return ""
+    return f"the 1-minute load {load:.0f} is over {limit:g}" if load > limit else ""
 
 
 def _try(directory: Path, kind: str) -> tuple[int, int] | None:
@@ -106,7 +102,7 @@ def pool(
     grant: Grant
     while True:
         if why := over(kind, load()):
-            grant = Grant(kind, deferred=f"{why}: a {kind} run starts only {'under' if kind == 'sim' else 'at or under'} {bar(kind):g}")
+            grant = Grant(kind, deferred=f"{why}: a {kind} run starts only at or under {bar(kind):g}")
             break
         got = _try(directory, kind)
         if got is not None:
@@ -120,9 +116,8 @@ def pool(
             told = True
         sleep(poll)
     try:
-        if grant.granted:
-            if demote is not None:
-                demote()
+        if grant.granted and demote is not None:
+            demote()
         yield grant
     finally:
         if held is not None:

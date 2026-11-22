@@ -17,10 +17,10 @@ from typing import Any
 import typer
 
 from steuermaschine import USAGE, verdicts
-from steuermaschine.engine import Refuse
+from steuermaschine.engine import Refuse, Wait
 from steuermaschine.helpdoc import H
 from steuermaschine.native import native, runtime
-from steuermaschine.preflight import SKIP, PreflightReport, Step
+from steuermaschine.preflight import SKIP, PreflightReport
 
 from . import affected, lock
 from . import preflight as _preflight
@@ -120,16 +120,16 @@ def extra_tests(sel: Path | None) -> list[str]:
     "A src/ change with no selected test fails. The receipt lists the steps that ran and says coverage and whole-project\n"
     "types are CI-enforced.\n"
     "Slot pool: at most 4 checks run at once on a machine (a shared pool of file locks), at background priority; a run waits up\n"
-    "60 s for a slot. No slot in that time, or a 1-minute load over 30: the run is DEFERRED TO CI, exit 0, nothing ran and nothing\n"
-    "failed; the output says what CI must run and no receipt is written (run again for one).\n"
-    "Budget: the whole local run has 90 s of wall time; a step that does not start in time, and the ones after it, are deferred to CI\n"
-    "the same way, and a selection of more than 40 test files is left to CI with a receipt that names it. A type check stopped at\n"
-    "its own limit (124) or without a slot (75) still fails: only the budget defers.\n"
+    "60 s for a slot. No slot in that time, a 1-minute load over 30, or the 90 s wall budget of the whole run spent with nothing\n"
+    "failed: exit 75, never READY, never a receipt: run the same command again. A failure found before the budget ended still\n"
+    "fails (exit 1). Only a selection of more than 40 test files (and a change nothing narrows) is left to CI: the receipt then\n"
+    "stores deferred: true and ci_must_run, and `sm check`, `sm ship` and `sm review verdict --approve` print \"deferred to CI: ...\".\n"
+    "A type check stopped at its own limit (124) or without a slot (75) still fails.\n"
     "E2E lanes never run here. --sel FILE adds tests ({\"python\": [files]}).\n"
     "The receipt is bound to the commit and names the base it was measured from: any new commit needs a new run, and\n"
     "an approval needs the receipt's base to be the base the reviewed packet builds the head on. A run with --skip or\n"
     "with another --base than the setting preflight_base, a red run and a dirty tree write none.\n"
-    "Exit 0 READY, 1 NOT READY, 2 usage."))
+    "Exit 0 READY, 1 NOT READY, 2 usage, 75 wait."))
 def check(worktree: Path | None = typer.Argument(None, metavar="WORKTREE", help="Core worktree whose HEAD is the head to check (default: the current directory)."),
           base: str | None = typer.Option(None, "--base", metavar="REV", help="The ref the head branched from (default: the setting preflight_base)."),
           sel: Path | None = typer.Option(None, "--sel", metavar="FILE", help='More tests to run: JSON {"python": [test files]}.'),
@@ -161,10 +161,10 @@ def check(worktree: Path | None = typer.Argument(None, metavar="WORKTREE", help=
                 raise Refuse(f"the selector of {wt} cannot be read: {why}", f"sm head select --repo {wt} --base {ref}", code=USAGE) from None
             c.plan = cheap.plan(c, selection, extra)
             steps, left_out, not_run = registry.run(c, set(skipped), say=rt.say)
-        else:  # no slot, or a loaded machine: nothing runs here and nothing fails; the receipt line says what CI must run
-            c.plan = cheap.Plan(changed=c.changed())
-            c.deferred, c.ci = grant.deferred, [f"every check of the {len(c.plan.changed)} changed path(s): {', '.join(cheap.STEPS)}"]
-            steps, left_out, not_run = [Step(name, SKIP, f"deferred to CI: {grant.deferred}") for name in cheap.STEPS], [], []
+        else:  # no slot, or a loaded machine: nothing ran, so nothing is READY: exit 75, the same command again later
+            raise Wait(f"sm check ran nothing: {grant.deferred}", "a free check slot and a quieter machine; run the same command again")
+    if c.deferred and not [s for s in steps if s.failures]:  # the budget ran out and nothing failed: part of the run did not happen, so it is not READY
+        raise Wait(f"sm check ran out of its local budget with nothing failed: {c.deferred}; not run here: {', '.join(c.ci)}", "a quieter machine; run the same command again")
     report = HeadCheck.of(f"sm check {c.sha[:9]} ({c.branch or 'detached'}) vs {ref} {c.base_sha[:9]}", steps, left_out, not_run, worktree=str(wt), head=c.sha,
                           branch=c.branch, base=c.base_sha, selector=c.plan.selector, changed=len(c.plan.changed), deferred=c.deferred, ci_must_run=c.ci,
                           generated_at=datetime.fromtimestamp(providers.clock.now()).astimezone().isoformat(timespec="seconds"))
@@ -174,10 +174,9 @@ def check(worktree: Path | None = typer.Argument(None, metavar="WORKTREE", help=
         report.receipt_note = f"none: {', '.join(left_out)} left out by --skip; a receipt needs every check"
     elif ref != default:  # checks measured from another base cover a part of the head: no proof of the head
         report.receipt_note = f"none: measured from --base {ref}, not from {default} (the setting preflight_base); run sm check without --base for the receipt"
-    elif c.deferred:  # a receipt is written once per commit: one that says "deferred" would keep the real check out, so none is written
-        report.receipt_note = f"none: deferred to CI ({c.deferred}); CI must run: {', '.join(c.ci)}. Run sm check again to get the receipt"
     else:
         state = verdicts.record_check(providers.store, c.sha, {"worktree": str(wt), "branch": c.branch, "base": c.base_sha, "at": providers.clock.now(), "command": report.command,
+                                                               "deferred": bool(c.ci), "ci_must_run": list(c.ci),
                                                                "checks": [{"name": s.name, "status": s.status, "detail": s.detail} for s in report.steps]})
         report.receipt = state in ("written", "kept")
         report.receipt_note = (f"{verdicts.CHECKS} {c.sha} ({'written' if state == 'written' else 'this commit already had one'}), measured from {c.base_sha[:12]}: "

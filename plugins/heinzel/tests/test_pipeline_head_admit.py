@@ -159,6 +159,18 @@ def test_check_adopts_a_green_receipt_and_refuses_a_red_run(tmp_path):
         assert head_admit.check(ctx) == f"READY at {HEAD[:12]}"
 
 
+def test_ship_prints_what_a_check_deferred_to_ci(tmp_path):
+    from types import SimpleNamespace
+
+    rt = runtime(tmp_path)
+    ctx = context(rt, tmp_path / "wt")
+    common.OVERRIDE["check"] = lambda **kw: SimpleNamespace(exit_code=0, ci_must_run=["41 selected test files"], render=lambda: [])
+    with native(rt):
+        assert head_admit.check(ctx) == f"READY at {HEAD[:12]}; deferred to CI: 41 selected test files"
+    rt.providers.store.put_receipt("checks", HEAD, {"green": True, "deferred": True, "ci_must_run": ["41 selected test files"]})
+    assert head_admit.check_probe(ctx) == f"`sm check` is green for {HEAD[:12]}; deferred to CI: 41 selected test files"
+
+
 # ----------------------------------------------------------------------------- the blocking review of protected paths
 class DiffCommands(FakeGh):
     """Answers the git calls of the protected review: the changed names, the merge-base and pyproject.toml at each side."""
