@@ -1182,6 +1182,7 @@ def merge_release_pr(tag: str, composite_run: int | None = None) -> None:
     pr = release_pr(tag)
     if not pr:
         raise Stop(f"no release PR for {tag}")
+    disarm_core_auto_merge()  # once more right before the merge: a queue tick may have armed a PR after the cut's disarm
     waiver = None if composite_run else pending_waiver(tag.removeprefix("v"))
     def full_candidate_guard() -> bool:
         if (moved := main_moved_refusal(pr["number"], tag)):

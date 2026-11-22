@@ -359,6 +359,16 @@ def test_the_loop_wakes_when_a_freeze_starts_and_disarms_at_once(rt, gh):
     assert [line for line in gh.lines() if line.startswith("pr merge")] == [f"pr merge 801 -R {CORE} --disable-auto"]
 
 
+def test_a_freeze_that_starts_while_the_tick_arms_is_undone_at_once(rt, gh):
+    """The interleaving: the tick reads "not frozen", the cut takes the freeze and disarms everything, then the tick
+    arms. The tick reads the freeze again after the arm and switches auto-merge off."""
+    queue_one(rt)
+    gh.on("pr list", [], [{"number": 900, "headRefName": "release/0.9.56"}]).on("pr merge 801", "")
+    assert invoke(rt, ["daemon", "queue"]).exit_code == 0
+    assert [line for line in gh.lines() if line.startswith("pr merge")] == [ARM, f"pr merge 801 -R {CORE} --disable-auto"]
+    assert items(rt)[-1]["detail"] == "merge freeze: auto-merge off until it lifts"
+
+
 def test_a_refused_arm_is_kept_queued_with_gh_s_reason(rt, gh):
     from steuermaschine.protocols import Result
 
