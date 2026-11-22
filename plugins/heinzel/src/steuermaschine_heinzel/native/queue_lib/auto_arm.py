@@ -1,8 +1,8 @@
 """The queue's tick since 2026-11-22: arm GitHub auto-merge on every queued PR; GitHub merges it on green.
 
-Owner decision 2026-11-22: a PR merges as soon as its required checks are green and it has no conflict; no branch has
-to be up to date with main, and a red main is reverted (`auto_revert.py`). The serial loop that updated each branch,
-waited for its checks and merged it (`merge_train.train`) no longer runs from the queue loop.
+Owner decision 2026-11-22: GitHub merges a PR once armed; sm keeps the old checks as conditions of the arm (below), and a
+red main is reverted (`auto_revert.py`). The serial loop that updated each branch, waited for its checks and merged it
+(`merge_train.train`) no longer runs from the queue loop.
 
 One tick, for each queued entry whose `after` PRs merged:
 
@@ -10,6 +10,9 @@ One tick, for each queued entry whose `after` PRs merged:
     CLOSED, or the head moved -> needs work (the diff guard read another head: ship it again)
     merge freeze (Core only)  -> auto-merge switched off on the PR; armed again once the freeze lifts
     main red or unknown       -> not armed (a PR that fixes main goes alone); an armed one is switched off
+    checks not settled/failed -> `queue_daemon.assess` (the train's checks, every repository): wait, or needs work
+    tool-required checks      -> `hzlib.tool_required_checks` (a private repository has no ruleset) not passed: wait
+    another Core PR armed     -> not armed (one Core PR is armed at a time: its merge moves main before the next arms)
     merge rule not met        -> not armed: checks pending or unreadable wait, any other refusal needs work
     otherwise                 -> `gh pr merge N --squash --auto --match-head-commit PINNED`
 
@@ -149,7 +152,7 @@ def one(q: Any, item: dict[str, Any], items: list[dict[str, Any]]) -> None:
     if not SHA.fullmatch(pinned):
         q.stuck_or_merged(item, "needs work", "no guarded head recorded; ship it again so the diff guard reads the head that merges")
         return
-    info = hzlib.ghj("pr", "view", item["pr"], "-R", item["repo"], "--json", "state,headRefOid,autoMergeRequest,author", default=None)
+    info = hzlib.ghj("pr", "view", item["pr"], "-R", item["repo"], "--json", "state,headRefOid,autoMergeRequest,author,statusCheckRollup", default=None)
     if not isinstance(info, dict) or not info.get("state"):
         q.log(f"{item['key']}: the PR cannot be read; the next tick reads it again")
         return
@@ -188,6 +191,27 @@ def one(q: Any, item: dict[str, Any], items: list[dict[str, Any]]) -> None:
             q.update(item["key"], detail=f"not armed: {why}")
             q.log(f"{item['key']}: not armed: {why}")
         return
+    verdict = q.assess(item, hzlib.load("merge_train"))  # the checks the serial train demanded before a merge: every repository
+    if verdict == "done":  # it marked the row merged or needs work
+        if armed:
+            disarm(item["repo"], item["pr"])
+        return
+    if verdict != "ready" and not armed:
+        if item.get("detail") != "not armed: checks not settled":
+            q.update(item["key"], detail="not armed: checks not settled")
+        return
+    passed = {c.get("name") for c in info.get("statusCheckRollup") or [] if c.get("conclusion") == "SUCCESS"}
+    if absent := hzlib.tool_required_checks(item["repo"]) - passed:
+        if armed and not disarm(item["repo"], item["pr"]):
+            q.log(f"{item['key']}: required by the tools, not passed: {', '.join(sorted(absent))}; auto-merge could not be switched off")
+            return
+        q.update(item["key"], detail=f"not armed: required by the tools, not passed: {', '.join(sorted(absent))}")
+        return
+    if item.get("reviewed_progress_main") and not q.progress_anchor_unchanged(item.get("progress_anchor")):
+        if armed:
+            disarm(item["repo"], item["pr"])
+        q.stuck_or_merged(item, "needs work", "completed main observation changed or unavailable; reassessment and requeue required")
+        return
     reason, wait = merge_rule(item, pinned)
     if reason and not (armed and wait):  # an armed PR whose checks are pending or unreadable keeps its arm: GitHub waits for the checks itself
         if armed and not disarm(item["repo"], item["pr"]):
@@ -204,6 +228,12 @@ def one(q: Any, item: dict[str, Any], items: list[dict[str, Any]]) -> None:
         if item.get("detail") != ARMED:
             q.update(item["key"], detail=ARMED)
         return
+    if item["repo"] == hzlib.CORE:
+        armed_now = armed_on_github(hzlib.CORE)
+        others = ["?"] if armed_now is None else [n for n in armed_now if n != str(item["pr"])]  # unreadable: fail closed
+        if others:
+            q.update(item["key"], detail=f"not armed: #{others[0]} is armed; one Core PR at a time")
+            return
     done, error = arm(item["repo"], item["pr"], pinned)
     if done:
         q.update(item["key"], detail=ARMED)

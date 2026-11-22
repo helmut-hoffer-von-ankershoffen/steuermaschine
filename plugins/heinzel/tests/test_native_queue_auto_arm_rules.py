@@ -82,3 +82,45 @@ def test_an_armed_pr_that_falls_behind_main_is_switched_off_again(rt, gh, monkey
     monkeypatch.setattr(main_plan, "gap", lambda pr, head="": "merge rule: #801 is behind against main: update the branch and let CI test it again")
     assert tick(rt).exit_code == 0
     assert merges(gh) == [f"pr merge 801 -R {CORE} --disable-auto"] and items(rt)[-1]["status"] == "needs work"
+
+
+PLUGINS = "helmut-hoffer-von-ankershoffen/heinzel-plugins"
+RED_CHECK = [{"name": "lint", "status": "COMPLETED", "conclusion": "FAILURE", "completedAt": "2026-11-12T20:00:00Z"}]
+
+
+def test_a_failing_check_stops_the_arm_in_every_repository(rt, gh):  # noqa: F811
+    """Gate review of 4ef48f7, findings 1 and 3: the train's check rule applies to plugins too and to checks the ruleset does not name."""
+    queue_one(rt, key="plugins #801", repo=PLUGINS)
+    gh.on("pr list", []).on("pr merge", "").on("pr view 801", {**PR, "statusCheckRollup": PR["statusCheckRollup"] + RED_CHECK})
+    assert tick(rt).exit_code == 0
+    assert not merges(gh) and items(rt)[-1]["status"] == "needs work" and "lint" in items(rt)[-1]["detail"]
+
+
+def test_checks_the_tools_require_are_demanded_before_the_arm(rt, gh, monkeypatch):  # noqa: F811
+    """Finding 2: a private repository has no ruleset; `tool_required_checks` stays the rule."""
+    from steuermaschine_heinzel.native.queue_lib import hzlib
+
+    queue_one(rt)
+    gh.on("pr list", []).on("pr merge", "")
+    monkeypatch.setattr(hzlib, "tool_required_checks", lambda repo: {"coverage-floor", "extra-check"})
+    assert tick(rt).exit_code == 0
+    assert not merges(gh) and "required by the tools, not passed: extra-check" in items(rt)[-1]["detail"]
+
+
+def test_one_core_pr_is_armed_at_a_time(rt, gh):  # noqa: F811
+    """Finding 4: two PRs armed in one tick would both land on a main CI never tested; the next arms after the first merged."""
+    gh.on("pr list", [{"number": 900, "autoMergeRequest": {"mergeMethod": "SQUASH"}}]).on("pr merge", "")
+    queue_one(rt)
+    assert tick(rt).exit_code == 0
+    assert not merges(gh) and "#900 is armed; one Core PR at a time" in items(rt)[-1]["detail"]
+    gh.on("pr list", "not json")  # unreadable fails closed
+    assert tick(rt).exit_code == 0 and not merges(gh)
+
+
+def test_reviewed_progress_needs_its_main_observation_unchanged_at_the_arm(rt, gh, monkeypatch):  # noqa: F811
+    """Finding 5: the progress anchor is checked before the arm, as the train did before the merge."""
+    queue_one(rt, reviewed_head=HEAD, reviewed_progress_main="why", progress_anchor={"completed": [], "pending": []})
+    gh.on("pr list", []).on("pr merge", "")
+    monkeypatch.setattr("steuermaschine_heinzel.native.queue_lib.queue_daemon.progress_anchor_unchanged", lambda anchor: False)
+    assert tick(rt).exit_code == 0
+    assert not merges(gh) and items(rt)[-1]["status"] == "needs work" and "observation changed" in items(rt)[-1]["detail"]
