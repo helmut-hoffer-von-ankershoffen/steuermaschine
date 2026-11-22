@@ -140,3 +140,16 @@ def test_main_records_the_exit_70_it_raises(tmp_path, monkeypatch):
     except SystemExit as done:
         assert done.code == 70
     assert seen == [70]
+
+
+def test_the_exit_code_survives_a_failing_error_record(monkeypatch):
+    """Gate review of PR 63, finding 3: recording the tool error never replaces the original exit code."""
+    import pytest
+
+    from steuermaschine import app
+
+    monkeypatch.setattr(app, "_main", lambda argv=None: (_ for _ in ()).throw(SystemExit(70)))
+    monkeypatch.setattr(app.config_mod, "environment", lambda: (_ for _ in ()).throw(ValueError("bad environment")))
+    with pytest.raises(SystemExit) as exit_info:
+        app.main([])
+    assert exit_info.value.code == 70

@@ -911,7 +911,8 @@ def main(argv: list[str] | None = None) -> None:
     try:
         _main(argv)
     except SystemExit as done:
-        record_tool_error(done.code, config_mod.environment().steuermaschine_pinned)
+        with contextlib.suppress(Exception):  # evidence only: the original exit code is never replaced
+            record_tool_error(done.code, config_mod.environment().steuermaschine_pinned)
         raise
 
 

@@ -375,7 +375,7 @@ def follow(stable: Path, clone: Path, home: Path, run: Run = sh, api_get: Callab
     get = api_get or (lambda p: api(p, run))
     at = time.time() if now is None else now
     if (stable / "canary").is_symlink():
-        return canary_tick(stable, clone, home, run, at)
+        return canary_tick(stable, clone, home, run, at, get)
     if watched := watch_swap(stable, clone, home, run, at):
         return watched
     latest = get(f"repos/{REPO}/releases/latest")
@@ -551,14 +551,28 @@ def restart_loops(home: Path, run: Run) -> int:
     return len(labels)
 
 
-def canary_tick(stable: Path, clone: Path, home: Path, run: Run, at: float) -> str:
-    """The canary's verdict after its tick: reject it, keep it, hold the swap, or swap `current` to it for all."""
+def canary_tick(stable: Path, clone: Path, home: Path, run: Run, at: float, get: Callable[[str], object] | None = None) -> str:
+    """The canary's verdict after its tick: drop it when it is no longer Latest or was rejected, reject it, keep it, hold
+    the swap, or swap `current` to it for all. Latest is read again on every tick: a swap never promotes a demoted release."""
+    get = get or (lambda p: api(p, run))
     try:
         meta = json.loads((stable / "canary.json").read_text(encoding="utf-8"))
         tag, since = str(meta["tag"]), float(meta["since"])
     except (OSError, ValueError, KeyError, TypeError):
         point(stable, "canary", None)
         raise Refused("the canary has no readable canary.json: it is dropped; the next run installs Latest again") from None
+    if (stable / "rejected" / tag).is_file():
+        point(stable, "canary", None)
+        (stable / "canary.json").unlink(missing_ok=True)
+        return f"{tag} was rejected here: its canary is dropped, no swap"
+    try:
+        latest = str(get(f"repos/{REPO}/releases/latest")["tag_name"])  # type: ignore[index,call-overload]
+    except (Refused, KeyError, TypeError, ValueError, OSError) as exc:
+        return f"{tag}: Latest cannot be read ({exc}); the swap waits"  # fails closed: no swap on a guess
+    if latest != tag:
+        point(stable, "canary", None)
+        (stable / "canary.json").unlink(missing_ok=True)
+        return f"{tag} is no longer Latest ({latest}): its canary is dropped, no swap"
     rel = (stable / "canary").resolve()
     errors = tool_errors(stable, rel.name, since)
     reason = f"{len(errors)} exit 70 of the canary" if errors else ""

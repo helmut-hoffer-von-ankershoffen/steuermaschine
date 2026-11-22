@@ -597,6 +597,33 @@ def test_no_swap_between_a_core_cut_and_its_live_ok(follower, monkeypatch):
     assert "is live for all" in rc.follow(stable, clone, home, fake_run([]), api_get, fake_pypi(), fetcher(), now=T0 + 600)
 
 
+def test_a_canary_that_is_no_longer_latest_is_dropped_not_swapped(follower):
+    """Gate review of PR 63, finding 1: Latest is read again on every tick; a demoted, replaced or rejected release never swaps."""
+    stable, clone, home, _cand = follower
+    api_get = to_canary(follower, [])
+    before = os.readlink(stable / "current")
+    moved = lambda path: {"tag_name": "v0.0.4"} if path.endswith("releases/latest") else api_get(path)  # noqa: E731
+    msg = rc.follow(stable, clone, home, fake_run([]), moved, fake_pypi(), fetcher(), now=T0 + 300)
+    assert "is no longer Latest (v0.0.4)" in msg and not (stable / "canary").exists() and os.readlink(stable / "current") == before
+
+
+def test_a_canary_whose_latest_cannot_be_read_waits_and_a_rejected_one_is_dropped(follower):
+    stable, clone, home, _cand = follower
+    api_get = to_canary(follower, [])
+
+    def broken(path):
+        if path.endswith("releases/latest"):
+            raise rc.Refused("gh: HTTP 502")
+        return api_get(path)
+
+    assert "Latest cannot be read" in rc.follow(stable, clone, home, fake_run([]), broken, fake_pypi(), fetcher(), now=T0 + 300)
+    assert os.readlink(stable / "canary") == "releases/v0.0.3"  # kept, no swap
+    (stable / "rejected").mkdir()
+    (stable / "rejected" / "v0.0.3").write_text("by hand\n")
+    assert "was rejected here" in rc.follow(stable, clone, home, fake_run([]), api_get, fake_pypi(), fetcher(), now=T0 + 400)
+    assert not (stable / "canary").exists()
+
+
 def test_a_tool_stall_after_the_swap_rolls_back_by_symlink(follower):
     stable, clone, home, _cand = follower
     (clone / "bin" / "rollback").write_text((BIN / "rollback").read_text())
