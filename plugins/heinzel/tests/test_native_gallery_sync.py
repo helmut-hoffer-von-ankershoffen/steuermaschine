@@ -164,3 +164,37 @@ def test_dirty_lists_the_changed_paths_and_refuses_outside_a_repository(repo, tm
     assert gs.dirty(Commands([FRESH]), repo) == ["new file.txt", "plugins/heinzel-clock/web.css"]
     with pytest.raises(Refuse, match="cannot read the status"):
         gs.dirty(Commands([FRESH]), tmp_path / "nowhere")
+
+
+def test_a_record_with_nothing_left_to_commit_is_dropped_and_a_record_of_another_head_is_never_folded(repo, monkeypatch):
+    capture_that_writes(monkeypatch, repo)
+    rt = runtime([STALE, FRESH])
+    check_module.plugins_check(rt, repo)
+    git(repo, "checkout", "--", ".")
+    git(repo, "clean", "-fdq")
+    assert gs.fold(rt, repo) == [] and rt.providers.store.load(gs.KIND, str(repo)) is None  # nothing dirty: the record goes
+    capture_that_writes(monkeypatch, repo)
+    rt.providers.commands = Commands([STALE, FRESH])  # the check answers again from the start
+    check_module.plugins_check(rt, repo)
+    git(repo, "-c", "core.hooksPath=/dev/null", "commit", "-q", "--allow-empty", "-m", "chore: the head moved")
+    assert "did not regenerate for this head" in gs.fold(rt, repo)[0]
+    assert git(repo, "rev-list", "--count", "HEAD") == "2"
+
+
+def test_a_commit_hook_that_refuses_the_gallery_commit_is_a_refusal_with_the_hook_output(repo, monkeypatch):
+    capture_that_writes(monkeypatch, repo)
+    rt = runtime([STALE, FRESH])
+    check_module.plugins_check(rt, repo)
+    hook = repo / ".git" / "hooks" / "pre-commit"
+    hook.write_text("#!/bin/sh\necho hook says no >&2\nexit 1\n")
+    hook.chmod(0o755)
+    with pytest.raises(Refuse, match="the commit of the regenerated gallery failed"):
+        gs.fold(rt, repo)
+
+
+def test_a_gallery_still_stale_after_the_regeneration_refuses_and_names_the_command(repo, monkeypatch):
+    capture_that_writes(monkeypatch, repo)
+    rt = runtime([STALE])  # the freshness check keeps saying stale
+    with pytest.raises(Refuse, match="still stale after regeneration") as refused:
+        gs.into_head(rt, repo)
+    assert "make screenshots NAME=heinzel-clock" in refused.value.next_cmd
