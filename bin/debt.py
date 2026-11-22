@@ -6,7 +6,7 @@ docs/debt.json (bin/check runs it so); `--record` writes the current numbers (do
 commit that makes a number better, never to hide a worse one: it refuses to lower a recorded number unless `--lower` is
 given). Coverage is recorded per platform (key `coverage core % [linux]`): the same tests cover different lines on
 macOS and Linux, so each platform is gated against the baseline recorded for it, and a platform with no baseline is not
-gated on coverage (listed as such, never red, never borrowed from another platform). Reads the .coverage file of the
+gated on coverage unless it is darwin or linux, whose baseline must exist; a platform not gated is listed as such and never borrows another's. Reads the .coverage file of the
 test run."""
 
 from __future__ import annotations
@@ -54,9 +54,16 @@ def worse(key: str, value: float | int, old: float | int) -> bool:
     return (value < old - 0.05) if key.startswith("coverage") else (value > old)
 
 
+REQUIRED_PLATFORMS = ("darwin", "linux")  # the platforms the project builds on: a missing coverage baseline there is red
+
+
+def required(key: str) -> bool:
+    return key.startswith("coverage") and key.endswith(tuple(f"[{name}]" for name in REQUIRED_PLATFORMS))
+
+
 def ungated(now: dict[str, float | int | None], before: dict[str, float | int]) -> list[str]:
     """Coverage numbers of a platform that has no baseline in docs/debt.json: not gated there."""
-    return [key for key in now if key.startswith("coverage") and key not in before]
+    return [key for key in now if key.startswith("coverage") and key not in before and not required(key)]
 
 
 def problems(now: dict[str, float | int | None], before: dict[str, float | int], strict: bool = False) -> list[str]:
@@ -69,7 +76,7 @@ def problems(now: dict[str, float | int | None], before: dict[str, float | int],
         if value is None:
             out.append(f"{key}: could not be read (no coverage data, or the tool printed no summary line)")
         elif old is None:
-            if strict or not key.startswith("coverage"):
+            if strict or not key.startswith("coverage") or required(key):
                 out.append(f"{key}: not recorded in docs/debt.json (record it: bin/debt.py --record)")
         elif worse(key, value, old):
             out.append(f"{key}: {value} is WORSE than recorded {old}")

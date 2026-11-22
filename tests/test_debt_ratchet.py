@@ -86,6 +86,9 @@ def test_a_platform_without_a_baseline_is_not_gated_on_coverage_but_other_number
     now = {"coverage core % [win]": 10.0, "mypy strict findings plugin": 11}
     assert debt.problems(now, BEFORE | {"coverage core % [darwin]": 95.0}) == ["mypy strict findings plugin: 11 is WORSE than recorded 10"]
     assert debt.ungated(now, LINUX) == ["coverage core % [win]"]
+    for platform in ("darwin", "linux"):  # a missing baseline on a platform the project builds on is red
+        key = f"coverage core % [{platform}]"
+        assert debt.problems({key: 90.0}, {}) == [f"{key}: not recorded in docs/debt.json (record it: bin/debt.py --record)"] and debt.ungated({key: 90.0}, {}) == []
     assert debt.problems({"coverage core % [win]": None}, LINUX) != []  # unreadable stays red
     assert debt.problems({"coverage core % [win]": 10.0}, LINUX, strict=True) == ["coverage core % [win]: not recorded in docs/debt.json (record it: bin/debt.py --record)"]
 
