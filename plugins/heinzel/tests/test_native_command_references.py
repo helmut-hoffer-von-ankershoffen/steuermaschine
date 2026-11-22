@@ -24,6 +24,7 @@ AFTER = re.compile(r"(?:^|[;:(]\s*|\d\. |\bthen |\brun )" + WORDS, re.M)  # a co
 DELIBERATE = {
     ("native/combine.py", "sm head combine build"): "not ported yet; the hint says so and names `sm tools gaps` (MISSING there)",
     ("native/packet_lib/admit_wave.py", "sm head packet predicted"): "the message of a predicted squash commit (part of its SHA), no command",
+    ("native/release_drive.py", "sm gap"): "the label of a gap note line (`sm gap: ...`), no command",
 }
 
 

@@ -107,4 +107,4 @@ release_drive = native("release drive", writes=True, help=H(
     "VERSION must be X.Y.Z or `patch`, and the release in flight, the latest release or the next patch or minor after it;\n"
     "anything else refuses with exit 2 before anything runs. Every option of `sm release resume` works here.\n"
     "After ACCEPTED it runs the iOS stage for that version (NOT-CLEAN is an alarm, never an un-publish). Exit 75: a fact is\n"
-    "not true yet (the wheel asset or PyPI), run the same command again. Every exit 1 or 70 writes its own `sm gap` note."))(mirrored(release_drive))
+    "not true yet (the wheel asset or PyPI), run the same command again. Every exit 1 or 70 writes its own gap note."))(mirrored(release_drive))
