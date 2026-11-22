@@ -102,10 +102,11 @@ def open_pr(worktree: Path, bead: str, title: str, body_file: Path | None, reaso
             origin = slug(need(git("remote", "get-url", "origin"), "the worktree has no remote origin", 2))
             if origin != repo.lower():
                 raise Stop(2, f"the worktree's origin is not {repo}, the repository the PR would be opened on; nothing was pushed (setting repo, or the right worktree)")
-            try:
-                repos.pr_key(repo, 1)  # refuse before publishing if the ship step cannot name this repository
-            except ValueError as error:
-                raise Stop(2, f"{error}; nothing was pushed or opened") from None
+            if repos.queued(repo):
+                try:
+                    repos.pr_key(repo, 1)  # refuse before publishing if the ship step cannot name this repository
+                except ValueError as error:
+                    raise Stop(2, f"{error}; nothing was pushed or opened") from None
             if body_file is None:
                 body = f"Bead {bead}.\n"
             else:
@@ -209,6 +210,10 @@ def open_pr(worktree: Path, bead: str, title: str, body_file: Path | None, reaso
             say(f"title read back ({len(got)} chars)")
             if not got or len(got) > TITLE_MAX:
                 raise Stop(1, f"PR #{number} opened but title read back as {len(got)} chars (limit {TITLE_MAX}); fix the title, then: sm head ship {number}")
+            if not repos.queued(repo):  # no merge queue here: the PR merges when CI and the Gate review are green
+                say(f"{repo} has no merge queue: PR #{number} merges when its required checks are green (sm queue auto --live squashes it)")
+                lines.append(str(number))
+                return Done(0, "".join(f"{line}\n" for line in lines))
             say(f"ship {number}")
             shipped = deps.ship(repos.pr_key(repo, number), reason or "", head)
             lines.extend(shipped.stdout.splitlines())
