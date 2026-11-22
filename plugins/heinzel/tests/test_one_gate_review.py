@@ -130,3 +130,9 @@ def test_a_flagged_pr_left_to_gate_review_merges_only_on_the_real_one(monkeypatc
         with native(rt):
             reason = main_plan.gap("803", "a" * 40, True)
         assert (reason == "") if not expected else (expected in reason), reason
+
+
+def test_only_core_lets_gate_review_decide_because_only_its_merge_rule_verifies_the_check(monkeypatch):
+    monkeypatch.setattr(hzlib, "required_checks", lambda repo: frozenset({"check", "Gate review"}))
+    assert hzlib.gate_review_decides(hzlib.CORE) is True
+    assert hzlib.gate_review_decides("owner/plugins") is False

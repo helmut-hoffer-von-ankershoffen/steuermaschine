@@ -111,8 +111,9 @@ def required_checks(repo: str) -> frozenset[str] | None:
 
 def gate_review_decides(repo: str) -> bool:
     """Whether main's ruleset in REPO requires the CI `Gate review` (queue_lib/ruleset.py): then it alone reviews a
-    gate-touching or diff-guard-flagged PR and sm asks for no local review. False when the rules cannot be read."""
-    return ruleset.GATE_REVIEW in (required_checks(repo) or ())
+    gate-touching or diff-guard-flagged PR and sm asks for no local review. False for any other repository (the merge rule that
+    verifies the check's source is Core's) and when the rules cannot be read."""
+    return repo == CORE and ruleset.GATE_REVIEW in (required_checks(repo) or ())  # only Core's merge rule checks who made the check
 
 
 def advisory_checks(repo: str) -> ruleset.Advisory:
