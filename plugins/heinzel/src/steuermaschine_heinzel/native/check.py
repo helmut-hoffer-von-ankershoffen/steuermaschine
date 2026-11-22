@@ -31,6 +31,12 @@ from .preflight_lib import head
 SUMMARY_KIND = "heinzel.check.summary"  # state store: the last report per head, green or not, keyed by the commit
 
 
+def tests_counts(steps: list[Any]) -> dict[str, int]:
+    """How many of the selected test files ran here (the receipt says it, `sm review verdict --approve` prints it)."""
+    data = next((s.data for s in steps if s.name == "tests" and "tests_selected" in s.data), {})
+    return {"tests_ran": int(data["tests_ran"]), "tests_selected": int(data["tests_selected"])} if data else {}
+
+
 class HeadCheck(PreflightReport):
     """The cheap checks of one head. `receipt` is True when this commit now has its check receipt."""
 
@@ -165,6 +171,8 @@ def check(worktree: Path | None = typer.Argument(None, metavar="WORKTREE", help=
             raise Wait(f"sm check ran nothing: {grant.deferred}", "a free check slot and a quieter machine; run the same command again")
     if c.deferred and not [s for s in steps if s.failures]:  # the budget ran out and nothing failed: part of the run did not happen, so it is not READY
         raise Wait(f"sm check ran out of its local budget with nothing failed: {c.deferred}; not run here: {', '.join(c.ci)}", "a quieter machine; run the same command again")
+    if c.unrun and not [s for s in steps if s.failures]:  # zero tests ran: never a receipt
+        raise Wait(f"sm check ran no test: {c.unrun}", "run the owning tests by name (sm check --sel FILE), or sm check --full when the coordinator allows it")
     report = HeadCheck.of(f"sm check {c.sha[:9]} ({c.branch or 'detached'}) vs {ref} {c.base_sha[:9]}", steps, left_out, not_run, worktree=str(wt), head=c.sha,
                           branch=c.branch, base=c.base_sha, selector=c.plan.selector, changed=len(c.plan.changed), deferred=c.deferred, ci_must_run=c.ci,
                           generated_at=datetime.fromtimestamp(providers.clock.now()).astimezone().isoformat(timespec="seconds"))
@@ -176,7 +184,7 @@ def check(worktree: Path | None = typer.Argument(None, metavar="WORKTREE", help=
         report.receipt_note = f"none: measured from --base {ref}, not from {default} (the setting preflight_base); run sm check without --base for the receipt"
     else:
         state = verdicts.record_check(providers.store, c.sha, {"worktree": str(wt), "branch": c.branch, "base": c.base_sha, "at": providers.clock.now(), "command": report.command,
-                                                               "deferred": bool(c.ci), "ci_must_run": list(c.ci),
+                                                               "deferred": bool(c.ci), "ci_must_run": list(c.ci), **tests_counts(steps),
                                                                "checks": [{"name": s.name, "status": s.status, "detail": s.detail} for s in report.steps]})
         report.receipt = state in ("written", "kept")
         report.receipt_note = (f"{verdicts.CHECKS} {c.sha} ({'written' if state == 'written' else 'this commit already had one'}), measured from {c.base_sha[:12]}: "

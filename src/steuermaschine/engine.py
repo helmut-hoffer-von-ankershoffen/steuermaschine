@@ -96,6 +96,9 @@ def deferred_note(receipt: dict[str, Any] | None) -> str:
     """"deferred to CI: ..." when the check receipt says part of the checks were left to CI, else "". Never mistake it for a full local run."""
     if not receipt or not receipt.get("deferred"):
         return ""
+    ran, selected = receipt.get("tests_ran"), receipt.get("tests_selected")
+    if isinstance(ran, int) and isinstance(selected, int) and ran < selected:
+        return f"{ran} of {selected} test files ran locally; {selected - ran} deferred to PR CI (required check)"
     return f"deferred to CI: {', '.join(str(x) for x in receipt.get('ci_must_run') or []) or 'part of the checks'}"
 
 

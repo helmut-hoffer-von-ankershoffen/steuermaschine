@@ -250,13 +250,16 @@ def test_fifteen_checks_at_once_run_four_and_defer_eleven(tmp_path):
         assert sum(g.granted for g in grants) == 4 and sum(not g.granted for g in grants) == 11 and all(g.deferred for g in grants if not g.granted)
 
 
-def many_tests(core, count):  # noqa: F811
+def many_tests(core, count, owned=True):  # noqa: F811
+    """A selection of COUNT test files for a change of src/heinzel/x.py; with `owned` the first, x_test.py, is named for the module."""
     names = [f"tests/unit/t{n}_test.py" for n in range(count)]
+    if owned:
+        names[0] = "tests/unit/x_test.py"
     selector = SELECTOR.replace('(["tests/unit/x_test.py"] if any(p.startswith("src/") for p in changed) else [])', f"({names!r} if any(p.startswith('src/') for p in changed) else [])")
     return checkout(core, **{"scripts/affected.py": selector}).on("git diff --name-only", "src/heinzel/x.py")
 
 
-def test_a_selection_over_40_test_files_is_deferred_to_ci_and_the_receipt_stores_it(core, rt):  # noqa: F811
+def test_a_selection_over_40_test_files_runs_the_owning_tests_and_defers_the_rest_to_ci(core, rt):  # noqa: F811
     for n in range(41):
         (core / "tests/unit" / f"t{n}_test.py").parent.mkdir(parents=True, exist_ok=True)
         (core / "tests/unit" / f"t{n}_test.py").write_text("")
@@ -265,15 +268,38 @@ def test_a_selection_over_40_test_files_is_deferred_to_ci_and_the_receipt_stores
     done = invoke(runtime, ["--format", "json", "check", str(core)])
     found = report(done)
     assert done.exit_code == 0 and found.ready and found.receipt, done
-    assert found.ci_must_run == ["41 selected test files"] and "deferred to CI: 41 selected test files" in found.receipt_note
-    assert step(found, "tests").status == "WARN" and "deferred to CI (over 40)" in step(found, "tests").detail
-    assert not [call for call in machine.ran("pytest") if "tests/unit/t0_test.py" in call[0]] and machine.ran("tests/unit/standards_test.py")  # not one of them ran here
+    assert found.ci_must_run == ["40 of 41 selected test files"] and "deferred to CI: 40 of 41 selected test files" in found.receipt_note
+    assert step(found, "tests").status == "WARN" and "1 of 41 selected test file(s) ran, 40 deferred to PR CI (over 40)" in step(found, "tests").detail
+    ran = [call for call in machine.ran("pytest")]
+    assert any("tests/unit/x_test.py" in call[0] for call in ran) and not [call for call in ran if "tests/unit/t1_test.py" in call[0]]  # the owner ran, the rest did not
     assert machine.ran("ruff") and machine.ran("mypy")  # the cheap checks of the change still did
     receipt = runtime.providers.store.get_receipt(verdicts.CHECKS, HEAD)
-    assert receipt["deferred"] is True and receipt["ci_must_run"] == ["41 selected test files"]
+    assert receipt["deferred"] is True and receipt["ci_must_run"] == ["40 of 41 selected test files"] and (receipt["tests_ran"], receipt["tests_selected"]) == (1, 41)
     stored, _ = verdicts.check_receipt(runtime.providers.store, HEAD)
-    assert verdicts.deferred_note(stored) == "deferred to CI: 41 selected test files"
-    assert "deferred to CI: 41 selected test files; CI must run" in "\n".join(found.render()) or "deferred to CI: 41 selected test files" in "\n".join(found.render())
+    assert verdicts.deferred_note(stored) == "1 of 41 test files ran locally; 40 deferred to PR CI (required check)"
+
+
+def test_a_selection_over_40_test_files_that_no_test_owns_is_exit_75_and_writes_no_receipt(core, rt):  # noqa: F811
+    for n in range(41):
+        (core / "tests/unit" / f"t{n}_test.py").parent.mkdir(parents=True, exist_ok=True)
+        (core / "tests/unit" / f"t{n}_test.py").write_text("")
+    machine = many_tests(core, 41, owned=False)
+    runtime = rt(machine)
+    done = invoke(runtime, ["--format", "json", "check", str(core)])
+    assert done.exit_code == 75 and "no test owns a changed module" in done.stdout + done.stderr, done
+    assert runtime.providers.store.get_receipt(verdicts.CHECKS, HEAD) is None
+    assert not [call for call in machine.ran("pytest") if "tests/unit/t" in call[0]]  # not one of them ran
+
+
+def test_a_test_that_imports_the_changed_module_owns_it(core, rt):  # noqa: F811
+    for n in range(41):
+        (core / "tests/unit" / f"t{n}_test.py").parent.mkdir(parents=True, exist_ok=True)
+        (core / "tests/unit" / f"t{n}_test.py").write_text("")
+    (core / "tests/unit/t7_test.py").write_text("from heinzel.x import X\n")
+    machine = many_tests(core, 41, owned=False)
+    found = report(invoke(rt(machine), ["--format", "json", "check", str(core)]))
+    assert found.ready and found.ci_must_run == ["40 of 41 selected test files"]
+    assert any("tests/unit/t7_test.py" in call[0] for call in machine.ran("pytest"))
 
 
 def test_40_test_files_still_run_here(core, rt):  # noqa: F811
@@ -282,7 +308,7 @@ def test_40_test_files_still_run_here(core, rt):  # noqa: F811
         (core / "tests/unit" / f"t{n}_test.py").write_text("")
     machine = many_tests(core, 40)
     found = report(invoke(rt(machine), ["--format", "json", "check", str(core)]))
-    assert found.ready and not found.ci_must_run and any("tests/unit/t0_test.py" in call[0] for call in machine.ran("pytest"))
+    assert found.ready and not found.ci_must_run and any("tests/unit/x_test.py" in call[0] for call in machine.ran("pytest"))
 
 
 def test_a_150_file_mechanical_change_is_checked_cheaply_and_ships_without_a_failure(core, rt):  # noqa: F811
@@ -292,9 +318,10 @@ def test_a_150_file_mechanical_change_is_checked_cheaply_and_ships_without_a_fai
         (core / path).write_text("X = 1\n")
     for n in range(41):
         (core / "tests/unit" / f"t{n}_test.py").write_text("")
+    paths.append("src/heinzel/x.py")  # the one module whose test (x_test.py) is among the selected files
     machine = many_tests(core, 41).on("git diff --name-only", "\n".join(paths)).on("git ls-files", "\n".join(paths))
     found = report(invoke(rt(machine), ["--format", "json", "check", str(core)]))
-    assert found.ready and found.changed == 150 and found.ci_must_run == ["41 selected test files"]
+    assert found.ready and found.changed == 151 and found.ci_must_run == ["40 of 41 selected test files"]
 
 
 def test_a_budget_spent_between_steps_exits_75_and_is_never_ready(core, rt):  # noqa: F811
