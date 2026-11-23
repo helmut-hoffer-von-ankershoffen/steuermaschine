@@ -152,6 +152,18 @@ def test_gate_marks_what_to_act_on():
                                    "not yet: coverage-floor  <<< NOT A, RED, BYPASS")
 
 
+def test_gate_reads_current_required_checks_without_legacy_policy(monkeypatch):
+    monkeypatch.setattr(gate.core_facts, "api_checks", lambda: ())
+    fake, web = FakeGh(), Web({})
+    checks = [{"context": "CI OK"}, {"context": "SonarCloud Code Analysis"}]
+    fake.on("repos/o/r/rulesets", [{"id": 8}])
+    fake.on("repos/o/r/rulesets/8", {"enforcement": "active", "rules": [
+        {"type": "required_status_checks", "parameters": {"required_status_checks": checks}},
+    ]})
+    row = gate.gate_row(Sonar("o_r", fetch=web), web, Gh(fake), "o", "r")
+    assert row["required"] == ["CI OK", "SonarCloud Code Analysis"]
+    assert row["not_yet"] == []
+
 def test_a_ruleset_that_could_not_be_read_is_not_reported_as_missing():
     fake, web = FakeGh().on("rulesets", 502), Web({})
     row = gate.gate_row(Sonar("o_r", fetch=web), web, Gh(fake), "o", "r")
