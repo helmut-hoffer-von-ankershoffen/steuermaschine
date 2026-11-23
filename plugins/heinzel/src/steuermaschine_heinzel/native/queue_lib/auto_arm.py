@@ -125,16 +125,12 @@ def main_hold(q: Any, item: dict[str, Any]) -> str:
     if item["repo"] != hzlib.CORE:
         return ""
     state = q.main_state()
+    if state == "red" and q.strict_red_recovery():
+        return "" if q.reviewed_red_recovery(item) else "main is red; only a reviewed fix or measured mitigation is armed"
     if state == "red" and not q.main_checkpoint.permits(q.state_path(), q.load().get("main_failure", {})) and not q.later_main_passes() and not q.restored_by_rerun():
         if q.red_main_fixes([item]) or q.fix_forward_ready([item]) or q.red_main_exceptions([item]):
             return ""
         return "main's latest run is not green; only a PR that fixes it is armed"
-    if state == "unknown" and SHA.fullmatch(item.get("reviewed_head") or ""):
-        if item.get("fixes_main") or item.get("mitigation_main"):
-            if evidence := q.cancelled_schedule_red_push():
-                if item.get("detail") != ARMED:
-                    q.log(f"{item['key']}: reviewed red-main recovery: {evidence}")
-                return ""
     if state not in ("green", "red"):
         return "main CI evidence is unknown"
     return ""
@@ -158,11 +154,14 @@ def one(q: Any, item: dict[str, Any], items: list[dict[str, Any]]) -> None:
     if not SHA.fullmatch(pinned):
         q.stuck_or_merged(item, "needs work", "no guarded head recorded; ship it again so the diff guard reads the head that merges")
         return
-    info = hzlib.ghj("pr", "view", item["pr"], "-R", item["repo"], "--json", "state,headRefOid,autoMergeRequest,author,statusCheckRollup", default=None)
+    info = hzlib.ghj("pr", "view", item["pr"], "-R", item["repo"], "--json", "state,baseRefName,headRefOid,mergeCommit,autoMergeRequest,author,statusCheckRollup", default=None)
     if not isinstance(info, dict) or not info.get("state"):
         q.log(f"{item['key']}: the PR cannot be read; the next tick reads it again")
         return
     if info["state"] == "MERGED":
+        if not q.record_reviewed_main_fix(item, info):
+            q.log(f"{item['key']}: merged fix cannot be bound to its reviewed head and squash commit; the red pin stays")
+            return
         q.stuck_or_merged(item, "merged", pinned[:8])
         q.record_merge(item)
         return
