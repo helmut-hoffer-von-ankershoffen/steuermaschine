@@ -500,3 +500,92 @@ def test_a_malformed_release_pr_record_refuses_before_any_network(candidate, cap
     rel.remember(release_pr_opened=bad)
     assert rel.main([*DROP, "--close-pr"]) != 0 and "release_pr_opened record is malformed" in capsys.readouterr().err
     assert remote.writes == []
+
+
+ADOPT = [*DROP, "--close-pr", "--adopt-pr", "794", "--adopt-head", OPENED["head"]]
+
+
+@pytest.fixture
+def unrecorded(tool, home, monkeypatch):
+    rel, remote = tool("hz-release"), Remote()
+    branch = f"release/v{VERSION}"
+    remote.prs = [{"number": 794, "state": "OPEN", "headRefName": branch, "isCrossRepository": False,
+                   "baseRefName": "main", "headRefOid": OPENED["head"], "autoMergeRequest": None}]
+    remote.branch = {"name": branch, "target": {"oid": OPENED["head"]}}
+    monkeypatch.setattr(rel.hzlib, "gh", remote.gh)
+    monkeypatch.setattr(rel.urllib.request, "urlopen", remote.urlopen)
+    return rel, remote
+
+
+def test_adopt_only_the_exact_unrecorded_candidate_then_finish_after_interruption(unrecorded):
+    rel, remote = unrecorded
+    remote.delete_fails = True
+    assert rel.main(ADOPT) == 1
+    assert rel.state()["release_pr_opened"]["head"] == OPENED["head"]
+    assert remote.prs[0]["state"] == "CLOSED" and archives(rel) == []
+    assert rel.main([*DROP, "--close-pr"]) == 1
+    remote.delete_fails = False
+    assert rel.main(ADOPT) == 0
+    record = json.loads(archives(rel)[0].read_text())
+    assert record["release_pr_opened"]["pr"] == 794 and record["drop"]["hold"] == "none"
+    assert [write[:2] for write in remote.writes] == [("pr", "close"), ("api", "--method"), ("api", "--method")]
+    assert rel.state() == {}
+
+
+@pytest.mark.parametrize(("target", "key", "value"), [
+    ("repo", "tag", {"name": "v1.2.3"}), ("repo", "release", {}), ("repo", "pypi", 200),
+    ("repo", "active", {"in_progress": [active_run(4301)]}), ("repo", "branch", None),
+    ("pr", "headRefOid", "f" * 40), ("pr", "number", 795), ("pr", "state", "CLOSED"),
+    ("pr", "autoMergeRequest", {}), ("pr", "isCrossRepository", True), ("pr", "isCrossRepository", None),
+    ("pr", "baseRefName", "other"), ("branch", "target", {"oid": "f" * 40}),
+])
+def test_adoption_false_proof_never_writes(unrecorded, target, key, value):
+    rel, remote = unrecorded
+    if target == "repo":
+        setattr(remote, key, value)
+    else:
+        (remote.prs[0] if target == "pr" else remote.branch)[key] = value
+    assert rel.main(ADOPT) == 1
+    assert not rel.paths()[1].exists() and not archives(rel) and not remote.writes
+
+
+def test_adoption_does_not_delete_a_branch_that_changed_after_close(unrecorded):
+    rel, remote = unrecorded
+    remote.on_close = lambda: remote.branch["target"].update(oid="f" * 40)
+    assert rel.main(ADOPT) == 1
+    assert remote.writes == [("pr", "close", "794", "-R", rel.CORE)]
+    assert rel.state()["release_pr_opened"]["head"] == OPENED["head"]
+    assert rel.main(ADOPT) == 1 and len(remote.writes) == 1
+
+
+def test_adoption_refuses_incident_hold_and_other_receipt(unrecorded):
+    rel, remote = unrecorded
+    incident = rel.paths()[0]
+    incident.parent.mkdir(parents=True, exist_ok=True)
+    incident.write_text("incident")
+    assert rel.main(ADOPT) == 1 and not rel.paths()[1].exists()
+    incident.unlink()
+    rel.remember(version=VERSION, release_pr_opened=OPENED | {"head": "f" * 40})
+    before = rel.paths()[1].read_bytes()
+    assert rel.main(ADOPT) == 1 and rel.paths()[1].read_bytes() == before and remote.writes == []
+
+
+@pytest.mark.parametrize("args", [
+    ["--adopt-pr", "794", "--adopt-head", OPENED["head"]],
+    ["--close-pr", "--adopt-pr", "794"],
+    ["--close-pr", "--adopt-head", OPENED["head"]],
+    ["--close-pr", "--adopt-pr", "0", "--adopt-head", OPENED["head"]],
+    ["--close-pr", "--adopt-pr", "794", "--adopt-head", "a"],
+])
+def test_adoption_needs_both_pins_and_close_pr(unrecorded, args):
+    rel, remote = unrecorded
+    assert rel.main([*DROP, *args]) == 1
+    assert not rel.paths()[1].exists() and not archives(rel) and not remote.writes
+
+
+def test_adoption_accepts_branch_already_deleted_when_pr_closes(unrecorded):
+    rel, remote = unrecorded
+    remote.on_close = lambda: setattr(remote, "branch", None)
+    assert rel.main(ADOPT) == 0
+    record = json.loads(archives(rel)[0].read_text())["drop"]["evidence"]
+    assert not record["branch_deleted_by_drop"] and record["closed_by_drop"] == [794]

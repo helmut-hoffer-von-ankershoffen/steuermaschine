@@ -168,3 +168,25 @@ def test_a_rejected_release_is_refused_before_the_pr_is_opened(rel, capsys, monk
     assert rel.main(["0.9.41", "--open-pr", "--reviewed-head", HEAD]) == 1
     assert "release rejection history blocks dispatch" in capsys.readouterr().err
     assert not rel.world["calls"]
+
+
+def test_open_records_an_exact_pr_when_starting_without_a_receipt(rel):
+    assert rel.state() == {}
+    assert rel.main(["0.9.41", "--open-pr", "--reviewed-head", HEAD]) == 0
+    receipt = rel.state()
+    assert receipt["version"] == "0.9.41"
+    assert receipt["release_pr_opened"]["pr"] == 820 and receipt["release_pr_opened"]["head"] == HEAD
+
+
+@pytest.mark.parametrize("missing", ["autoMergeRequest", "number"])
+def test_open_keeps_an_unproven_pr_without_recording_it(rel, missing):
+    rel.world["view"].pop(missing)
+    assert rel.main(["0.9.41", "--open-pr", "--reviewed-head", HEAD]) == 1
+    assert rel.state() == {}
+
+
+def test_open_preserves_a_finished_receipt_of_another_version(rel):
+    rel.remember(version="0.9.40", finished=True)
+    before = rel.state()
+    assert rel.main(["0.9.41", "--open-pr", "--reviewed-head", HEAD]) == 0
+    assert rel.state() == before
