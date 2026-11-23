@@ -32,6 +32,7 @@ from collections.abc import Callable
 from typing import Any
 
 from . import hzlib
+from ..release_lib import exact_queue
 
 ARMED = "auto-merge armed"
 HELD = "merge freeze: auto-merge off until it lifts"
@@ -56,9 +57,16 @@ def frozen(repo: str) -> str:
     return release_pr_open()
 
 
-def arm(repo: str, number: str, head: str) -> tuple[bool, str]:
+def freeze_without_candidate(repo: str) -> str:
+    if exact_queue.reviewed_freeze_active():
+        return "only the reviewed release candidate can merge during its owned freeze"
+    return frozen(repo)
+
+
+def arm(repo: str, number: str, head: str, *, subject: str = "") -> tuple[bool, str]:
     """Switch GitHub auto-merge on for exactly HEAD (squash). (done, gh's error line)."""
-    code, out = hzlib.gh("pr", "merge", number, "-R", repo, "--squash", "--auto", "--match-head-commit", head)
+    extra = ("--subject", subject) if subject else ()
+    code, out = hzlib.gh("pr", "merge", number, "-R", repo, "--squash", "--auto", "--match-head-commit", head, *extra)
     return code == 0, "" if code == 0 else (out.strip().splitlines() or [f"gh exit {code}"])[-1][:160]
 
 
@@ -179,8 +187,17 @@ def one(q: Any, item: dict[str, Any], items: list[dict[str, Any]]) -> None:
             disarm(item["repo"], item["pr"])
         q.stuck_or_merged(item, "needs work", f"head moved from {pinned[:8]} after the diff guard read it; ship it again")
         return
-    armed = bool(info.get("autoMergeRequest"))
-    if why := frozen(item["repo"]):
+    request = info.get("autoMergeRequest")
+    armed = bool(request)
+    candidate = None
+    try:
+        candidate = exact_queue.queue_candidate(item)
+        why = "" if candidate else freeze_without_candidate(item["repo"])
+        if candidate and armed and (not isinstance(request, dict) or request.get("commitHeadline") != candidate.subject):
+            why = "existing auto-merge does not carry the reviewed release squash subject"
+    except Exception:  # an unreadable exact release or verdict must also disarm an already armed PR
+        why = "cannot verify the exact release queue approval and owned hold"
+    if why:
         if armed and not disarm(item["repo"], item["pr"]):
             q.log(f"{item['key']}: {why}, and auto-merge could not be switched off; the next tick tries again")
             return
@@ -229,6 +246,14 @@ def one(q: Any, item: dict[str, Any], items: list[dict[str, Any]]) -> None:
         else:
             q.stuck_or_merged(item, "needs work", reason)
         return
+    if candidate:
+        try:
+            exact_queue.verify_open(candidate)
+        except Exception:
+            if armed:
+                disarm(item["repo"], item["pr"])
+            q.update(item["key"], detail="not armed: exact release candidate proof changed or cannot be verified")
+            return
     if armed:
         if item.get("detail") != ARMED:
             q.update(item["key"], detail=ARMED)
@@ -239,8 +264,19 @@ def one(q: Any, item: dict[str, Any], items: list[dict[str, Any]]) -> None:
         if others:
             q.update(item["key"], detail=f"not armed: #{others[0]} is armed; one Core PR at a time")
             return
-    done, error = arm(item["repo"], item["pr"], pinned)
-    if done and (late := frozen(item["repo"])):
+    done, error = (arm(item["repo"], item["pr"], pinned, subject=candidate.subject) if candidate else
+                   arm(item["repo"], item["pr"], pinned))
+    late = ""
+    if done:
+        try:
+            if candidate:
+                if exact_queue.queue_candidate(item) != candidate:
+                    late = "release queue approval or hold changed"
+            else:
+                late = freeze_without_candidate(item["repo"])
+        except Exception:
+            late = "release queue approval or hold cannot be verified"
+    if late:
         # the freeze started between the check above and the arm, possibly after the cut's disarm_all: undo it now
         if disarm(item["repo"], item["pr"]):
             q.update(item["key"], detail=HELD)

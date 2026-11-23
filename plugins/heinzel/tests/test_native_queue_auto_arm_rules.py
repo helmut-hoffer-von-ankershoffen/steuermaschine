@@ -46,6 +46,40 @@ def test_a_pr_that_meets_the_merge_rule_is_armed(rt, gh):  # noqa: F811
     assert tick(rt).exit_code == 0 and merges(gh) == [ARM]
 
 
+
+def test_owned_reviewed_release_freeze_only_arms_exact_candidate(rt, gh, monkeypatch):  # noqa: F811
+    from steuermaschine_heinzel.native.release_lib import exact_queue
+
+    candidate = exact_queue.Candidate("0.9.55", "1" * 32, 801, HEAD, MAIN, "3" * 40, 42)
+    queue_one(rt, reviewed_head=HEAD)
+    queue_one(rt, key="802", pr="802")
+    queue_one(rt, key="plugins #803", pr="803", repo=PLUGINS)
+    gh.on("pr list", []).on("pr merge", "").on("pr view 802", PR).on("pr view 803", PR)
+    monkeypatch.setattr(exact_queue, "reviewed_freeze_active", lambda: True)
+    monkeypatch.setattr(exact_queue, "queue_candidate", lambda item: candidate if item["key"] == "801" else None)
+    verified = []
+    monkeypatch.setattr(exact_queue, "verify_open", verified.append)
+    assert tick(rt).exit_code == 0
+    assert merges(gh) == [f"{ARM} --subject {candidate.subject}"] and verified == [candidate]
+
+    gh.on("pr view 801", {**PR, "autoMergeRequest": {"commitHeadline": "chore(release): v0.9.55"}})
+    assert tick(rt).exit_code == 0
+    assert merges(gh)[-1] == f"pr merge 801 -R {CORE} --disable-auto"
+
+
+def test_release_authority_loss_during_arm_switches_off_auto_merge(rt, gh, monkeypatch):  # noqa: F811
+    from steuermaschine_heinzel.native.release_lib import exact_queue
+
+    candidate = exact_queue.Candidate("0.9.55", "1" * 32, 801, HEAD, MAIN, "3" * 40, 42)
+    queue_one(rt, reviewed_head=HEAD)
+    gh.on("pr list", []).on("pr merge", "")
+    auth = iter([candidate, None])
+    monkeypatch.setattr(exact_queue, "queue_candidate", lambda item: next(auth))
+    monkeypatch.setattr(exact_queue, "verify_open", lambda candidate: None)
+    assert tick(rt).exit_code == 0
+    assert merges(gh) == [f"{ARM} --subject {candidate.subject}", f"pr merge 801 -R {CORE} --disable-auto"]
+
+
 def test_a_red_main_arms_nothing_except_the_pr_that_fixes_it(rt, gh):  # noqa: F811
     gh.on("run list", RED_MAIN).on("pr list", []).on("pr merge", "")
     queue_one(rt)

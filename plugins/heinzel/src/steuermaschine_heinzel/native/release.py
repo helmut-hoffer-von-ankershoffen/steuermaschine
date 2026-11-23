@@ -199,6 +199,7 @@ def release_resume(
     version: str = typer.Argument(..., metavar="VERSION", help="X.Y.Z, `patch`, or `migrate-legacy`."),
     intro: str = typer.Option("", "--intro", help="What changed for users; needed only to open the release PR."),
     snapshot_acceptance: bool = typer.Option(False, "--snapshot-acceptance", help="Pin acceptance to the tag-pinned public snapshot; the release owns its hold."),
+    reviewed_queue: bool = typer.Option(False, "--reviewed-queue", help="Queue the independently reviewed exact candidate; requires --snapshot-acceptance."),
     timeout: int | None = typer.Option(None, "--timeout", metavar="MINUTES", help="Minutes per step (default 120)."),
     wait_previous: int | None = typer.Option(None, "--wait-previous", metavar="MINUTES", help="Minutes to wait for the previous release's verdict (default --timeout)."),
     candidate_gate: bool = typer.Option(False, "--candidate-gate", help="Train path only: main may be unfinished or red by KNOWN failures; the candidate stays the gate."),
@@ -231,6 +232,8 @@ def release_resume(
         argv = [version]
         action = next((name for name, on in (("pause", pause), ("prepare-only", prepare_only), ("reject", reject_release), ("candidate-capacity", bool(candidate_capacity)),
                                              ("migrate-legacy", version == "migrate-legacy")) if on), "resume")
+    if reviewed_queue:
+        argv.append("--reviewed-queue")
     argv += [flag for flag, on in (("--snapshot-acceptance", snapshot_acceptance), ("--candidate-gate", candidate_gate), ("--refresh", refresh), ("--pause", pause),
                                    ("--prepare-only", prepare_only), ("--reject-release", reject_release)) if on]
     for flag, value in (("--intro", intro or None), ("--timeout", timeout), ("--wait-previous", wait_previous), ("--reason", reason), ("--acceptance-ref", acceptance_ref),

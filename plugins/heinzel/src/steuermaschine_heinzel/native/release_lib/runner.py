@@ -2220,8 +2220,16 @@ def prepare_release(version: str) -> int:
     return 0
 
 
-def release_core(request: str, intro: str, timeout: float, snapshot_acceptance: bool = False, harness_ref: str | None = None, replace_run: int | None = None, composite_run: int | None = None, candidate_gate: bool = False, wait_previous: float | None = None, refresh: bool = False, replace_reason: str | None = None) -> int:
+def release_core(request: str, intro: str, timeout: float, snapshot_acceptance: bool = False, harness_ref: str | None = None, replace_run: int | None = None, composite_run: int | None = None, candidate_gate: bool = False, wait_previous: float | None = None, refresh: bool = False, replace_reason: str | None = None, reviewed_queue: bool = False) -> int:
+    from . import exact_queue
+
+    prior = state()
+    if prior.get("merge_route") == exact_queue.MODE and request in (prior.get("version"), "patch"):
+        reviewed_queue = True  # a restart can never fall back to the legacy direct merge
+        snapshot_acceptance = True
     flow = pick_flow(request, composite_run)
+    if reviewed_queue and (flow != release_flow.RELEASE_PR or not snapshot_acceptance or composite_run or candidate_gate or refresh):
+        raise Stop("reviewed queue needs the owned release-PR freeze and original first-attempt evidence")
     if flow == release_flow.TAG_ON_MAIN:
         return release_core_on_main(request, intro, timeout, snapshot_acceptance, harness_ref, replace_run,
                                     candidate_gate, wait_previous, refresh, replace_reason)
@@ -2250,6 +2258,15 @@ def release_core(request: str, intro: str, timeout: float, snapshot_acceptance: 
         raise Stop("this release uses a snapshot; resume with --snapshot-acceptance")
     if previous.get("version") != version:
         write_state({"version": version})
+    if reviewed_queue:
+        if pending_waiver(version):
+            raise Stop("reviewed release queue refuses a candidate waiver")
+        if state().get("merge_route") not in (None, exact_queue.MODE):
+            raise Stop("this release receipt has an unrecognized merge route")
+        if not state().get("merge_route"):
+            if has_tag(CORE, tag) or ((existing := release_pr(tag)) and existing["state"] == "MERGED"):
+                raise Stop("existing release tag or merge has no reviewed queue authorization")
+            remember(merge_route=exact_queue.MODE)
     hzlib.say(f"release {tag}")
     # An unsupported tagged workflow can resume on the default path. Keep its existing owned hold until default
     # acceptance finishes; do not switch to or remove a shared incident sentinel while that hold is active.
@@ -2265,7 +2282,17 @@ def release_core(request: str, intro: str, timeout: float, snapshot_acceptance: 
         else:
             step("freeze", freeze.exists, lambda: freeze.touch(), 60)
         disarm_core_auto_merge()  # 8i4oi: before the gate reads main, no Core PR can still merge by itself
-    if candidate_gate:
+    if reviewed_queue:
+        # A previously verified merge resumes directly at the exact tag check. It has not produced a tag yet.
+        try:
+            candidate = exact_queue.read_candidate(version)
+            merged = candidate and (existing := release_pr(tag)) and existing["state"] == "MERGED"
+            ready = merged or exact_queue.base_ready(candidate.base if candidate else None)
+        except exact_queue.ExactReleaseError as error:
+            raise Stop(str(error)) from error
+        if not ready:
+            raise Stop("both original main CI lanes must pass on the current base before the release PR")
+    elif candidate_gate:
         step("main gate (train path)", lambda: has_tag(CORE, tag) or main_candidate_gate(version), None, timeout)
     else:
         step("main tip green", lambda: has_tag(CORE, tag) or main_tip_green(), None, timeout)
@@ -2273,8 +2300,11 @@ def release_core(request: str, intro: str, timeout: float, snapshot_acceptance: 
     step("release PR open", lambda: has_tag(CORE, tag) or bool(release_pr(tag)), lambda: open_release_pr(tag, bump, intro), timeout)
     step("previous release accepted", lambda: has_tag(CORE, tag) or previous_accepted(version), None,
          timeout if wait_previous is None else wait_previous)
-    step("release PR merged", lambda: has_tag(CORE, tag) or bool((p := release_pr(tag)) and p["state"] == "MERGED"), lambda: merge_release_pr(tag, composite_run) if composite_run else merge_release_pr(tag), timeout)
-    step("tag", lambda: has_tag(CORE, tag), None, timeout)
+    if reviewed_queue:
+        exact_queue_release(version, tag, timeout)
+    else:
+        step("release PR merged", lambda: has_tag(CORE, tag) or bool((p := release_pr(tag)) and p["state"] == "MERGED"), lambda: merge_release_pr(tag, composite_run) if composite_run else merge_release_pr(tag), timeout)
+        step("tag", lambda: has_tag(CORE, tag), None, timeout)
     lift_freeze_at_tag(owned_hold, freeze)
     # The tag exists before its release does; pypi.yml reads the published release, so dispatching on the tag alone races.
     step("release published", lambda: release_published(tag), None, timeout)
@@ -2298,6 +2328,44 @@ def release_core(request: str, intro: str, timeout: float, snapshot_acceptance: 
     for line in lines:
         hzlib.say("  " + line)
     return 0 if good else 1
+
+def exact_queue_release(version: str, tag: str, timeout: float) -> None:
+    """Publish only after the active queue has merged the exact independently reviewed source."""
+    from steuermaschine.engine import Refuse
+    from . import exact_queue
+
+    pr = release_pr(tag)
+    if not pr:
+        raise Stop(f"no release PR for {tag}")
+    try:
+        if pr["state"] == "OPEN":
+            candidate = exact_queue.prepare(version, str(state().get("freeze_token", "")), pr["number"])
+            try:
+                exact_queue.approve_required(candidate)
+            except Refuse as error:
+                raise Stop(f"release PR #{candidate.pr} head {candidate.head} base {candidate.base} tree {candidate.tree}, "
+                           f"first-attempt CI run {candidate.run}. {error} Review with: {candidate.review_command()}") from error
+            from .. import queue as queue_commands
+            queue = queue_commands._queue()
+            row = next((i for i in queue.load()["items"] if i["key"] == str(candidate.pr)), {})
+            if row.get("status") != "queued" or row.get("reviewed_head") != candidate.head:
+                from ..ship_lib import ship
+
+                result = ship.ship(str(candidate.pr), f"exact candidate verdict {candidate.digest}", candidate.head)
+                if result.returncode:
+                    raise Stop(f"the active queue refused release PR #{candidate.pr}: "
+                               f"{(result.stderr or result.stdout).strip()}")
+            step("release PR merged", lambda: bool((p := release_pr(tag)) and p["state"] == "MERGED"), None, timeout)
+        else:
+            candidate = exact_queue.read_candidate(version)
+            if not candidate or candidate.pr != pr["number"]:
+                raise Stop("merged release PR has no exact candidate authorization")
+        clone = Path(edge.release_dir())
+        step("tag", lambda: exact_queue.ensure_tag(candidate, clone),
+             lambda: exact_queue.ensure_tag(candidate, clone, create=True), timeout)
+    except (exact_queue.ExactReleaseError, release_candidate_policy.release_candidate.CandidateError, Refuse) as error:
+        raise Stop(str(error)) from error
+
 
 # ---------------------------------------------------------------- tag-on-green-main (core ADR 0144, flag)
 
@@ -2842,6 +2910,7 @@ def main(argv: list[str]) -> int:
                         "owned hold and archive the receipt under release-dropped/ in the state directory; needs --reason; cancels no run")
     parser.add_argument("--close-pr", action="store_true", help="with --drop-candidate: close the open release PR and delete "
                         "release/vX.Y.Z first, then prove the state again")
+    parser.add_argument("--reviewed-queue", action="store_true", help="use the active queue and explicit exact tag after independent candidate review")
     parser.add_argument("--snapshot-acceptance", action="store_true", help="allow core merges during acceptance of pinned release bytes")
     parser.add_argument("--acceptance-ref", help="explicit corrected acceptance harness ref")
     parser.add_argument("--replace-acceptance-run", type=int, help="preserve and replace this exact completed rejected attempt")
@@ -2923,6 +2992,10 @@ def main(argv: list[str]) -> int:
             parser.error("candidate capacity requires exact version/run/receipt/hold identities and no release action flags")
     elif args.candidate_run is not None or args.expected_audit_sha256 is not None:
         parser.error("candidate audit identity requires --candidate-capacity")
+    if args.reviewed_queue and (args.plugin or args.pause or args.prepare_only or args.reject_release or args.drop_candidate
+                                or args.candidate_capacity or args.version in (None, "patch")
+                                or not args.snapshot_acceptance or args.waive_job or args.use_candidate_composite):
+        parser.error("--reviewed-queue needs an exact Core release and --snapshot-acceptance")
     if args.candidate_gate and (args.plugin or args.pause or args.prepare_only or args.reject_release
                                 or args.candidate_capacity or args.version == "patch"):
         parser.error("--candidate-gate is only for an exact core release run by sm release train")
@@ -2987,7 +3060,7 @@ def main(argv: list[str]) -> int:
             wait_previous = None if args.wait_previous is None else args.wait_previous * 60
             if args.use_candidate_composite is not None:
                 return release_core(args.version, args.intro, args.timeout * 60, args.snapshot_acceptance, args.acceptance_ref, args.replace_acceptance_run, args.use_candidate_composite, candidate_gate=args.candidate_gate, wait_previous=wait_previous, replace_reason=args.replace_reason)
-            return release_core(args.version, args.intro, args.timeout * 60, args.snapshot_acceptance, args.acceptance_ref, args.replace_acceptance_run, candidate_gate=args.candidate_gate, wait_previous=wait_previous, refresh=args.refresh, replace_reason=args.replace_reason)
+            return release_core(args.version, args.intro, args.timeout * 60, args.snapshot_acceptance, args.acceptance_ref, args.replace_acceptance_run, candidate_gate=args.candidate_gate, wait_previous=wait_previous, refresh=args.refresh, replace_reason=args.replace_reason, reviewed_queue=args.reviewed_queue)
         finally:
             free_global_lock()
             free_tail_lock()
