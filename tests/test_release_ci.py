@@ -87,6 +87,31 @@ def no_cz(*cmd, **kw):  # commitizen unavailable: the patch-bump fallback
     return rc.sh(*cmd, **kw)
 
 
+@pytest.mark.parametrize(("proposed", "expected"), [
+    ("0.2.0", "0.2.0"), ("0.1.0", "0.1.1"), ("0.0.9", "0.1.1"), ("unknown", "0.1.1"),
+])
+def test_next_version_uses_release_tags_instead_of_the_package_version(repo, proposed, expected):
+    git(repo, "tag", "v0.1.0", "HEAD~1")
+    pyproject = repo / "pyproject.toml"
+    source = ('[project]\nversion = "0.0.2"\n[tool.commitizen]\nversion_provider = "uv"\n'
+              'major_version_zero = true\ntag_format = "v$version"\n')
+    pyproject.write_text(source)
+
+    def run(*cmd, **kw):
+        if cmd[0] == "uv":
+            config = Path(cmd[cmd.index("--config") + 1])
+            assert json.loads(config.read_bytes()) == {"commitizen": {
+                "version_provider": "scm", "major_version_zero": True, "tag_format": "v$version",
+            }}
+            assert cmd[-3:] == ("bump", "--get-next", "--yes")
+            return proposed
+        return rc.sh(*cmd, **kw)
+
+    assert rc.next_version(repo, run) == expected
+    assert rc.next_version(repo, run) == expected  # the same commit and tags resume at the same version
+    assert pyproject.read_text() == source
+
+
 def test_a_green_merge_with_a_verdict_is_released(repo):
     sha = git(repo, "rev-parse", "HEAD")
     out = rc.gate(repo, sha, fake_api(sha, repo=repo), no_cz)
