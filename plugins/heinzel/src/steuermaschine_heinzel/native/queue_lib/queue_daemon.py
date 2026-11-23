@@ -523,6 +523,41 @@ def attempt_jobs(run_id: int, attempt: int) -> list[dict] | None:
     return jobs
 
 
+def cancelled_schedule_red_push() -> str:
+    """Evidence for the reviewed recovery lane only, never a main health or release verdict."""
+    rows = hzlib.ghj(
+        "run", "list", "-R", hzlib.CORE, "--workflow", ci_workflow(), "--branch", "main", "-L", "10",
+        "--json", "status,conclusion,databaseId,headSha,displayTitle,attempt,event", default=None,
+    )
+    rows = hzlib.resolve_main_runs(rows)
+    if not isinstance(rows, list) or not all(valid_main_run(row) and not row.get("batch_unknown") for row in rows):
+        return ""
+    runs, _ = main_lanes.split_runs(rows)
+    if len(runs) < 2:
+        return ""
+    schedule, push = runs[:2]
+    if (schedule.get("event"), schedule["status"], schedule["conclusion"]) != ("schedule", "completed", "cancelled"):
+        return ""
+    if (push.get("event"), push["status"], push.get("conclusion")) != ("push", "completed", "failure"):
+        return ""
+    if schedule["databaseId"] <= push["databaseId"]:
+        return ""
+    ref = hzlib.ghj("api", f"repos/{hzlib.CORE}/git/ref/heads/main", default=None)
+    obj = ref.get("object") if isinstance(ref, dict) else None
+    if not isinstance(obj, dict) or obj.get("sha") != push["headSha"] or schedule["headSha"] != push["headSha"]:
+        return ""
+    attempt = push.get("attempt")
+    if type(attempt) is not int or attempt < 1:
+        return ""
+    jobs = attempt_jobs(push["databaseId"], attempt)
+    if not jobs or any(job.get("status") != "completed" for job in jobs):
+        return ""
+    failed = {job["name"] for job in jobs if job.get("conclusion") == "failure"}
+    if aggregate() not in failed or len(failed) < 2:
+        return ""
+    return f"failed push run {push['databaseId']} attempt {attempt} at {push['headSha']}; later scheduled run {schedule['databaseId']} cancelled"
+
+
 def aggregate() -> str:
     """The aggregate job of Core's CI, from Core's release policy at main (CandidateError when unreadable)."""
     return core_facts.at_main().aggregate

@@ -129,6 +129,12 @@ def main_hold(q: Any, item: dict[str, Any]) -> str:
         if q.red_main_fixes([item]) or q.fix_forward_ready([item]) or q.red_main_exceptions([item]):
             return ""
         return "main's latest run is not green; only a PR that fixes it is armed"
+    if state == "unknown" and SHA.fullmatch(item.get("reviewed_head") or ""):
+        if item.get("fixes_main") or item.get("mitigation_main"):
+            if evidence := q.cancelled_schedule_red_push():
+                if item.get("detail") != ARMED:
+                    q.log(f"{item['key']}: reviewed red-main recovery: {evidence}")
+                return ""
     if state not in ("green", "red"):
         return "main CI evidence is unknown"
     return ""

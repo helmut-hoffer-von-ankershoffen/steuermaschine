@@ -63,6 +63,55 @@ def test_a_red_main_switches_off_an_armed_pr_that_does_not_fix_it(rt, gh):  # no
     assert merges(gh) == [f"pr merge 801 -R {CORE} --disable-auto"]
 
 
+PUSH = {**MAIN_RUNS[0], "event": "push", "conclusion": "failure"}
+SCHEDULE = {**PUSH, "event": "schedule", "conclusion": "cancelled", "databaseId": 502, "attempt": 2}
+MACOS = {**MAIN_RUNS[0], "event": "workflow_dispatch", "displayTitle": "CI macOS main " + MAIN, "databaseId": 501}
+RECOVERY_JOB = {"name": "End-to-end cli (ubuntu-24.04)", "status": "completed", "conclusion": "failure"}
+RECOVERY_JOBS = {"total_count": 2, "jobs": [RECOVERY_JOB, {**RECOVERY_JOB, "name": "CI OK"}]}
+
+
+def recovery_forge(gh, rows, ref, jobs):  # noqa: F811
+    gh.on("run list", rows).on(f"repos/{CORE}/git/ref/heads/main", ref)
+    gh.on(f"repos/{CORE}/actions/runs/500/attempts/1/jobs?per_page=100", jobs)
+    gh.on("pr list", []).on("pr merge", "")
+
+
+def test_cancelled_schedule_preserves_exact_failed_push_for_reviewed_recovery(rt, gh):  # noqa: F811
+    recovery_forge(gh, [SCHEDULE, MACOS, PUSH], {"object": {"sha": MAIN}}, RECOVERY_JOBS)
+    queue_one(rt)
+    queue_one(rt, key="802", pr="802", fixes_main=True)
+    queue_one(rt, key="803", pr="803", reviewed_head=HEAD, mitigation_main="reviewed exact revert")
+    gh.on("pr view 802", PR).on("pr view 803", PR)
+    out = tick(rt)
+    assert out.exit_code == 0 and merges(gh) == [ARM.replace("801", "803")]
+    assert all("main CI evidence is unknown" in row["detail"] for row in items(rt)[-3:-1])
+    assert f"failed push run 500 attempt 1 at {MAIN}; later scheduled run 502 cancelled" in out.stdout
+
+
+@pytest.mark.parametrize(
+    ("rows", "ref", "jobs"),
+    [
+        (None, {"object": {"sha": MAIN}}, RECOVERY_JOBS),
+        ([SCHEDULE, PUSH], None, RECOVERY_JOBS),
+        ([SCHEDULE, PUSH], {"object": {"sha": "2" * 40}}, RECOVERY_JOBS),
+        ([{**SCHEDULE, "headSha": "2" * 40}, PUSH], {"object": {"sha": MAIN}}, RECOVERY_JOBS),
+        ([{**SCHEDULE, "databaseId": 499}, PUSH], {"object": {"sha": MAIN}}, RECOVERY_JOBS),
+        ([{**SCHEDULE, "status": "in_progress", "conclusion": ""}, PUSH], {"object": {"sha": MAIN}}, RECOVERY_JOBS),
+        ([SCHEDULE, {**PUSH, "status": "queued", "conclusion": "", "databaseId": 501}, PUSH], {"object": {"sha": MAIN}}, RECOVERY_JOBS),
+        ([SCHEDULE, {**PUSH, "conclusion": "success", "databaseId": 501}, PUSH], {"object": {"sha": MAIN}}, RECOVERY_JOBS),
+        ([SCHEDULE, PUSH], {"object": {"sha": MAIN}}, None),
+        ([SCHEDULE, PUSH], {"object": {"sha": MAIN}}, {**RECOVERY_JOBS, "total_count": 3}),
+        ([SCHEDULE, PUSH], {"object": {"sha": MAIN}}, {"total_count": 1, "jobs": [{**RECOVERY_JOB, "name": "CI OK"}]}),
+    ],
+)
+def test_unknown_or_replaced_push_evidence_cannot_authorize_recovery(rt, gh, rows, ref, jobs):  # noqa: F811
+    from steuermaschine.native import NativeRuntime, using
+
+    recovery_forge(gh, rows, ref, jobs)
+    with using(NativeRuntime(rt.providers, rt.settings, rt.project)):
+        assert area._queue().cancelled_schedule_red_push() == ""
+
+
 def test_a_hold_switches_off_every_pr_armed_on_github_not_only_the_recorded_ones(rt, gh):  # noqa: F811
     queue_one(rt, detail="")  # sm's record says nothing is armed (the arm call failed on our side but worked on GitHub)
     gh.on("pr list", [{"number": 801, "autoMergeRequest": {"mergeMethod": "SQUASH"}}, {"number": 999, "autoMergeRequest": {"mergeMethod": "SQUASH"}}, {"number": 5, "autoMergeRequest": None}]).on(
