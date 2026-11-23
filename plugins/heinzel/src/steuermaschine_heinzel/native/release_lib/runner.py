@@ -2331,7 +2331,10 @@ def release_core(request: str, intro: str, timeout: float, snapshot_acceptance: 
 
 def exact_queue_release(version: str, tag: str, timeout: float) -> None:
     """Publish only after the active queue has merged the exact independently reviewed source."""
+    import importlib
+
     from steuermaschine.engine import Refuse
+    from steuermaschine.native import NativeCommand, call
     from . import exact_queue
 
     pr = release_pr(tag)
@@ -2345,16 +2348,16 @@ def exact_queue_release(version: str, tag: str, timeout: float) -> None:
             except Refuse as error:
                 raise Stop(f"release PR #{candidate.pr} head {candidate.head} base {candidate.base} tree {candidate.tree}, "
                            f"first-attempt CI run {candidate.run}. {error} Review with: {candidate.review_command()}") from error
-            from .. import queue as queue_commands
-            queue = queue_commands._queue()
-            row = next((i for i in queue.load()["items"] if i["key"] == str(candidate.pr)), {})
-            if row.get("status") != "queued" or row.get("reviewed_head") != candidate.head:
-                from ..ship_lib import ship
-
-                result = ship.ship(str(candidate.pr), f"exact candidate verdict {candidate.digest}", candidate.head)
-                if result.returncode:
-                    raise Stop(f"the active queue refused release PR #{candidate.pr}: "
-                               f"{(result.stderr or result.stdout).strip()}")
+            # Keep the queue commands as their own review units, as daemon queue does for main-proof.
+            registry = importlib.import_module("steuermaschine_heinzel.native")
+            commands = {cmd.path: cmd for cmd in registry.commands() if isinstance(cmd, NativeCommand)}
+            rows = call(commands["queue list"], active=True).entries
+            if not any(row.repo == CORE and row.pr == str(candidate.pr) and row.status == "queued"
+                       and row.reviewed_head == candidate.head for row in rows):
+                result = call(commands["queue add"], pr=[str(candidate.pr)], reviewed=f"exact candidate verdict {candidate.digest}",
+                              reviewed_head=candidate.head)
+                if result.exit:
+                    raise Stop(f"the active queue refused release PR #{candidate.pr}: {' '.join(result.errors or result.lines)}")
             step("release PR merged", lambda: bool((p := release_pr(tag)) and p["state"] == "MERGED"), None, timeout)
         else:
             candidate = exact_queue.read_candidate(version)

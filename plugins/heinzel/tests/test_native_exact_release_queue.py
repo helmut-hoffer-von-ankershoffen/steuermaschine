@@ -120,3 +120,39 @@ def test_tag_created_once_and_resumed_only_when_exact(evidence, monkeypatch, tmp
     with pytest.raises(exact.ExactReleaseError, match="existing tag"):
         exact.ensure_tag(CANDIDATE, tmp_path, create=True)
     assert [argv[0] for argv in commands].count("push") == 1
+
+
+@pytest.mark.parametrize("queued, denied", [(True, False), (False, False), (False, True)])
+def test_release_delegates_to_queue_commands_once(monkeypatch, tmp_path, queued, denied):
+    from types import SimpleNamespace
+
+    import steuermaschine.native
+    from steuermaschine_heinzel.native.release_lib import runner
+
+    monkeypatch.setattr(runner, "release_pr", lambda tag: {"state": "OPEN", "number": CANDIDATE.pr})
+    monkeypatch.setattr(runner, "state", lambda: {"freeze_token": CANDIDATE.token})
+    monkeypatch.setattr(runner.edge, "release_dir", lambda: tmp_path)
+    monkeypatch.setattr(exact, "prepare", lambda *_: CANDIDATE)
+    monkeypatch.setattr(exact, "approve_required", lambda _: None)
+    steps, calls = [], []
+    monkeypatch.setattr(runner, "step", lambda name, *_: steps.append(name))
+    row = SimpleNamespace(repo=runner.CORE, pr=str(CANDIDATE.pr), status="queued", reviewed_head=CANDIDATE.head)
+
+    def call(command, **arguments):
+        calls.append(command.path)
+        if command.path == "queue list":
+            assert arguments == {"active": True}
+            return SimpleNamespace(entries=[row] if queued else [])
+        assert command.path == "queue add"
+        assert arguments["pr"] == [str(CANDIDATE.pr)] and arguments["reviewed_head"] == CANDIDATE.head
+        return SimpleNamespace(exit=1 if denied else 0, errors=["refused"], lines=[])
+
+    monkeypatch.setattr(steuermaschine.native, "call", call)
+    if denied:
+        with pytest.raises(runner.Stop, match="active queue refused"):
+            runner.exact_queue_release(CANDIDATE.version, CANDIDATE.tag, 1)
+        assert steps == []
+    else:
+        runner.exact_queue_release(CANDIDATE.version, CANDIDATE.tag, 1)
+        assert steps == ["release PR merged", "tag"]
+    assert calls == (["queue list"] if queued else ["queue list", "queue add"])
