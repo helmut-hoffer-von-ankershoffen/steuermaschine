@@ -44,6 +44,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import tomllib
 import urllib.error
 import urllib.request
 from collections.abc import Callable
@@ -155,17 +156,24 @@ def independent(repo: Path, sha: str, reviewer: str) -> None:
 
 
 def next_version(repo: Path, run: Run = sh) -> str:
-    """The commitizen bump from the commits since the last tag, else a patch bump of the last tag."""
-    try:
-        got = run("uv", "run", "cz", "bump", "--get-next", "--yes", cwd=repo).strip().splitlines()
-        if got and re.fullmatch(r"\d+\.\d+\.\d+", got[-1]):
-            return got[-1]
-    except Refused:
-        pass
-    tags = [t for t in run("git", "tag", "--list", "v*", cwd=repo).split() if re.fullmatch(r"v\d+\.\d+\.\d+", t)]
+    """The Commitizen bump against release tags, with a patch fallback that cannot reuse a tag."""
+    tags = [t[1:] for t in run("git", "tag", "--list", "v*", cwd=repo).split() if re.fullmatch(r"v\d+\.\d+\.\d+", t)]
     if not tags:
         raise Refused("no release tag vX.Y.Z to bump from")
-    major, minor, patch = max(tuple(int(n) for n in t[1:].split(".")) for t in tags)
+    latest = max(tuple(map(int, tag.split("."))) for tag in tags)
+    try:
+        # The workflow sets package versions only in the build checkout. Use the
+        # released tags for this calculation without changing local package bumping.
+        settings = tomllib.loads((repo / "pyproject.toml").read_text(encoding="utf-8"))["tool"]["commitizen"]
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Path(tmp) / "release.json"
+            config.write_text(json.dumps({"commitizen": {**settings, "version_provider": "scm"}}), encoding="utf-8")
+            got = run("uv", "run", "cz", "--config", str(config), "bump", "--get-next", "--yes", cwd=repo).strip().splitlines()
+        if got and re.fullmatch(r"\d+\.\d+\.\d+", got[-1]) and tuple(map(int, got[-1].split("."))) > latest:
+            return got[-1]
+    except (OSError, KeyError, TypeError, ValueError, Refused):
+        pass
+    major, minor, patch = latest
     return f"{major}.{minor}.{patch + 1}"
 
 
