@@ -200,8 +200,8 @@ def test_add_pins_the_reviewed_head_and_refuses_when_the_pr_moved(rt, gh):
 
 
 @pytest.mark.parametrize(("argv", "message"), [
-    (["--reviewed", "r", "--reviewed-head", "", "801"], "--reviewed-head requires one PR"),
-    (["--reviewed-head", HEAD, "801"], "--reviewed-head requires one PR"),
+    (["--reviewed", "r", "--reviewed-head", "", "801"], "--reviewed-head requires one normal PR"),
+    (["--reviewed-head", HEAD, "801"], "--reviewed-head requires one normal PR"),
     (["--diagnostics-main", "", "801"], "--diagnostics-main needs a purpose"),
     (["--safety-fix-main", "", "801"], "--safety-fix-main needs a purpose"),
     (["--mitigation-main", "", "--mitigation-evidence", "e", "801"], "--mitigation-evidence requires --mitigation-main"),

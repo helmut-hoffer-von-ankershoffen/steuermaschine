@@ -1715,9 +1715,11 @@ def add(args) -> int:
         not reviewed or not re.fullmatch(r"[0-9a-f]{40}", normal_head)
         or len(args.pr) != 1
         or fix_forward or any(purpose for _, _, purpose in purposes)
-        or (getattr(args, "fixes_main", False) and hzlib.split_key(args.pr[0])[0] != hzlib.CORE)
     ):
-        print("refused: --reviewed-head requires one PR, --reviewed reason and a full SHA; --fixes-main is Core only", file=sys.stderr)
+        print("refused: --reviewed-head requires one normal PR, --reviewed reason and a full SHA", file=sys.stderr)
+        return 1
+    if normal_head is not None and getattr(args, "fixes_main", False) and hzlib.split_key(args.pr[0])[0] != hzlib.CORE:
+        print("refused: --fixes-main with --reviewed-head is Core only", file=sys.stderr)
         return 1
     if fix_forward:
         return add_fix_forward(args, reviewed, after)
