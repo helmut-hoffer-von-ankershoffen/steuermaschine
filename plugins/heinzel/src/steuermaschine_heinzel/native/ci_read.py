@@ -245,7 +245,7 @@ def decide(target: int, kind: str, runs: list[RunFailure], gates: list[str], pen
             return (f"{label}: no CI job failed; red gate check(s) judged by the head's Merge gate run: {', '.join(posted)}",
                     f"sm head sonar {target}   (clean: sm ci merge-gate rejudge {target})", TRAPS["gate"])
         return (f"{label}: no CI job failed; red check(s) posted by another check suite: {', '.join(posted)}",
-                f"sm head sonar {target}" if core_facts.gate_check("sonar") in posted else f"sm why {target}", TRAPS["attached"])
+                f"sm head sonar {target}" if core_facts.at_main().gate_checks.get("sonar") in posted else f"sm why {target}", TRAPS["attached"])
     if pending or any(r.status and r.status != "completed" for r in runs):
         return f"{label}: still running ({len(pending)} check(s) pending), no failure yet", f"sm ci watch {target}", TRAPS["pending"]
     if any(r.cancelled_jobs or r.conclusion == "cancelled" for r in runs):
