@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import asdict, dataclass
-from pathlib import Path
 from typing import Any
 
 from steuermaschine import go, verdicts
@@ -53,8 +52,7 @@ class Candidate:
 
     @property
     def subject(self) -> str:
-        # Core's automatic tag workflow matches the canonical PR title, so it must never see that squash subject.
-        return f"chore(release-merge): {self.tag}"
+        return f"chore(release): {self.tag}"
 
     def review_command(self) -> str:
         return f"sm review verdict {self.digest} --approve --head {self.head} --reviewer NAME --model MODEL"
@@ -237,41 +235,7 @@ def merged_commit(candidate: Candidate) -> str:
     message = _commit_field(commit, "message")
     if (commit.get("sha") != sha or _parents(commit) != [candidate.base] or _tree(commit) != candidate.tree
             or not isinstance(message, str) or message.splitlines()[:1] != [candidate.subject]):
-        raise ExactReleaseError("merged release source differs from the reviewed base or tested tree; no tag")
+        raise ExactReleaseError("merged release source differs from the reviewed base, tested tree or canonical subject")
     if _api(f"compare/{sha}...main").get("status") not in ("ahead", "identical"):
         raise ExactReleaseError("merged release source cannot be proven to be on main")
     return sha
-
-
-def _git(clone: Path, *argv: str) -> str:
-    result = runtime().providers.commands.run(["git", "-C", str(clone), *argv], timeout=120)
-    if result.rc:
-        raise ExactReleaseError(f"cannot {argv[0]} the exact release tag")
-    return str(result.out)
-
-
-def ensure_tag(candidate: Candidate, clone: Path, *, create: bool = False) -> bool:
-    """Read, or create without force, only the tag for the proven squash commit."""
-    approve_required(candidate)
-    sha = merged_commit(candidate)
-    url = f"https://github.com/{hzlib.CORE}.git"
-    ref = f"refs/tags/{candidate.tag}"
-    remote = _git(clone, "ls-remote", "--tags", url, ref, ref + "^{}")
-    parsed = [row.split() for row in remote.splitlines()]
-    keys = {ref, ref + "^{}"}
-    if any(len(row) != 2 or not SHA.fullmatch(row[0]) or row[1] not in keys for row in parsed):
-        raise ExactReleaseError("the remote tag ref is unreadable")
-    rows = {name: oid for oid, name in parsed}
-    if rows:
-        if len(rows) != len(parsed) or ref not in rows or rows.get(ref + "^{}", rows[ref]) != sha:
-            raise ExactReleaseError("the existing tag does not point at the verified release commit")
-        return True
-    if not create:
-        return False
-    require_hold(candidate)
-    _git(clone, "fetch", "--no-tags", url, sha)
-    if merged_commit(candidate) != sha:
-        raise ExactReleaseError("release merge changed before tagging")
-    require_hold(candidate)
-    _git(clone, "push", url, f"{sha}:{ref}")
-    return ensure_tag(candidate, clone)

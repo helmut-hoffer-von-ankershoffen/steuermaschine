@@ -72,7 +72,7 @@ def test_release_review_survives_restart_but_belongs_to_one_candidate_and_hold(e
         exact.queue_candidate(item)
 
 
-def test_exact_candidate_refuses_moved_head_before_arming(evidence):
+def test_exact_candidate_refuses_moved_head_before_merge(evidence):
     _, remote, _ = evidence
     exact.prepare(CANDIDATE.version, CANDIDATE.token, CANDIDATE.pr)
     remote[f"pulls/{CANDIDATE.pr}"] = pr(head={**pr()["head"], "sha": "e" * 40})
@@ -82,48 +82,20 @@ def test_exact_candidate_refuses_moved_head_before_arming(evidence):
 
 @pytest.mark.parametrize("bad", [
     {"parents": ["e" * 40]}, {"parents": [CANDIDATE.base, CANDIDATE.head]},
-    {"tree": "e" * 40}, {"message": "chore(release): v0.9.55"},
+    {"tree": "e" * 40}, {"message": "chore(release-merge): v0.9.55"},
 ])
-def test_merge_race_never_tags_the_wrong_base_or_tree(evidence, monkeypatch, tmp_path, bad):
+def test_post_merge_check_rejects_the_wrong_base_or_tree(evidence, bad):
     records, remote, _ = evidence
     exact.prepare(CANDIDATE.version, CANDIDATE.token, CANDIDATE.pr)
     approve(records)
     remote[f"pulls/{CANDIDATE.pr}"] = pr(state="closed", merged=True, merge_commit_sha=MERGE)
     remote[f"commits/{MERGE}"] = commit(MERGE, **bad)
-    monkeypatch.setattr(exact, "_git", lambda *_: pytest.fail("never read or write a tag for an unverified merge"))
-    with pytest.raises(exact.ExactReleaseError, match="no tag"):
-        exact.ensure_tag(CANDIDATE, tmp_path, create=True)
-
-
-def test_tag_created_once_and_resumed_only_when_exact(evidence, monkeypatch, tmp_path):
-    records, remote, receipt = evidence
-    exact.prepare(CANDIDATE.version, CANDIDATE.token, CANDIDATE.pr)
-    approve(records)
-    remote[f"pulls/{CANDIDATE.pr}"] = pr(state="closed", merged=True, merge_commit_sha=MERGE)
-    ref = f"refs/tags/{CANDIDATE.tag}"
-    commands, tag = [], []
-
-    def git(_clone, *argv):
-        commands.append(argv)
-        if argv[0] == "push":
-            assert argv[-1] == f"{MERGE}:{ref}" and "--force" not in argv
-            tag.append(f"{MERGE}\t{ref}")
-        return "\n".join(tag) if argv[0] == "ls-remote" else ""
-
-    monkeypatch.setattr(exact, "_git", git)
-    assert not exact.ensure_tag(CANDIDATE, tmp_path)
-    assert exact.ensure_tag(CANDIDATE, tmp_path, create=True)
-    receipt["finished"] = True  # an already verified tag remains resumable after dropping the hold
-    assert exact.ensure_tag(CANDIDATE, tmp_path, create=True)
-    assert [argv[0] for argv in commands].count("push") == 1
-    tag[:] = [f"{'e' * 40}\t{ref}"]
-    with pytest.raises(exact.ExactReleaseError, match="existing tag"):
-        exact.ensure_tag(CANDIDATE, tmp_path, create=True)
-    assert [argv[0] for argv in commands].count("push") == 1
+    with pytest.raises(exact.ExactReleaseError, match="merged release source differs"):
+        exact.merged_commit(CANDIDATE)
 
 
 @pytest.mark.parametrize("queued, denied", [(True, False), (False, False), (False, True)])
-def test_release_delegates_to_queue_commands_once(monkeypatch, tmp_path, queued, denied):
+def test_release_delegates_to_queue_commands_once(monkeypatch, queued, denied):
     from types import SimpleNamespace
 
     import steuermaschine.native
@@ -131,7 +103,7 @@ def test_release_delegates_to_queue_commands_once(monkeypatch, tmp_path, queued,
 
     monkeypatch.setattr(runner, "release_pr", lambda tag: {"state": "OPEN", "number": CANDIDATE.pr})
     monkeypatch.setattr(runner, "state", lambda: {"freeze_token": CANDIDATE.token})
-    monkeypatch.setattr(runner.edge, "release_dir", lambda: tmp_path)
+    monkeypatch.setattr(exact, "merged_commit", lambda _: MERGE)
     monkeypatch.setattr(exact, "prepare", lambda *_: CANDIDATE)
     monkeypatch.setattr(exact, "approve_required", lambda _: None)
     steps, calls = [], []
@@ -156,3 +128,28 @@ def test_release_delegates_to_queue_commands_once(monkeypatch, tmp_path, queued,
         runner.exact_queue_release(CANDIDATE.version, CANDIDATE.tag, 1)
         assert steps == ["release PR merged", "tag"]
     assert calls == (["queue list"] if queued else ["queue list", "queue add"])
+
+
+def test_runner_waits_for_the_hosted_tag_and_rejects_a_different_commit(monkeypatch):
+    from steuermaschine_heinzel.native.release_lib import runner
+
+    monkeypatch.setattr(runner, "release_pr", lambda tag: {"state": "MERGED", "number": CANDIDATE.pr})
+    monkeypatch.setattr(exact, "read_candidate", lambda _: CANDIDATE)
+    monkeypatch.setattr(exact, "approve_required", lambda _: None)
+    monkeypatch.setattr(exact, "merged_commit", lambda _: MERGE)
+    hosted_tag = []
+    monkeypatch.setattr(runner, "has_tag", lambda repo, tag: bool(hosted_tag))
+    monkeypatch.setattr(runner, "tag_commit", lambda tag: hosted_tag[0])
+
+    def step(name, done, act, timeout):
+        assert name == "tag" and act is None and timeout == 1
+        if not hosted_tag:
+            assert not done()
+            hosted_tag.append(MERGE)
+        assert done()
+
+    monkeypatch.setattr(runner, "step", step)
+    runner.exact_queue_release(CANDIDATE.version, CANDIDATE.tag, 1)
+    hosted_tag[0] = "e" * 40
+    with pytest.raises(runner.Stop, match="does not point at the reviewed merge"):
+        runner.exact_queue_release(CANDIDATE.version, CANDIDATE.tag, 1)

@@ -22,7 +22,9 @@ ruleset requires). The rule is read again every tick on an armed PR: one that no
 Core arming except a PR that fixes main (fixes_main, fix-forward, or a reviewed safety fix, mitigation, diagnostic).
 
 The freeze is the release freeze (8i4oi): a release hold, the incident sentinel, or an open release/* PR of Core.
-Unreadable evidence holds (fails closed). Other repositories are not held by Core's release, as before.
+Unreadable evidence holds (fails closed). The opt-in reviewed release freeze holds the whole sm queue except
+its one approved candidate. That candidate uses an immediate protected squash after rechecking its evidence.
+An ordinary Core release freeze continues to cover Core only.
 """
 
 from __future__ import annotations
@@ -63,10 +65,9 @@ def freeze_without_candidate(repo: str) -> str:
     return frozen(repo)
 
 
-def arm(repo: str, number: str, head: str, *, subject: str = "") -> tuple[bool, str]:
+def arm(repo: str, number: str, head: str) -> tuple[bool, str]:
     """Switch GitHub auto-merge on for exactly HEAD (squash). (done, gh's error line)."""
-    extra = ("--subject", subject) if subject else ()
-    code, out = hzlib.gh("pr", "merge", number, "-R", repo, "--squash", "--auto", "--match-head-commit", head, *extra)
+    code, out = hzlib.gh("pr", "merge", number, "-R", repo, "--squash", "--auto", "--match-head-commit", head)
     return code == 0, "" if code == 0 else (out.strip().splitlines() or [f"gh exit {code}"])[-1][:160]
 
 
@@ -187,14 +188,13 @@ def one(q: Any, item: dict[str, Any], items: list[dict[str, Any]]) -> None:
             disarm(item["repo"], item["pr"])
         q.stuck_or_merged(item, "needs work", f"head moved from {pinned[:8]} after the diff guard read it; ship it again")
         return
-    request = info.get("autoMergeRequest")
-    armed = bool(request)
+    armed = bool(info.get("autoMergeRequest"))
     candidate = None
     try:
         candidate = exact_queue.queue_candidate(item)
         why = "" if candidate else freeze_without_candidate(item["repo"])
-        if candidate and armed and (not isinstance(request, dict) or request.get("commitHeadline") != candidate.subject):
-            why = "existing auto-merge does not carry the reviewed release squash subject"
+        if candidate and armed:
+            why = "reviewed releases require an immediate merge; disabling deferred auto-merge"
     except Exception:  # an unreadable exact release or verdict must also disarm an already armed PR
         why = "cannot verify the exact release queue approval and owned hold"
     if why:
@@ -247,13 +247,8 @@ def one(q: Any, item: dict[str, Any], items: list[dict[str, Any]]) -> None:
             q.stuck_or_merged(item, "needs work", reason)
         return
     if candidate:
-        try:
-            exact_queue.verify_open(candidate)
-        except Exception:
-            if armed:
-                disarm(item["repo"], item["pr"])
-            q.update(item["key"], detail="not armed: exact release candidate proof changed or cannot be verified")
-            return
+        merge_release(q, item, candidate)
+        return
     if armed:
         if item.get("detail") != ARMED:
             q.update(item["key"], detail=ARMED)
@@ -264,18 +259,8 @@ def one(q: Any, item: dict[str, Any], items: list[dict[str, Any]]) -> None:
         if others:
             q.update(item["key"], detail=f"not armed: #{others[0]} is armed; one Core PR at a time")
             return
-    done, error = (arm(item["repo"], item["pr"], pinned, subject=candidate.subject) if candidate else
-                   arm(item["repo"], item["pr"], pinned))
-    late = ""
-    if done:
-        try:
-            if candidate:
-                if exact_queue.queue_candidate(item) != candidate:
-                    late = "release queue approval or hold changed"
-            else:
-                late = freeze_without_candidate(item["repo"])
-        except Exception:
-            late = "release queue approval or hold cannot be verified"
+    done, error = arm(item["repo"], item["pr"], pinned)
+    late = freeze_without_candidate(item["repo"]) if done else ""
     if late:
         # the freeze started between the check above and the arm, possibly after the cut's disarm_all: undo it now
         if disarm(item["repo"], item["pr"]):
@@ -290,6 +275,35 @@ def one(q: Any, item: dict[str, Any], items: list[dict[str, Any]]) -> None:
     else:
         q.update(item["key"], detail=f"auto-merge not armed: {error}")
         q.log(f"{item['key']}: auto-merge not armed: {error}")
+
+
+def merge_release(q: Any, item: dict[str, Any], candidate: exact_queue.Candidate) -> None:
+    """Preserve the release runner's immediate disarm, candidate proof and protected squash sequence."""
+    if remaining := disarm_all():
+        q.update(item["key"], detail="release merge held: auto-merge still armed or unreadable: " + ", ".join(remaining))
+        return
+    refs = hzlib.ghj("api", f"repos/{hzlib.CORE}/git/matching-refs/tags/{candidate.tag}", default=None)
+    if not isinstance(refs, list) or any(not isinstance(row, dict) or not isinstance(row.get("ref"), str)
+                                         or row["ref"] == f"refs/tags/{candidate.tag}" for row in refs):
+        q.update(item["key"], detail="release merge held: tag exists or tag inventory cannot be read")
+        return
+    try:
+        exact_queue.verify_open(candidate)
+        if exact_queue.queue_candidate(item) != candidate:
+            raise exact_queue.ExactReleaseError("approval or owned hold changed")
+    except Exception as error:
+        q.update(item["key"], detail=f"release merge held: {error}")
+        return
+    # gh pr merge can enqueue when main requires GitHub's merge queue, even without --auto.
+    # The protected REST squash accepts the exact PR head or refuses, without granting deferred merge authority.
+    code, out = hzlib.gh("api", "--method", "PUT", f"repos/{hzlib.CORE}/pulls/{candidate.pr}/merge",
+                         "-f", "merge_method=squash", "-f", f"sha={candidate.head}",
+                         "-f", f"commit_title={candidate.subject}")
+    if code:
+        detail = (out.strip().splitlines() or [f"gh exit {code}"])[-1][:160]
+        q.update(item["key"], detail=f"release merge result needs GitHub read-back: {detail}")
+    else:
+        q.update(item["key"], detail="release merge requested; awaiting GitHub read-back")
 
 
 def tick(q: Any) -> None:

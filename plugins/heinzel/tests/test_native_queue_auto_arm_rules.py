@@ -55,29 +55,59 @@ def test_owned_reviewed_release_freeze_only_arms_exact_candidate(rt, gh, monkeyp
     queue_one(rt, key="802", pr="802")
     queue_one(rt, key="plugins #803", pr="803", repo=PLUGINS)
     gh.on("pr list", []).on("pr merge", "").on("pr view 802", PR).on("pr view 803", PR)
+    gh.on(f"repos/{CORE}/git/matching-refs/tags/v0.9.55", [])
     monkeypatch.setattr(exact_queue, "reviewed_freeze_active", lambda: True)
     monkeypatch.setattr(exact_queue, "queue_candidate", lambda item: candidate if item["key"] == "801" else None)
     verified = []
     monkeypatch.setattr(exact_queue, "verify_open", verified.append)
     assert tick(rt).exit_code == 0
-    assert merges(gh) == [f"{ARM} --subject {candidate.subject}"] and verified == [candidate]
+    route = f"repos/{CORE}/pulls/801/merge"
+    direct = [line for line in gh.lines() if route in line]
+    assert direct == [f"api --method PUT {route} -f merge_method=squash -f sha={HEAD} -f commit_title=chore(release): v0.9.55"]
+    assert not merges(gh) and verified == [candidate]
+    assert not any(line.startswith("pr update-branch") for line in gh.lines())
 
-    gh.on("pr view 801", {**PR, "autoMergeRequest": {"commitHeadline": "chore(release): v0.9.55"}})
+    gh.on("pr view 801", {**PR, "autoMergeRequest": {"commitHeadline": candidate.subject}})
     assert tick(rt).exit_code == 0
     assert merges(gh)[-1] == f"pr merge 801 -R {CORE} --disable-auto"
 
+    gh.on("pr view 801", PR).on(f"repos/{CORE}/git/matching-refs/tags/v0.9.55", [{"ref": "refs/tags/v0.9.55"}])
+    assert tick(rt).exit_code == 0
+    assert [line for line in gh.lines() if route in line] == direct
+    assert "tag exists" in next(row["detail"] for row in items(rt) if row["key"] == "801")
 
-def test_release_authority_loss_during_arm_switches_off_auto_merge(rt, gh, monkeypatch):  # noqa: F811
+
+def test_release_authority_loss_after_verification_prevents_merge(rt, gh, monkeypatch):  # noqa: F811
     from steuermaschine_heinzel.native.release_lib import exact_queue
 
     candidate = exact_queue.Candidate("0.9.55", "1" * 32, 801, HEAD, MAIN, "3" * 40, 42)
     queue_one(rt, reviewed_head=HEAD)
     gh.on("pr list", []).on("pr merge", "")
+    gh.on(f"repos/{CORE}/git/matching-refs/tags/v0.9.55", [])
     auth = iter([candidate, None])
     monkeypatch.setattr(exact_queue, "queue_candidate", lambda item: next(auth))
     monkeypatch.setattr(exact_queue, "verify_open", lambda candidate: None)
     assert tick(rt).exit_code == 0
-    assert merges(gh) == [f"{ARM} --subject {candidate.subject}", f"pr merge 801 -R {CORE} --disable-auto"]
+    assert not merges(gh)
+    assert not any(line.startswith("api --method PUT ") for line in gh.lines())
+    assert "approval or owned hold changed" in items(rt)[-1]["detail"]
+
+
+def test_reviewed_release_stops_when_core_auto_merge_cannot_be_disarmed(rt, gh, monkeypatch):  # noqa: F811
+    from steuermaschine_heinzel.native.queue_lib import auto_arm
+    from steuermaschine_heinzel.native.release_lib import exact_queue
+
+    candidate = exact_queue.Candidate("0.9.55", "1" * 32, 801, HEAD, MAIN, "3" * 40, 42)
+    queue_one(rt, reviewed_head=HEAD)
+    gh.on("pr list", []).on("pr merge", "")
+    disarms = []
+    monkeypatch.setattr(auto_arm, "disarm_all", lambda: disarms.append(True) or ["#999"])
+    monkeypatch.setattr(exact_queue, "queue_candidate", lambda item: candidate)
+    monkeypatch.setattr(exact_queue, "verify_open", lambda _: pytest.fail("proof ran before successful disarm"))
+    assert tick(rt).exit_code == 0
+    assert disarms == [True] and not merges(gh)
+    assert not any(line.startswith("api --method PUT ") for line in gh.lines())
+    assert "auto-merge still armed" in items(rt)[-1]["detail"]
 
 
 def test_a_red_main_arms_nothing_except_the_pr_that_fixes_it(rt, gh):  # noqa: F811

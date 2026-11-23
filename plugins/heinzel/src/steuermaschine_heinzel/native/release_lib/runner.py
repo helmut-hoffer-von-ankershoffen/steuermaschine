@@ -2283,7 +2283,7 @@ def release_core(request: str, intro: str, timeout: float, snapshot_acceptance: 
             step("freeze", freeze.exists, lambda: freeze.touch(), 60)
         disarm_core_auto_merge()  # 8i4oi: before the gate reads main, no Core PR can still merge by itself
     if reviewed_queue:
-        # A previously verified merge resumes directly at the exact tag check. It has not produced a tag yet.
+        # A previously verified merge resumes at the hosted tag check.
         try:
             candidate = exact_queue.read_candidate(version)
             merged = candidate and (existing := release_pr(tag)) and existing["state"] == "MERGED"
@@ -2363,9 +2363,17 @@ def exact_queue_release(version: str, tag: str, timeout: float) -> None:
             candidate = exact_queue.read_candidate(version)
             if not candidate or candidate.pr != pr["number"]:
                 raise Stop("merged release PR has no exact candidate authorization")
-        clone = Path(edge.release_dir())
-        step("tag", lambda: exact_queue.ensure_tag(candidate, clone),
-             lambda: exact_queue.ensure_tag(candidate, clone, create=True), timeout)
+        exact_queue.approve_required(candidate)
+        merged = exact_queue.merged_commit(candidate)
+
+        def hosted_tag_ready() -> bool:
+            if not has_tag(CORE, tag):
+                return False
+            if tag_commit(tag) != merged:
+                raise Stop(f"{tag} exists but does not point at the reviewed merge {merged}; preserve it for review")
+            return True
+
+        step("tag", hosted_tag_ready, None, timeout)
     except (exact_queue.ExactReleaseError, release_candidate_policy.release_candidate.CandidateError, Refuse) as error:
         raise Stop(str(error)) from error
 
@@ -2913,7 +2921,7 @@ def main(argv: list[str]) -> int:
                         "owned hold and archive the receipt under release-dropped/ in the state directory; needs --reason; cancels no run")
     parser.add_argument("--close-pr", action="store_true", help="with --drop-candidate: close the open release PR and delete "
                         "release/vX.Y.Z first, then prove the state again")
-    parser.add_argument("--reviewed-queue", action="store_true", help="use the active queue and explicit exact tag after independent candidate review")
+    parser.add_argument("--reviewed-queue", action="store_true", help="use the active queue after independent candidate review; Core CI creates the tag")
     parser.add_argument("--snapshot-acceptance", action="store_true", help="allow core merges during acceptance of pinned release bytes")
     parser.add_argument("--acceptance-ref", help="explicit corrected acceptance harness ref")
     parser.add_argument("--replace-acceptance-run", type=int, help="preserve and replace this exact completed rejected attempt")
