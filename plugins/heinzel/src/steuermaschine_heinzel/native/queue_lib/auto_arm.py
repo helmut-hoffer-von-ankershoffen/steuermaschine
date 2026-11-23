@@ -33,8 +33,10 @@ import re
 from collections.abc import Callable
 from typing import Any
 
-from . import hzlib
+from steuermaschine.engine import Refuse
+
 from ..release_lib import exact_queue
+from . import hzlib
 
 ARMED = "auto-merge armed"
 HELD = "merge freeze: auto-merge off until it lifts"
@@ -195,7 +197,7 @@ def one(q: Any, item: dict[str, Any], items: list[dict[str, Any]]) -> None:
         why = "" if candidate else freeze_without_candidate(item["repo"])
         if candidate and armed:
             why = "reviewed releases require an immediate merge; disabling deferred auto-merge"
-    except Exception:  # an unreadable exact release or verdict must also disarm an already armed PR
+    except (Refuse, OSError, ValueError, TypeError, AttributeError, KeyError, RuntimeError):
         why = "cannot verify the exact release queue approval and owned hold"
     if why:
         if armed and not disarm(item["repo"], item["pr"]):
@@ -291,8 +293,8 @@ def merge_release(q: Any, item: dict[str, Any], candidate: exact_queue.Candidate
         exact_queue.verify_open(candidate)
         if exact_queue.queue_candidate(item) != candidate:
             raise exact_queue.ExactReleaseError("approval or owned hold changed")
-    except Exception as error:
-        q.update(item["key"], detail=f"release merge held: {error}")
+    except (Refuse, OSError, ValueError, TypeError, AttributeError, KeyError, RuntimeError) as error:
+        q.update(item["key"], detail=f"release merge held: {type(error).__name__}: {error}")
         return
     # gh pr merge can enqueue when main requires GitHub's merge queue, even without --auto.
     # The protected REST squash accepts the exact PR head or refuses, without granting deferred merge authority.

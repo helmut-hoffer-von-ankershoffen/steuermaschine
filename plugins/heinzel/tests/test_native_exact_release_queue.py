@@ -153,3 +153,131 @@ def test_runner_waits_for_the_hosted_tag_and_rejects_a_different_commit(monkeypa
     hosted_tag[0] = "e" * 40
     with pytest.raises(runner.Stop, match="does not point at the reviewed merge"):
         runner.exact_queue_release(CANDIDATE.version, CANDIDATE.tag, 1)
+
+
+BASE = {"headSha": CANDIDATE.base, "status": "completed", "conclusion": "success", "attempt": 1}
+PUSH = {**BASE, "event": "push"}
+MAC = {**BASE, "event": "workflow_dispatch", "displayTitle": exact.main_lanes.MACOS_TITLE + " " + CANDIDATE.base}
+
+
+@pytest.mark.parametrize(("runs", "ready"), [
+    ([PUSH, MAC], True),
+    ([PUSH, {**MAC, "attempt": 2}], False),
+    ([{**PUSH, "conclusion": "failure"}, MAC, PUSH], False),
+    ([PUSH, {**MAC, "headSha": "f" * 40}], False),
+    ([PUSH, {**MAC, "displayTitle": "other workflow dispatch"}], False),
+    ([MAC, {**PUSH, "event": "schedule"}], False),
+    ([PUSH, None], False),
+    ({}, False),
+])
+def test_current_base_requires_both_original_main_ci_lanes(monkeypatch, runs, ready):
+    ref = {"object": {"sha": CANDIDATE.base, "type": "commit"}}
+    monkeypatch.setattr(exact.core_facts, "ci_file", lambda: "ci.yml")
+
+    def gh(*argv, default=None):
+        if argv[0] == "api":
+            assert argv[1].endswith("/git/ref/heads/main")
+            return ref
+        assert argv[:2] == ("run", "list") and ("--commit", CANDIDATE.base) == argv[8:10]
+        return runs
+
+    monkeypatch.setattr(exact.hzlib, "ghj", gh)
+    assert exact.base_ready(CANDIDATE.base) == ready
+    assert not exact.base_ready("0" * 40)
+    ref["object"]["type"] = "tag"
+    assert not exact.base_ready()
+
+
+@pytest.mark.parametrize("contents", [None, "{", "[]", '{"merge_route":"another-route"}'])
+def test_bad_or_unrelated_release_state_never_opens_the_freeze(monkeypatch, tmp_path, contents):
+    release = tmp_path / "release.json"
+    if contents is not None:
+        release.write_text(contents)
+    monkeypatch.setattr(exact.statedir, "path", lambda _: release)
+    monkeypatch.setattr(exact.hzlib, "release_holds_present", lambda: True)
+    item = {"repo": exact.hzlib.CORE, "pr": str(CANDIDATE.pr), "reviewed_head": CANDIDATE.head}
+    assert exact.queue_candidate(item) is None
+    assert exact.reviewed_freeze_active() == (contents != '{"merge_route":"another-route"}')
+    monkeypatch.setattr(exact.hzlib, "release_holds_present", lambda: False)
+    assert not exact.reviewed_freeze_active()
+    assert exact.queue_candidate(item) is None
+
+
+def test_release_review_requires_a_registered_author_and_reviewer_model(evidence):
+    records, _, _ = evidence
+    with pytest.raises(exact.ExactReleaseError, match="authorship"):
+        exact.approve_required(CANDIDATE)
+    exact.prepare(CANDIDATE.version, CANDIDATE.token, CANDIDATE.pr)
+    verdicts.record_head_verdict(records, CANDIDATE.digest, CANDIDATE.head,
+                                 {"digest": CANDIDATE.digest, "reviewer": "other-model", "verdict": "approve"})
+    with pytest.raises(exact.ExactReleaseError, match="record its model"):
+        exact.approve_required(CANDIDATE)
+
+
+def test_open_candidate_refuses_replaced_attempt_or_moved_main(evidence):
+    _, remote, _ = evidence
+    with pytest.raises(exact.ExactReleaseError, match="first-attempt"):
+        exact.verify_open(CANDIDATE, {**APPROVED, "run_attempt": 2})
+    remote["git/ref/heads/main"]["object"]["sha"] = "e" * 40
+    with pytest.raises(exact.ExactReleaseError, match="current main moved"):
+        exact.verify_open(CANDIDATE)
+
+
+def test_release_merge_must_be_linked_to_the_pr_and_still_on_main(evidence):
+    _, remote, _ = evidence
+    with pytest.raises(exact.ExactReleaseError, match="has not merged"):
+        exact.merged_commit(CANDIDATE)
+    remote[f"pulls/{CANDIDATE.pr}"] = pr(state="closed", merged=True, merge_commit_sha=MERGE)
+    assert exact.merged_commit(CANDIDATE) == MERGE
+    remote[f"compare/{MERGE}...main"]["status"] = "diverged"
+    with pytest.raises(exact.ExactReleaseError, match="cannot be proven to be on main"):
+        exact.merged_commit(CANDIDATE)
+
+
+@pytest.mark.parametrize(("initial", "requested", "ready", "tagged", "error"), [
+    ("", True, True, False, "queued"),
+    (exact.MODE, False, True, False, "queued"),
+    (exact.MODE, False, False, False, "both original main CI lanes"),
+    ("legacy", True, True, False, "unrecognized merge route"),
+    ("", True, True, True, "no reviewed queue authorization"),
+])
+def test_resume_adopts_only_the_current_open_release_without_legacy_merge(monkeypatch, tmp_path, initial, requested, ready, tagged, error):
+    from steuermaschine_heinzel.native.release_lib import runner
+
+    receipt = {"version": CANDIDATE.version}
+    if initial:
+        receipt["merge_route"] = initial
+    monkeypatch.setattr(runner, "state", lambda: receipt)
+    monkeypatch.setattr(runner, "paths", lambda: (tmp_path / "freeze", tmp_path / "receipt.json"))
+    monkeypatch.setattr(runner, "remember", lambda **fields: receipt.update(fields))
+    monkeypatch.setattr(runner, "pick_flow", lambda *_: runner.release_flow.RELEASE_PR)
+    monkeypatch.setattr(runner, "next_version", lambda _: (CANDIDATE.version, "patch"))
+    monkeypatch.setattr(runner, "pending_waiver", lambda _: None)
+    monkeypatch.setattr(runner, "has_tag", lambda *_: tagged)
+    monkeypatch.setattr(runner, "release_pr", lambda _: {"number": CANDIDATE.pr, "state": "OPEN"})
+    monkeypatch.setattr(runner, "previous_accepted", lambda _: True)
+    for name in ("resume_paused_hold", "guard_tails", "rejection_guard"):
+        monkeypatch.setattr(runner, name, lambda *_: None)
+    sequence = []
+    monkeypatch.setattr(runner, "acquire_snapshot_freeze", lambda version: sequence.append(("freeze", version)))
+    monkeypatch.setattr(runner, "disarm_core_auto_merge", lambda: sequence.append("disarm"))
+    monkeypatch.setattr(exact, "read_candidate", lambda _: None)
+    monkeypatch.setattr(exact, "base_ready", lambda expected: sequence.append(("base", expected)) or ready)
+    monkeypatch.setattr(runner, "merge_release_pr", lambda *_: pytest.fail("must never use legacy merge"))
+    monkeypatch.setattr(runner, "open_release_pr", lambda *_: pytest.fail("must adopt the already-open PR"))
+
+    def step(name, done, action, timeout):
+        sequence.append(name)
+        assert done()
+
+    def queued(version, tag, timeout):
+        assert (version, tag, timeout) == (CANDIDATE.version, CANDIDATE.tag, 1)
+        assert receipt["merge_route"] == exact.MODE
+        raise runner.Stop("queued")
+
+    monkeypatch.setattr(runner, "step", step)
+    monkeypatch.setattr(runner, "exact_queue_release", queued)
+    with pytest.raises(runner.Stop, match=error):
+        runner.release_core(CANDIDATE.version, "", 1, snapshot_acceptance=requested, reviewed_queue=requested)
+    if error == "queued":
+        assert sequence == [("freeze", CANDIDATE.version), "disarm", ("base", None), "release PR open", "previous release accepted"]

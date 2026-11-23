@@ -2220,7 +2220,12 @@ def prepare_release(version: str) -> int:
     return 0
 
 
-def release_core(request: str, intro: str, timeout: float, snapshot_acceptance: bool = False, harness_ref: str | None = None, replace_run: int | None = None, composite_run: int | None = None, candidate_gate: bool = False, wait_previous: float | None = None, refresh: bool = False, replace_reason: str | None = None, reviewed_queue: bool = False) -> int:
+def release_core(
+    request: str, intro: str, timeout: float, snapshot_acceptance: bool = False, harness_ref: str | None = None,
+    replace_run: int | None = None, composite_run: int | None = None, candidate_gate: bool = False,
+    wait_previous: float | None = None, refresh: bool = False, replace_reason: str | None = None,
+    reviewed_queue: bool = False,
+) -> int:
     from . import exact_queue
 
     prior = state()
@@ -2335,6 +2340,7 @@ def exact_queue_release(version: str, tag: str, timeout: float) -> None:
 
     from steuermaschine.engine import Refuse
     from steuermaschine.native import NativeCommand, call
+
     from . import exact_queue
 
     pr = release_pr(tag)
@@ -3070,8 +3076,16 @@ def main(argv: list[str]) -> int:
                 record_waiver(args.version, args.waive_job, args.owner_quote)
             wait_previous = None if args.wait_previous is None else args.wait_previous * 60
             if args.use_candidate_composite is not None:
-                return release_core(args.version, args.intro, args.timeout * 60, args.snapshot_acceptance, args.acceptance_ref, args.replace_acceptance_run, args.use_candidate_composite, candidate_gate=args.candidate_gate, wait_previous=wait_previous, replace_reason=args.replace_reason)
-            return release_core(args.version, args.intro, args.timeout * 60, args.snapshot_acceptance, args.acceptance_ref, args.replace_acceptance_run, candidate_gate=args.candidate_gate, wait_previous=wait_previous, refresh=args.refresh, replace_reason=args.replace_reason, reviewed_queue=args.reviewed_queue)
+                return release_core(
+                    args.version, args.intro, args.timeout * 60, args.snapshot_acceptance, args.acceptance_ref,
+                    args.replace_acceptance_run, args.use_candidate_composite, candidate_gate=args.candidate_gate,
+                    wait_previous=wait_previous, replace_reason=args.replace_reason,
+                )
+            return release_core(
+                args.version, args.intro, args.timeout * 60, args.snapshot_acceptance, args.acceptance_ref,
+                args.replace_acceptance_run, candidate_gate=args.candidate_gate, wait_previous=wait_previous,
+                refresh=args.refresh, replace_reason=args.replace_reason, reviewed_queue=args.reviewed_queue,
+            )
         finally:
             free_global_lock()
             free_tail_lock()
