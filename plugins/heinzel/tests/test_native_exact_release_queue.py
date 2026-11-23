@@ -240,6 +240,9 @@ def test_release_merge_must_be_linked_to_the_pr_and_still_on_main(evidence):
     (exact.MODE, False, False, False, "both original main CI lanes"),
     ("legacy", True, True, False, "unrecognized merge route"),
     ("", True, True, True, "no reviewed queue authorization"),
+    (exact.MODE, False, True, False, "refuses a candidate waiver"),
+    (exact.MODE, False, True, False, "needs the owned release-PR freeze"),
+    (exact.MODE, False, True, False, "candidate receipt unavailable"),
 ])
 def test_resume_adopts_only_the_current_open_release_without_legacy_merge(monkeypatch, tmp_path, initial, requested, ready, tagged, error):
     from steuermaschine_heinzel.native.release_lib import runner
@@ -252,7 +255,7 @@ def test_resume_adopts_only_the_current_open_release_without_legacy_merge(monkey
     monkeypatch.setattr(runner, "remember", lambda **fields: receipt.update(fields))
     monkeypatch.setattr(runner, "pick_flow", lambda *_: runner.release_flow.RELEASE_PR)
     monkeypatch.setattr(runner, "next_version", lambda _: (CANDIDATE.version, "patch"))
-    monkeypatch.setattr(runner, "pending_waiver", lambda _: None)
+    monkeypatch.setattr(runner, "pending_waiver", lambda _: {"job": "CI OK"} if "waiver" in error else None)
     monkeypatch.setattr(runner, "has_tag", lambda *_: tagged)
     monkeypatch.setattr(runner, "release_pr", lambda _: {"number": CANDIDATE.pr, "state": "OPEN"})
     monkeypatch.setattr(runner, "previous_accepted", lambda _: True)
@@ -261,7 +264,12 @@ def test_resume_adopts_only_the_current_open_release_without_legacy_merge(monkey
     sequence = []
     monkeypatch.setattr(runner, "acquire_snapshot_freeze", lambda version: sequence.append(("freeze", version)))
     monkeypatch.setattr(runner, "disarm_core_auto_merge", lambda: sequence.append("disarm"))
-    monkeypatch.setattr(exact, "read_candidate", lambda _: None)
+    def read_candidate(_):
+        if error == "candidate receipt unavailable":
+            raise exact.ExactReleaseError(error)
+        return None
+
+    monkeypatch.setattr(exact, "read_candidate", read_candidate)
     monkeypatch.setattr(exact, "base_ready", lambda expected: sequence.append(("base", expected)) or ready)
     monkeypatch.setattr(runner, "merge_release_pr", lambda *_: pytest.fail("must never use legacy merge"))
     monkeypatch.setattr(runner, "open_release_pr", lambda *_: pytest.fail("must adopt the already-open PR"))
@@ -278,6 +286,83 @@ def test_resume_adopts_only_the_current_open_release_without_legacy_merge(monkey
     monkeypatch.setattr(runner, "step", step)
     monkeypatch.setattr(runner, "exact_queue_release", queued)
     with pytest.raises(runner.Stop, match=error):
-        runner.release_core(CANDIDATE.version, "", 1, snapshot_acceptance=requested, reviewed_queue=requested)
+        runner.release_core(CANDIDATE.version, "", 1, snapshot_acceptance=requested, reviewed_queue=requested,
+                            refresh=error == "needs the owned release-PR freeze")
     if error == "queued":
         assert sequence == [("freeze", CANDIDATE.version), "disarm", ("base", None), "release PR open", "previous release accepted"]
+
+
+@pytest.mark.parametrize("patch", [{"version": "01.9.55"}, {"token": "x"}, {"pr": 0}, {"head": "ab"}, {"run": 0}])
+def test_candidate_receipt_rejects_invalid_identities(patch):
+    with pytest.raises(exact.ExactReleaseError, match="exact release identities"):
+        exact.Candidate(**(asdict(CANDIDATE) | patch))
+
+
+@pytest.mark.parametrize(("data", "reason"), [
+    ({"unexpected": "field"}, "malformed"),
+    (asdict(CANDIDATE) | {"version": "0.9.56"}, "different version"),
+])
+def test_persisted_candidate_receipt_cannot_be_rebound(evidence, data, reason):
+    records, _, _ = evidence
+    records.put_receipt(exact.KIND, CANDIDATE.version, data)
+    with pytest.raises(exact.ExactReleaseError, match=reason):
+        exact.read_candidate(CANDIDATE.version)
+
+
+def test_freeze_token_must_still_belong_to_candidate(evidence, monkeypatch, tmp_path):
+    _, _, receipt = evidence
+    receipt["freeze_token"] = "2" * 32
+    with pytest.raises(exact.ExactReleaseError, match="does not own"):
+        exact.require_hold(CANDIDATE)
+    receipt["freeze_token"] = CANDIDATE.token
+    monkeypatch.setattr(exact.hzlib, "release_holds", lambda: tmp_path / "missing")
+    with pytest.raises(exact.ExactReleaseError, match="cannot verify the ownership"):
+        exact.require_hold(CANDIDATE)
+
+
+def test_candidate_proof_rejects_unavailable_main_ci(evidence, monkeypatch):
+    monkeypatch.setattr(exact, "base_ready", lambda _: False)
+    with pytest.raises(exact.ExactReleaseError, match="both original main CI lanes"):
+        exact.verify_open(CANDIDATE)
+
+
+@pytest.mark.parametrize(("state", "number", "reason"), [
+    (None, None, "no release PR"),
+    ("OPEN", CANDIDATE.pr, "first-attempt CI run"),
+    ("MERGED", CANDIDATE.pr + 1, "no exact candidate authorization"),
+])
+def test_release_queue_refusal_occurs_before_tag_readback(evidence, monkeypatch, state, number, reason):
+    from steuermaschine_heinzel.native.release_lib import runner
+
+    exact.prepare(CANDIDATE.version, CANDIDATE.token, CANDIDATE.pr)
+    monkeypatch.setattr(runner, "state", lambda: {"freeze_token": CANDIDATE.token})
+    monkeypatch.setattr(runner, "release_pr", lambda _: {"state": state, "number": number} if state else None)
+    monkeypatch.setattr(runner, "has_tag", lambda *_: pytest.fail("an unauthorized merge cannot advance to tag readback"))
+    with pytest.raises(runner.Stop, match=reason):
+        runner.exact_queue_release(CANDIDATE.version, CANDIDATE.tag, 1)
+
+
+def test_unreadable_merged_source_stops_before_matching_a_tag(monkeypatch):
+    from steuermaschine_heinzel.native.release_lib import runner
+
+    def fail(_):
+        raise exact.ExactReleaseError("cannot prove the resulting tree")
+
+    monkeypatch.setattr(runner, "release_pr", lambda _: {"state": "MERGED", "number": CANDIDATE.pr})
+    monkeypatch.setattr(exact, "read_candidate", lambda _: CANDIDATE)
+    monkeypatch.setattr(exact, "approve_required", lambda _: None)
+    monkeypatch.setattr(exact, "merged_commit", fail)
+    monkeypatch.setattr(runner, "has_tag", lambda *_: pytest.fail("the tree must be proven before reading the tag"))
+    with pytest.raises(runner.Stop, match="cannot prove the resulting tree"):
+        runner.exact_queue_release(CANDIDATE.version, CANDIDATE.tag, 1)
+
+
+@pytest.mark.parametrize("extra", [[], ["--snapshot-acceptance", "--waive-job", "CI OK"],
+                                  ["--snapshot-acceptance", "--use-candidate-composite", "123"]])
+def test_reviewed_queue_cli_refuses_weaker_release_paths(monkeypatch, extra):
+    from steuermaschine_heinzel.native.release_lib import runner
+
+    monkeypatch.setattr(runner, "acquire_global_lock", lambda: pytest.fail("invalid options must never take the lock"))
+    with pytest.raises(SystemExit) as exc:
+        runner.main([CANDIDATE.version, "--reviewed-queue", *extra])
+    assert exc.value.code == 2
