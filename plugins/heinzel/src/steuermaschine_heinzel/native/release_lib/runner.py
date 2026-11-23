@@ -1121,8 +1121,10 @@ def open_reviewed_release_pr(version: str, reviewed_head: str, dry_run: bool) ->
             or opened.get("headRefOid") != head or opened.get("autoMergeRequest") is not None or not str(opened.get("body") or "").strip()):
         raise Stop(f"the opened release PR for {tag} is not the checked one (state, title, base, head, empty body or auto-merge); "
                    "it is preserved for inspection")
-    if pending.get("version") == version:
-        remember(release_pr_opened={"pr": opened.get("number"), "head": head, "at": now_iso()})
+    if type(opened.get("number")) is not int or opened["number"] <= 0 or "autoMergeRequest" not in opened:
+        raise Stop(f"cannot prove the opened release PR identity for {tag}; the PR is preserved for inspection")
+    if not pending or pending.get("version") == version:
+        remember(version=version, release_pr_opened={"pr": opened["number"], "head": head, "at": now_iso()})
     hzlib.say(f"OPENED release PR #{opened.get('number')} \"{title}\" at {head}; not merged: `sm release resume {version} --intro ...` merges it")
     return 0
 
@@ -1993,6 +1995,10 @@ DROP_QUERY = """query($owner:String!,$name:String!,$tag:String!,$head:String!,$r
   pullRequests(first:20,headRefName:$head,states:[OPEN,CLOSED,MERGED]){
     nodes{number state headRefName isCrossRepository}}}}"""
 
+ADOPT_DROP_QUERY = DROP_QUERY.replace(
+    "branch:ref(qualifiedName:$branch){name}", "branch:ref(qualifiedName:$branch){name target{oid}}",
+).replace("isCrossRepository}", "isCrossRepository headRefOid baseRefName autoMergeRequest{enabledAt}}")
+
 
 def drop_active_runs(head: str) -> list[int]:
     """Workflow runs on the release branch that have not completed. A candidate that still runs is never dropped:
@@ -2012,7 +2018,7 @@ def drop_active_runs(head: str) -> list[int]:
     return sorted(set(found))
 
 
-def drop_identity(version: str) -> dict:
+def drop_identity(version: str, expected: tuple[int, str] | None = None, *, recorded: bool = False) -> dict:
     """Prove nothing of the version is published; report the release PRs and branch. Unknown is never absent."""
     try:
         with urllib.request.urlopen(f"https://pypi.org/pypi/heinzel/{version}/json", timeout=20):
@@ -2024,7 +2030,8 @@ def drop_identity(version: str) -> dict:
         raise Stop(f"drop refused: cannot prove {version} is absent from PyPI") from exc
     owner, name = CORE.split("/", 1)
     tag, head = f"v{version}", f"release/v{version}"
-    code, output = hzlib.gh("api", "graphql", "-f", f"query={DROP_QUERY}", "-f", f"owner={owner}",
+    query = DROP_QUERY if expected is None else ADOPT_DROP_QUERY
+    code, output = hzlib.gh("api", "graphql", "-f", f"query={query}", "-f", f"owner={owner}",
                              "-f", f"name={name}", "-f", f"tag={tag}", "-f", f"head={head}",
                              "-f", f"ref=refs/tags/{tag}", "-f", f"branch=refs/heads/{head}")
     try:
@@ -2039,6 +2046,8 @@ def drop_identity(version: str) -> dict:
             raise ValueError
     except (KeyError, TypeError, ValueError) as exc:
         raise Stop("drop refused: cannot prove the release state on GitHub (tag, release, PR, branch)") from exc
+    if expected is not None and any(type(pr.get("isCrossRepository")) is not bool for pr in prs):
+        raise Stop("drop refused: cannot prove release PR repository ownership")
     prs = [pr for pr in prs if not pr.get("isCrossRepository")]  # a fork's PR of the same branch name is no release PR of ours
     if repo["ref"] is not None:
         raise Stop(f"drop refused: tag {tag} exists on the remote")
@@ -2047,6 +2056,8 @@ def drop_identity(version: str) -> dict:
     merged = [pr["number"] for pr in prs if pr["state"] == "MERGED"]
     if merged:
         raise Stop(f"drop refused: release PR #{merged[0]} is merged")
+    if expected is not None:
+        require_exact_drop_candidate(prs, repo["branch"], head, expected, recorded=recorded)
     running = drop_active_runs(head)
     if running:
         raise Stop(f"drop refused: candidate run {running[0]} on {head} is still active ({len(running)} in all); read every "
@@ -2054,6 +2065,23 @@ def drop_identity(version: str) -> dict:
     return {"open": sorted(pr["number"] for pr in prs if pr["state"] == "OPEN"),
             "closed": sorted(pr["number"] for pr in prs if pr["state"] == "CLOSED"),
             "branch": repo["branch"] is not None}
+
+
+def require_exact_drop_candidate(prs: list[dict], branch: Any, name: str, expected: tuple[int, str], *, recorded: bool) -> None:
+    number, sha = expected
+    matches = [pr for pr in prs if pr["number"] == number]
+    if len(matches) != 1:
+        raise Stop(f"drop refused: cannot prove exact release PR #{number}")
+    pr = matches[0]
+    if (pr.get("baseRefName") != "main" or pr.get("headRefOid") != sha or "autoMergeRequest" not in pr
+            or pr["autoMergeRequest"] is not None or (pr["state"] != "OPEN" and not recorded)
+            or any(other["state"] == "OPEN" and other["number"] != number for other in prs)):
+        raise Stop(f"drop refused: #{number} is not the exact eligible release PR at {sha}")
+    if branch is None and recorded and pr["state"] == "CLOSED":
+        return
+    if (not isinstance(branch, dict) or branch.get("name") != name or not isinstance(branch.get("target"), dict)
+            or branch["target"].get("oid") != sha):
+        raise Stop(f"drop refused: {name} does not point to the exact candidate {sha}")
 
 
 def recorded_release_pr(data: dict[str, Any]) -> int | None:
@@ -2099,7 +2127,7 @@ def archive_dropped(version: str, stamp: str) -> Path:
     return target
 
 
-def drop_candidate(version: str, reason: str, close_pr: bool) -> int:
+def drop_candidate(version: str, reason: str, close_pr: bool, *, adopt_pr: int | None = None, adopt_head: str | None = None) -> int:
     """Drop a provably unpublished candidate: release only its own hold and archive its receipt."""
     reason = (reason or "").strip()
     if not EXACT_VERSION.fullmatch(version or "") or len(reason) < 10:
@@ -2108,7 +2136,12 @@ def drop_candidate(version: str, reason: str, close_pr: bool) -> int:
     if RECEIPT_OVERRIDE is not None or tail_receipt(version).exists():
         raise Stop(f"drop refused: {version} is past its tag (it has a tail receipt); reject or absorb it instead")
     data = state()
-    if data.get("version") != version:
+    expected = None
+    if adopt_pr is not None or adopt_head is not None:
+        if not close_pr or adopt_pr is None or adopt_pr <= 0 or not adopt_head or not re.fullmatch(r"[0-9a-f]{40}", adopt_head):
+            raise Stop("drop refused: adoption requires --close-pr, an exact PR number, and a full head SHA")
+        expected = (adopt_pr, adopt_head)
+    if data.get("version") != version and not (expected is not None and not data):
         raise Stop(f"drop refused: the release receipt is for {data.get('version') or 'no release'}, not {version}")
     if data.get("finished"):
         raise Stop(f"drop refused: release {version} is finished")
@@ -2116,10 +2149,19 @@ def drop_candidate(version: str, reason: str, close_pr: bool) -> int:
     if recorded is not None and (not isinstance(recorded, dict) or recorded.get("version") != version
                                  or recorded.get("token") != data.get("freeze_token")):
         raise Stop("drop refused: the receipt holds a drop record of another identity; preserving it for review")
-    if not has_only_pretag_core_state({key: value for key, value in data.items() if key not in ("drop", "release_pr_opened")}):
+    adoption = data.get("drop_adoption")
+    if adoption is not None and (adoption is not True or expected is None):
+        raise Stop("drop refused: retry the recorded adoption with the same --adopt-pr and --adopt-head")
+    pretag = {key: value for key, value in data.items() if key not in ("drop", "release_pr_opened", "drop_adoption")}
+    if not has_only_pretag_core_state(pretag):
         raise Stop("drop refused: the receipt records steps after the tag (PyPI, compose or acceptance)")
     opened = recorded_release_pr(data)  # `sm release pr` records the PR it opened: pre-tag, if GitHub agrees below
     events = hold_events(data)
+    if expected is not None:
+        if hzlib.merge_frozen() or pending_waiver(version) is not None:
+            raise Stop("drop refused: adoption requires no release hold, incident hold, or waiver")
+        if data and (adoption is not True or (opened, (data.get("release_pr_opened") or {}).get("head")) != expected):
+            raise Stop("drop refused: adoption would overwrite another release identity")
     owned = data.get("freeze_token") is not None
     exists = owned and owned_hold_exists(version)
     if owned and not exists and recorded is None and (not events or events[-1]["action"] != "pause"):
@@ -2128,7 +2170,10 @@ def drop_candidate(version: str, reason: str, close_pr: bool) -> int:
     if exists:
         directory, held = pin_owned_hold(version)
     try:
-        identity = drop_identity(version)  # proves: no tag, no GitHub release, PyPI 404, no merged release PR
+        identity = drop_identity(version) if expected is None else drop_identity(version, expected, recorded=bool(data))
+        if expected is not None and not data:
+            opened, sha = expected
+            remember(version=version, drop_adoption=True, release_pr_opened={"pr": opened, "head": sha, "at": now_iso()})
         if opened is not None and opened not in identity["open"] + identity["closed"]:
             raise Stop(f"drop refused: the receipt names release PR #{opened}, which GitHub does not show as an "
                        f"unmerged PR of release/v{version}; nothing was dropped")
@@ -2141,11 +2186,13 @@ def drop_candidate(version: str, reason: str, close_pr: bool) -> int:
                 if hzlib.gh("pr", "close", str(number), "-R", CORE)[0] != 0:
                     raise Stop(f"drop refused: cannot close release PR #{number}; nothing was dropped")
                 closed_now.append(number)
+            if expected is not None:
+                identity = drop_identity(version, expected, recorded=True)
             if identity["branch"]:
                 # A failed delete is judged by the proof below: closing a PR may already have removed the branch.
                 hzlib.gh("api", "--method", "DELETE", f"repos/{CORE}/git/refs/heads/release/v{version}")
                 branch_deleted = True
-            identity = drop_identity(version)
+            identity = drop_identity(version) if expected is None else drop_identity(version, expected, recorded=True)
             if unmet := drop_unmet(version, identity):
                 raise Stop(f"drop refused: {unmet} after --close-pr; nothing was dropped")
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -2925,6 +2972,8 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--drop-candidate", action="store_true", help="drop an exact candidate that is provably before publication "
                         "(no tag, no GitHub release, PyPI 404, release PR closed or absent, branch absent, no active run): remove only its "
                         "owned hold and archive the receipt under release-dropped/ in the state directory; needs --reason; cancels no run")
+    parser.add_argument("--adopt-pr", type=int)
+    parser.add_argument("--adopt-head")
     parser.add_argument("--close-pr", action="store_true", help="with --drop-candidate: close the open release PR and delete "
                         "release/vX.Y.Z first, then prove the state again")
     parser.add_argument("--reviewed-queue", action="store_true", help="use the active queue after independent candidate review; Core CI creates the tag")
@@ -2994,12 +3043,12 @@ def main(argv: list[str]) -> int:
           and not args.drop_candidate):
         parser.error("rejection identity options require --reject-release")
     if args.drop_candidate:
-        allowed = {"--drop-candidate", "--reason", "--close-pr"}
+        allowed = {"--drop-candidate", "--reason", "--close-pr", "--adopt-pr", "--adopt-head"}
         if (any(item.startswith("--") and item.split("=", 1)[0] not in allowed for item in argv)
                 or not args.version or not EXACT_VERSION.fullmatch(args.version) or not args.reason):
-            parser.error("--drop-candidate needs an exact core version X.Y.Z and --reason, and takes only --close-pr besides")
-    elif args.close_pr:
-        parser.error("--close-pr requires --drop-candidate")
+            parser.error("--drop-candidate needs an exact core version X.Y.Z and --reason")
+    elif args.close_pr or args.adopt_pr is not None or args.adopt_head is not None:
+        parser.error("--close-pr and candidate adoption require --drop-candidate")
     if args.candidate_capacity:
         allowed = {"--candidate-capacity", "--candidate-run", "--expected-receipt-sha256", "--expected-freeze-token", "--expected-audit-sha256"}
         if (any(item.startswith("--") and item.split("=", 1)[0] not in allowed for item in argv)
@@ -3046,8 +3095,10 @@ def main(argv: list[str]) -> int:
                     route_to_tail(args.absorb)
             state()  # reject corruption before any network request or publication action
             if args.drop_candidate:
-                return drop_candidate(args.version, args.reason, args.close_pr)
-            if state().get("drop") is not None:
+                if args.adopt_pr is None and args.adopt_head is None:
+                    return drop_candidate(args.version, args.reason, args.close_pr)
+                return drop_candidate(args.version, args.reason, args.close_pr, adopt_pr=args.adopt_pr, adopt_head=args.adopt_head)
+            if state().get("drop") is not None or state().get("drop_adoption") is not None:
                 dropping = state().get("version")
                 raise Stop(f"a drop of {dropping} is recorded but unfinished; finish it first with "
                            f"`sm release drop {dropping} --reason ...`")

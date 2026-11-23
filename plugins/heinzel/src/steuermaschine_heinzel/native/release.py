@@ -523,20 +523,32 @@ class ReleaseDrop(Model):
     "another release's hold. Not for a release past its tag (reject or absorb), a finished one, or tag-on-green-main."))
 def release_drop(version: str = typer.Argument(..., metavar="VERSION", help="The exact version X.Y.Z of the candidate."),
                  reason: str = typer.Option(..., "--reason", help="Why the candidate is dropped; kept with the archived receipt."),
-                 close_pr: bool = typer.Option(False, "--close-pr", help="Close the open release PR and delete its branch first, then prove everything again.")) -> ReleaseDrop:
+                 close_pr: bool = typer.Option(False, "--close-pr", help="Close the open release PR and delete its branch first, then prove everything again."),
+                 adopt_pr: int | None = typer.Option(None, "--adopt-pr", help="Recover a missing receipt for this exact open PR."),
+                 adopt_head: str | None = typer.Option(None, "--adopt-head", help="Full commit SHA for --adopt-pr.")) -> ReleaseDrop:
     # The cut's own engine lock, held for the whole drop: a cut that is advancing saves its state after every step and would
     # bring the dropped run back. Busy: nothing is dropped, wait and run the same command again.
     try:
-        with runtime().providers.store.lock(f"release.cut.{version}"):
-            return _drop(version, reason, close_pr)
+        store = runtime().providers.store
+        with store.lock(f"release.cut.{version}"):
+            if (adopt_pr is not None or adopt_head is not None) and store.load(CUT_KIND, version) is not None:
+                raise Refuse(f"candidate adoption refused: release cut state exists for {version}")
+            return _drop(version, reason, close_pr, adopt_pr, adopt_head)
     except Busy:
         raise Refuse(f"`sm release cut {version}` is advancing and holds its lock: nothing was dropped. Run the same command again when it has stopped",
                      f"sm release drop {version} --reason ...", code=WAITING) from None
 
 
-def _drop(version: str, reason: str, close_pr: bool) -> ReleaseDrop:
+def _drop(version: str, reason: str, close_pr: bool, adopt_pr: int | None = None, adopt_head: str | None = None) -> ReleaseDrop:
     module = runner()
-    code, lines, errors = run(module, [version, "--drop-candidate", "--reason", reason, *(["--close-pr"] if close_pr else [])])
+    args = [version, "--drop-candidate", "--reason", reason]
+    if close_pr:
+        args.append("--close-pr")
+    if adopt_pr is not None:
+        args.extend(["--adopt-pr", str(adopt_pr)])
+    if adopt_head is not None:
+        args.extend(["--adopt-head", adopt_head])
+    code, lines, errors = run(module, args)
     stopped = next((line.removeprefix("STOPPED: ") for line in errors if line.startswith("STOPPED: ")), "")
     record: dict = {}
     done = next((line for line in lines if line.startswith(f"DROPPED {version}:")), "")

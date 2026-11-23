@@ -324,6 +324,17 @@ def test_every_typed_option_becomes_the_step_runners_argument(tmp_path, monkeypa
                     "--failed-compose-attempt", "1", "--expected-compose-head", "d", "--expected-core-source", "e"] and doc["action"] == "reject"
     assert typed(rt, monkeypatch, "plugin", "audio", "--timeout", "5") == (["--plugin", "audio", "--timeout", "5"], doc | {"action": "plugin", "version": ""})
     assert typed(rt, monkeypatch, "drop", "0.9.41", "--reason", "red", "--close-pr")[0] == ["0.9.41", "--drop-candidate", "--reason", "red", "--close-pr"]
+    sha = "b" * 40
+    args = ["drop", "0.9.41", "--reason", "red", "--close-pr", "--adopt-pr", "820", "--adopt-head", sha]
+    assert typed(rt, monkeypatch, *args)[0] == ["0.9.41", "--drop-candidate", *args[2:]]
+
+
+def test_adopt_refuses_an_existing_native_cut_receipt(tmp_path, monkeypatch):
+    gh = FakeGh()
+    rt = make(tmp_path, monkeypatch, gh)
+    rt.providers.store.save(area.CUT_KIND, "0.9.41", {"version": "0.9.41"})
+    out = invoke(rt, ["release", "drop", "0.9.41", "--reason", "candidate failed", "--close-pr", "--adopt-pr", "820", "--adopt-head", "b" * 40])
+    assert out.exit_code != 0 and "release cut state exists" in out.stderr and gh.calls == []
 
 
 def test_a_combination_the_step_runner_refuses_is_a_refusal_with_exit_2_and_nothing_written(tmp_path, monkeypatch):
