@@ -1,7 +1,7 @@
 """`sm queue auto`: queue (or merge) every pull request that is ready, in every repository of the project, by itself.
 
 Ready PRs are open, not drafts, and CLEAN (or BEHIND where the queue updates the branch). They meet the target branch
-requirements, have no red checks, no open review threads, no hold in the action table, and, when a gate changes,
+requirements, have a reported green Sonar check, no red checks, no open review threads, no hold in the action table, and, when a gate changes,
 an APPROVE verdict recorded for exactly this head (`sm review dispatch`). A rejected or
 missing verdict stops the PR with its reason. Nothing weakens a rule: the queue still waits for green checks, honours the
 merge freeze and the queue hold, and the repository's ruleset still decides at the merge.
@@ -70,8 +70,8 @@ def eligible(row: prtable.PrRow) -> str:
         return f"merge state {row.state}"
     if row.ci != "ok":
         return f"CI {row.ci}"
-    if row.sonar not in {"-", "ok"}:
-        return f"Sonar {row.sonar}"
+    if row.sonar != "ok":
+        return "no Sonar check" if row.sonar == "-" else f"Sonar {row.sonar}"
     if not re.fullmatch(r"[0-9a-f]{40}", row.head):
         return "the head the checks were read for is unknown"
     if row.threads:
@@ -172,7 +172,10 @@ def required_gap(gh: Any, owner: str, repo: str, number: int, head: str, base: s
             raise ValueError("unreadable target branch rules")
         rules = [rule for page in pages for rule in page]
         missing = check_requirements(rules, target["branchProtectionRule"]) - (passed - skipped)
-        return "required checks missing or not successful: " + ", ".join(sorted(f"{n} (app {a})" if a else n for n, a in missing)) if missing else ""
+        if missing:
+            return "required checks missing or not successful: " + ", ".join(sorted(f"{n} (app {a})" if a else n for n, a in missing))
+        # The local queue policy also requires a reported Sonar result, even if the branch rules do not.
+        return "" if any("sonar" in name.lower() for name, _ in passed | skipped) else "no Sonar check on the current head"
     except (AttributeError, KeyError, TypeError, ValueError) as error:
         return f"cannot verify target branch checks: {error}"
 
@@ -202,7 +205,7 @@ def hold_reason(w: Any, repo_full: str, number: int) -> str:
 
 
 @native("queue auto", writes=True, help=H(
-    "Queue every ready pull request of the allowed authors: required branch checks green, no open thread, a review if gated.",
+    "Queue every ready pull request of the allowed authors: required branch checks and Sonar green, no open thread, a review if gated.",
     "Use when green pull requests wait to be checked and queued by hand; run it each tick.",
     "with --live: queue entries (Core, plugins, acme), a squash merge in a repository without a queue, and with --dispatch a headless reviewer run and its comment; without --live: only the list.",
     "sm queue auto --live --dispatch", "sm queue list; sm why N for a pull request it skipped",
