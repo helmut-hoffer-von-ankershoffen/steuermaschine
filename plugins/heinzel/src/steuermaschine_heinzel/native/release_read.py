@@ -270,7 +270,7 @@ class ProtectedRegistration(CandidateProof):
 
     def render(self) -> list[str]:
         return [*super().render(), f"Review {', '.join(self.paths)} and record the independent verdict:",
-                f"sm review verdict {self.digest} --head {self.head} --scope {self.scope} --approve --reviewer NAME --model MODEL"]
+                f"STEUERMASCHINE_AGENT=NAME sm review verdict {self.digest} --head {self.head} --scope {self.scope} --approve --reviewer NAME --model MODEL"]
 
 
 @native("release prepare-protected", writes=True, help=H(
@@ -288,28 +288,22 @@ def prepare_protected(
 ) -> ProtectedRegistration:
     from steuermaschine import verdicts
 
+    from ..pipelines import full_ci
     from . import protected
-    from .queue_lib import hzlib, main_plan
-    from .release_lib import candidate_policy
+    from .queue_lib import main_plan
+    from .release_lib import exact_queue
 
     proof = release_candidate_proof(pr, head, base, tree)
     try:
-        candidate_policy.require_base_sources(base, head)
-        inventory = hzlib.ghj("api", f"repos/{hzlib.CORE}/pulls/{pr}", default={})
-        count = inventory.get("changed_files")
-        if type(count) is not int or count < 1:
-            raise ValueError("unreadable candidate change count")
-        blobs = main_plan.protected_blobs(str(pr), head, base, expected_count=count)
-        current = hzlib.ghj("api", f"repos/{hzlib.CORE}/pulls/{pr}", default={})
-        for snapshot in (inventory, current):
-            if (snapshot.get("state"), snapshot.get("head", {}).get("sha"), snapshot.get("base", {}).get("sha"), snapshot.get("changed_files")) != ("open", head, base, count):
-                raise ValueError("candidate changed during protected source collection")
+        version, producers = exact_queue.source_producers(head, base, tree, pr, proof.run_id)
+        full_ci.validate_generated_release(str(release_dir()), base, head, version)
+        blobs = main_plan.protected_blobs(str(pr), head, base)
     except Exception as error:
         raise Refuse(f"cannot identify protected sources: {error}") from error
     if not blobs or any(blob != "removed" and not re.fullmatch(r"[a-f0-9]{40}", blob) for blob in blobs.values()) or protected.record(blobs)[0] != digest:
         raise Refuse("protected source digest differs or contains unreadable blobs")
     scope = main_plan.release_scope(str(pr), base)
-    verdicts.register_scoped_proof(runtime().providers.store, digest, head, scope, proof.model_dump())
+    verdicts.register_scoped_proof(runtime().providers.store, digest, head, scope, proof.model_dump(), producers)
     return ProtectedRegistration(**proof.model_dump(), digest=digest, scope=scope, paths=sorted(blobs))
 
 

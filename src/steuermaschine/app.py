@@ -373,7 +373,9 @@ def _review(rt: Runtime, app: typer.Typer, hidden: bool = False) -> None:
             proof = verdicts.scoped_proof(store, digest, head, scope) if head and not kind else {}
             if not proof:
                 fail("no verified evidence for this scope, digest and head", USAGE)
-            authors.add(proof["author"])
+            if config_mod.environment().steuermaschine_agent != reviewer:
+                fail("the reviewer must run this scoped verdict with their own STEUERMASCHINE_AGENT identity")
+            authors.update(proof["authors"])
         if not authors:
             fail(f"no run is waiting for a review of {digest[:12]} and no command registered it (`prepare` does): check the digest in the brief", USAGE)
         if reviewer in authors:

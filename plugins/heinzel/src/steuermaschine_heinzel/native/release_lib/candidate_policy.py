@@ -113,16 +113,6 @@ def verify_pr(number: int, waiver: dict | None = None) -> dict:
     return evidence
 
 
-def require_base_sources(base: str, head: str) -> None:
-    """The candidate cannot redefine the workload or the workflow and recorder used to prove it."""
-    policy = core_policy.at_commit_api(_api, base)
-    pinned = (core_policy.PATH, *policy.pinned)
-    for path in pinned:
-        before = release_candidate.source_bytes(_api, path, base, pinned)
-        after = release_candidate.source_bytes(_api, path, head, pinned)
-        release_candidate.require(before == after, f"candidate changed its evidence source: {path}")
-
-
 def verify_commit(sha: str, waiver: dict | None = None) -> dict:
     """Tag-on-green-main: the first-attempt full main push run of the release commit `sha` is the candidate. Same
     reader, same first-attempt and waiver rules as verify_pr; no PR, the commit must be on main."""

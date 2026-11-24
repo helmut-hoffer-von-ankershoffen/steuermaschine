@@ -8,6 +8,7 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 from steuermaschine import go, verdicts
+from steuermaschine.config import environment
 from steuermaschine.hashing import canonical_sha256
 from steuermaschine.native import runtime
 
@@ -60,6 +61,37 @@ class Candidate:
 
 def store() -> Any:
     return runtime().providers.store
+
+
+SOURCE_KIND = "generated-release-source"
+
+
+def record_source_producer(head: str, version: str) -> None:
+    """Called only after this invocation generated and validated a fresh release commit."""
+    author = environment().steuermaschine_agent
+    if not author or not author.strip():
+        return  # ordinary admission remains available; this head has no proved producer for hosted registration
+    receipt = {"head": head, "version": version, "author": author}
+    records = store()
+    try:
+        records.put_receipt(SOURCE_KIND, head, receipt)
+    except FileExistsError:
+        if records.get_receipt(SOURCE_KIND, head) != receipt:
+            raise ExactReleaseError("release source already belongs to a different producer") from None
+
+
+def source_producers(head: str, base: str, tree: str, pr: int, run: int) -> tuple[str, set[str]]:
+    records = store()
+    source = records.get_receipt(SOURCE_KIND, head) or {}
+    author, version = source.get("author"), source.get("version")
+    if source.get("head") != head or not isinstance(author, str) or not author.strip() or not isinstance(version, str) or not VERSION.fullmatch(version):
+        raise ExactReleaseError("no release generation record identifies the producer of this exact head")
+    candidate = read_candidate(version)
+    if not candidate or (candidate.head, candidate.base, candidate.tree, candidate.pr, candidate.run) != (head, base, tree, pr, run):
+        raise ExactReleaseError("the prepared candidate differs from the verified release")
+    approve_required(candidate)
+    runs = go.run_states(records)
+    return version, {author} | verdicts.authors_of(records, candidate.digest, runs) | verdicts.authors_of(records, head, runs)
 
 
 def active_receipt() -> dict:

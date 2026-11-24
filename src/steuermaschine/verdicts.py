@@ -67,7 +67,7 @@ def require_independent(store: Any, digest: str, run_states: list[dict[str, Any]
                      "a different agent must review", recorded)
     if receipt.get("scope"):
         proof = scoped_proof(store, digest, head, scope)
-        if not proof or proof["author"] == receipt.get("reviewer"):
+        if not proof or receipt.get("reviewer") in proof["authors"]:
             raise Refuse("missing independent scoped review evidence", recorded)
     elif unchecked := missing_check(store, digest):
         raise Refuse(unchecked, recorded)
@@ -80,16 +80,21 @@ def scoped_proof(store: Any, digest: str, head: str, scope: str) -> dict[str, An
 
     key = sha256_text(f"{digest}/{head}/{scope}")
     proof = store.get_receipt("review.proofs", key)
-    if not isinstance(proof, dict) or (proof.get("digest"), proof.get("head"), proof.get("scope")) != (digest, head, scope) or not proof.get("author"):
+    if not isinstance(proof, dict) or (proof.get("digest"), proof.get("head"), proof.get("scope")) != (digest, head, scope):
+        return {}
+    authors = proof.get("authors")
+    if not isinstance(authors, list) or not authors or not all(isinstance(a, str) and a.strip() for a in authors):
         return {}
     return proof
 
 
-def register_scoped_proof(store: Any, digest: str, head: str, scope: str, evidence: dict[str, Any]) -> None:
+def register_scoped_proof(store: Any, digest: str, head: str, scope: str, evidence: dict[str, Any], producers: set[str]) -> None:
     from .hashing import sha256_text
 
     key = sha256_text(f"{digest}/{head}/{scope}")
-    proof = dict(evidence, digest=digest, head=head, scope=scope, author=current_agent())
+    if not producers:
+        raise Refuse("no source producers registered for this head")
+    proof = dict(evidence, digest=digest, head=head, scope=scope, authors=sorted(producers | {current_agent()}))
     try:
         store.put_receipt("review.proofs", key, proof)
     except FileExistsError:

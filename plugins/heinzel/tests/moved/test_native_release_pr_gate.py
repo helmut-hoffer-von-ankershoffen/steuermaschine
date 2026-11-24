@@ -44,7 +44,14 @@ def test_release_pr_prepares_locally_then_uses_scoped_normal_push(tool, monkeypa
 
     monkeypatch.setattr(release.subprocess, "run", run)
     monkeypatch.setattr(release, "verify_release_pr_scope", lambda *_: checked)
+    from steuermaschine.testing import fake_providers
+    from steuermaschine_heinzel.native.release_lib import exact_queue
+
+    monkeypatch.setenv("STEUERMASCHINE_AGENT", "builder")
+    store = fake_providers().store
+    monkeypatch.setattr(exact_queue, "store", lambda: store)
     release.open_release_pr("v0.9.17", "patch", "Preserve update hashes")
+    assert store.get_receipt(exact_queue.SOURCE_KIND, checked) == {"head": checked, "version": "0.9.17", "author": "builder"}
 
     work = str(tmp_path / "release-work")
     gate = release.edge.gate()
