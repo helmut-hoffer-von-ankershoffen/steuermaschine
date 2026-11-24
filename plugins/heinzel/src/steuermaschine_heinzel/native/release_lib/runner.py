@@ -2152,10 +2152,30 @@ def drop_candidate(version: str, reason: str, close_pr: bool, *, adopt_pr: int |
     adoption = data.get("drop_adoption")
     if adoption is not None and (adoption is not True or expected is None):
         raise Stop("drop refused: retry the recorded adoption with the same --adopt-pr and --adopt-head")
+    from . import exact_queue
+
     pretag = {key: value for key, value in data.items() if key not in ("drop", "release_pr_opened", "drop_adoption")}
+    reviewed = pretag.get("merge_route") == exact_queue.MODE
+    token = pretag.get("freeze_token")
+    if reviewed:
+        if not isinstance(token, str) or not exact_queue.TOKEN.fullmatch(token):
+            raise Stop("drop refused: reviewed release receipt has no valid owned hold token")
+        pretag.pop("merge_route")
     if not has_only_pretag_core_state(pretag):
         raise Stop("drop refused: the receipt records steps after the tag (PyPI, compose or acceptance)")
     opened = recorded_release_pr(data)  # `sm release pr` records the PR it opened: pre-tag, if GitHub agrees below
+    reviewed_identity = None
+    if reviewed:
+        try:
+            candidate = exact_queue.read_candidate(version, token)
+        except exact_queue.ExactReleaseError as exc:
+            raise Stop(str(exc)) from exc
+        if opened is not None:
+            reviewed_identity = opened, data["release_pr_opened"]["head"]
+        if candidate:
+            if reviewed_identity and reviewed_identity != (candidate.pr, candidate.head):
+                raise Stop("drop refused: recorded PR and reviewed candidate identities disagree")
+            reviewed_identity = candidate.pr, candidate.head
     events = hold_events(data)
     if expected is not None:
         if hzlib.merge_frozen() or pending_waiver(version) is not None:
@@ -2169,8 +2189,17 @@ def drop_candidate(version: str, reason: str, close_pr: bool, *, adopt_pr: int |
     directory = held = None
     if exists:
         directory, held = pin_owned_hold(version)
+
+    def inspect_drop(*, after_close: bool = False) -> dict:
+        pinned = expected or reviewed_identity
+        if pinned is None:
+            return drop_identity(version)
+        return drop_identity(version, pinned, recorded=bool(data) or after_close)
+
     try:
-        identity = drop_identity(version) if expected is None else drop_identity(version, expected, recorded=bool(data))
+        identity = inspect_drop()
+        if reviewed and reviewed_identity is None and drop_unmet(version, identity):
+            raise Stop("drop refused: the reviewed receipt cannot identify the release PR or branch")
         if expected is not None and not data:
             opened, sha = expected
             remember(version=version, drop_adoption=True, release_pr_opened={"pr": opened, "head": sha, "at": now_iso()})
@@ -2186,13 +2215,13 @@ def drop_candidate(version: str, reason: str, close_pr: bool, *, adopt_pr: int |
                 if hzlib.gh("pr", "close", str(number), "-R", CORE)[0] != 0:
                     raise Stop(f"drop refused: cannot close release PR #{number}; nothing was dropped")
                 closed_now.append(number)
-            if expected is not None:
-                identity = drop_identity(version, expected, recorded=True)
+            if expected is not None or reviewed_identity is not None:
+                identity = inspect_drop(after_close=True)
             if identity["branch"]:
                 # A failed delete is judged by the proof below: closing a PR may already have removed the branch.
                 hzlib.gh("api", "--method", "DELETE", f"repos/{CORE}/git/refs/heads/release/v{version}")
                 branch_deleted = True
-            identity = drop_identity(version) if expected is None else drop_identity(version, expected, recorded=True)
+            identity = inspect_drop(after_close=True)
             if unmet := drop_unmet(version, identity):
                 raise Stop(f"drop refused: {unmet} after --close-pr; nothing was dropped")
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -2216,8 +2245,11 @@ def drop_candidate(version: str, reason: str, close_pr: bool, *, adopt_pr: int |
     target = archive_dropped(version, stamp)
     hold = {"owned": "its owned hold was removed", "paused": "its owned hold was already removed by --pause",
             "none": "it owned no hold"}.get(record.get("hold"), "its owned hold is removed")
+    resume = f"sm release resume {version}"
+    if reviewed:
+        resume += " --snapshot-acceptance --reviewed-queue"
     hzlib.say(f"DROPPED {version}: {hold}; receipt archived at {target}. No workflow run was cancelled. "
-              f"A fresh `sm release resume {version}` starts clean.")
+              f"A fresh `{resume}` starts clean.")
     if hzlib.merge_frozen():
         hzlib.say("note: other merge holds remain (incident sentinel or another release's hold); they were not touched")
     return 0
@@ -2337,7 +2369,7 @@ def release_core(
     if reviewed_queue:
         # A previously verified merge resumes at the hosted tag check.
         try:
-            candidate = exact_queue.read_candidate(version)
+            candidate = exact_queue.read_candidate(version, str(state().get("freeze_token") or ""))
             merged = candidate and (existing := release_pr(tag)) and existing["state"] == "MERGED"
             ready = merged or exact_queue.base_ready(candidate.base if candidate else None)
         except exact_queue.ExactReleaseError as error:
@@ -2413,7 +2445,7 @@ def exact_queue_release(version: str, tag: str, timeout: float) -> None:
                     raise Stop(f"the active queue refused release PR #{candidate.pr}: {' '.join(result.errors or result.lines)}")
             step("release PR merged", lambda: bool((p := release_pr(tag)) and p["state"] == "MERGED"), None, timeout)
         else:
-            candidate = exact_queue.read_candidate(version)
+            candidate = exact_queue.read_candidate(version, str(state().get("freeze_token") or ""))
             if not candidate or candidate.pr != pr["number"]:
                 raise Stop("merged release PR has no exact candidate authorization")
         exact_queue.approve_required(candidate)

@@ -423,6 +423,48 @@ def test_a_drop_archives_the_cut_state_so_a_later_cut_starts_fresh(tmp_path, mon
     assert any("a later cut starts fresh" in line for line in doc.lines)
 
 
+@pytest.mark.parametrize(("change", "expected"), [
+    ({}, ""),
+    ({"merge_route": "unknown"}, "steps after the tag"),
+    ({"pypi": "published"}, "steps after the tag"),
+    ({"freeze_token": "bad"}, "valid owned hold token"),
+    ({"release_pr_opened": {"pr": 999, "head": "c" * 40, "at": "2026-11-24T01:00:00Z"}}, "not the exact eligible release PR"),
+])
+def test_drop_accepts_only_the_exact_reviewed_pretag_receipt(tmp_path, monkeypatch, change, expected):
+    version, head, token = "0.9.40", "a" * 40, "b" * 32
+    name = f"release/v{version}"
+    pr = {"number": 999, "headRefName": name, "isCrossRepository": False, "headRefOid": head,
+          "baseRefName": "main", "autoMergeRequest": None}
+    branch = {"name": name, "target": {"oid": head}}
+
+    def github(state, ref):
+        return {"data": {"repository": {"ref": None, "branch": ref, "release": None,
+                                         "pullRequests": {"nodes": [pr | {"state": state}]}}}}
+
+    gh = FakeGh().on("api graphql", github("OPEN", branch), github("CLOSED", branch), github("CLOSED", None))
+    gh.on("actions/runs?branch=release/v0.9.40", {"total_count": 0, "workflow_runs": []})
+    gh.on("pr close", "").on("--method DELETE", "")
+    rt = make(tmp_path, monkeypatch, gh)
+    pypi(monkeypatch, {})
+    receipt = {"version": version, "freeze_token": token, "merge_route": "reviewed-release-queue",
+               "release_pr_opened": {"pr": 999, "head": head, "at": "2026-11-24T01:00:00Z"}} | change
+    path = statedir.root() / "release.json"
+    path.write_text(json.dumps(receipt))
+    hold = statedir.root() / "release-holds" / token
+    hold.parent.mkdir(mode=0o700)
+    hold.write_text(version)
+    out = invoke(rt, ["release", "drop", version, "--reason", "candidate proof failed on the shelf", "--close-pr"])
+    if expected:
+        assert out.exit_code == 1 and expected in out.stdout
+        assert not gh.writes() and hold.exists() and json.loads(path.read_text()) == receipt
+    else:
+        assert out.exit_code == 0 and "--snapshot-acceptance --reviewed-queue" in out.stdout
+        assert not hold.exists() and not path.exists()
+        [archived] = (statedir.root() / "release-dropped").glob(f"v{version}-*.json")
+        assert json.loads(archived.read_text())["release_pr_opened"] == receipt["release_pr_opened"]
+        assert len([call for call in gh.lines() if "api graphql" in call and "headRefOid" in call]) == 3
+
+
 def test_a_refused_drop_leaves_the_cut_state_alone(tmp_path, monkeypatch):
     rt = make(tmp_path, monkeypatch, FakeGh())
     rt.providers.store.save(area.CUT_KIND, "0.9.40", {"key": "0.9.40"})
