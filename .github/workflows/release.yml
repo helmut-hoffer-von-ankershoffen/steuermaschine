@@ -181,13 +181,20 @@ jobs:
           for i in $(seq 1 20); do
             if docker run --rm -e VERSION ghcr.io/astral-sh/uv:0.13.5-debian-slim sh -euc '
                 cd "$(mktemp -d)"
-                uvx --refresh --python 3.15 --from "steuermaschine==$VERSION" --with "steuermaschine-heinzel==$VERSION" sm -h | tee help.txt
-                grep -q "Commands, in the order of a working day" help.txt
-                uvx --python 3.15 --from "steuermaschine==$VERSION" --with "steuermaschine-heinzel==$VERSION" sm self config | tee config.txt
-                grep -q "installed plugins:.*heinzel" config.txt
-                uvx --python 3.15 --from "steuermaschine==$VERSION" --with "steuermaschine-heinzel==$VERSION" sm self tree > tree.txt
+                printf "%s\n" "[project]" "name = \"release-smoke\"" "plugin = \"heinzel\"" > steuermaschine.toml
+                sm_from_pypi() {
+                  uvx --python 3.15 --from "steuermaschine==$VERSION" --with "steuermaschine-heinzel==$VERSION" \
+                    --no-build-package steuermaschine --no-build-package steuermaschine-heinzel "$@"
+                }
+                sm_from_pypi --refresh sm -h > help.txt
+                cat help.txt
+                grep -Fq "Commands, in the order of a working day" help.txt
+                sm_from_pypi sm self config > config.txt
+                cat config.txt
+                grep -Fxq "project: release-smoke   plugin: heinzel (loaded)" config.txt
+                sm_from_pypi sm self tree > tree.txt
                 grep -q "^R sm alarm list" tree.txt'; then exit 0; fi
-            echo "not yet installable from PyPI (attempt $i); waiting"; sleep 30
+            echo "clean install or startup failed (attempt $i); waiting"; sleep 30
           done
           echo "::error title=Not accepted::v$VERSION does not install and start in a clean container; it stays published but not Latest"
           exit 1

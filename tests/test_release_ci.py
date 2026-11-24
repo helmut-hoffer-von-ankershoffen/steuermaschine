@@ -538,7 +538,7 @@ def test_the_follower_downloads_only_pypi_files(tmp_path):
         rc.download("https://example.org/x.whl", tmp_path / "x.whl")
 
 
-UVX = 'uvx --refresh --python 3.15 --from "steuermaschine==$VERSION" --with "steuermaschine-heinzel==$VERSION" sm -h'
+UVX = 'uvx --python 3.15 --from "steuermaschine==$VERSION" --with "steuermaschine-heinzel==$VERSION"'
 
 
 def test_the_workflow_releases_both_packages_in_lockstep_and_marks_latest_only_after_acceptance():
@@ -549,6 +549,10 @@ def test_the_workflow_releases_both_packages_in_lockstep_and_marks_latest_only_a
     assert flow.count("skip-existing: true") == 2 and "workflow_dispatch" not in flow
     assert "uv version --package steuermaschine-heinzel" in flow and "Requires-Dist: steuermaschine==${VERSION}" in flow
     assert "timings.json" in flow
+    assert flow.index("cd \"$(mktemp -d)\"") < flow.index("> steuermaschine.toml") < flow.index("sm_from_pypi --refresh sm -h")
+    assert "--no-build-package steuermaschine --no-build-package steuermaschine-heinzel" in flow
+    assert 'grep -Fxq "project: release-smoke   plugin: heinzel (loaded)" config.txt' in flow
+    assert 'grep -q "^R sm alarm list" tree.txt' in flow
 
 
 # ----------------------------------------------------------------------------- the gate: a squash of a branch behind main
