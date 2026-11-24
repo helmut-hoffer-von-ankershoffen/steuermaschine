@@ -7,7 +7,9 @@ missing verdict stops the PR with its reason. Nothing weakens a rule: the queue 
 merge freeze and the queue hold, and the repository's ruleset still decides at the merge.
 
 A repository the queue knows (Core, plugins, acme) gets a queue entry; another one (this tool's own) is squash-merged by
-`gh pr merge --match-head-commit`, unless a freeze or hold is on.
+`gh pr merge --match-head-commit`, unless a freeze or hold is on. The direct request pins the head only. Branch rules,
+base, optional checks and holds are observed locally and can change before the request. GitHub enforces its rules
+when merging. For queued PRs, GitHub can merge after a later auto-merge arm under its own required checks.
 """
 
 from __future__ import annotations
@@ -205,10 +207,17 @@ def hold_reason(w: Any, repo_full: str, number: int) -> str:
     "with --live: queue entries (Core, plugins, acme), a squash merge in a repository without a queue, and with --dispatch a headless reviewer run and its comment; without --live: only the list.",
     "sm queue auto --live --dispatch", "sm queue list; sm why N for a pull request it skipped",
     "Only PRs of auto_queue_authors (default: the owner) are acted on; a public repository needs no approval.\n"
+    "Pass --repo OWNER/REPO and --pr N together to consider just that PR.\n"
+    "Direct merges pin the head. For queued and direct merges, GitHub enforces its branch rules at merge. The base and local "
+    "hold and optional-check observations can change before then.\n"
     "A PR that touches a gate (diff guard flag, CI change) is queued only with an APPROVE comment of `sm review dispatch` for exactly its head. --dispatch starts that\n"
     "review when none is recorded. A merge freeze or a hold in the action table keeps the PR where it is; the queue hold stops the whole pass."))
 def queue_auto(live: bool = typer.Option(False, "--live", help="Queue and merge; without it only list what would happen."),
-               dispatch: bool = typer.Option(False, "--dispatch", help="Start the independent review of a gate-touching PR that has none (needs --live).")) -> AutoQueued:
+               dispatch: bool = typer.Option(False, "--dispatch", help="Start the independent review of a gate-touching PR that has none (needs --live)."),
+               repo: str | None = typer.Option(None, "--repo", metavar="OWNER/REPO", help="Limit this pass to one configured repository; requires --pr."),
+               pr: int | None = typer.Option(None, "--pr", min=1, metavar="N", help="Limit this pass to one PR; requires --repo.")) -> AutoQueued:
+    if (repo is None) != (pr is None):
+        raise Refuse("select one PR with --repo OWNER/REPO and --pr N together", "sm queue auto --help", code=2)
     if dispatch and not live:
         raise Refuse("--dispatch starts an agent and posts a comment: add --live", "sm queue auto --live --dispatch", code=2)
     rt = runtime()
@@ -217,18 +226,23 @@ def queue_auto(live: bool = typer.Option(False, "--live", help="Queue and merge;
     w = world()
     owner = w.repo.split("/")[0]
     settings = auto_review.settings_of(w)
+    names = list(w.settings.get("status_pr_repos") or prtable.DEFAULT_REPOS)
+    if repo is not None:
+        names = [name for name in names if f"{owner}/{name}".lower() == repo.lower()]
+        if len(names) != 1:
+            raise Refuse("the selected repository must be configured in status_pr_repos", "sm queue auto --help", code=2)
     try:
         with rt.providers.store.lock(PASS_LOCK) if live else nullcontext():
-            return one_pass(rt, w, owner, settings, live, dispatch)
+            return one_pass(rt, w, owner, settings, live, dispatch, names, pr)
     except Busy:
         raise Refuse("another `sm queue auto` pass is running", "sm queue list", code=1) from None
 
 
-def one_pass(rt: Any, w: Any, owner: str, settings: auto_review.AutoReviewSettings, live: bool, dispatch: bool) -> AutoQueued:
+def one_pass(rt: Any, w: Any, owner: str, settings: auto_review.AutoReviewSettings, live: bool, dispatch: bool,
+             names: list[str], number: int | None) -> AutoQueued:
     module: Any = queue._queue()  # type: ignore[no-untyped-call]
     frozen = bool(module.hzlib.merge_frozen())
     queued = {str(i["key"]) for i in queue._load(module)["items"] if i["status"] == "queued"}
-    names = list(w.settings.get("status_pr_repos") or prtable.DEFAULT_REPOS)
     now = datetime.now(UTC)
     budget = [settings.review_max_per_pass]  # headless reviews this pass may still start
     rows: list[AutoRow] = []
@@ -237,6 +251,11 @@ def one_pass(rt: Any, w: Any, owner: str, settings: auto_review.AutoReviewSettin
         if why:
             rows.append(AutoRow(repo=name, number=0, action="skipped", why=why))
             continue
+        if number is not None:
+            listed = [pr for pr in listed if (pr.repo, pr.number) == (name, number)]
+            if len(listed) != 1:
+                rows.append(AutoRow(repo=name, number=number, action="skipped", why="the selected open PR could not be identified"))
+                continue
         for pr in listed:
             rows.append(handle(rt, w, module, owner, pr, (live, dispatch, frozen), queued, settings, budget))
     return AutoQueued(rows=[r for r in rows if r.action != "idle"])

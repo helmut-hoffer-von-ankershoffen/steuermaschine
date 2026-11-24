@@ -63,7 +63,7 @@ def world_of_prs(tmp_path, monkeypatch):
         monkeypatch.setattr(auto_review, "needs_review", lambda *a, **k: list(reasons))
         monkeypatch.setattr(prtable, "fetch", lambda g, o, name, now: ([r for r in rows if r.repo == name], ""))
         gh.on("pr view", {**view(comments=comments), "baseRefName": "main", "files": [], "headRefOid": moved or HEAD})
-        for repo, names in {"steuermaschine": ["Gate review", "check"], "heinzel": ["CI OK", "SonarCloud Code Analysis"], "heinzel-plugins": ["CI OK"]}.items():
+        for repo, names in {"steuermaschine": ["Gate review", "check"], "heinzel": ["CI OK", "SonarCloud Code Analysis"], "heinzel-plugins": ["CI OK", "SonarCloud Code Analysis"]}.items():
             gh.on(f"repos/{OWNER}/{repo}/rules/branches/main", [rules(*names)])
             gh.on(f"repo={repo} -F number=", snapshot([run(n, 12526 if n.startswith("Sonar") else 15368) for n in names]))
         table = {"status_pr_repos": ["heinzel", "steuermaschine"], "queue_state_file": str(tmp_path / "queue.json"), **settings}
@@ -82,6 +82,22 @@ def test_a_ready_pr_in_a_repo_without_a_queue_is_listed_then_merged_on_live(worl
     assert invoke(rt, ["queue", "auto"]).stdout.strip() == "steuermaschine #9: would-merge" and not gh.writes()
     out = invoke(rt, ["queue", "auto", "--live"])
     assert "steuermaschine #9: merged" in out.stdout and merged_cmds(gh) == [f"pr merge 9 -R {OWNER}/steuermaschine --squash --match-head-commit {HEAD}"]
+
+
+def test_live_selection_can_act_only_on_the_named_repository_and_pr(world_of_prs):
+    gh = FakeGh().on("pr merge", "")
+    rt = world_of_prs([row(number=9), row(repo="steuermaschine", number=10), row(repo="steuermaschine", number=9, sonar="-")], gh)
+    out = invoke(rt, ["queue", "auto", "--repo", f"{OWNER}/steuermaschine", "--pr", "9", "--live"])
+    assert out.stdout.strip() == "steuermaschine #9: merged"
+    assert merged_cmds(gh) == [f"pr merge 9 -R {OWNER}/steuermaschine --squash --match-head-commit {HEAD}"]
+    assert all("pr view 10" not in call and "repo=heinzel " not in call for call in gh.lines())
+
+
+@pytest.mark.parametrize("args", [["--repo", f"{OWNER}/steuermaschine"], ["--pr", "9"], ["--repo", "other/steuermaschine", "--pr", "9"]])
+def test_partial_or_unconfigured_selection_refuses_without_writes(world_of_prs, args):
+    gh = FakeGh().on("pr merge", "")
+    rt = world_of_prs([row(repo="steuermaschine", number=9)], gh)
+    assert invoke(rt, ["queue", "auto", "--live", *args]).exit_code == 2 and not gh.writes()
 
 
 def test_a_pr_that_is_not_ready_is_not_touched(world_of_prs):
@@ -146,6 +162,22 @@ def test_a_plugins_pr_is_pinned_to_the_head_too(world_of_prs, monkeypatch):
     rt = world_of_prs([row(repo="heinzel-plugins", number=3)], FakeGh(), status_pr_repos=["heinzel-plugins"])
     assert "heinzel-plugins #3: queued" in invoke(rt, ["queue", "auto", "--live"]).stdout
     assert seen == [["add", "--reviewed", f"sm queue auto: no gate touched, ready at head {HEAD[:12]}", "--reviewed-head", HEAD, "plugins", "3"]]
+
+
+def test_plugins_uses_both_enforced_integrations_and_holds_observed_optional_checks(world_of_prs):
+    repo = "heinzel-plugins"
+    gh = FakeGh()
+    rt = world_of_prs([row(repo=repo, number=126)], gh, status_pr_repos=[repo])
+    notes = [run("CI OK"), run("SonarCloud Code Analysis", 12526)]
+    for checks, expected in [
+        (notes, "would-queue"),
+        (notes[:1], "SonarCloud Code Analysis (app 12526)"),
+        ([*notes, run("Focused optional", conclusion="FAILURE")], "Focused optional: FAILURE"),
+        ([*notes, run("Optional build") | {"status": "IN_PROGRESS"}], "Optional build: RUNNING"),
+    ]:
+        gh.on(f"repo={repo} -F number=", snapshot(checks))
+        assert expected in invoke(rt, ["queue", "auto", "--repo", f"{OWNER}/{repo}", "--pr", "126"]).stdout
+    assert not gh.writes()
 
 
 def test_checks_read_for_another_head_are_not_trusted(world_of_prs):
@@ -224,6 +256,8 @@ def test_unreported_classic_required_check_or_incomplete_head_refuses(world_of_p
     classic = {"requiresStatusChecks": True, "requiredStatusChecks": [{"context": "classic", "app": {"databaseId": 154}}]}
     gh.on("repo=steuermaschine -F number=", snapshot(checks, classic=classic))
     assert "classic (app 154)" in invoke(rt, ["queue", "auto"]).stdout
+    gh.on("repo=steuermaschine -F number=", snapshot(checks, classic=classic | {"requiredStatusChecks": []}))
+    assert "unreadable classic required checks" in invoke(rt, ["queue", "auto"]).stdout
     gh.on("repo=steuermaschine -F number=", snapshot(checks, count=3))
     assert "incomplete GitHub inventory" in invoke(rt, ["queue", "auto"]).stdout
 
