@@ -284,6 +284,7 @@ def test_a_retargeted_or_updated_pr_is_refused_after_review(world_of_prs, change
     gh.on("repo=steuermaschine -F number=", late)
     assert "changed while reading checks" in invoke(rt, ["queue", "auto", "--live"]).stdout and not gh.writes()
 
+
 def test_steuermaschine_requires_local_sonar_in_addition_to_forge_rules(world_of_prs):
     gh = FakeGh().on("pr merge", "")
     rt = world_of_prs([row(repo="steuermaschine", number=84)], gh)
@@ -331,6 +332,7 @@ def test_effective_rule_inventory_requires_valid_shapes(world_of_prs, ruleset, c
     gh.on(f"repos/{OWNER}/steuermaschine/rules/branches/main", ruleset)
     gh.on("repo=steuermaschine -F number=", snapshot([run("check"), run("SonarCloud Code Analysis", 12526)], classic=classic))
     assert reason in invoke(rt, ["queue", "auto"]).stdout and not gh.writes()
+
 
 @pytest.mark.parametrize(("listed", "reason"), [(False, "could not list PRs"), (True, "selected open PR could not be identified")])
 def test_targeted_pass_refuses_unavailable_or_absent_pr(world_of_prs, monkeypatch, listed, reason):
