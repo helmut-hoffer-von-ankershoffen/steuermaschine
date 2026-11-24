@@ -27,7 +27,6 @@
   "native/queue_lib/stall.py: import subprocess": "queue-release",
   "native/release_admit_lib/release_slots.py: import subprocess": "heinzel-native-admission",
   "native/release_lib/candidate_capacity.py: import subprocess": "release",
-  "native/release_lib/candidate_policy.py: import subprocess": "release",
   "native/release_lib/notes_audit.py: import subprocess": "release",
   "native/release_lib/runner.py: import subprocess": "release",
   "native/ship_lib/moved_map.py: an argument list starts the old tool hz-push-gate": "queue-release; not a call: the table of what moved where (old file name -> module)",
