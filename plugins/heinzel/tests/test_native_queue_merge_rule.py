@@ -50,7 +50,7 @@ NOT_FOUND = (1, '{"message":"Not Found","status":"404"}')
 
 
 def blob(path: str, version: str = "1") -> str:
-    return hashlib.sha1(f"{path}:{version}".encode()).hexdigest()  # noqa: S324 - a stand-in for a git blob id
+    return hashlib.sha1(f"{path}:{version}".encode()).hexdigest()
 
 
 class World:
@@ -70,6 +70,8 @@ class World:
             return (1, "") if self.ruleset == "unreadable" else (0, json.dumps(self.ruleset))
         if "/compare/" in text:
             return 0, json.dumps({"status": self.status})
+        if text.endswith("/pulls/803"):
+            return 0, json.dumps({"state": "open", "head": {"sha": self.head}, "base": {"sha": MAIN}, "changed_files": len(self.files)})
         if "/pulls/" in text and "/files" in text:
             return 0, "".join(f"{name}\t{blob(name, self.version)}\tmodified\n" for name in self.files)
         if "contents/" in text:
@@ -268,3 +270,31 @@ def test_a_ruleset_that_requires_gate_review_does_not_replace_the_recorded_verdi
     approve(rt, [".github/workflows/ci.yml"])
     with native(rt):
         assert main_plan.gap("803", HEAD) == ""
+
+
+def test_hosted_registration_needs_independent_scoped_verdict_and_matching_base(gap, monkeypatch):
+    from steuermaschine_heinzel.native import release_read
+    from steuermaschine_heinzel.native.release_lib import candidate_policy
+
+    world = World(files=["uv.lock"])
+    tree = "c" * 40
+    digest = protected.record({"uv.lock": blob("uv.lock")})[0]
+    monkeypatch.setattr(candidate_policy, "require_base_sources", lambda base, head: None)
+    evidence = dict(head=HEAD, base=MAIN, tree=tree, run_id=1234, run_attempt=1, job_count=40)
+    monkeypatch.setattr(candidate_policy, "verify_pr", lambda number: evidence)
+    monkeypatch.setattr(hzlib, "gh", world)
+    store = gap.rt.providers.store
+    with native(gap.rt):
+        for args in [(HEAD, MAIN, tree, "d" * 64), (MAIN, MAIN, tree, digest),
+                     (HEAD, HEAD, tree, digest), (HEAD, MAIN, HEAD, digest)]:
+            with pytest.raises(release_read.Refuse):
+                release_read.prepare_protected(803, *args)
+        registration = release_read.prepare_protected(803, HEAD, MAIN, tree, digest)
+    assert gap(world) and verdicts.check_receipt(store, HEAD)[0] is None
+    data = {"reviewer": "independent", "verdict": "approve", "scope": registration.scope}
+    verdicts.record_head_verdict(store, digest, HEAD, data)
+    assert gap(world) == ""
+    assert verdicts.head_verdict(store, digest, HEAD) is None
+    assert verdicts.head_verdict(store, digest, HEAD, main_plan.release_scope("803", tree)) is None
+    verdicts.record_head_verdict(store, digest, HEAD, {"reviewer": "another", "verdict": "reject"})
+    assert "reject" in gap(world)

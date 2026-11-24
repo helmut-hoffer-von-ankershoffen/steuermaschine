@@ -32,3 +32,12 @@ def test_candidate_proof_refuses_malformed_and_failed_evidence(monkeypatch):
     monkeypatch.setattr(candidate_policy, 'verify_pr', failed)
     with pytest.raises(Refuse, match='candidate proof refused'):
         release_read.release_candidate_proof(123, HEAD, BASE, TREE)
+
+
+def test_registration_refuses_if_head_redefines_candidate_evidence(monkeypatch):
+    from types import SimpleNamespace
+    monkeypatch.setattr(candidate_policy.core_policy, "at_commit_api", lambda get, ref: SimpleNamespace(pinned=("workflow", "recorder")))
+    for changed in (candidate_policy.core_policy.PATH, "workflow", "recorder"):
+        monkeypatch.setattr(candidate_policy.release_candidate, "source_bytes", lambda get, path, ref, pins, changed=changed: ref.encode() if path == changed else b"same")
+        with pytest.raises(ValueError, match="changed its evidence source"):
+            candidate_policy.require_base_sources(BASE, HEAD)

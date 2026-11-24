@@ -1,7 +1,6 @@
 """Require the independently reviewed full Core candidate before the existing exact-head merge."""
 
 import re
-import subprocess
 
 from ..queue_lib import core_policy, hzlib, job_proof, release_candidate
 from . import edge  # moved: records, processes and what used to be separate scripts
@@ -112,6 +111,16 @@ def verify_pr(number: int, waiver: dict | None = None) -> dict:
     if record is not None:
         evidence = evidence | {"owner_waiver": record}
     return evidence
+
+
+def require_base_sources(base: str, head: str) -> None:
+    """The candidate cannot redefine the workload or the workflow and recorder used to prove it."""
+    policy = core_policy.at_commit_api(_api, base)
+    pinned = (core_policy.PATH, *policy.pinned)
+    for path in pinned:
+        before = release_candidate.source_bytes(_api, path, base, pinned)
+        after = release_candidate.source_bytes(_api, path, head, pinned)
+        release_candidate.require(before == after, f"candidate changed its evidence source: {path}")
 
 
 def verify_commit(sha: str, waiver: dict | None = None) -> dict:

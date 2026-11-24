@@ -368,6 +368,20 @@ def test_review_verdict_with_a_head_is_write_once_per_reviewer_and_a_reject_bloc
     assert r.providers.store.get_receipt("verdicts", digest) is None
 
 
+def test_hosted_verdict_requires_exact_registration_and_a_different_reviewer():
+    r = rt()
+    store = r.providers.store
+    digest, head, scope = "e" * 64, "a" * 40, "operation-123"
+    args = ["review", "verdict", digest, "--approve", "--head", head, "--scope", scope, "--reviewer"]
+    assert invoke(r, [*args, "reader"]).exit_code == 2
+    verdicts.register_scoped_proof(store, digest, head, scope, {"run_id": 7})
+    verdicts.need_check(store, digest, head, "sm check worktree")
+    assert invoke(r, [*args, verdicts.current_agent()]).exit_code == 1
+    assert invoke(r, [*args, "reader"]).exit_code == 0
+    assert verdicts.head_verdict(store, digest, head) is None
+    assert verdicts.require_independent(store, digest, [], "", head=head, scope=scope)["scope"] == scope
+
+
 def test_an_approve_of_a_digest_bound_to_a_head_needs_the_green_check_receipt_of_that_commit():
     r = rt()
     digest, head = "f" * 64, "a" * 40

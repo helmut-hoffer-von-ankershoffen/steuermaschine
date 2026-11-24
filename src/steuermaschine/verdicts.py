@@ -50,11 +50,11 @@ def authors_of(store: Any, digest: str, run_states: list[dict[str, Any]]) -> set
     return {a for a in found if a}
 
 
-def require_independent(store: Any, digest: str, run_states: list[dict[str, Any]], recorded: str, kind: str = "", head: str = "") -> dict[str, Any]:
+def require_independent(store: Any, digest: str, run_states: list[dict[str, Any]], recorded: str, kind: str = "", head: str = "", scope: str = "") -> dict[str, Any]:
     """The approving verdict receipt for `digest`, or a Refuse naming the command that records it. With `kind`
     (`CI_CHANGE`), only a receipt of that kind counts: a verdict on prepared bytes never covers a CI change. With `head`, only
     a verdict recorded for exactly that commit counts (`head_verdict`)."""
-    receipt = head_verdict(store, digest, head) if head else store.get_receipt("verdicts", digest)
+    receipt = head_verdict(store, digest, head, scope) if head else store.get_receipt("verdicts", digest)
     if not receipt:
         raise Refuse(f"no verdict is recorded for {digest}: the digest alone is not a review", recorded)
     if kind and receipt.get("kind", "") != kind:
@@ -65,6 +65,33 @@ def require_independent(store: Any, digest: str, run_states: list[dict[str, Any]
     if receipt.get("reviewer") in authors_of(store, digest, run_states):
         raise Refuse(f"the verdict for {digest[:12]} was recorded by {receipt.get('reviewer')}, who also produced these bytes: "
                      "a different agent must review", recorded)
-    if unchecked := missing_check(store, digest):
+    if receipt.get("scope"):
+        proof = scoped_proof(store, digest, head, scope)
+        if not proof or proof["author"] == receipt.get("reviewer"):
+            raise Refuse("missing independent scoped review evidence", recorded)
+    elif unchecked := missing_check(store, digest):
         raise Refuse(unchecked, recorded)
     return dict(receipt)
+
+
+def scoped_proof(store: Any, digest: str, head: str, scope: str) -> dict[str, Any]:
+    """A trusted producer's check evidence for one review, head and operation."""
+    from .hashing import sha256_text
+
+    key = sha256_text(f"{digest}/{head}/{scope}")
+    proof = store.get_receipt("review.proofs", key)
+    if not isinstance(proof, dict) or (proof.get("digest"), proof.get("head"), proof.get("scope")) != (digest, head, scope) or not proof.get("author"):
+        return {}
+    return proof
+
+
+def register_scoped_proof(store: Any, digest: str, head: str, scope: str, evidence: dict[str, Any]) -> None:
+    from .hashing import sha256_text
+
+    key = sha256_text(f"{digest}/{head}/{scope}")
+    proof = dict(evidence, digest=digest, head=head, scope=scope, author=current_agent())
+    try:
+        store.put_receipt("review.proofs", key, proof)
+    except FileExistsError:
+        if scoped_proof(store, digest, head, scope) != proof:
+            raise Refuse("different evidence already registered for this scoped review") from None

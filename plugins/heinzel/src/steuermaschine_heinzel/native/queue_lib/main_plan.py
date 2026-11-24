@@ -73,7 +73,7 @@ def required_checks() -> set[str] | None:
     return found or None
 
 
-def _verdict(head: str, blobs: dict[str, str]) -> str:
+def _verdict(head: str, blobs: dict[str, str], scope: str) -> str:
     """'' when a different agent approved exactly the content of these protected files, else the refusal text."""
     from steuermaschine.engine import Refuse
 
@@ -85,12 +85,30 @@ def _verdict(head: str, blobs: dict[str, str]) -> str:
         verdicts = importlib.import_module("steuermaschine.verdicts")
         go = importlib.import_module("steuermaschine.go")
         store = native.runtime().providers.store
-        verdicts.require_independent(store, digest, go.run_states(store), f"sm review verdict {digest} --approve --reviewer NAME --model M --head {head}", head=head)
+        verdicts.require_independent(store, digest, go.run_states(store), f"sm review verdict {digest} --approve --reviewer NAME --model M --head {head}", head=head, scope=scope)
     except Refuse as refused:
         return f"{refused.message}: changed protected paths {', '.join(paths[:6])}"
     except Exception as error:  # noqa: BLE001 - fail closed: no readable store, no verdict
         return f"cannot read the protected-review verdicts ({error}): changed protected paths {', '.join(paths[:6])}"
     return ""
+
+
+def release_scope(pr: str, base: str) -> str:
+    return f"release-{pr}-{base}"
+
+
+def protected_blobs(pr: str, head: str, main: str, expected_count: int | None = None) -> dict[str, str]:
+    changed = _changed(pr)
+    if changed is None or (expected_count is not None and len(changed) != expected_count):
+        raise ValueError(f"cannot read the files #{pr} changes")
+    protected = importlib.import_module("steuermaschine_heinzel.native.protected")
+    plan, absent = _raw("scripts/focused_plan.py", main)
+    if plan is None and not absent:
+        raise ValueError(f"cannot read Core's scripts/focused_plan.py at main {main[:8]}: its protected files are unknown")
+    found = protected.matches(list(changed), protected.execution_inputs(plan))
+    if "pyproject.toml" in changed and protected.pyproject_weakens(_raw("pyproject.toml", main)[0], _raw("pyproject.toml", head)[0]):
+        found.add("pyproject.toml")
+    return {name: changed[name] for name in found}
 
 
 def gap(pr: str, head: str = "") -> str:
@@ -118,18 +136,9 @@ def gap(pr: str, head: str = "") -> str:
         if compare.get("status") not in ("ahead", "identical"):
             return (f"{PREFIX}: #{pr} ({head[:8]}) is {compare.get('status') or 'unreadable'} against main {main[:8]}: "
                     "update the branch and let CI test it again")
-        changed = _changed(pr)
-        if changed is None:
-            return f"{PREFIX}: cannot read the files #{pr} changes"
-        protected = importlib.import_module("steuermaschine_heinzel.native.protected")
-        plan, absent = _raw("scripts/focused_plan.py", main)
-        if plan is None and not absent:
-            return f"{PREFIX}: cannot read Core's scripts/focused_plan.py at main {main[:8]}: its protected files are unknown"
-        found = protected.matches(list(changed), protected.execution_inputs(plan))
-        if "pyproject.toml" in changed and protected.pyproject_weakens(_raw("pyproject.toml", main)[0], _raw("pyproject.toml", head)[0]):
-            found.add("pyproject.toml")
+        blobs = protected_blobs(pr, head, main)
     except Exception as error:  # noqa: BLE001 - fail closed: every error is a named refusal
         return f"{PREFIX}: cannot check #{pr}: {error}"
-    if found and (reason := _verdict(head, {name: changed[name] for name in found})):
+    if blobs and (reason := _verdict(head, blobs, release_scope(pr, main))):
         return f"{PREFIX}: #{pr} ({head[:8]}): {reason}"
     return ""

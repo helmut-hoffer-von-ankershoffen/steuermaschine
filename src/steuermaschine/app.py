@@ -357,6 +357,7 @@ def _review(rt: Runtime, app: typer.Typer, hidden: bool = False) -> None:
                 notes: str = typer.Option("", "--notes", help="What was checked and what was not."),
                 head: str = typer.Option("", "--head", metavar="SHA", help="The commit this verdict is for (the brief names it): only a verdict for exactly the head being admitted "
                                          "counts, a reviewer records once per head, and a rejection blocks the digest at every head until the protected bytes change."),
+                scope: str = typer.Option("", "--scope", help="The exact operation named by a verified hosted review registration; requires --head."),
                 kind: str = typer.Option("", "--kind", metavar="KIND", help="ci_change: a strong review of a commit whose CI paths changed since the last "
                                          "release (the release gate asks for it; needs --model and --notes naming the paths)."),
                 as_json: bool = JSON) -> None:
@@ -368,13 +369,20 @@ def _review(rt: Runtime, app: typer.Typer, hidden: bool = False) -> None:
             fail("a ci_change verdict is a strong review: give --model and --notes naming the CI paths you read", USAGE)
         store = rt.providers.store
         authors = verdicts.authors_of(store, digest, go_mod.run_states(store))
+        if scope:
+            proof = verdicts.scoped_proof(store, digest, head, scope) if head and not kind else {}
+            if not proof:
+                fail("no verified evidence for this scope, digest and head", USAGE)
+            authors.add(proof["author"])
         if not authors:
             fail(f"no run is waiting for a review of {digest[:12]} and no command registered it (`prepare` does): check the digest in the brief", USAGE)
         if reviewer in authors:
             fail(f"{reviewer} drives the run that produced these bytes: a different agent must review")
-        if approve and (unchecked := verdicts.missing_check(store, digest)):
+        if approve and not scope and (unchecked := verdicts.missing_check(store, digest)):
             fail(unchecked)
         data = {"digest": digest, "verdict": "approve" if approve else "reject", "reviewer": reviewer, "model": model, "notes": notes, "at": rt.providers.clock.now()}
+        if scope:
+            data["scope"] = scope
         if kind:
             data["kind"] = kind
         if head:
