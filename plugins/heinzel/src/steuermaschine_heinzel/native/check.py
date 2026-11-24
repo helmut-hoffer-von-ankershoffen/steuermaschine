@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from pathlib import Path
+from shlex import join
 from typing import Any
 
 import typer
@@ -196,7 +197,18 @@ def check(worktree: Path | None = typer.Argument(None, metavar="WORKTREE", help=
         else:  # no slot, or a loaded machine: nothing ran, so nothing is READY: exit 75, the same command again later
             raise Wait(f"sm check ran nothing: {grant.deferred}", "a free check slot and a quieter machine; run the same command again")
     if c.deferred and not [s for s in steps if s.failures]:  # the budget ran out and nothing failed: part of the run did not happen, so it is not READY
-        raise Wait(f"sm check ran out of its local budget with nothing failed: {c.deferred}; not run here: {', '.join(c.ci)}", "a quieter machine; run the same command again")
+        retry = join(["sm", "check", str(wt), "--allow-full", *(["--base", base] if base else []),
+                      *(["--sel", str(sel.expanduser().resolve())] if sel else []),
+                      *(arg for name in skipped for arg in ("--skip", name))])
+        next_cmd = (f"Coordinator only, on the unchanged head: {retry} "
+                    "(heavy lane, may run the full unit suite)")
+        if not skipped and ref == default:
+            next_cmd += (". Once READY with a receipt, rerun your original sm head admit command "
+                         "to adopt that receipt if admission was in progress")
+        raise Wait(
+            f"sm check ran out of its local budget with nothing failed: {c.deferred}; not run here: {', '.join(c.ci)}",
+            "a quieter machine; retry the original command", next_cmd=next_cmd,
+        )
     if c.unrun and not [s for s in steps if s.failures]:  # zero tests ran: never a receipt
         raise Wait(f"sm check ran no test: {c.unrun}", "run the owning tests by name (sm check --sel FILE), or sm check --full when the coordinator allows it")
     report = HeadCheck.of(f"sm check {c.sha[:9]} ({c.branch or 'detached'}) vs {ref} {c.base_sha[:9]}", steps, left_out, not_run, worktree=str(wt), head=c.sha,

@@ -337,6 +337,10 @@ def test_a_budget_spent_between_steps_exits_75_and_is_never_ready(core, rt):  # 
     done = invoke(runtime, ["check", str(core)])
     assert done.exit_code == 75, done
     assert "local budget of 90 s is spent" in done.stderr and "types, hook, parity, web, docs, standards, tests" in done.stderr
+    assert f"Coordinator only, on the unchanged head: sm check {core} --allow-full" in done.stderr
+    assert "heavy lane, may run the full unit suite" in done.stderr
+    assert "rerun your original sm head admit command to adopt that receipt" in done.stderr
+    assert "a quieter machine; retry the original command" in done.stderr
     assert not machine.ran("mypy") and runtime.providers.store.get_receipt(verdicts.CHECKS, HEAD) is None
 
 

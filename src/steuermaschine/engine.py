@@ -34,11 +34,12 @@ class Refuse(Exception):
 
 
 class Wait(Exception):
-    """Nothing is wrong, something else must finish first. The same command continues."""
+    """Work is incomplete. By default the same command can continue when the wait clears."""
 
-    def __init__(self, message: str, waiting_on: str = ""):
+    def __init__(self, message: str, waiting_on: str = "", *, next_cmd: str = ""):
         super().__init__(message)
         self.message, self.waiting_on = message, waiting_on or message
+        self.next_cmd = next_cmd
 
 
 @dataclass
@@ -494,7 +495,8 @@ class Engine:
                 save()
             except Wait as wait:
                 say(f"{tag} WAITING: {wait.message}")
-                return end("waiting", f"{step.name}: {wait.message}", cmd + (" --live" if opts.live else ""), wait.waiting_on, trap, WAITING)
+                resume = cmd + (" --live" if opts.live else "")
+                return end("waiting", f"{step.name}: {wait.message}", wait.next_cmd or resume, wait.waiting_on, trap, WAITING)
             except Refuse as no:
                 say(f"{tag} REFUSED: {no.message}")
                 return end("refused", f"{step.name} refused: {no.message.splitlines()[0][:200]}", no.next_cmd, trap=trap, code=no.code)
