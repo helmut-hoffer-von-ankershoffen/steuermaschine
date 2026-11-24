@@ -4,7 +4,7 @@
 from types import SimpleNamespace
 
 import pytest
-from test_native_auto_review import HEAD, said, view
+from test_native_auto_review import BASE, HEAD, said, view
 from test_native_ci_triage import REPO, runtime_for
 
 from steuermaschine.github.testing import FakeGh
@@ -22,7 +22,7 @@ def row(**over):
 
 
 def test_the_cheap_rules_name_what_is_missing():
-    assert area.eligible(row()) == "" and area.eligible(row(sonar="-")) == "no Sonar check"  # a missing check is not a passing one
+    assert area.eligible(row()) == "" and area.eligible(row(sonar="-")) == ""  # the target branch decides whether Sonar is required
     assert "unknown" in area.eligible(row(head=""))
     assert area.eligible(row(state="DRAFT")) == "draft" and "BLOCKED" in area.eligible(row(state="BLOCKED"))
     assert area.eligible(row(ci="FAIL 1")) == "CI FAIL 1" and area.eligible(row(ci="running 3")) == "CI running 3"
@@ -40,12 +40,32 @@ def test_queue_words_know_the_queue_repositories_only():
     assert area.queue_words("steuermaschine", 3, OWNER) is None
 
 
+def rules(*names):
+    return [{"type": "required_status_checks", "parameters": {"required_status_checks": [
+        {"context": n, "integration_id": 12526 if n.startswith("Sonar") else 15368} for n in names]}}]
+
+
+def run(name, app=15368, conclusion="SUCCESS"):
+    return {"__typename": "CheckRun", "name": name, "status": "COMPLETED", "conclusion": conclusion, "checkSuite": {"app": {"databaseId": app}}}
+
+
+def snapshot(checks, classic=None, branch="main", count=None):
+    connection = {"nodes": checks, "totalCount": len(checks) if count is None else count}
+    pr = {"state": "OPEN", "isDraft": False, "mergeStateStatus": "CLEAN", "headRefOid": HEAD, "baseRefOid": BASE, "baseRef": {"name": branch, "branchProtectionRule": classic},
+          "commits": {"nodes": [{"commit": {"oid": HEAD, "statusCheckRollup": {"contexts": connection}}}]},
+          "reviewThreads": {"nodes": [], "totalCount": 0}}
+    return {"data": {"repository": {"pullRequest": pr}}}
+
+
 @pytest.fixture
 def world_of_prs(tmp_path, monkeypatch):
     def make(rows, gh, reasons=(), comments=(), moved="", **settings):
         monkeypatch.setattr(auto_review, "needs_review", lambda *a, **k: list(reasons))
         monkeypatch.setattr(prtable, "fetch", lambda g, o, name, now: ([r for r in rows if r.repo == name], ""))
-        gh.on("pr view", {**view(comments=comments), "files": [], "headRefOid": moved or HEAD})
+        gh.on("pr view", {**view(comments=comments), "baseRefName": "main", "files": [], "headRefOid": moved or HEAD})
+        for repo, names in {"steuermaschine": ["Gate review", "check"], "heinzel": ["CI OK", "SonarCloud Code Analysis"], "heinzel-plugins": ["CI OK"]}.items():
+            gh.on(f"repos/{OWNER}/{repo}/rules/branches/main", [rules(*names)])
+            gh.on(f"repo={repo} -F number=", snapshot([run(n, 12526 if n.startswith("Sonar") else 15368) for n in names]))
         table = {"status_pr_repos": ["heinzel", "steuermaschine"], "queue_state_file": str(tmp_path / "queue.json"), **settings}
         return runtime_for(tmp_path, gh, **table)
 
@@ -58,7 +78,7 @@ def merged_cmds(gh):
 
 def test_a_ready_pr_in_a_repo_without_a_queue_is_listed_then_merged_on_live(world_of_prs):
     gh = FakeGh().on("pr merge", "")
-    rt = world_of_prs([row(repo="steuermaschine", number=9)], gh)
+    rt = world_of_prs([row(repo="steuermaschine", number=9, sonar="-")], gh)
     assert invoke(rt, ["queue", "auto"]).stdout.strip() == "steuermaschine #9: would-merge" and not gh.writes()
     out = invoke(rt, ["queue", "auto", "--live"])
     assert "steuermaschine #9: merged" in out.stdout and merged_cmds(gh) == [f"pr merge 9 -R {OWNER}/steuermaschine --squash --match-head-commit {HEAD}"]
@@ -165,3 +185,64 @@ def test_no_login_ends_the_reviews_of_the_pass(world_of_prs):
     rt = world_of_prs(rows, gh, reasons=["diff guard: timeout"])
     out = invoke(rt, ["queue", "auto", "--live", "--dispatch"]).stdout
     assert len([c for c in gh.calls if c[0] == "claude"]) == 1 and out.count("cannot authenticate") == 1 and "reviews were started in this pass" in out
+
+@pytest.mark.parametrize(("checks","why"), [
+    ([run("check")], "Gate review (app 15368)"),
+    ([run("check", conclusion="FAILURE"), run("Gate review")], "check: FAILURE"),
+    ([run("check"), run("Gate review", 987)], "Gate review (app 15368)"),
+    ([run("check"), {"__typename": "StatusContext", "context": "Gate review", "state": "SUCCESS"}], "Gate review (app 15368)"),
+    ([run("check"), run("Gate review", conclusion="SKIPPED")], "Gate review (app 15368)"),
+    ([run("check"), run("Gate review"), run("Focused optional", conclusion="FAILURE")], "Focused optional: FAILURE"),
+])
+def test_actual_required_integrations_and_every_reported_failure_block_the_merge(world_of_prs, checks, why):
+    gh = FakeGh().on("pr merge", "")
+    rt = world_of_prs([row(repo="steuermaschine", sonar="-")], gh)
+    gh.on("repo=steuermaschine -F number=", snapshot(checks))
+    out = invoke(rt, ["queue", "auto", "--live"])
+    assert why in out.stdout and not merged_cmds(gh)
+
+
+def test_core_still_requires_its_sonar_integration(world_of_prs):
+    gh = FakeGh()
+    rt = world_of_prs([row(sonar="-")], gh)
+    gh.on("repo=heinzel -F number=", snapshot([run("CI OK"), run("SonarCloud Code Analysis", 15368)]))
+    assert "SonarCloud Code Analysis (app 12526)" in invoke(rt, ["queue", "auto"]).stdout
+
+
+@pytest.mark.parametrize("answer", [403, [], [{"type": "required_status_checks", "parameters": {}}]])
+def test_unreadable_or_empty_rules_refuse(world_of_prs, answer):
+    gh = FakeGh()
+    rt = world_of_prs([row(repo="steuermaschine", sonar="-")], gh)
+    gh.on(f"repos/{OWNER}/steuermaschine/rules/branches/main", answer)
+    assert "waiting" in invoke(rt, ["queue", "auto", "--live"]).stdout and not gh.writes()
+
+
+def test_unreported_classic_required_check_or_incomplete_head_refuses(world_of_prs):
+    gh = FakeGh()
+    rt = world_of_prs([row(repo="steuermaschine", sonar="-")], gh)
+    checks = [run("Gate review"), run("check")]
+    classic = {"requiresStatusChecks": True, "requiredStatusChecks": [{"context": "classic", "app": {"databaseId": 154}}]}
+    gh.on("repo=steuermaschine -F number=", snapshot(checks, classic=classic))
+    assert "classic (app 154)" in invoke(rt, ["queue", "auto"]).stdout
+    gh.on("repo=steuermaschine -F number=", snapshot(checks, count=3))
+    assert "incomplete GitHub inventory" in invoke(rt, ["queue", "auto"]).stdout
+
+
+def test_rules_follow_the_pr_target_and_all_pages(world_of_prs):
+    gh = FakeGh()
+    rt = world_of_prs([row(repo="steuermaschine", sonar="-")], gh)
+    gh.on("pr view", {**view(), "baseRefName": "release/next"})
+    gh.on("repo=steuermaschine -F number=", snapshot([run("check"), run("Gate review")], branch="release/next"))
+    gh.on(f"repos/{OWNER}/steuermaschine/rules/branches/release%2Fnext", [rules("check"), rules("release acceptance")])
+    assert "release acceptance (app 15368)" in invoke(rt, ["queue", "auto"]).stdout
+    assert not any("rules/branches/main" in command for command in gh.lines())
+
+
+@pytest.mark.parametrize("changed", ["headRefOid", "baseRefOid", "baseRef"])
+def test_a_retargeted_or_updated_pr_is_refused_after_review(world_of_prs, changed):
+    gh = FakeGh()
+    rt = world_of_prs([row(repo="steuermaschine", sonar="-")], gh)
+    late = snapshot([run("check"), run("Gate review")])
+    late["data"]["repository"]["pullRequest"][changed] = {"name": "other"} if changed == "baseRef" else "e" * 40
+    gh.on("repo=steuermaschine -F number=", late)
+    assert "changed while reading checks" in invoke(rt, ["queue", "auto", "--live"]).stdout and not gh.writes()
