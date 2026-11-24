@@ -3,6 +3,7 @@ comes from (the checkout's selector and hook, never a list in sm), and the recei
 No network, no real git, uv or node; the lock files live under tmp_path."""
 
 import json
+from shlex import split
 
 import pytest
 from test_native_preflight import HEAD, MAIN, Machine, core, rt  # noqa: F401  (core and rt are fixtures)
@@ -337,11 +338,38 @@ def test_a_budget_spent_between_steps_exits_75_and_is_never_ready(core, rt):  # 
     done = invoke(runtime, ["check", str(core)])
     assert done.exit_code == 75, done
     assert "local budget of 90 s is spent" in done.stderr and "types, hook, parity, web, docs, standards, tests" in done.stderr
-    assert f"Coordinator only, on the unchanged head: sm check {core} --allow-full" in done.stderr
+    assert split(done.stderr.splitlines()[-1]) == ["sm", "check", str(core), "--allow-full"]
+    assert "for the coordinator on the unchanged head" in done.stderr
     assert "heavy lane, may run the full unit suite" in done.stderr
     assert "rerun your original sm head admit command to adopt that receipt" in done.stderr
-    assert "a quieter machine; retry the original command" in done.stderr
+    assert "retry the original command on a quieter machine" in done.stderr
     assert not machine.ran("mypy") and runtime.providers.store.get_receipt(verdicts.CHECKS, HEAD) is None
+
+
+@pytest.mark.parametrize(("base", "skipped"), [(True, False), (False, True), (True, True)])
+def test_budget_next_is_a_runnable_command_that_preserves_non_receipting_options(core, rt, tmp_path, base, skipped):  # noqa: F811
+    wt = core.rename(core.with_name("work tree"))
+    selection = tmp_path / "selected tests.json"
+    selection.write_text('{"python": ["tests/unit/x_test.py"]}')
+    options = []
+    if base:
+        options += ["--base", "refs/heads/integration"]
+    options += ["--sel", str(selection)]
+    if skipped:
+        options += ["--skip", "web", "--skip", "docs"]
+    machine = src_change(wt)
+    runtime = rt(machine)
+    machine.on("ruff format", lambda argv: (setattr(runtime.providers.clock, "t", runtime.providers.clock.t + 91), Result(0, "", ""))[1])
+
+    done = invoke(runtime, ["--format", "json", "check", str(wt), *options])
+    assert done.exit_code == 75, done
+    message = json.loads(done.stdout)
+    retry = split(message["hint"])
+    assert retry == ["sm", "check", str(wt), "--allow-full", *options]
+    assert "An admission receipt requires the default base and every check." in message["error"]
+    assert "adopt" not in message["error"]
+    assert invoke(runtime, retry[1:]).exit_code == 0
+    assert runtime.providers.store.get_receipt(verdicts.CHECKS, HEAD) is None
 
 
 def test_a_failure_before_the_budget_ends_still_fails_the_run(core, rt):  # noqa: F811

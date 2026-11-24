@@ -200,14 +200,16 @@ def check(worktree: Path | None = typer.Argument(None, metavar="WORKTREE", help=
         retry = join(["sm", "check", str(wt), "--allow-full", *(["--base", base] if base else []),
                       *(["--sel", str(sel.expanduser().resolve())] if sel else []),
                       *(arg for name in skipped for arg in ("--skip", name))])
-        next_cmd = (f"Coordinator only, on the unchanged head: {retry} "
-                    "(heavy lane, may run the full unit suite)")
+        recovery = ("The suggested command is for the coordinator on the unchanged head "
+                    "(heavy lane, may run the full unit suite). Otherwise, retry the original command on a quieter machine.")
         if not skipped and ref == default:
-            next_cmd += (". Once READY with a receipt, rerun your original sm head admit command "
+            recovery += (" Once READY with a receipt, rerun your original sm head admit command "
                          "to adopt that receipt if admission was in progress")
+        else:
+            recovery += " An admission receipt requires the default base and every check."
         raise Wait(
-            f"sm check ran out of its local budget with nothing failed: {c.deferred}; not run here: {', '.join(c.ci)}",
-            "a quieter machine; retry the original command", next_cmd=next_cmd,
+            f"sm check ran out of its local budget with nothing failed: {c.deferred}; not run here: {', '.join(c.ci)}. {recovery}",
+            "a quieter machine for the ordinary retry", next_cmd=retry,
         )
     if c.unrun and not [s for s in steps if s.failures]:  # zero tests ran: never a receipt
         raise Wait(f"sm check ran no test: {c.unrun}", "run the owning tests by name (sm check --sel FILE), or sm check --full when the coordinator allows it")

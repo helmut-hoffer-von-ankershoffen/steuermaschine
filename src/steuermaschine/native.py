@@ -461,7 +461,7 @@ def _command(cmd: NativeCommand, rt: Any, emit: Callable[..., Any], fail: Callab
             fail(no.message, no.code, hint=no.next_cmd)
         except Wait as wait:
             retry = f"waiting on {wait.waiting_on}; run the same command again"
-            fail(wait.message, WAITING, hint=f"{wait.next_cmd}. Otherwise, wait for {wait.waiting_on}" if wait.next_cmd else retry)
+            fail(wait.message, WAITING, hint=wait.next_cmd or retry)
         finally:
             _CURRENT.reset(token)
         emit(result)
