@@ -205,12 +205,12 @@ def test_live_runs_the_external_step_then_waits_with_exit_75_then_finishes():
     assert e.advance(pl, "/wt", Options(live=True)).status == "finished" and calls == ["build", "publish"]
 
 
-def test_wait_next_can_explain_an_alternate_recovery_without_changing_wait_state():
+def test_wait_next_can_offer_an_alternate_command_without_changing_wait_state():
     p = fake_providers()
-    pl, calls = make(p, review=False, wait_next="run the owning check, then resume")
+    pl, calls = make(p, review=False, wait_next="sm check /wt --allow-full")
     r = engine(p).advance(pl, "/wt", Options(live=True))
     assert (r.status, r.exit_code) == ("waiting", WAITING)
-    assert "NEXT     run the owning check, then resume" in r.lines()
+    assert "NEXT     sm check /wt --allow-full" in r.lines()
     assert r.waiting_on == "the world" and calls == ["build", "publish"]
 
 
