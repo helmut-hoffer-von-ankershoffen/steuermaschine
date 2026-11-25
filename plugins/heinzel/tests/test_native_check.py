@@ -417,6 +417,7 @@ def test_extended_budget_does_not_accept_unfinished_or_failed_mandatory_work(cor
     assert runtime.providers.store.get_receipt(verdicts.CHECKS, HEAD) is None
     if expected == 75:
         assert "local budget of 600 s is spent" in done.stderr
+        assert "the extended budget is already in use" in done.stderr
     else:
         assert "types:" in done.stdout
 
@@ -427,6 +428,22 @@ def test_extended_and_full_modes_are_mutually_exclusive(core, rt, full_option): 
     done = invoke(rt(machine), ["check", str(core), "--extended", full_option])
     assert done.exit_code == 2 and "applies to focused checks" in done.stderr
     assert machine.calls == []
+
+
+def test_extended_refuses_plugin_gallery_checks_before_running_them(core, rt):  # noqa: F811
+    (core / ".git").touch()
+    machine = checkout(core).on("remote get-url origin", "https://github.com/example/heinzel-plugins.git")
+    machine.on("screenshots-check --all --json", '{"ok": true, "stale": [], "failed": []}')
+    runtime = rt(machine)
+
+    done = invoke(runtime, ["check", str(core), "--extended"])
+    assert done.exit_code == 2 and "--extended applies to Core checks" in done.stderr
+    assert machine.ran("remote get-url origin") and not machine.ran("screenshots-check")
+
+    found = report(invoke(runtime, ["--format", "json", "check", str(core)]))
+    assert found.ready and not found.receipt
+    assert step(found, "gallery").detail.startswith("every screenshot gallery is fresh")
+    assert machine.ran("screenshots-check") and not machine.ran("git merge-base")
 
 
 def test_a_failure_before_the_budget_ends_still_fails_the_run(core, rt):  # noqa: F811
