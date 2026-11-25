@@ -10,6 +10,8 @@ that commit.
 from __future__ import annotations
 
 import json
+import tempfile
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -17,6 +19,7 @@ from typing import Any
 import typer
 
 from steuermaschine import USAGE, verdicts
+from steuermaschine.config import child_environment
 from steuermaschine.engine import Refuse, Wait
 from steuermaschine.helpdoc import H
 from steuermaschine.native import native, runtime
@@ -78,6 +81,17 @@ def bound(rt: Any, wt: Path, base: str, allow_full: bool = False, full: bool = F
     branch = c.git("rev-parse", "--abbrev-ref", "HEAD")[1].strip()
     c.branch = "" if branch == "HEAD" else branch
     return c
+
+
+@contextmanager
+def isolated_gate(gate: _preflight.Shell):
+    """Give this check and all its gated children a private pytest cleanup namespace."""
+    parent = child_environment().get("PYTEST_DEBUG_TEMPROOT") or None
+    with tempfile.TemporaryDirectory(prefix="sm-check-", dir=parent) as root:
+        def run(cmd, cwd=None, env=None):
+            return gate(cmd, cwd=cwd, env={**(env or {}), "PYTEST_DEBUG_TEMPROOT": root})
+
+        yield run
 
 
 def extra_tests(sel: Path | None) -> list[str]:
@@ -192,7 +206,8 @@ def check(worktree: Path | None = typer.Argument(None, metavar="WORKTREE", help=
             except select.RepoError as why:
                 raise Refuse(f"the selector of {wt} cannot be read: {why}", f"sm head select --repo {wt} --base {ref}", code=USAGE) from None
             c.plan = cheap.plan(c, selection, extra)
-            steps, left_out, not_run = registry.run(c, set(skipped), say=rt.say)
+            with isolated_gate(c.gate) as c.gate:
+                steps, left_out, not_run = registry.run(c, set(skipped), say=rt.say)
         else:  # no slot, or a loaded machine: nothing ran, so nothing is READY: exit 75, the same command again later
             raise Wait(f"sm check ran nothing: {grant.deferred}", "a free check slot and a quieter machine; run the same command again")
     if c.deferred and not [s for s in steps if s.failures]:  # the budget ran out and nothing failed: part of the run did not happen, so it is not READY
