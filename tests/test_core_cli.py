@@ -168,6 +168,21 @@ def test_native_paths_keep_the_engine_command_and_merge_the_rest_of_the_group():
     assert "abc" in invoke(r, ["head", "status"]).stdout  # the core's status stays next to it
 
 
+def test_status_ignores_legacy_replan_archives_and_lists_current_runs():
+    r = rt(Native())
+    store = r.providers.store
+    store.save("runs.release.cut.replanned", "1.2.3", {"schema": 1, "at": 0, "original": {}, "proof": {}})
+    assert invoke(r, ["head", "ship", "abc"]).exit_code == 75
+
+    text = invoke(r, ["head", "status"])
+    assert text.exit_code == 0 and "abc" in text.stdout
+    result = invoke(r, ["head", "status", "--json"])
+    assert result.exit_code == 0
+    assert [(row["pipeline"], row["key"]) for row in json.loads(result.stdout)] == [("head.ship", "abc")]
+    release = invoke(r, ["release", "status", "--all", "--json"])
+    assert release.exit_code == 0 and json.loads(release.stdout) == []
+
+
 def test_self_is_reserved():
     assert "hijacked" not in invoke(rt(), ["self", "config"]).stdout
 
