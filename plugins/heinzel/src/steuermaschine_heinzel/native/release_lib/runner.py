@@ -81,7 +81,6 @@ from ..queue_lib import (
     release_flow,
 )
 from . import acceptance_capacity as release_acceptance_capacity
-from . import acceptance_runner as release_acceptance_runner
 from . import candidate_capacity as release_candidate_capacity
 from . import candidate_policy as release_candidate_policy
 from . import edge  # moved: siblings are imported relatively, no sys.path entry
@@ -527,9 +526,6 @@ def runs(repo: str, workflow: str, **extra) -> list[dict]:
 def check_capacity_replacement(data: dict[str, Any], run: dict[str, Any], run_id: int) -> None:
     try:
         release_acceptance_capacity.validate_replacement(data, run, CORE, run_id)
-        release_acceptance_runner.validate_run(data, run, CORE, run_id)
-    except core_facts.CandidateError as exc:
-        raise Stop(str(exc)) from None
     except release_candidate_capacity.InvalidCapacity as exc:
         raise Stop(str(exc)) from None
 
@@ -571,7 +567,7 @@ def ours(repo: str, workflow: str, key: str) -> dict | None:
     if marker and selected:
         if key == "acceptance" and data.get("acceptance_identity") and selected.get("attempt") != 1:
             raise Stop("acceptance discovery requires the original run attempt")
-        if key == "acceptance" and (data.get("acceptance_capacity") is not None or (data.get("acceptance_identity") or {}).get("runner")):
+        if key == "acceptance" and data.get("acceptance_capacity") is not None:
             selected_id = selected.get("databaseId")
             if type(selected_id) is not int or selected_id <= 0:
                 raise Stop("capacity replacement run ID is invalid")
@@ -1489,8 +1485,7 @@ def compose_fix_landed(run: dict) -> dict | None:
     return {"failed_run": run_id, "failed_conclusion": run.get("conclusion"), "failed_head": head, "main": main_head, "plugins": changed}
 
 
-def acceptance_identity(version: str, snapshot: dict | None, ref: str | None = None,
-                        runner_label: str | None = None, reviewed_head: str | None = None) -> dict:
+def acceptance_identity(version: str, snapshot: dict | None, ref: str | None = None) -> dict:
     """Separate immutable release bytes from the explicitly selected harness commit."""
     captured = snapshot if snapshot is not None else release_snapshot.capture(version)
     previous = state().get("snapshot")
@@ -1503,20 +1498,10 @@ def acceptance_identity(version: str, snapshot: dict | None, ref: str | None = N
     commit = commit.strip()
     if code or not release_snapshot.COMMIT.fullmatch(commit):
         raise Stop("cannot resolve acceptance harness commit")
-    binding = None
-    if runner_label is not None:
-        if ref != "main" or snapshot is None:
-            raise Stop("alternate acceptance requires an immutable snapshot and explicit corrected main")
-        try:
-            binding = release_acceptance_runner.bind(CORE, hzlib.ghj, captured, commit, reviewed_head, runner_label)
-        except core_facts.CandidateError as exc:
-            raise Stop(str(exc)) from None
-    elif not release_snapshot.workflow_supports_snapshot(commit):
+    if not release_snapshot.workflow_supports_snapshot(commit):
         raise Stop("acceptance harness cannot enforce the release snapshot")
-    result = {"version": version, "app_version": version, "snapshot": captured, "ref": selected, "commit": commit}
-    if binding is not None:
-        result["runner"] = binding
-    return result
+    return {"version": version, "app_version": version, "snapshot": captured,
+            "ref": selected, "commit": commit}
 
 
 def rerun_rejection(replace_run: int, identity: dict, reason: str | None) -> dict | None:
@@ -1567,22 +1552,10 @@ def rerun_rejection(replace_run: int, identity: dict, reason: str | None) -> dic
 
 def acceptance_step(version: str, timeout: float, snapshot: dict | None = None,
                     harness_ref: str | None = None, replace_run: int | None = None,
-                    replace_reason: str | None = None, *, runner_label: str | None = None,
-                    reviewed_head: str | None = None) -> int:
+                    replace_reason: str | None = None) -> int:
     """Every path uses the same persisted marker and resolved harness identity."""
     data = state()
     identity = data.get("acceptance_identity")
-    replacement_updates = None
-    if runner_label is not None:
-        try:
-            release_acceptance_runner.request_state(data, version, runner_label, reviewed_head, replace_run)
-        except core_facts.CandidateError as exc:
-            raise Stop(str(exc)) from None
-        if harness_ref != "main" or not reviewed_head or snapshot is None or not replace_run or not identity:
-            raise Stop("alternate acceptance needs an exact reviewed main, immutable snapshot and rejected run replacement")
-        existing = identity.get("runner")
-        if existing and (existing.get("label") != runner_label or existing.get("head") != reviewed_head):
-            raise Stop("alternate acceptance runner or reviewed head changed")
     if identity is not None:
         if identity.get("version") != version or (snapshot is not None and identity.get("snapshot") != snapshot):
             raise Stop("acceptance release identity changed")
@@ -1624,32 +1597,17 @@ def acceptance_step(version: str, timeout: float, snapshot: dict | None = None,
                 f"  job: {job['name']}: {job['conclusion']}" for job in rerun["jobs"]]
         if harness_ref is None:
             raise Stop("replacement requires an explicit corrected harness ref")
-        if runner_label is not None:
-            if data.get("finished") is not True or data.get("accepted") is not False or data.get("acceptance_snapshot_mode") is not True:
-                raise Stop("alternate acceptance requires the finished rejected snapshot receipt")
-            replacement = acceptance_identity(version, identity["snapshot"], harness_ref, runner_label, reviewed_head)
-        else:
-            replacement = acceptance_identity(version, identity["snapshot"], harness_ref)
+        replacement = acceptance_identity(version, identity["snapshot"], harness_ref)
         if replacement["commit"] == identity["commit"]:
             raise Stop("replacement requires a different corrected harness commit")
         history = data.get("acceptance_attempts", [])
         archive = {key: value for key, value in state().items() if key.startswith("acceptance") and key != "acceptance_attempts"}
         archive["verdict"] = lines
-        if runner_label is not None:
-            original_receipt = release_rejection.private_read(paths()[1])
-            archive.update(receipt_sha256=hashlib.sha256(original_receipt).hexdigest(),
-                           receipt_base64=base64.b64encode(original_receipt).decode())
         if rerun is not None:
             archive["rerun_rejection"] = rerun
-        updates = dict(finished=False, acceptance_run=None, acceptance_attempts=history + [archive], acceptance_identity=replacement,
-                       acceptance=None, acceptance_marker=None, acceptance_commit=None,
-                       acceptance_run_id=None, acceptance_run_attempt=None, acceptance_requested=False)
-        if runner_label is not None and len(json.dumps(state() | updates).encode()) > release_rejection.LIMIT:
-            raise Stop("alternate acceptance archive would exceed the receipt size limit")
-        if runner_label is not None:
-            replacement_updates = updates  # Keep the exact rejected receipt active until the last no-send check passes.
-        else:
-            remember(**updates)
+        remember(finished=False, acceptance_run=None, acceptance_attempts=history + [archive], acceptance_identity=replacement,
+                 acceptance=None, acceptance_marker=None, acceptance_commit=None,
+                 acceptance_run_id=None, acceptance_run_attempt=None, acceptance_requested=False)
         identity = replacement
     if identity is None:
         # Never silently adopt the legacy timestamp-only attempt or overwrite its rejection.
@@ -1657,34 +1615,20 @@ def acceptance_step(version: str, timeout: float, snapshot: dict | None = None,
             raise Stop("legacy acceptance has no bound identity; preserve it for explicit recovery")
         identity = acceptance_identity(version, snapshot, harness_ref)
         remember(acceptance_identity=identity, snapshot=identity["snapshot"], acceptance_snapshot_mode=snapshot is not None)
-    if replacement_updates is None and state().get("acceptance_commit") not in (None, identity["commit"]):
+    if state().get("acceptance_commit") not in (None, identity["commit"]):
         raise Stop("acceptance marker belongs to a different harness commit")
 
     def act() -> None:
-        nonlocal replacement_updates
-        if replacement_updates is None and (ours(CORE, "acceptance.yml", "acceptance") or state().get("acceptance_requested")):
+        if ours(CORE, "acceptance.yml", "acceptance") or state().get("acceptance_requested"):
             return
-        pinned = identity["snapshot"]
-        extra = {}
-        if binding := identity.get("runner"):
-            code, current = hzlib.gh("api", f"repos/{CORE}/commits/main", "--jq", ".sha")
-            if code or current.strip() != identity["commit"]:
-                raise Stop("reviewed main cannot be confirmed before alternate acceptance; no request sent, original receipt retained")
-            extra["macos_runner"] = binding["label"]
         marker = "release-" + uuid.uuid4().hex
-        request = {**(replacement_updates or {}), "acceptance_marker": marker,
-                   "acceptance_commit": identity["commit"], "acceptance_requested": True}
-        if replacement_updates is not None and len(json.dumps(state() | request).encode()) > release_rejection.LIMIT:
-            raise Stop("alternate acceptance archive would exceed the receipt size limit")
-        remember(**request)
-        replacement_updates = None  # Any failure from here may have crossed the network: reconcile, never re-POST.
+        remember(acceptance_marker=marker, acceptance_commit=identity["commit"], acceptance_requested=True)
+        pinned = identity["snapshot"]
         dispatch(CORE, "acceptance.yml", identity["ref"], "acceptance", expected_version=version,
                  expected_app_version=identity["app_version"], expected_wheel_sha256=pinned["wheel_sha256"],
-                 expected_profile_sha256=pinned["profile_sha256"], release_attempt=marker, **extra)
+                 expected_profile_sha256=pinned["profile_sha256"], release_attempt=marker)
 
     def done() -> bool:
-        if replacement_updates is not None:
-            return False
         run = ours(CORE, "acceptance.yml", "acceptance")
         if run and snapshot is not None:
             release_snapshot_freeze()
@@ -1704,8 +1648,7 @@ def acceptance_receipt_matches(result: dict[str, Any], run_id: int, attempt: int
             and published.get("expect_version") == identity["version"]
             and published.get("expect_app_version") == identity["app_version"]
             and published.get("core_wheel_sha256") == identity["snapshot"]["wheel_sha256"]
-            and published.get("profile_sha256") == identity["snapshot"]["profile_sha256"]
-            and release_acceptance_runner.receipt_matches(result, identity, os_name))
+            and published.get("profile_sha256") == identity["snapshot"]["profile_sha256"])
 
 
 def acceptance_receipts(run_id: int, identity: dict) -> bool:
@@ -1760,11 +1703,6 @@ def verdict(run_id: int) -> tuple[bool, list[str]]:
                        and {job.get("name") for job in required_jobs} == expected
                        and all(job.get("conclusion") == "success" for job in required_jobs))
     good = info.get("status") == "completed" and info.get("conclusion") == "success" and successful_jobs
-    if good and identity.get("runner"):
-        try:
-            release_acceptance_runner.validate_jobs(identity, run_id)
-        except (core_facts.CandidateError, release_candidate_capacity.InvalidCapacity) as exc:
-            return False, [f"alternate acceptance: {exc}"]
     _, log = hzlib.gh("run", "view", str(run_id), "-R", CORE, "--log")
     lines = []
     counts = {name: 0 for name in expected}
@@ -2557,16 +2495,11 @@ def release_core(
     request: str, intro: str, timeout: float, snapshot_acceptance: bool = False, harness_ref: str | None = None,
     replace_run: int | None = None, composite_run: int | None = None, candidate_gate: bool = False,
     wait_previous: float | None = None, refresh: bool = False, replace_reason: str | None = None,
-    reviewed_queue: bool = False, runner_label: str | None = None, reviewed_head: str | None = None,
+    reviewed_queue: bool = False,
 ) -> int:
     from . import exact_queue
 
     prior = state()
-    if runner_label is not None:
-        try:
-            release_acceptance_runner.request_state(prior, request, runner_label, reviewed_head, replace_run)
-        except core_facts.CandidateError as exc:
-            raise Stop(str(exc)) from None
     if prior.get("merge_route") == exact_queue.MODE and request in (prior.get("version"), "patch"):
         reviewed_queue = True  # a restart can never fall back to the legacy direct merge
         snapshot_acceptance = True
@@ -2575,8 +2508,7 @@ def release_core(
         raise Stop("reviewed queue needs the owned release-PR freeze and original first-attempt evidence")
     if flow == release_flow.TAG_ON_MAIN:
         return release_core_on_main(request, intro, timeout, snapshot_acceptance, harness_ref, replace_run,
-                                    candidate_gate, wait_previous, refresh, replace_reason,
-                                    **({"runner_label": runner_label, "reviewed_head": reviewed_head} if runner_label else {}))
+                                    candidate_gate, wait_previous, refresh, replace_reason)
     if refresh:
         raise Stop("--refresh is only for a tag-on-green-main release (flag HZ_RELEASE_TAG_ON_MAIN at its start)")
     freeze, _ = paths()
@@ -2656,8 +2588,7 @@ def release_core(
     pypi_step("heinzel", version, tag, timeout)
     compose_step(version, timeout)
     snapshot = pinned_snapshot(version) if snapshot_acceptance else None
-    run_id = acceptance_step(version, timeout, snapshot, harness_ref, replace_run, replace_reason,
-                             **({"runner_label": runner_label, "reviewed_head": reviewed_head} if runner_label else {}))
+    run_id = acceptance_step(version, timeout, snapshot, harness_ref, replace_run, replace_reason)
     # Past the handoff the shared sentinel may belong to the next candidate (N+1): the tail never touches it.
     if owned_hold:
         release_snapshot_freeze()
@@ -2932,8 +2863,7 @@ def tag_check(version: str) -> None:
 
 def release_core_on_main(request: str, intro: str, timeout: float, snapshot_acceptance: bool, harness_ref: str | None,
                          replace_run: int | None, candidate_gate: bool, wait_previous: float | None,
-                         refresh: bool, replace_reason: str | None = None, *, runner_label: str | None = None,
-                         reviewed_head: str | None = None) -> int:
+                         refresh: bool, replace_reason: str | None = None) -> int:
     version, bump_kind = next_version(request)
     rejection_guard(version)
     if RECEIPT_OVERRIDE is None and state().get("finished") and state().get("version") != version:
@@ -2970,8 +2900,7 @@ def release_core_on_main(request: str, intro: str, timeout: float, snapshot_acce
     pypi_step("heinzel", version, tag, timeout)
     compose_step(version, timeout)
     snapshot = pinned_snapshot(version) if snapshot_acceptance else None
-    run_id = acceptance_step(version, timeout, snapshot, harness_ref, replace_run, replace_reason,
-                             **({"runner_label": runner_label, "reviewed_head": reviewed_head} if runner_label else {}))
+    run_id = acceptance_step(version, timeout, snapshot, harness_ref, replace_run, replace_reason)
     good, lines = verdict(run_id)
     publish_acceptance(version, run_id, good)
     if good:
@@ -3275,8 +3204,6 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--reviewed-queue", action="store_true", help="use the active queue after independent candidate review; Core CI creates the tag")
     parser.add_argument("--snapshot-acceptance", action="store_true", help="allow core merges during acceptance of pinned release bytes")
     parser.add_argument("--acceptance-ref", help="explicit corrected acceptance harness ref")
-    parser.add_argument("--acceptance-runner", help="explicit alternate runner approved by corrected-main Core policy")
-    parser.add_argument("--acceptance-head", help="exact reviewed protected-main commit for the alternate runner")
     parser.add_argument("--replace-acceptance-run", type=int, help="preserve and replace this exact completed rejected attempt")
     parser.add_argument("--replace-reason", help="written infra-only reason; required when the rejected run was rerun after "
                         "its bound attempt (that attempt is archived, later attempts are never credited)")
@@ -3324,14 +3251,6 @@ def main(argv: list[str]) -> int:
         parser.error("--prepare-only requires an exact core version and no release action options")
     if (args.acceptance_ref or args.replace_acceptance_run) and (args.plugin or args.pause or args.prepare_only):
         parser.error("acceptance identity options require a core release")
-    if (args.acceptance_runner is not None or args.acceptance_head is not None) and (
-                not args.acceptance_runner or not args.acceptance_head or not re.fullmatch(r"[a-f0-9]{40}", args.acceptance_head)
-                or args.acceptance_ref != "main" or not args.replace_acceptance_run or not args.snapshot_acceptance
-                or not args.version or not EXACT_VERSION.fullmatch(args.version) or args.plugin or args.pause or args.prepare_only
-                or args.absorb or args.reject_release or args.drop_candidate or args.candidate_capacity
-                or args.reviewed_queue or args.use_candidate_composite or args.open_pr or args.refresh or args.candidate_gate
-                or args.waive_job is not None or args.owner_quote is not None):
-        parser.error("alternate acceptance requires exact version, --snapshot-acceptance, --acceptance-ref main, --replace-acceptance-run, --acceptance-head and --acceptance-runner")
     if args.replace_reason is not None and not args.replace_acceptance_run:
         parser.error("--replace-reason requires --replace-acceptance-run")
     rejection_fields = (args.failed_compose_run, args.failed_compose_attempt, args.expected_receipt_sha256,
@@ -3441,13 +3360,11 @@ def main(argv: list[str]) -> int:
                     args.version, args.intro, args.timeout * 60, args.snapshot_acceptance, args.acceptance_ref,
                     args.replace_acceptance_run, args.use_candidate_composite, candidate_gate=args.candidate_gate,
                     wait_previous=wait_previous, replace_reason=args.replace_reason,
-                    **({"runner_label": args.acceptance_runner, "reviewed_head": args.acceptance_head} if args.acceptance_runner else {}),
                 )
             return release_core(
                 args.version, args.intro, args.timeout * 60, args.snapshot_acceptance, args.acceptance_ref,
                 args.replace_acceptance_run, candidate_gate=args.candidate_gate, wait_previous=wait_previous,
                 refresh=args.refresh, replace_reason=args.replace_reason, reviewed_queue=args.reviewed_queue,
-                **({"runner_label": args.acceptance_runner, "reviewed_head": args.acceptance_head} if args.acceptance_runner else {}),
             )
         finally:
             free_global_lock()

@@ -36,9 +36,9 @@ MAX_PATH = 1024  # bytes of one path, UTF-8
 EVENTS = ("pull_request", "workflow_dispatch")
 KEYS = frozenset((
     "policy", "repository", "workflow", "recorder", "aggregate", "expected_jobs", "quarantine", "test_jobs",
-    "lanes", "required_contexts", "focused_job", "not_ci", "judge_workflow", "gate_checks", "acceptance",
+    "lanes", "required_contexts", "focused_job", "not_ci", "judge_workflow", "gate_checks",
 ))
-OPTIONAL_KEYS = frozenset(("lanes", "focused_job", "gate_checks", "judge_workflow", "acceptance"))  # Optional reviewed extensions; never inferred.
+OPTIONAL_KEYS = frozenset(("lanes", "focused_job", "gate_checks", "judge_workflow"))  # Core's focused-plan and merge-gate parts: a policy may drop them
 GATE_ROLES = frozenset(("coverage", "sonar"))  # what each check the merge-gate workflow posts judges
 QUARANTINE_KEYS = frozenset(("registry", "plan", "runs", "idle"))
 LANE_KEYS = frozenset(("runner", "python", "kind"))
@@ -91,7 +91,6 @@ class Policy:
     gate_checks: dict[str, str]  # role (coverage, sonar) -> the check's name; {} when the policy has no merge-gate checks
     not_ci: tuple[str, ...]
     ci_except: frozenset[str]
-    acceptance: dict[str, Any] | None = None  # Validated by the acceptance consumer only when explicitly requested.
 
     def expected_jobs(self, event: str) -> dict[str, str]:
         """The complete candidate inventory of `event`: job name -> its required conclusion."""
@@ -234,10 +233,8 @@ def parse(raw: bytes, commit: str) -> Policy:
     ci_except = frozenset(_names(raw_not_ci["except"], "not-CI exceptions", empty=True))
     require(all(repo_path(p) and not set(p) & set("[*?") for p in ci_except),
             "release policy not-CI exception is not a literal repository path")
-    acceptance = data.get("acceptance")
-    require("acceptance" not in data or isinstance(acceptance, dict), "release policy acceptance malformed")
     return Policy(commit, repository, workflow, recorder, judge, aggregate, jobs, quarantine, test_jobs, lanes, contexts,
-                  focused, dict(gates), not_ci, ci_except, acceptance)
+                  focused, dict(gates), not_ci, ci_except)
 
 
 def at_commit_api(get: Callable[[str], Any], commit: str) -> Policy:
