@@ -91,13 +91,14 @@ def record_head_verdict(store: Any, digest: str, head: str, data: dict[str, Any]
             store.save(REJECT_LEDGER, digest, {"entries": [*rejects, dict(data, head=head)]})
 
 
-def head_verdict(store: Any, digest: str, head: str) -> dict[str, Any] | None:
+def head_verdict(store: Any, digest: str, head: str, scope: str = "") -> dict[str, Any] | None:
     """The verdict that counts for (digest, head): a reject of the digest at ANY head blocks (until the protected content, so the
     digest, changes); else the newest approval recorded for exactly this head. An approval for another head never counts."""
     rejects = (store.load(REJECT_LEDGER, digest) or {}).get("entries", [])
     if rejects:
         return dict(rejects[0])
     entries = (store.load(VERDICT_LEDGER, f"{digest}.{head}") or {}).get("entries", [])
+    entries = [e for e in entries if not e.get("scope") or e["scope"] == scope]
     return dict(max(enumerate(entries), key=lambda ie: (str(ie[1].get("at", "")), ie[0]))[1]) if entries else None
 
 

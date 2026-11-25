@@ -48,6 +48,7 @@ def full(tmp_path, monkeypatch, request):
         "copier.yml": f'heinzel_version:\n  type: str\n  default: "{old}" # bumped by the release process\n  when: false\n',
         release_scope.ACCEPTANCE: f'FOREGROUND_UI = {{\n    "{old}": ("ui", "serve"),\n}}\n',
         "CHANGELOG.md": "# Changelog\n",
+        "Makefile": "test-parallel:\n\tpytest tests\n",
     }
     workflow = direct_workflow()
     target = next(job for job in workflow["jobs"].values() if job.get("name") == "Coverage")
@@ -261,6 +262,29 @@ def test_release_head_cannot_replace_protected_execution_sources(full, path):
     _git(clone, "commit", "-q", "--amend", "-m", "changed source")
     with pytest.raises(Refuse, match="changes protected workflow"):
         full_ci.source_request(str(clone), base, _git(clone, "rev-parse", "HEAD"), "0.9.41")
+
+
+@pytest.mark.parametrize(("rename", "error"), [(False, "unsupported path"), (True, "modify existing regular files")])
+def test_hosted_registration_refuses_a_neutered_or_renamed_make_target(full, monkeypatch, rename, error):
+    from steuermaschine_heinzel.native import release_read
+    from steuermaschine_heinzel.native.release_lib import exact_queue
+
+    rt, _ctx, clone, base, _head = full
+    if rename:
+        _git(clone, "mv", "Makefile", "other.txt")
+    else:
+        (clone / "Makefile").write_text("test-parallel:\n\ttrue\n")
+        _git(clone, "add", "Makefile")
+    _git(clone, "commit", "-q", "--amend", "-m", "different workload")
+    head, tree = _git(clone, "rev-parse", "HEAD"), _git(clone, "rev-parse", "HEAD^{tree}")
+    # A local replacement would otherwise make git read the original harmless tree under the untrusted head SHA.
+    _git(clone, "replace", head, _head)
+    proof = release_read.CandidateProof(pr=12, head=head, base=base, tree=tree, run_id=99, run_attempt=1, job_count=12)
+    monkeypatch.setattr(release_read, "release_candidate_proof", lambda *args: proof)
+    monkeypatch.setattr(release_read, "release_dir", lambda: clone)
+    monkeypatch.setattr(exact_queue, "source_producers", lambda *args: ("0.9.41", {"builder"}))
+    with native(rt), pytest.raises(Refuse, match=error):
+        release_read.prepare_protected(12, head, base, tree, "d" * 64)
 
 
 def test_generated_release_validation_preserves_transitive_execution_inputs(full):

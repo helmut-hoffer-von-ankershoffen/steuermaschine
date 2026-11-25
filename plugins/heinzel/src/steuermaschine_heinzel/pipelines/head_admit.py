@@ -81,7 +81,8 @@ def _text_at(ctx: Ctx, wt: str, rev: str, path: str) -> str | None:
 def protected_changes(ctx: Ctx) -> list[str]:
     """The paths this head changes against main that need a blocking review. A diff that cannot be read refuses (fail closed)."""
     wt = ctx.subject.facts["worktree"]
-    done = ctx.providers.commands.run(["git", "-C", wt, "diff", "--name-only", "-z", "origin/main...HEAD"], timeout=120)
+    # Match the hosted inventory, which includes the removed source of each rename.
+    done = ctx.providers.commands.run(["git", "-C", wt, "diff", "--no-renames", "--name-only", "-z", "origin/main...HEAD"], timeout=120)
     if done.rc != 0:
         raise Refuse(f"cannot read the changed paths of {wt} against origin/main: {(done.err or done.out).strip()[:200]}", f"git -C {wt} fetch origin main")
     names = [n for n in str(done.out).split("\0") if n]
@@ -119,7 +120,8 @@ def protected_review(ctx: Ctx) -> tuple[str, str, str]:
     path.write_text(record)
     brief = (f"Review the protected paths changed by {ctx.subject.label} at {head[:12]}: {', '.join(changed)}.\n"
              f"Read the diff of exactly these paths (git -C {wt} diff origin/main...HEAD -- PATH). Approve the digest {digest[:12]}... only if they weaken no "
-             "gate, test, threshold or publish step. The digest is sha256 of the record: each protected file with the id of its content at this head; your verdict counts for exactly this head (--head): a new head needs a new verdict.")
+             "gate, test, threshold or publish step. The digest is sha256 of the record: each protected file with the id of its content at this head; "
+             "your verdict counts for exactly this head (--head): a new head needs a new verdict.")
     return digest, brief, str(path)
 
 

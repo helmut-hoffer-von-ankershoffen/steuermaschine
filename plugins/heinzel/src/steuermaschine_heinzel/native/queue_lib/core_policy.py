@@ -247,7 +247,7 @@ def at_commit_api(get: Callable[[str], Any], commit: str) -> Policy:
 
 def _git_env() -> dict[str, str]:
     """The environment of every git read here: no inherited GIT_* variable may redirect it to another repository."""
-    return child_environment(drop_prefixes=("GIT_",))
+    return {**child_environment(drop_prefixes=("GIT_",)), "GIT_NO_REPLACE_OBJECTS": "1"}
 
 
 def git_read(repo: str | Path, *args: str, stdin: bytes | None = None) -> bytes:

@@ -52,10 +52,11 @@ def rel(tmp_path, monkeypatch):
             return SimpleNamespace(returncode=0, stdout=world["notes"], stderr="")
         if "push" in command:
             world["pushed"] = True
-        return SimpleNamespace(returncode=0, stdout="https://github.com/example/heinzel/pull/820\n", stderr="")
+        return SimpleNamespace(returncode=0, stdout=f"https://github.com/{module.CORE}/pull/820\n", stderr="")
 
     monkeypatch.setattr(module.subprocess, "run", run)
     opened = {"number": 820, "state": "OPEN", "title": f"chore(release): {TAG}", "baseRefName": "main", "headRefOid": HEAD,
+              "headRefName": f"release/{TAG}", "isCrossRepository": False,
               "autoMergeRequest": None, "body": world["notes"]}
     world["view"] = opened
     monkeypatch.setattr(module.hzlib, "ghj", lambda *a, **k: world["view"] if a[:2] == ("pr", "view") else pytest.fail(str(a)))
@@ -115,7 +116,8 @@ def test_another_unfinished_release_in_the_receipt_is_preserved(rel, capsys):
     assert "belongs to the unfinished release 0.9.40" in capsys.readouterr().err and rel.state() == {"version": "0.9.40"}
 
 
-@pytest.mark.parametrize("change", [{"autoMergeRequest": {"enabledAt": "now"}}, {"title": "release"}, {"headRefOid": "c" * 40}, {"body": ""}, {"state": "MERGED"}])
+@pytest.mark.parametrize("change", [{"autoMergeRequest": {"enabledAt": "now"}}, {"title": "release"}, {"headRefOid": "c" * 40}, {"body": ""},
+                                    {"state": "MERGED"}, {"number": 821}, {"isCrossRepository": True}])
 def test_an_opened_pr_that_is_not_the_checked_one_stops_and_is_preserved(rel, capsys, change):
     rel.world["view"] = rel.world["view"] | change
     assert rel.main(["0.9.41", "--open-pr", "--reviewed-head", HEAD]) == 1
@@ -168,3 +170,25 @@ def test_a_rejected_release_is_refused_before_the_pr_is_opened(rel, capsys, monk
     assert rel.main(["0.9.41", "--open-pr", "--reviewed-head", HEAD]) == 1
     assert "release rejection history blocks dispatch" in capsys.readouterr().err
     assert not rel.world["calls"]
+
+
+def test_open_records_an_exact_pr_when_starting_without_a_receipt(rel):
+    assert rel.state() == {}
+    assert rel.main(["0.9.41", "--open-pr", "--reviewed-head", HEAD]) == 0
+    receipt = rel.state()
+    assert receipt["version"] == "0.9.41"
+    assert receipt["release_pr_opened"]["pr"] == 820 and receipt["release_pr_opened"]["head"] == HEAD
+
+
+@pytest.mark.parametrize("missing", ["autoMergeRequest", "number"])
+def test_open_keeps_an_unproven_pr_without_recording_it(rel, missing):
+    rel.world["view"].pop(missing)
+    assert rel.main(["0.9.41", "--open-pr", "--reviewed-head", HEAD]) == 1
+    assert rel.state() == {}
+
+
+def test_open_preserves_a_finished_receipt_of_another_version(rel):
+    rel.remember(version="0.9.40", finished=True)
+    before = rel.state()
+    assert rel.main(["0.9.41", "--open-pr", "--reviewed-head", HEAD]) == 0
+    assert rel.state() == before

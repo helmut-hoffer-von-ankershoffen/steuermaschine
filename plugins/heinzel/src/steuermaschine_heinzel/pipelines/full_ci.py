@@ -27,10 +27,7 @@ def source_request(clone: str, base: str, head: str, version: str) -> dict[str, 
         prospective = core_policy.blobs_at(clone, head, paths)
         if prospective != protected:
             raise Refuse("full-candidate request changes protected workflow, batch or verification sources")
-        metadata = {side: core_policy.blobs_at(clone, commit, set(release_scope.SCOPE))
-                    for side, commit in (("base", base), ("head", head))}
-        raw = core_policy.git_read(clone, "diff", "--raw", "--no-abbrev", "--no-renames", "-z", base, head, "--")
-        release_scope.validate(lambda side, path: metadata[side][path], raw, version)
+        validate_generated_release(clone, base, head, version)
     except (OSError, ValueError, TypeError, KeyError, core_policy.CandidateError) as exc:
         raise Refuse(f"cannot bind full-candidate source review: {exc}") from None
     return {"repository": policy.repository, "base": base, "head": head,
@@ -38,3 +35,11 @@ def source_request(clone: str, base: str, head: str, version: str) -> dict[str, 
             "source_sha256": {path: hashlib.sha256(raw).hexdigest() for path, raw in sorted(protected.items())},
             "validation_requested": "full-first-attempt", "execution_evidence": None,
             "review_required": "Verify every required job condition and matrix, the actual batch producer, and that no focused reservation is needed."}
+
+
+def validate_generated_release(clone: str, base: str, head: str, version: str) -> None:
+    """Only generated version edits and changelog prose may differ from the trusted base."""
+    metadata = {side: core_policy.blobs_at(clone, commit, set(release_scope.SCOPE))
+                for side, commit in (("base", base), ("head", head))}
+    raw = core_policy.git_read(clone, "diff", "--raw", "--no-abbrev", "--no-renames", "--ignore-submodules=none", "-z", base, head, "--")
+    release_scope.validate(lambda side, path: metadata[side][path], raw, version)

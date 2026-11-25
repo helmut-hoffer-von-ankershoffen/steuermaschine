@@ -12,13 +12,16 @@ import pytest
 
 from steuermaschine.app import Runtime
 from steuermaschine.config import Project
+from steuermaschine.defaults import Subprocess
 from steuermaschine.engine import DIGEST_KIND, Ctx, Refuse, Subject, Wait
 from steuermaschine.github.testing import FakeGh
 from steuermaschine.native import NativeRuntime, using
 from steuermaschine.plugins import stack_of
 from steuermaschine.testing import fake_providers
 from steuermaschine.testing.fakes import FakeVcs
+from steuermaschine_heinzel.native import protected
 from steuermaschine_heinzel.native.queue import QueueEntry, QueueList
+from steuermaschine_heinzel.native.queue_lib import main_plan
 from steuermaschine_heinzel.native.ship import HeadResult
 from steuermaschine_heinzel.pipelines import common, head_admit
 from steuermaschine_heinzel.plugin import plugin
@@ -208,6 +211,55 @@ def test_a_protected_path_stops_for_a_digest_of_exactly_these_paths(tmp_path, pa
         digest, brief, under = head_admit.protected_review(ctx)
     assert len(digest) == 64 and path in brief and Path(under).read_text().count(path) == 1 and "src/a.py" not in Path(under).read_text()
     assert rt.providers.store.load(DIGEST_KIND, digest)["check"]["head"] == HEAD  # an approval needs the head's green check receipt
+
+
+@pytest.mark.parametrize("destination", [".github/workflows/new.yml", "docs/workflow.yml"])
+def test_protected_rename_local_review_matches_hosted_digest(tmp_path, monkeypatch, destination):
+    commands = Subprocess()
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+
+    def git(*args: str) -> str:
+        result = commands.run(["git", "-C", str(worktree), "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", *args])
+        assert result.rc == 0, result.err
+        return result.out.strip()
+
+    git("init", "--quiet")
+    git("config", "diff.renames", "true")
+    source = ".github/workflows/old.yml"
+    (worktree / source).parent.mkdir(parents=True)
+    (worktree / source).write_text("name: workflow\n")
+    git("add", source)
+    git("commit", "-qm", "test: add workflow")
+    base = git("rev-parse", "HEAD")
+    git("update-ref", "refs/remotes/origin/main", base)
+    (worktree / destination).parent.mkdir(parents=True, exist_ok=True)
+    git("mv", source, destination)
+    git("commit", "-qm", "test: rename workflow")
+    head = git("rev-parse", "HEAD")
+    blob = git("rev-parse", f"HEAD:{destination}")
+    assert git("diff", "--name-status", "origin/main...HEAD") == f"R100\t{source}\t{destination}"
+
+    monkeypatch.setattr(main_plan, "_snapshot", lambda pr, checked_head, main: 1)
+    monkeypatch.setattr(main_plan, "_raw", lambda path, ref: (None, True))
+    monkeypatch.setattr(main_plan.hzlib, "ghj", lambda *args, **kwargs: [[
+        {"filename": destination, "previous_filename": source, "sha": blob, "status": "renamed"},
+    ]])
+    hosted = main_plan.protected_blobs("123", head, base)
+    expected = {source: "removed"}
+    if destination.startswith(".github/"):
+        expected[destination] = blob
+    assert hosted == expected
+
+    rt = runtime(tmp_path)
+    rt.providers.commands = commands
+    ctx = context(rt, worktree)
+    ctx.subject.key = head
+    monkeypatch.setattr(head_admit.statedir, "path", lambda name: tmp_path / name)
+    with native(rt):
+        digest, _, record = head_admit.protected_review(ctx)
+    hosted_digest, hosted_record = protected.record(hosted)
+    assert digest == hosted_digest and Path(record).read_text() == hosted_record
 
 
 def test_an_ordinary_head_has_no_stop_and_other_protected_files_change_the_digest(tmp_path):

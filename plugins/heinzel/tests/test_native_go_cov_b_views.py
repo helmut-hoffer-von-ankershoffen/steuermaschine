@@ -149,7 +149,7 @@ def test_bugs_line(tmp_path):
 def test_wait_view(tmp_path, monkeypatch):
     L = views.legacy
     monkeypatch.setattr(L, "gate_hold_since", lambda d: NOW - 600)
-    monkeypatch.setattr(L, "incident_frozen", lambda d: True)
+    (tmp_path / "merge-freeze").touch()
     monkeypatch.setattr(L, "release_holds", lambda d: ["h1"])
     monkeypatch.setattr(L, "queue_state", lambda d: {"items": [{"key": "1", "status": "queued", "waiting_since": NOW - 120}]})
     monkeypatch.setattr(views, "load_average", lambda: 2.0)
@@ -161,7 +161,7 @@ def test_wait_view(tmp_path, monkeypatch):
     assert "deferred CI" in view.biggest_wait and "go waits on   the thing" in text and "run 77" in text
     assert "incident merge freeze" in text and "10 min" in text and "queue         item 1: waiting 2 min" in text
     monkeypatch.setattr(L, "gate_hold_since", lambda d: None)
-    monkeypatch.setattr(L, "incident_frozen", lambda d: False)
+    (tmp_path / "merge-freeze").unlink()
     monkeypatch.setattr(L, "release_holds", lambda d: [])
     monkeypatch.setattr(views, "load_average", lambda: None)
     view = views.wait(w, {"prs": {"unknown": "gh down"}}, go())

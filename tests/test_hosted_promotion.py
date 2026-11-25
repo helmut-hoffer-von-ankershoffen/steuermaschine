@@ -59,7 +59,11 @@ def test_required_step_and_hosted_runner_cannot_be_omitted():
         hosted.good_job(job, ("Tests",))
 
 
-def test_hosted_evidence_rejects_identity_and_artifact_changes(monkeypatch):
+@pytest.mark.parametrize(("branch", "split", "mac"), [
+    ("feature", False, None), ("main", False, "macos-latest"), ("main", True, "macos-latest"),
+    ("main", True, "macos-15"),
+])
+def test_hosted_evidence_rejects_identity_and_artifact_changes(monkeypatch, branch, split, mac):
     import copy
     import hashlib
     import io
@@ -84,9 +88,16 @@ def test_hosted_evidence_rejects_identity_and_artifact_changes(monkeypatch):
                 "steps": [{"name": step, "status": "completed", "conclusion": "success"} for step in steps]}
 
     run = {"id": 1, "run_attempt": 1, "status": "completed", "conclusion": "success", "event": "push",
-           "path": ".github/workflows/ci.yml", "head_sha": sha, "head_branch": "feature",
+           "path": ".github/workflows/ci.yml", "head_sha": sha, "head_branch": branch,
            "repository": {"id": 3}, "head_repository": {"id": 3}}
     jobs = [job("check", check_steps), job("Test (ubuntu-24.04, Python 3.15)", ("Tests",))]
+    if mac:
+        mac_steps = ("Require native Apple Silicon Python 3.15", "Tests") if mac == "macos-15" else ("Tests",)
+        mac_job = job(f"Test ({mac}, Python 3.15)", mac_steps) | {"labels": [mac]}
+        jobs.extend((mac_job, job("badge", ("Write badges/coverage.svg",))))
+    if split:
+        jobs[0]["name"] = "Integration checks"
+        jobs.append(job("check", ("Set up job", "Require integration and test results", "Complete job")))
     artifact = {"id": 5, "name": "coverage", "expired": False, "size_in_bytes": len(data),
                 "digest": "sha256:" + hashlib.sha256(data).hexdigest(),
                 "workflow_run": {"id": 1, "head_sha": sha, "repository_id": 3, "head_repository_id": 3}}
@@ -111,7 +122,7 @@ def test_hosted_evidence_rejects_identity_and_artifact_changes(monkeypatch):
         if args[:3] == ("git", "remote", "get-url"):
             return f"https://github.com/{repo}.git".encode()
         if args[:3] == ("git", "branch", "--show-current"):
-            return b"feature"
+            return branch.encode()
         if args[:2] == ("git", "ls-files"):
             return ("\0".join(FILES) + "\0").encode()
         if args[:2] == ("gh", "api"):
@@ -122,6 +133,19 @@ def test_hosted_evidence_rejects_identity_and_artifact_changes(monkeypatch):
     monkeypatch.setattr(hosted, "command", command)
     monkeypatch.setattr(hosted, "trusted_sources", lambda _: None)
     assert hosted.verify(repo, 1, sha, Path("."))["artifact"] == 5
+    if mac == "macos-15":
+        mac_job["labels"] = ["macos-15-intel"]
+        with pytest.raises(hosted.Refused):
+            hosted.verify(repo, 1, sha, Path("."))
+        mac_job["labels"] = [mac]
+        mac_job["steps"][0]["conclusion"] = "skipped"
+        with pytest.raises(hosted.Refused):
+            hosted.verify(repo, 1, sha, Path("."))
+        mac_job["steps"][0]["conclusion"] = "success"
+        jobs.append(job("Test (macos-latest, Python 3.15)", ("Tests",)))
+        with pytest.raises(hosted.Refused):
+            hosted.verify(repo, 1, sha, Path("."))
+        jobs.pop()
     for section, key, bad in (("run", "head_sha", "b" * 40), ("run", "event", "pull_request"),
                               ("run", "run_attempt", 2), ("run", "path", "other.yml"),
                               ("artifact", "digest", "sha256:" + "0" * 64), ("artifact", "expired", True)):
@@ -134,6 +158,26 @@ def test_hosted_evidence_rejects_identity_and_artifact_changes(monkeypatch):
     with pytest.raises(hosted.Refused):
         hosted.verify(repo, 1, sha, Path("."))
     state["jobs"].append(saved)
+    bad_jobs = [job("unexpected", ("Tests",)), copy.deepcopy(jobs[0])]
+    for bad in bad_jobs:
+        state["jobs"].append(bad)
+        with pytest.raises(hosted.Refused):
+            hosted.verify(repo, 1, sha, Path("."))
+        state["jobs"].pop()
+    if split:
+        summary = state["jobs"][-1]
+        summary["steps"].append(copy.deepcopy(state["jobs"][0]["steps"][0]))
+        with pytest.raises(hosted.Refused):
+            hosted.verify(repo, 1, sha, Path("."))
+        summary["steps"].pop()
+        summary["steps"][1]["conclusion"] = "skipped"
+        with pytest.raises(hosted.Refused):
+            hosted.verify(repo, 1, sha, Path("."))
+        summary["steps"][1]["conclusion"] = "success"
+        summary["run_attempt"] = 2
+        with pytest.raises(hosted.Refused):
+            hosted.verify(repo, 1, sha, Path("."))
+        summary["run_attempt"] = 1
     state["jobs"][0]["steps"][0]["conclusion"] = "skipped"
     with pytest.raises(hosted.Refused):
         hosted.verify(repo, 1, sha, Path("."))

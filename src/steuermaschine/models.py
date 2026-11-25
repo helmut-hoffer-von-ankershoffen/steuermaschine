@@ -205,6 +205,7 @@ class Verdict(Model):
     model: str = ""
     notes: str = ""
     at: float = 0.0  # epoch seconds of the clock provider, as stored
+    scope: str = ""  # exact hosted operation, when the verdict uses its verified evidence
     kind: str = ""  # "" (prepared bytes) or "ci_change" (a commit whose CI paths changed since the last release)
 
 

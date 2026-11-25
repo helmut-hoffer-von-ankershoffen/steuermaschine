@@ -15,6 +15,7 @@ from typing import Any
 
 from steuermaschine.models import Model
 
+from ..queue_lib import hzlib
 from . import legacy, probes
 from . import views_moved as moved
 from .decide import classify_pr, known
@@ -381,12 +382,9 @@ def wait(w: probes.World, state: dict, go: Any) -> GoView:
     buckets = buckets_of(open_prs(state))
     since = legacy.gate_hold_since(w.state_dir)
     hold_minutes = round((now - since) / 60) if since is not None else None
-    holds = []
-    if legacy.incident_frozen(w.state_dir):
-        holds.append("incident merge freeze")
-    from ..journal_view import source
-
-    holds += [f"release hold {h}" for h in source(w).release_holds()]
+    scope = hzlib.freeze_scope(w.state_dir)
+    holds = [probes.FREEZE_STATUS[scope]] if scope != "open" else []
+    holds.extend(f"release hold {h}" for h in legacy.release_holds(w.state_dir))
     runs = state.get("runs") if known(state.get("runs")) and isinstance(state.get("runs"), list) else []
     acceptance = next((f"run {r.get('databaseId')}" for r in runs if r.get("workflowName") == "Acceptance" and r.get("status") != "completed"), "")
     load = load_average()

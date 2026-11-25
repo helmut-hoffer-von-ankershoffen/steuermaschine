@@ -450,7 +450,7 @@ def main_state() -> str:
     successfully merged --fixes-main PR followed by its successful main CI can supersede it. Pending runs,
     diagnostic, safety-fix or mitigation merges and reruns of the failed commit do not clear the pin.
     """
-    runs = hzlib.ghj("run", "list", "-R", hzlib.CORE, "--workflow", ci_workflow(), "--branch", "main", "-L", "10", "--json", "status,conclusion,databaseId,headSha,displayTitle,attempt")
+    runs = hzlib.ghj("run", "list", "-R", hzlib.CORE, "--workflow", ci_workflow(), "--branch", "main", "-L", "10", "--json", "status,conclusion,databaseId,headSha,displayTitle,attempt,event")
     runs = hzlib.resolve_main_runs(runs)
     if not isinstance(runs, list) or not runs:
         return "unknown"
@@ -482,6 +482,8 @@ def main_state() -> str:
             continue  # cancelled by a newer push (cancel-in-progress); a newer green or still-pending run covers its commits
         elif found is runs[0] and latest_required_timeout(runs):
             result = "red"  # retain the literal cancelled run and the existing pin unchanged
+        elif found is runs[0] and (push := cancelled_schedule_red_push(runs)):
+            result, failure = "red", push
         else:
             return "unknown"  # cancelled, skipped or undecided is not proof that tests failed
     pinned = load().get("main_failure", {})
@@ -493,14 +495,25 @@ def main_state() -> str:
                 or pinned["conclusion"] not in {"failure", "timed_out", "startup_failure"}
                 or not isinstance(fixes, list) or not all(isinstance(s, str) and re.fullmatch(r"[0-9a-f]{8,40}", s) for s in fixes)):
             return "unknown"
-        repaired = any(r["databaseId"] == pinned["databaseId"] and r["conclusion"] == "success" for r in done) and tier()
-        if main_lanes.is_macos_lane(pinned):  # a macOS-lane failure is cleared only by a newer green lane run
+        repaired = not pinned.get("cancelled_schedule") and any(r["databaseId"] == pinned["databaseId"] and r["conclusion"] == "success" for r in done) and tier()
+        if pinned.get("cancelled_schedule"):
+            if not any(r["conclusion"] == "success" and r.get("event") == "push" and r.get("attempt") == 1
+                       and not r.get("batch") and r["headSha"] in fixes for r in done):
+                result = "red"
+        elif main_lanes.is_macos_lane(pinned):  # a macOS-lane failure is cleared only by a newer green lane run
             if not (lane_done and lane_done[0]["conclusion"] == "success" and lane_done[0]["databaseId"] > pinned["databaseId"]):
                 result = "red"
         elif not repaired and not any(r["conclusion"] == "success" and any(r["headSha"].startswith(s) or any(member[1].startswith(s) for member in r.get("batch", {}).get("prs", [])) for s in fixes) for r in done):
             result = "red"
-    if failure and (not pinned or (fixes and (failure["databaseId"], failure["headSha"]) != (pinned["databaseId"], pinned["headSha"]))):
-        update(main_failure=failure)  # source evidence, never a receipt written by hand
+    if failure:
+        replace_pin = not pinned or (fixes and (failure["databaseId"], failure["headSha"]) != (pinned["databaseId"], pinned["headSha"]))
+        pin = failure if replace_pin else pinned
+        evidence = failure.get("cancelled_schedule")
+        recovery = evidence or pinned.get("cancelled_schedule")
+        if recovery:
+            pin = {**pin, "cancelled_schedule": recovery}
+        if pin != pinned:
+            update(main_failure=pin)  # source evidence, never a receipt written by hand
     elif result == "green" and pinned:
         update(main_failure={}, red_batch={})  # successful main CI at the actual fix's squash commit
     return result
@@ -521,6 +534,63 @@ def attempt_jobs(run_id: int, attempt: int) -> list[dict] | None:
     if any(not isinstance(j, dict) or not isinstance(j.get("name"), str) or not j["name"] for j in jobs):
         return None
     return jobs
+
+
+def direct_main_attempt(row: dict, workflow: str) -> list[dict] | None:
+    """Read the current attempt and bind every listed job to the exact main workflow run."""
+    run_id, attempt, sha = row["databaseId"], row.get("attempt"), row["headSha"]
+    if type(attempt) is not int or attempt < 1:
+        return None
+    run = hzlib.ghj("api", f"repos/{hzlib.CORE}/actions/runs/{run_id}", default=None)
+    if (not isinstance(run, dict) or type(run.get("id")) is not int or type(run.get("run_attempt")) is not int
+            or (run.get("id"), run.get("run_attempt"), run.get("head_sha"), run.get("head_branch"), run.get("path"),
+                run.get("event"), run.get("status"), run.get("conclusion"))
+            != (run_id, attempt, sha, "main", workflow, row["event"], "completed", row["conclusion"])
+            or any(not isinstance(run.get(key), dict) or run[key].get("full_name") != hzlib.CORE
+                   for key in ("repository", "head_repository"))):
+        return None
+    jobs = attempt_jobs(run_id, attempt)
+    if (not jobs or any(type(job.get("id")) is not int or job["id"] < 1
+                        or type(job.get("run_id")) is not int or type(job.get("run_attempt")) is not int
+                        or (job.get("run_id"), job.get("run_attempt"), job.get("head_sha"), job.get("status"))
+                        != (run_id, attempt, sha, "completed")
+                        or not isinstance(job.get("conclusion"), str)
+                        or job["conclusion"] not in {"success", "skipped", "neutral", "failure", "cancelled"}
+                        for job in jobs)
+            or len({job["id"] for job in jobs}) != len(jobs)):
+        return None
+    return jobs
+
+
+def cancelled_schedule_red_push(runs: list[dict]) -> dict:
+    """Exact failed main push evidence hidden by a later, inconclusive scheduled run."""
+    if len(runs) < 2:
+        return {}
+    schedule, push = runs[:2]
+    if (schedule.get("event"), schedule["status"], schedule["conclusion"]) != ("schedule", "completed", "cancelled"):
+        return {}
+    if (push.get("event"), push["status"], push["conclusion"]) != ("push", "completed", "failure"):
+        return {}
+    sha = push["headSha"]
+    if schedule["databaseId"] <= push["databaseId"] or schedule["headSha"] != sha:
+        return {}
+    prefix = f"repos/{hzlib.CORE}"
+    tip = hzlib.ghj("api", f"{prefix}/git/ref/heads/main", default=None)
+    if (not isinstance(tip, dict) or tip.get("ref") != "refs/heads/main"
+            or tip.get("object") != {"sha": sha, "type": "commit", "url": f"https://api.github.com/{prefix}/git/commits/{sha}"}):
+        return {}
+    policy = core_facts.at_main()
+    push_jobs = direct_main_attempt(push, policy.workflow)
+    schedule_jobs = direct_main_attempt(schedule, policy.workflow) if push_jobs else None
+    if not push_jobs or not schedule_jobs:
+        return {}
+    failed = {job["name"] for job in push_jobs if job["conclusion"] == "failure"}
+    scheduled_failures = {job["name"] for job in schedule_jobs if job["conclusion"] == "failure"}
+    if (policy.aggregate not in failed or len(failed) < 2 or scheduled_failures - {policy.aggregate}
+            or not any(job["conclusion"] == "cancelled" for job in schedule_jobs)):
+        return {}
+    return {**push, "cancelled_schedule": {"push_run": push["databaseId"], "push_attempt": push["attempt"],
+             "head": sha, "schedule_run": schedule["databaseId"], "schedule_attempt": schedule["attempt"]}}
 
 
 def aggregate() -> str:
@@ -868,6 +938,8 @@ def gate(ready: list[dict], now: float, data: dict) -> str:
         return f"last batch {int((now - data['last_batch']) / 60)} min ago, one per 5 minutes"
     if any(i["repo"] == hzlib.CORE for i in ready):
         state = main_state()
+        if state == "red" and strict_red_recovery():
+            return "main CI evidence is unknown"  # the retired serial train never dispatches this recovery
         if state == "red" and not main_checkpoint.permits(state_path(), data.get("main_failure", {})) and not later_main_passes() and not restored_by_rerun():
             return "main's latest run is not green"
         if state not in ("green", "red"):
@@ -1141,6 +1213,22 @@ def progress_anchor_unchanged(anchor: dict) -> bool:
     return True
 
 
+def strict_red_recovery() -> bool:
+    """This pin does not grant checkpoint, descendant, or rerun waivers."""
+    return bool(load().get("main_failure", {}).get("cancelled_schedule"))
+
+
+def reviewed_red_recovery(item: dict) -> bool:
+    """Use the existing red admission predicates for a reviewed pin, fix or measured mitigation."""
+    if not re.fullmatch(r"[0-9a-f]{40}", item.get("reviewed_head") or ""):
+        return False
+    if red_main_fixes([item]):
+        return not reviewed_exception(item)
+    evidence = item.get("mitigation_evidence")
+    return (reviewed_exception(item) == "mitigation" and isinstance(evidence, str) and bool(evidence.strip())
+            and bool(red_main_exceptions([item])))
+
+
 def red_main_exceptions(ready: list[dict]) -> list[dict]:
     """New completed evidence needs fresh assessment before owner-approved progress continues."""
     candidates = [item for item in ready if item["repo"] == hzlib.CORE and reviewed_exception(item) and item.get("reviewed_head")]
@@ -1152,6 +1240,26 @@ def main_commit(item: dict) -> str:
     """The commit a squash merge made on main (the PR's head sha is not on main), as 8 characters; empty when unknown."""
     info = hzlib.ghj("pr", "view", item["pr"], "-R", item["repo"], "--json", "mergeCommit", default={}) or {}
     return str((info.get("mergeCommit") or {}).get("oid") or "")[:8]
+
+
+def record_reviewed_main_fix(item: dict, info: dict) -> bool:
+    """Retain an observed reviewed fix's exact squash SHA before marking its queue entry merged."""
+    if not red_main_fixes([item]) or not strict_red_recovery():
+        return True
+    if (not reviewed_red_recovery(item) or info.get("state") != "MERGED" or info.get("baseRefName") != "main"
+            or item["reviewed_head"] != info.get("headRefOid")):
+        return False
+    commit = info.get("mergeCommit")
+    sha = commit.get("oid") if isinstance(commit, dict) else None
+    if not isinstance(sha, str) or not re.fullmatch(r"[0-9a-f]{40}", sha):
+        return False
+    with state_lock():
+        data = load()
+        pin = data.get("main_failure", {})
+        if pin.get("cancelled_schedule") and sha not in (fixes := pin.get("fixed_by", [])):
+            data["main_failure"] = {**pin, "fixed_by": [*fixes, sha]}
+            save(data)
+    return True
 
 
 def record_merge(item: dict) -> None:
@@ -1606,9 +1714,12 @@ def add(args) -> int:
     if normal_head is not None and (
         not reviewed or not re.fullmatch(r"[0-9a-f]{40}", normal_head)
         or len(args.pr) != 1
-        or fix_forward or getattr(args, "fixes_main", False) or any(purpose for _, _, purpose in purposes)
+        or fix_forward or any(purpose for _, _, purpose in purposes)
     ):
         print("refused: --reviewed-head requires one normal PR, --reviewed reason and a full SHA", file=sys.stderr)
+        return 1
+    if normal_head is not None and getattr(args, "fixes_main", False) and hzlib.split_key(args.pr[0])[0] != hzlib.CORE:
+        print("refused: --fixes-main with --reviewed-head is Core only", file=sys.stderr)
         return 1
     if fix_forward:
         return add_fix_forward(args, reviewed, after)
@@ -1745,6 +1856,10 @@ def listing(active: bool = False) -> None:
         print("main is RED after batch: " + " ".join(data["red_batch"]["prs"]) + f" (bisect: gh api repos/{hzlib.CORE}/compare/<last-green-sha>...<red-sha>)")
     if pinned := data.get("main_failure"):
         print(f"main failure pinned: run {pinned['databaseId']} at {pinned['headSha'][:8]}" + (f"; awaiting green main at fix {', '.join(pinned['fixed_by'])}" if pinned.get("fixed_by") else "; a diagnostic, safety fix, mitigation or rerun does not clear it"))
+        if recovery := pinned.get("cancelled_schedule"):
+            print(f"main recovery evidence: failed push run {recovery.get('push_run')} attempt {recovery.get('push_attempt')} "
+                  f"at {recovery.get('head')}; later scheduled run {recovery.get('schedule_run')} "
+                  f"attempt {recovery.get('schedule_attempt')} cancelled")
     if restored := data.get("main_restored"):
         print(f"main {restored.get('label')}: run {restored.get('run')} at {str(restored.get('sha'))[:8]} (merges only, never releases)")
     if data["last_batch"]:

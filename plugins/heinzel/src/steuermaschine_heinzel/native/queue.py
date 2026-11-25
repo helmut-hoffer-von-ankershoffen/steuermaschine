@@ -292,7 +292,7 @@ def queue_add(
     bead: str | None = typer.Option(None, "--bead", help="The bead this PR closes; recorded at the merge."),
     reviewed: str | None = typer.Option(None, "--reviewed", metavar="REASON", help="Queue a PR the diff guard flagged; the reason of the independent review."),
     reviewed_head: str | None = typer.Option(None, "--reviewed-head", metavar="SHA", help="Pin one PR (any repository) to its reviewed full SHA; needs --reviewed."),
-    fixes_main: bool = typer.Option(False, "--fixes-main", help="The PR that makes a red main green: it may merge while main is red, alone."),
+    fixes_main: bool = typer.Option(False, "--fixes-main", help="The PR that makes a red main green; use --reviewed-head for a reviewed recovery."),
     diagnostics_main: str | None = typer.Option(None, "--diagnostics-main", metavar="REASON", help="One reviewed core diagnostic, not a fix; needs --reviewed and --diagnostic-head."),
     safety_fix_main: str | None = typer.Option(None, "--safety-fix-main", metavar="REASON", help="One reviewed core safety fix, not a main CI fix; needs --reviewed and --safety-head."),
     mitigation_main: str | None = typer.Option(None, "--mitigation-main", metavar="REASON", help="One reviewed measured mitigation; needs --reviewed, --mitigation-head, --mitigation-evidence."),
