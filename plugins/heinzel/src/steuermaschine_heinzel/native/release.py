@@ -520,26 +520,32 @@ class ReleaseDrop(Model):
     "Proves first, from typed replies: no tag, no GitHub release, PyPI answers 404, no merged release PR, the release PR\n"
     "closed or absent, the branch absent, no workflow run on that branch still active. A transport failure is never read as\n"
     "absence. It cancels no run: wait for a running candidate or cancel it yourself. Never touches the incident hold or\n"
-    "another release's hold. Not for a release past its tag (reject or absorb), a finished one, or tag-on-green-main."))
+    "another release's hold. For a legacy reviewed receipt lacking the PR pin, use --close-pr and "
+    "--bind-owned-candidate PR,HEAD,BASE,TREE,HOLD with independently verified full identities. When cleanup stops "
+    "after the pin is recorded, retry without the binding option. Not for a release past its tag (reject or absorb), "
+    "a finished one, or tag-on-green-main."))
 def release_drop(version: str = typer.Argument(..., metavar="VERSION", help="The exact version X.Y.Z of the candidate."),
                  reason: str = typer.Option(..., "--reason", help="Why the candidate is dropped; kept with the archived receipt."),
                  close_pr: bool = typer.Option(False, "--close-pr", help="Delete the branch only at its verified head, then verify PR closure and release state."),
                  adopt_pr: int | None = typer.Option(None, "--adopt-pr", help="Recover a missing receipt for this exact open PR."),
-                 adopt_head: str | None = typer.Option(None, "--adopt-head", help="Full commit SHA for --adopt-pr.")) -> ReleaseDrop:
+                 adopt_head: str | None = typer.Option(None, "--adopt-head", help="Full commit SHA for --adopt-pr."),
+                 bind_owned_candidate: str | None = typer.Option(None, "--bind-owned-candidate", metavar="PR,HEAD,BASE,TREE,HOLD",
+                                                                help="Bind a legacy unpinned reviewed receipt using exact PR number, three full SHAs and its owned hold token.")) -> ReleaseDrop:
     # The cut's own engine lock, held for the whole drop: a cut that is advancing saves its state after every step and would
     # bring the dropped run back. Busy: nothing is dropped, wait and run the same command again.
     try:
         store = runtime().providers.store
         with store.lock(f"release.cut.{version}"):
-            if (adopt_pr is not None or adopt_head is not None) and store.load(CUT_KIND, version) is not None:
+            if (adopt_pr is not None or adopt_head is not None or bind_owned_candidate is not None) and store.load(CUT_KIND, version) is not None:
                 raise Refuse(f"candidate adoption refused: release cut state exists for {version}")
-            return _drop(version, reason, close_pr, adopt_pr, adopt_head)
+            return _drop(version, reason, close_pr, adopt_pr, adopt_head, bind_owned_candidate)
     except Busy:
         raise Refuse(f"`sm release cut {version}` is advancing and holds its lock: nothing was dropped. Run the same command again when it has stopped",
                      f"sm release drop {version} --reason ...", code=WAITING) from None
 
 
-def _drop(version: str, reason: str, close_pr: bool, adopt_pr: int | None = None, adopt_head: str | None = None) -> ReleaseDrop:
+def _drop(version: str, reason: str, close_pr: bool, adopt_pr: int | None = None, adopt_head: str | None = None,
+          bind_owned_candidate: str | None = None) -> ReleaseDrop:
     module = runner()
     args = [version, "--drop-candidate", "--reason", reason]
     if close_pr:
@@ -548,6 +554,8 @@ def _drop(version: str, reason: str, close_pr: bool, adopt_pr: int | None = None
         args.extend(["--adopt-pr", str(adopt_pr)])
     if adopt_head is not None:
         args.extend(["--adopt-head", adopt_head])
+    if bind_owned_candidate is not None:
+        args.extend(["--bind-owned-candidate", bind_owned_candidate])
     code, lines, errors = run(module, args)
     stopped = next((line.removeprefix("STOPPED: ") for line in errors if line.startswith("STOPPED: ")), "")
     record: dict = {}

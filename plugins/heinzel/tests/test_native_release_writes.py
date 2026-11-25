@@ -335,6 +335,8 @@ def test_every_typed_option_becomes_the_step_runners_argument(tmp_path, monkeypa
     sha = "b" * 40
     args = ["drop", "0.9.41", "--reason", "red", "--close-pr", "--adopt-pr", "820", "--adopt-head", sha]
     assert typed(rt, monkeypatch, *args)[0] == ["0.9.41", "--drop-candidate", *args[2:]]
+    bound = ["drop", "0.9.41", "--reason", "red", "--close-pr", "--bind-owned-candidate", f"820,{sha},{sha},{sha},{'d' * 32}"]
+    assert typed(rt, monkeypatch, *bound)[0] == ["0.9.41", "--drop-candidate", *bound[2:]]
 
 
 def test_adopt_refuses_an_existing_native_cut_receipt(tmp_path, monkeypatch):
