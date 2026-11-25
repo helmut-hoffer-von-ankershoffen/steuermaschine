@@ -77,7 +77,7 @@ def require_hold(candidate: Candidate) -> None:
     events = data.get("hold_events", [])
     if (data.get("version"), data.get("freeze_token"), data.get("merge_route")) != (candidate.version, candidate.token, MODE):
         raise ExactReleaseError("the candidate does not own this Core release")
-    if (data.get("finished") or data.get("drop") is not None or not isinstance(events, list) or
+    if (data.get("finished") or data.get("drop") is not None or data.get("drop_attempt") is not None or not isinstance(events, list) or
             (events and (not isinstance(events[-1], dict) or events[-1].get("action") in {"pause", "pause-request"}))):
         raise ExactReleaseError("the Core release is paused, dropping, or finished")
     root = hzlib.release_holds()
