@@ -59,8 +59,11 @@ def test_required_step_and_hosted_runner_cannot_be_omitted():
         hosted.good_job(job, ("Tests",))
 
 
-@pytest.mark.parametrize(("branch", "split"), [("feature", False), ("main", False), ("main", True)])
-def test_hosted_evidence_rejects_identity_and_artifact_changes(monkeypatch, branch, split):
+@pytest.mark.parametrize(("branch", "split", "mac"), [
+    ("feature", False, None), ("main", False, "macos-latest"), ("main", True, "macos-latest"),
+    ("main", True, "macos-15"),
+])
+def test_hosted_evidence_rejects_identity_and_artifact_changes(monkeypatch, branch, split, mac):
     import copy
     import hashlib
     import io
@@ -88,8 +91,10 @@ def test_hosted_evidence_rejects_identity_and_artifact_changes(monkeypatch, bran
            "path": ".github/workflows/ci.yml", "head_sha": sha, "head_branch": branch,
            "repository": {"id": 3}, "head_repository": {"id": 3}}
     jobs = [job("check", check_steps), job("Test (ubuntu-24.04, Python 3.15)", ("Tests",))]
-    if branch == "main":
-        jobs.extend((job("Test (macos-latest, Python 3.15)", ("Tests",)), job("badge", ("Write badges/coverage.svg",))))
+    if mac:
+        mac_steps = ("Require native Apple Silicon Python 3.15", "Tests") if mac == "macos-15" else ("Tests",)
+        mac_job = job(f"Test ({mac}, Python 3.15)", mac_steps) | {"labels": [mac]}
+        jobs.extend((mac_job, job("badge", ("Write badges/coverage.svg",))))
     if split:
         jobs[0]["name"] = "Integration checks"
         jobs.append(job("check", ("Set up job", "Require integration and test results", "Complete job")))
@@ -128,6 +133,19 @@ def test_hosted_evidence_rejects_identity_and_artifact_changes(monkeypatch, bran
     monkeypatch.setattr(hosted, "command", command)
     monkeypatch.setattr(hosted, "trusted_sources", lambda _: None)
     assert hosted.verify(repo, 1, sha, Path("."))["artifact"] == 5
+    if mac == "macos-15":
+        mac_job["labels"] = ["macos-15-intel"]
+        with pytest.raises(hosted.Refused):
+            hosted.verify(repo, 1, sha, Path("."))
+        mac_job["labels"] = [mac]
+        mac_job["steps"][0]["conclusion"] = "skipped"
+        with pytest.raises(hosted.Refused):
+            hosted.verify(repo, 1, sha, Path("."))
+        mac_job["steps"][0]["conclusion"] = "success"
+        jobs.append(job("Test (macos-latest, Python 3.15)", ("Tests",)))
+        with pytest.raises(hosted.Refused):
+            hosted.verify(repo, 1, sha, Path("."))
+        jobs.pop()
     for section, key, bad in (("run", "head_sha", "b" * 40), ("run", "event", "pull_request"),
                               ("run", "run_attempt", 2), ("run", "path", "other.yml"),
                               ("artifact", "digest", "sha256:" + "0" * 64), ("artifact", "expired", True)):
