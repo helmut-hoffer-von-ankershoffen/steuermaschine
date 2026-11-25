@@ -446,6 +446,30 @@ def test_a_change_nothing_narrows_leaves_the_whole_unit_suite_to_pr_ci_unless_a_
     assert not found.ready and "| 1 failed" in found.failures[0].message and failing.providers.store.get_receipt(verdicts.CHECKS, HEAD) is None
 
 
+def test_full_failure_evidence_is_private_complete_and_unique(core, rt, tmp_path, monkeypatch):  # noqa: F811
+    import tempfile
+    from concurrent.futures import ThreadPoolExecutor
+    from pathlib import Path
+
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    details = "first failure traceback\n" + "worker stack\n" * 24
+    machine = checkout(core).on("git diff --name-only", "pyproject.toml").on("scripts/related_tests.py", "ALL\n")
+    runtime = rt(machine.on("unit and not perf", Result(1, details, "two failed\n")))
+    done = invoke(runtime, ["--format", "json", "check", str(core), "--allow-full"])
+    assert done.exit_code == 1 and "first failure traceback" not in done.stdout + done.stderr
+    message = report(done).failures[0].message
+    path = Path(message.split("; log ", 1)[1].splitlines()[0])
+    assert path.read_text() == details + "two failed\n" and path.stat().st_mode & 0o777 == 0o600
+    assert path.parent == tmp_path and "| two failed" in message
+    assert runtime.providers.store.get_receipt(verdicts.CHECKS, HEAD) is None
+
+    ctx = check.cheap.Ctx(wt=core, outdir=tmp_path)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        paths = list(pool.map(lambda value: Path(ctx.log("../../same", value)), ["first", "second"]))
+    assert all(p.parent == tmp_path for p in paths)
+    assert [p.read_text() for p in paths] == ["first", "second"] and len({path, *paths}) == 3
+
+
 def test_a_failing_import_graph_fails_the_run_instead_of_passing_for_everything(core, rt):  # noqa: F811
     """B1 (the reviewer's probe): scripts/related_tests.py fails or prints something odd. That is no "ALL": red, no receipt."""
     for answer, why in ((Result(3, "", "Traceback"), "scripts/related_tests.py failed (exit 3)"), ("something odd\n", "printed something that is no test path")):
