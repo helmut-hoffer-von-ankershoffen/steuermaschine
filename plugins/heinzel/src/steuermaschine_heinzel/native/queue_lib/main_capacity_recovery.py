@@ -81,13 +81,15 @@ def assess(head: str, push_run: int, macos_run: int, *, api: Callable[[str], Any
     failed = {name for name, job in mac_jobs.items() if job.get("conclusion") not in GREEN}
     cancelled = failed - {policy.aggregate}
     mac_required = {name for name in policy.test_jobs if main_lanes.is_macos_cell(name)}
+    dispatch_jobs = policy.expected_jobs("workflow_dispatch")
+    capacity_eligible = {name for name, verdict in dispatch_jobs.items()
+                         if verdict == "success" and main_lanes.is_macos_cell(name)}
     require(
         all(job.get("conclusion") in GREEN for job in linux_jobs.values())
         and {policy.aggregate, main_lanes.DISPATCH_JOB, *(policy.test_jobs - mac_required)} <= linux
         and mac_required and mac_required <= mac | cancelled
         and policy.aggregate in failed and mac_jobs[policy.aggregate].get("conclusion") == "failure"
-        and cancelled and cancelled <= mac_required
-        and all(name.startswith("Test (macos-latest, Python ") for name in cancelled),
+        and cancelled and cancelled <= capacity_eligible,
         "missing required jobs or observed a non-capacity failure",
     )
     original_annotations = {}
