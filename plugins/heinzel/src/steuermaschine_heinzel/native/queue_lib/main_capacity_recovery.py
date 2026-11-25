@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from datetime import datetime
-from subprocess import SubprocessError
 from typing import Any
 
 from steuermaschine.protocols import Store
@@ -172,7 +171,7 @@ def dispatch(store: Store, head: str, push_run: int, macos_run: int, *, api: Cal
         store.put_receipt(DISPATCH, head, request)
         try:
             reply = post(proof.workflow.rsplit("/", 1)[-1])
-        except (OSError, SubprocessError):
+        except OSError:
             reply = None
         rid = reply.get("workflow_run_id") if isinstance(reply, dict) else None
         link = f"https://github.com/{hzlib.CORE}/actions/runs/{rid}"
