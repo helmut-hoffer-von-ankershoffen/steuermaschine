@@ -86,12 +86,13 @@ def paged(path: str, key: str) -> list[dict[str, Any]]:
     raise InvalidCapacity('capacity inventory pagination exceeded bound')
 
 
-def annotations(job: dict[str, Any]) -> list[dict[str, Any]]:
+def annotations(job: dict[str, Any], *, api: Callable[[str], Any] | None = None) -> list[dict[str, Any]]:
     require(job.get('check_run_url') == f'https://api.github.com/repos/{hzlib.CORE}/check-runs/{job["id"]}',
             'annotations are not bound to the official same job')
+    read = get if api is None else api
     rows = []
     for page in range(1, 11):
-        part = get(f'check-runs/{job["id"]}/annotations?per_page=100&page={page}')
+        part = read(f'check-runs/{job["id"]}/annotations?per_page=100&page={page}')
         require(isinstance(part, list) and len(part) <= 100, 'malformed annotation inventory')
         rows.extend(part)
         if len(part) < 100:
