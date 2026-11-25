@@ -52,10 +52,11 @@ def rel(tmp_path, monkeypatch):
             return SimpleNamespace(returncode=0, stdout=world["notes"], stderr="")
         if "push" in command:
             world["pushed"] = True
-        return SimpleNamespace(returncode=0, stdout="https://github.com/example/heinzel/pull/820\n", stderr="")
+        return SimpleNamespace(returncode=0, stdout=f"https://github.com/{module.CORE}/pull/820\n", stderr="")
 
     monkeypatch.setattr(module.subprocess, "run", run)
     opened = {"number": 820, "state": "OPEN", "title": f"chore(release): {TAG}", "baseRefName": "main", "headRefOid": HEAD,
+              "headRefName": f"release/{TAG}", "isCrossRepository": False,
               "autoMergeRequest": None, "body": world["notes"]}
     world["view"] = opened
     monkeypatch.setattr(module.hzlib, "ghj", lambda *a, **k: world["view"] if a[:2] == ("pr", "view") else pytest.fail(str(a)))
@@ -115,7 +116,8 @@ def test_another_unfinished_release_in_the_receipt_is_preserved(rel, capsys):
     assert "belongs to the unfinished release 0.9.40" in capsys.readouterr().err and rel.state() == {"version": "0.9.40"}
 
 
-@pytest.mark.parametrize("change", [{"autoMergeRequest": {"enabledAt": "now"}}, {"title": "release"}, {"headRefOid": "c" * 40}, {"body": ""}, {"state": "MERGED"}])
+@pytest.mark.parametrize("change", [{"autoMergeRequest": {"enabledAt": "now"}}, {"title": "release"}, {"headRefOid": "c" * 40}, {"body": ""},
+                                    {"state": "MERGED"}, {"number": 821}, {"isCrossRepository": True}])
 def test_an_opened_pr_that_is_not_the_checked_one_stops_and_is_preserved(rel, capsys, change):
     rel.world["view"] = rel.world["view"] | change
     assert rel.main(["0.9.41", "--open-pr", "--reviewed-head", HEAD]) == 1

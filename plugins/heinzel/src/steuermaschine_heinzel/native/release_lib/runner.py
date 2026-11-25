@@ -1029,7 +1029,7 @@ def _verify_checked_release_head(work: str, branch: str, checked_head: str) -> N
             raise Stop("checked release head/branch changed or checkout is dirty; preserving branch without PR creation")
 
 
-def publish_release_pr(work: str, tag: str, checked_head: str) -> None:
+def publish_release_pr(work: str, tag: str, checked_head: str) -> int:
     """Push through the ordinary hook with the reviewed release-only selectors, then open its PR."""
     branch = f"release/{tag}"
     gate = edge.gate()  # moved: the run lock is `sm gate run --`, no script is started
@@ -1077,9 +1077,37 @@ def publish_release_pr(work: str, tag: str, checked_head: str) -> None:
                        "the pushed branch is preserved: check the open PRs before a resume") from None
         if created.returncode != 0:
             raise Stop(f"release PR creation failed; pushed branch is preserved: {(created.stderr or '').strip()[-300:]}")
+    url = re.fullmatch(rf"https://github\.com/{re.escape(CORE)}/pull/([1-9][0-9]*)", created.stdout.strip(), re.IGNORECASE)
+    if url is None:
+        raise Stop("cannot prove the created release PR number; the branch and any PR are preserved")
+    return record_opened_release_pr(tag, checked_head, int(url[1]))
 
 
 RELEASE_PR_TITLE = "chore(release): {tag}"
+
+
+def record_opened_release_pr(tag: str, head: str, number: int) -> int:
+    """Pin the PR just created, without waiting for candidate CI."""
+    opened = hzlib.ghj("pr", "view", str(number), "-R", CORE,
+                       "--json", "number,state,title,baseRefName,headRefName,headRefOid,isCrossRepository,autoMergeRequest,body",
+                       default=None)
+    title = RELEASE_PR_TITLE.format(tag=tag)
+    if (not isinstance(opened, dict) or opened.get("state") != "OPEN" or opened.get("title") != title
+            or opened.get("baseRefName") != "main" or opened.get("headRefName") != f"release/{tag}"
+            or opened.get("isCrossRepository") is not False or opened.get("headRefOid") != head
+            or "autoMergeRequest" not in opened or opened["autoMergeRequest"] is not None
+            or not str(opened.get("body") or "").strip()
+            or type(opened.get("number")) is not int or opened["number"] != number):
+        raise Stop(f"the opened release PR for {tag} is not the checked one; it is preserved for inspection")
+    version = tag.removeprefix("v")
+    pending = state()
+    if not pending or pending.get("version") == version:
+        prior = recorded_release_pr(pending)
+        if prior is not None and (prior, pending["release_pr_opened"]["head"]) != (number, head):
+            raise Stop("release receipt already pins a different PR or head; preserving it")
+        if prior is None:
+            remember(version=version, release_pr_opened={"pr": number, "head": head, "at": now_iso()})
+    return number
 
 
 def open_reviewed_release_pr(version: str, reviewed_head: str, dry_run: bool) -> int:
@@ -1114,18 +1142,8 @@ def open_reviewed_release_pr(version: str, reviewed_head: str, dry_run: bool) ->
         hzlib.say(f"DRY RUN: checks passed. Would push {head} to refs/heads/release/{tag} under `{' '.join(edge.gate())}` with the "
                   f"release-only hook selectors and open \"{title}\" against main (never auto-merged). Nothing was pushed.")
         return 0
-    publish_release_pr(work, tag, head)
-    opened = hzlib.ghj("pr", "view", f"release/{tag}", "-R", CORE, "--json", "number,state,title,baseRefName,headRefOid,autoMergeRequest,body",
-                       default=None)
-    if (not isinstance(opened, dict) or opened.get("state") != "OPEN" or opened.get("title") != title or opened.get("baseRefName") != "main"
-            or opened.get("headRefOid") != head or opened.get("autoMergeRequest") is not None or not str(opened.get("body") or "").strip()):
-        raise Stop(f"the opened release PR for {tag} is not the checked one (state, title, base, head, empty body or auto-merge); "
-                   "it is preserved for inspection")
-    if type(opened.get("number")) is not int or opened["number"] <= 0 or "autoMergeRequest" not in opened:
-        raise Stop(f"cannot prove the opened release PR identity for {tag}; the PR is preserved for inspection")
-    if not pending or pending.get("version") == version:
-        remember(version=version, release_pr_opened={"pr": opened["number"], "head": head, "at": now_iso()})
-    hzlib.say(f"OPENED release PR #{opened.get('number')} \"{title}\" at {head}; not merged: `sm release resume {version} --intro ...` merges it")
+    number = publish_release_pr(work, tag, head)
+    hzlib.say(f"OPENED release PR #{number} \"{title}\" at {head}; not merged: `sm release resume {version} --intro ...` merges it")
     return 0
 
 
@@ -1869,15 +1887,20 @@ def pin_owned_hold(version: str) -> tuple[int, tuple[int, int]]:
         raise Stop("cannot pin owned release hold for pause") from exc
 
 
+def verify_pinned_hold(directory: int, identity: tuple[int, int]) -> None:
+    """Reject an observed substitution of the hold directory or file."""
+    root = hzlib.release_holds().lstat()
+    pinned = os.fstat(directory)
+    held = os.stat(snapshot_hold_path().name, dir_fd=directory, follow_symlinks=False)
+    if ((root.st_dev, root.st_ino) != (pinned.st_dev, pinned.st_ino)
+            or not stat.S_ISDIR(root.st_mode) or (held.st_dev, held.st_ino) != identity):
+        raise Stop("release hold directory or file was replaced; hold retained")
+
+
 def unlink_pinned_hold(directory: int, identity: tuple[int, int]) -> None:
     """Delete from the pinned directory only after rejecting observed inode substitution."""
     try:
-        root = hzlib.release_holds().lstat()
-        pinned = os.fstat(directory)
-        held = os.stat(snapshot_hold_path().name, dir_fd=directory, follow_symlinks=False)
-        if ((root.st_dev, root.st_ino) != (pinned.st_dev, pinned.st_ino)
-                or not stat.S_ISDIR(root.st_mode) or (held.st_dev, held.st_ino) != identity):
-            raise Stop("release hold directory or file was replaced; hold retained")
+        verify_pinned_hold(directory, identity)
         os.unlink(snapshot_hold_path().name, dir_fd=directory)
         os.fsync(directory)
     except OSError as exc:
@@ -2168,7 +2191,8 @@ def archive_dropped(version: str, stamp: str) -> Path:
     return target
 
 
-def drop_candidate(version: str, reason: str, close_pr: bool, *, adopt_pr: int | None = None, adopt_head: str | None = None) -> int:
+def drop_candidate(version: str, reason: str, close_pr: bool, *, adopt_pr: int | None = None, adopt_head: str | None = None,
+                   bind_owned_candidate: str | None = None) -> int:
     """Drop a provably unpublished candidate: release only its own hold and archive its receipt."""
     reason = (reason or "").strip()
     if not EXACT_VERSION.fullmatch(version or "") or len(reason) < 10:
@@ -2178,6 +2202,8 @@ def drop_candidate(version: str, reason: str, close_pr: bool, *, adopt_pr: int |
         raise Stop(f"drop refused: {version} is past its tag (it has a tail receipt); reject or absorb it instead")
     data = state()
     expected = drop_adoption_identity(close_pr, adopt_pr, adopt_head)
+    if bind_owned_candidate is not None and (not close_pr or expected is not None):
+        raise Stop("drop refused: --bind-owned-candidate requires --close-pr without adoption options")
     recorded = validate_drop_receipt(version, data, expected)
     reviewed = reviewed_drop_mode(data)
     opened = recorded_release_pr(data)
@@ -2190,6 +2216,10 @@ def drop_candidate(version: str, reason: str, close_pr: bool, *, adopt_pr: int |
         raise Stop("drop refused: the owned release hold is missing without a recorded pause")
     hold_pin = pin_owned_hold(version) if exists else None
     try:
+        if bind_owned_candidate is not None:
+            reviewed_identity = bind_unpinned_drop(version, data, bind_owned_candidate, hold_pin, reviewed_identity)
+            data = state()
+            opened = reviewed_identity[0]
         evidence = prove_drop(version, data, opened, expected, reviewed, reviewed_identity, close_pr)
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         record = {"version": version, "token": data.get("freeze_token"), "reason": reason, "at": now_iso(),
@@ -2199,6 +2229,53 @@ def drop_candidate(version: str, reason: str, close_pr: bool, *, adopt_pr: int |
         if hold_pin is not None:
             os.close(hold_pin[0])
     return report_dropped(version, stamp, record, reviewed)
+
+
+def bind_unpinned_drop(version: str, data: dict, binding: str, hold_pin: tuple[int, tuple[int, int]] | None,
+                       reviewed_identity: tuple[int, str] | None) -> tuple[int, str]:
+    """Bind the legacy automatic-open receipt before the normal guarded drop can delete anything."""
+    from . import exact_queue
+
+    match = re.fullmatch(r"([1-9][0-9]{0,9}),([0-9a-f]{40}),([0-9a-f]{40}),([0-9a-f]{40}),([0-9a-f]{32})", binding)
+    if match is None:
+        raise Stop("drop refused: --bind-owned-candidate needs PR,HEAD,BASE,TREE,HOLD with full identities")
+    number = int(match[1])
+    head, base, tree, token = match.groups()[1:]
+    if (set(data) != {"version", "merge_route", "freeze_token"} or data.get("merge_route") != exact_queue.MODE
+            or data.get("freeze_token") != token or hold_pin is None or reviewed_identity is not None
+            or pending_waiver(version) is not None):
+        raise Stop("drop refused: binding needs the exact active, unpinned reviewed hold with no waiver")
+    identity = drop_identity(version, (number, head))
+    verify_unpinned_release_source(version, number, head, base, tree, identity.get("repository_id"))
+    try:
+        verify_pinned_hold(*hold_pin)
+    except OSError as exc:
+        raise Stop("drop refused: the release hold changed while verifying ownership") from exc
+    if state() != data or not owned_hold_exists(version):
+        raise Stop("drop refused: the release receipt or owned hold changed while verifying ownership")
+    remember(release_pr_opened={"pr": number, "head": head, "at": now_iso()})
+    hzlib.say(f"Pinned legacy release PR #{number} at {head}; if cleanup stops, retry without --bind-owned-candidate.")
+    return number, head
+
+
+def verify_unpinned_release_source(version: str, number: int, head: str, base: str, tree: str, repository: str | None) -> None:
+    pull = hzlib.ghj("api", f"repos/{CORE}/pulls/{number}", default=None)
+    commit = hzlib.ghj("api", f"repos/{CORE}/commits/{head}", default=None)
+    tag = f"v{version}"
+    try:
+        if (not isinstance(repository, str) or not repository or type(pull["number"]) is not int or pull["number"] != number
+                or pull["state"] != "open" or pull["merged"] is not False or pull["auto_merge"] is not None
+                or pull["title"] != RELEASE_PR_TITLE.format(tag=tag)
+                or any((pull[side]["ref"], pull[side]["sha"], pull[side]["repo"]["full_name"], pull[side]["repo"]["node_id"])
+                       != (ref, sha, CORE, repository) for side, ref, sha in (("head", f"release/{tag}", head), ("base", "main", base)))
+                or commit["sha"] != head or [parent["sha"] for parent in commit["parents"]] != [base]
+                or commit["commit"]["tree"]["sha"] != tree):
+            raise ValueError
+    except (KeyError, TypeError, ValueError) as exc:
+        raise Stop("drop refused: central release PR, repository, base or candidate tree differs") from exc
+    work = edge.release_dir()
+    if verify_release_pr_scope(work, tag) != head:
+        raise Stop("drop refused: the canonical release checkout does not contain the exact generated candidate")
 
 
 def persist_drop(version: str, record: dict, recorded: dict | None, hold_pin: tuple[int, tuple[int, int]] | None) -> dict:
@@ -3115,6 +3192,7 @@ def main(argv: list[str]) -> int:
                         "owned hold and archive the receipt under release-dropped/ in the state directory; needs --reason; cancels no run")
     parser.add_argument("--adopt-pr", type=int)
     parser.add_argument("--adopt-head")
+    parser.add_argument("--bind-owned-candidate")
     parser.add_argument("--close-pr", action="store_true", help="with --drop-candidate: conditionally delete the exact release branch "
                         "and verify that its PR is closed")
     parser.add_argument("--reviewed-queue", action="store_true", help="use the active queue after independent candidate review; Core CI creates the tag")
@@ -3184,11 +3262,11 @@ def main(argv: list[str]) -> int:
           and not args.drop_candidate):
         parser.error("rejection identity options require --reject-release")
     if args.drop_candidate:
-        allowed = {"--drop-candidate", "--reason", "--close-pr", "--adopt-pr", "--adopt-head"}
+        allowed = {"--drop-candidate", "--reason", "--close-pr", "--adopt-pr", "--adopt-head", "--bind-owned-candidate"}
         if (any(item.startswith("--") and item.split("=", 1)[0] not in allowed for item in argv)
                 or not args.version or not EXACT_VERSION.fullmatch(args.version) or not args.reason):
             parser.error("--drop-candidate needs an exact core version X.Y.Z and --reason")
-    elif args.close_pr or args.adopt_pr is not None or args.adopt_head is not None:
+    elif args.close_pr or args.adopt_pr is not None or args.adopt_head is not None or args.bind_owned_candidate is not None:
         parser.error("--close-pr and candidate adoption require --drop-candidate")
     if args.candidate_capacity:
         allowed = {"--candidate-capacity", "--candidate-run", "--expected-receipt-sha256", "--expected-freeze-token", "--expected-audit-sha256"}
@@ -3236,6 +3314,10 @@ def main(argv: list[str]) -> int:
                     route_to_tail(args.absorb)
             current = state()  # reject corruption before any network request or publication action
             if args.drop_candidate:
+                if args.bind_owned_candidate is not None:
+                    if args.adopt_pr is not None or args.adopt_head is not None:
+                        raise Stop("drop refused: --bind-owned-candidate cannot be combined with adoption options")
+                    return drop_candidate(args.version, args.reason, args.close_pr, bind_owned_candidate=args.bind_owned_candidate)
                 if args.adopt_pr is None and args.adopt_head is None:
                     return drop_candidate(args.version, args.reason, args.close_pr)
                 return drop_candidate(args.version, args.reason, args.close_pr, adopt_pr=args.adopt_pr, adopt_head=args.adopt_head)
