@@ -214,8 +214,9 @@ def hold_reason(w: Any, repo_full: str, number: int) -> str:
     "Direct merges pin the head. For queued and direct merges, GitHub enforces its branch rules at merge. The base and local "
     "hold and optional-check observations can change before then.\n"
     "A PR that touches a gate (diff guard flag, CI change) is queued only with an APPROVE comment of `sm review dispatch` for exactly its head. --dispatch starts that\n"
-    "review when none is recorded. A verified Core release hold leaves independent tooling free to merge. An incident or "
-    "unreadable hold still blocks it, as does an operator hold."))
+    "review when none is recorded. Release holds, incident holds, and uncertain hold state block ordinary merges in every "
+    "repository. Operator holds also apply. An independently reviewed exact Core release candidate uses the separate "
+    "release queue path."))
 def queue_auto(live: bool = typer.Option(False, "--live", help="Queue and merge; without it only list what would happen."),
                dispatch: bool = typer.Option(False, "--dispatch", help="Start the independent review of a gate-touching PR that has none (needs --live)."),
                repo: str | None = typer.Option(None, "--repo", metavar="OWNER/REPO", help="Limit this pass to one configured repository; requires --pr."),
