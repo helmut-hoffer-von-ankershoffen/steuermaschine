@@ -327,13 +327,13 @@ def test_a_freeze_keeps_auto_merge_off_and_it_is_armed_once_the_freeze_lifts(rt,
     assert [line for line in gh.lines() if line.startswith("pr merge")] == [ARM] and items(rt)[-1]["detail"] == "auto-merge armed"
 
 
-def test_the_freeze_holds_only_core(rt, gh):
+def test_an_incident_freeze_also_holds_queued_plugins(rt, gh):
     queue_one(rt, key="plugins #801", repo="helmut-hoffer-von-ankershoffen/heinzel-plugins")
     (statedir.root() / "merge-freeze").touch()
     gh.on("pr view 801", PR).on("pr merge 801", "")
     assert invoke(rt, ["daemon", "queue"]).exit_code == 0
-    assert [line for line in gh.lines() if line.startswith("pr merge")] == [
-        "pr merge 801 -R helmut-hoffer-von-ankershoffen/heinzel-plugins --squash --auto --match-head-commit " + HEAD]
+    assert not any(line.startswith("pr merge") for line in gh.lines())
+    assert items(rt)[-1]["detail"] == "merge freeze: auto-merge off until it lifts"
 
 
 def test_a_pr_of_an_author_not_on_auto_queue_authors_is_never_armed(rt, gh):

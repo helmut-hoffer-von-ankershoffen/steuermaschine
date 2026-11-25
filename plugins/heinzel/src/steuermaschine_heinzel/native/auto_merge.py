@@ -31,7 +31,7 @@ from steuermaschine.protocols import Busy
 
 from . import auto_review, merge_ready, queue, queue_hold
 from .go import world
-from .queue_lib import hzlib
+from .queue_lib import auto_arm, hzlib
 from .status_lib import prtable
 
 READY_STATES = ("CLEAN", "BEHIND")
@@ -214,7 +214,9 @@ def hold_reason(w: Any, repo_full: str, number: int) -> str:
     "Direct merges pin the head. For queued and direct merges, GitHub enforces its branch rules at merge. The base and local "
     "hold and optional-check observations can change before then.\n"
     "A PR that touches a gate (diff guard flag, CI change) is queued only with an APPROVE comment of `sm review dispatch` for exactly its head. --dispatch starts that\n"
-    "review when none is recorded. A merge freeze or a hold in the action table keeps the PR where it is; the queue hold stops the whole pass."))
+    "review when none is recorded. Release holds, incident holds, and uncertain hold state block ordinary merges in every "
+    "repository. Operator holds also apply. An independently reviewed exact Core release candidate uses the separate "
+    "release queue path."))
 def queue_auto(live: bool = typer.Option(False, "--live", help="Queue and merge; without it only list what would happen."),
                dispatch: bool = typer.Option(False, "--dispatch", help="Start the independent review of a gate-touching PR that has none (needs --live)."),
                repo: str | None = typer.Option(None, "--repo", metavar="OWNER/REPO", help="Limit this pass to one configured repository; requires --pr."),
@@ -244,7 +246,6 @@ def queue_auto(live: bool = typer.Option(False, "--live", help="Queue and merge;
 def one_pass(rt: Any, w: Any, owner: str, settings: auto_review.AutoReviewSettings, live: bool, dispatch: bool,
              names: list[str], number: int | None) -> AutoQueued:
     module: Any = queue._queue()  # type: ignore[no-untyped-call]
-    frozen = bool(module.hzlib.merge_frozen())
     queued = {str(i["key"]) for i in queue._load(module)["items"] if i["status"] == "queued"}
     now = datetime.now(UTC)
     budget = [settings.review_max_per_pass]  # headless reviews this pass may still start
@@ -260,15 +261,15 @@ def one_pass(rt: Any, w: Any, owner: str, settings: auto_review.AutoReviewSettin
                 rows.append(AutoRow(repo=name, number=number, action="skipped", why="the selected open PR could not be identified"))
                 continue
         for pr in listed:
-            rows.append(handle(rt, w, module, owner, pr, (live, dispatch, frozen), queued, settings, budget))
+            rows.append(handle(rt, w, module, owner, pr, (live, dispatch), queued, settings, budget))
     return AutoQueued(rows=[r for r in rows if r.action != "idle"])
 
 
-def handle(rt: Any, w: Any, module: Any, owner: str, pr: prtable.PrRow, mode: tuple[bool, bool, bool], queued: set[str],
+def handle(rt: Any, w: Any, module: Any, owner: str, pr: prtable.PrRow, mode: tuple[bool, bool], queued: set[str],
            settings: auto_review.AutoReviewSettings, budget: list[int]) -> AutoRow:
     """One pull request through the rules; an `idle` row is one that merely is not ready yet (it is not listed).
-    `mode` is (live, dispatch, frozen); `budget[0]` the headless reviews this pass may still start."""
-    live, dispatch, frozen = mode
+    `mode` is (live, dispatch); `budget[0]` the headless reviews this pass may still start."""
+    live, dispatch = mode
 
     def row(action: str, why: str = "") -> AutoRow:
         return AutoRow(repo=pr.repo, number=pr.number, action=action, why=why)
@@ -318,8 +319,12 @@ def handle(rt: Any, w: Any, module: Any, owner: str, pr: prtable.PrRow, mode: tu
             return row("would-queue")
         done = queue._changed("add", ["add", "--reviewed", reason, "--reviewed-head", head, *words], words)  # every entry is bound to the head the checks were read for
         return row("queued" if not done.exit else "skipped", "" if not done.exit else "; ".join(done.errors or done.lines)[:120])
-    if frozen:
-        return row("waiting", "merge freeze is on")
+    if held := queue_hold.current(rt):
+        return row("waiting", held.describe())
+    if held := hold_reason(w, full, pr.number):
+        return row("skipped", held)
+    if held := auto_arm.freeze_without_candidate(full):
+        return row("waiting", held)
     if not live:
         return row("would-merge")
     merged = rt.providers.commands.run(["gh", "pr", "merge", str(pr.number), "-R", full, "--squash", "--match-head-commit", head], timeout=120)

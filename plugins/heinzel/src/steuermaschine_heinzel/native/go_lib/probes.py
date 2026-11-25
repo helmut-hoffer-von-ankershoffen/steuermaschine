@@ -20,7 +20,7 @@ from steuermaschine.github.forge import GitHub
 from steuermaschine.hashing import canonical_sha256
 
 from .. import updater_hold
-from ..queue_lib import core_facts
+from ..queue_lib import core_facts, hzlib
 from . import legacy
 from .decide import unknown
 
@@ -172,12 +172,19 @@ def queue_waits(items: list[dict], now: float) -> list[str]:
     return out
 
 
-def queue_verdict(data: dict, frozen: bool, stalls: list[str]) -> str:
+FREEZE_STATUS = {
+    "release": "the verified release hold blocks ordinary merges across all repositories, including tooling",
+    "incident": "the incident merge freeze holds every repository",
+    "uncertain": "unverified release hold state blocks every repository",
+}
+
+
+def queue_verdict(data: dict, scope: hzlib.FreezeScope, stalls: list[str]) -> str:
+    if scope != "open":
+        return FREEZE_STATUS[scope]
     queued = [i["key"] for i in data["items"] if i.get("status") == "queued"]
     if not queued:
         return "nothing queued"
-    if frozen:
-        return "merge freeze holds all core PRs"
     if data.get("blocked") == "merge freeze is on":
         return "the freeze was lifted after the last tick; the next tick (within 5 minutes) gates again"
     if data.get("blocked"):
@@ -195,10 +202,10 @@ def main_runs(w: World, limit: int = 5) -> list[dict]:
 
 def probe_queue(w: World) -> dict[str, Any]:
     data = _source(w).queue_state()
-    frozen = _source(w).merge_frozen()
+    scope = hzlib.freeze_scope(w.state_dir)
     queued = [str(i.get("key")) for i in data["items"] if i.get("status") == "queued"]
     added = {str(i.get("key")): i.get("added") for i in data["items"] if i.get("status") == "queued" and i.get("added")}
-    return {"queued": queued, "freeze": frozen, "verdict": queue_verdict(data, frozen, queue_waits(data["items"], w.now())),
+    return {"queued": queued, "freeze": scope != "open", "freeze_scope": scope, "verdict": queue_verdict(data, scope, queue_waits(data["items"], w.now())),
             "main_runs": [{"databaseId": r.get("databaseId"), "headSha": r.get("headSha"), "status": r.get("status"), "conclusion": r.get("conclusion") or ""}
                           for r in main_runs(w)], "added": added}
 

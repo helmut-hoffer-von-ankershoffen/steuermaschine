@@ -197,9 +197,7 @@ def test_bad_or_unrelated_release_state_never_opens_the_freeze(monkeypatch, tmp_
     monkeypatch.setattr(exact.hzlib, "release_holds_present", lambda: True)
     item = {"repo": exact.hzlib.CORE, "pr": str(CANDIDATE.pr), "reviewed_head": CANDIDATE.head}
     assert exact.queue_candidate(item) is None
-    assert exact.reviewed_freeze_active() == (contents != '{"merge_route":"another-route"}')
     monkeypatch.setattr(exact.hzlib, "release_holds_present", lambda: False)
-    assert not exact.reviewed_freeze_active()
     assert exact.queue_candidate(item) is None
 
 

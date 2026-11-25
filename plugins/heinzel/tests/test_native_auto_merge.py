@@ -1,6 +1,7 @@
 """`sm queue auto`: every ready PR is queued or merged by itself; a gate-touching one only with a recorded review of its head.
 `gh` is scripted; the queue state is a temporary file."""
 
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -11,6 +12,7 @@ from steuermaschine.github.testing import FakeGh
 from steuermaschine.testing import invoke
 from steuermaschine_heinzel.native import auto_merge as area
 from steuermaschine_heinzel.native import auto_review, queue
+from steuermaschine_heinzel.native.queue_lib import auto_arm, hzlib
 from steuermaschine_heinzel.native.status_lib import prtable
 
 OWNER = REPO.split("/")[0]
@@ -94,6 +96,136 @@ def test_live_selection_can_act_only_on_the_named_repository_and_pr(world_of_prs
     assert out.stdout.strip() == "steuermaschine #9: merged"
     assert merged_cmds(gh) == [f"pr merge 9 -R {OWNER}/steuermaschine --squash --match-head-commit {HEAD}"]
     assert all("pr view 10" not in call and "repo=heinzel " not in call for call in gh.lines())
+
+
+@pytest.mark.parametrize("hold_kind", ["owned", "incident", "missing receipt", "wrong token", "wrong version", "extra hold", "symlink", "duplicate keys", "missing file", "missing directory"])
+def test_release_and_incident_holds_block_direct_tooling_merges(world_of_prs, tmp_path, monkeypatch, hold_kind):
+    gh = FakeGh().on("pr merge", "")
+    comment = said(auto_review.comment_body(HEAD, "opus", "sonnet", "ok", "APPROVE"))
+    rt = world_of_prs([row(repo="steuermaschine", number=9)], gh, reasons=["workflow"], comments=[comment])
+    state = tmp_path / "merge-state"
+    monkeypatch.setattr(hzlib.statedir, "path", lambda name: state / name)
+    directory = state / "release-holds"
+    directory.mkdir(parents=True)
+    token, version = "a" * 32, "0.9.55"
+    held = directory / token
+    held.write_text(version)
+    receipt = state / "release.json"
+    data = {"version": version, "freeze_token": token, "merge_route": "reviewed-release-queue"}
+    if hold_kind != "missing receipt":
+        receipt.write_text(json.dumps(data))
+    if hold_kind == "incident":
+        (state / "merge-freeze").write_text("incident")
+    elif hold_kind == "wrong token":
+        receipt.write_text(json.dumps(data | {"freeze_token": "b" * 32}))
+    elif hold_kind == "wrong version":
+        held.write_text("0.9.56")
+    elif hold_kind == "extra hold":
+        (directory / ("b" * 32)).write_text(version)
+    elif hold_kind == "symlink":
+        held.unlink()
+        held.symlink_to(receipt)
+    elif hold_kind in ("missing file", "missing directory"):
+        held.unlink()
+        if hold_kind == "missing directory":
+            directory.rmdir()
+    elif hold_kind == "duplicate keys":
+        receipt.write_text(f'{{"version":"0.9.56","version":"{version}","freeze_token":"{token}"}}')
+    out = invoke(rt, ["queue", "auto", "--repo", f"{OWNER}/steuermaschine", "--pr", "9", "--live"])
+    assert "waiting (merge freeze is on)" in out.stdout and not gh.writes()
+
+
+def test_direct_merge_observes_an_incident_started_during_verification(world_of_prs, tmp_path, monkeypatch):
+    gh = FakeGh().on("pr merge", "")
+    rt = world_of_prs([row(repo="steuermaschine", number=9)], gh)
+    original = area.required_gap
+    monkeypatch.setattr(hzlib.statedir, "path", lambda name: tmp_path / name)
+
+    def new_incident(*args):
+        result = original(*args)
+        (tmp_path / "merge-freeze").touch()
+        return result
+
+    monkeypatch.setattr(area, "required_gap", new_incident)
+    assert "waiting (merge freeze is on)" in invoke(rt, ["queue", "auto", "--live"]).stdout
+    assert not gh.writes()
+
+
+def test_shared_arm_policy_holds_core_dependencies_and_tooling(tmp_path, monkeypatch):
+    monkeypatch.setattr(hzlib.statedir, "path", lambda name: tmp_path / name)
+    token, version = "a" * 32, "0.9.55"
+    receipt = {"version": version, "freeze_token": token, "merge_route": "reviewed-release-queue"}
+    (tmp_path / "release.json").write_text(json.dumps(receipt))
+    directory = tmp_path / "release-holds"
+    directory.mkdir()
+    (directory / token).write_text(version)
+    assert hzlib.freeze_scope(tmp_path) == "release"
+    assert auto_arm.freeze_without_candidate(hzlib.CORE)
+    assert auto_arm.freeze_without_candidate(hzlib.PLUGINS)
+    assert auto_arm.freeze_without_candidate(f"{OWNER}/steuermaschine")
+    assert auto_arm.freeze_without_candidate(f"{OWNER}/heinzel-management")
+
+    (directory / token).unlink()
+    assert hzlib.freeze_scope(tmp_path) == "uncertain"
+    assert auto_arm.freeze_without_candidate(hzlib.CORE)
+    assert auto_arm.freeze_without_candidate(hzlib.PLUGINS)
+    assert auto_arm.freeze_without_candidate(f"{OWNER}/steuermaschine")
+    assert auto_arm.freeze_without_candidate(f"{OWNER}/heinzel-management")
+
+
+def test_an_incident_starting_during_owned_hold_verification_wins(monkeypatch):
+    incident = iter((False, True))
+    monkeypatch.setattr(hzlib, "incident_frozen", lambda *_: next(incident))
+    monkeypatch.setattr(hzlib, "release_freeze_scope", lambda *_: "release")
+    assert auto_arm.freeze_without_candidate(f"{OWNER}/steuermaschine") == "merge freeze is on"
+
+
+@pytest.mark.parametrize("remove_directory", [False, True])
+def test_hold_disappearing_while_read_is_uncertain(tmp_path, monkeypatch, remove_directory):
+    token, version = "a" * 32, "0.9.55"
+    (tmp_path / "release.json").write_text(json.dumps({"version": version, "freeze_token": token}))
+    directory = tmp_path / "release-holds"
+    directory.mkdir()
+    hold = directory / token
+    hold.write_text(version)
+    original = hzlib.os.listdir
+
+    def remove_after_listing(path):
+        names = original(path)
+        hold.unlink()
+        if remove_directory:
+            directory.rmdir()
+        return names
+
+    monkeypatch.setattr(hzlib.os, "listdir", remove_after_listing)
+    assert hzlib.freeze_scope(tmp_path) == "uncertain"
+
+
+@pytest.mark.parametrize("state, expected", [
+    ("request", "uncertain"), ("pause", "open"), ("bad pause", "uncertain"),
+    ("resume", "uncertain"), ("tag", "open"), ("drop pending archive", "uncertain"),
+])
+def test_missing_hold_needs_durable_transition(tmp_path, state, expected):
+    token, version, at = "a" * 32, "0.9.55", "2026-11-25T12:00:00Z"
+    base = {"version": version, "freeze_token": token, "merge_route": "reviewed-release-queue"}
+    stamp = {"version": version, "token": token, "at": at}
+    request = stamp | {"action": "pause-request", "pr": None, "head": None, "was_ready": False}
+    pause = stamp | {"action": "pause", "pr": None, "head": None, "draft": True}
+    events = {
+        "request": [request], "pause": [request, pause], "bad pause": [request, pause | {"head": "a" * 40}],
+        "resume": [request, pause, stamp | {"action": "resume"}],
+    }
+    if state in events:
+        base["hold_events"] = events[state]
+    elif state == "tag":
+        base["freeze_lifted_at"] = at
+    else:
+        base["drop"] = stamp
+    (tmp_path / "release.json").write_text(json.dumps(base))
+    assert hzlib.freeze_scope(tmp_path) == expected
+    if state == "drop pending archive":
+        (tmp_path / "release.json").unlink()
+        assert hzlib.freeze_scope(tmp_path) == "open"
 
 
 @pytest.mark.parametrize("args", [["--repo", f"{OWNER}/steuermaschine"], ["--pr", "9"], ["--repo", "other/steuermaschine", "--pr", "9"]])
@@ -349,7 +481,7 @@ def test_direct_merge_stops_on_local_hold_or_unknown_head(world_of_prs, monkeypa
     rt = world_of_prs([row(repo="steuermaschine")], gh)
     reason = {"freeze": "merge freeze is on", "action hold": "action table holds this PR", "unreadable PR": "head unreadable"}[gate]
     if gate == "freeze":
-        monkeypatch.setattr(area.hzlib, "merge_frozen", lambda *_: True)
+        monkeypatch.setattr(area.hzlib, "incident_frozen", lambda *_: True)
     elif gate == "action hold":
         monkeypatch.setattr(area, "hold_reason", lambda *_: reason)
     else:
