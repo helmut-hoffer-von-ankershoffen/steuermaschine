@@ -24,7 +24,7 @@ candidate that will be cut again), so a fresh `hz-release X.Y.Z` starts clean. I
 vX.Y.Z and no GitHub release on the remote, PyPI answers 404 for the version, no merged release PR, the release PR
 closed or absent, the branch release/vX.Y.Z absent and no workflow run on that branch still active (a candidate
 that still runs is never dropped, with or without `--close-pr`: wait for it or cancel it yourself). `--close-pr`
-closes the open release PR and deletes that branch first, then proves everything again. It cancels no workflow run. Then it removes ONLY the hold this release
+requests conditional deletion of the exact recorded branch and verifies that GitHub closed its PR. It cancels no workflow run. Then it removes ONLY the hold this release
 owns (never the incident sentinel or another release's hold) and moves the receipt, with the reason and the evidence,
 to ~/.cache/hz-release-dropped/vX.Y.Z-<UTC>.json; an owner waiver recorded for this version moves there too. Every
 other case is refused with the exact unmet condition; a transport failure is never read as absence. Not for a
@@ -1997,7 +1997,14 @@ DROP_QUERY = """query($owner:String!,$name:String!,$tag:String!,$head:String!,$r
 
 ADOPT_DROP_QUERY = DROP_QUERY.replace(
     "branch:ref(qualifiedName:$branch){name}", "branch:ref(qualifiedName:$branch){name target{oid}}",
-).replace("isCrossRepository}", "isCrossRepository headRefOid baseRefName autoMergeRequest{enabledAt}}")
+).replace("isCrossRepository}", "isCrossRepository headRefOid baseRefName autoMergeRequest{enabledAt}}"
+          ).replace("name:$name){ref", "name:$name){id ref", 1)
+
+DELETE_DROP_REF = """mutation($repository:ID!,$ref:GitRefname!,$before:GitObjectID!){
+  updateRefs(input:{repositoryId:$repository,refUpdates:[{
+    name:$ref,beforeOid:$before,afterOid:"0000000000000000000000000000000000000000",force:false
+  }]}){clientMutationId}}
+"""
 
 
 def drop_active_runs(head: str) -> list[int]:
@@ -2018,8 +2025,29 @@ def drop_active_runs(head: str) -> list[int]:
     return sorted(set(found))
 
 
-def drop_identity(version: str, expected: tuple[int, str] | None = None, *, recorded: bool = False) -> dict:
+def drop_identity(version: str, expected: tuple[int, str] | None = None, *, recorded: bool = False, discover: bool = False) -> dict:
     """Prove nothing of the version is published; report the release PRs and branch. Unknown is never absent."""
+    verify_drop_unpublished_on_pypi(version)
+    head = f"release/v{version}"
+    exact = expected is not None or discover
+    repo, prs = read_drop_github_state(version, exact)
+    if expected is not None:
+        require_exact_drop_candidate(prs, repo["branch"], head, expected, recorded=recorded)
+    running = drop_active_runs(head)
+    if running:
+        raise Stop(f"drop refused: candidate run {running[0]} on {head} is still active ({len(running)} in all); read every "
+                   f"failure first, then wait for it or cancel it (gh run cancel {running[0]} -R {CORE})")
+    identity: dict[str, Any] = {"open": sorted(pr["number"] for pr in prs if pr["state"] == "OPEN"),
+                               "closed": sorted(pr["number"] for pr in prs if pr["state"] == "CLOSED"),
+                               "branch": repo["branch"] is not None}
+    if exact:
+        identity["repository_id"] = repo.get("id")
+    if discover and repo["branch"] is not None:
+        identity["pin"] = observed_drop_pin(prs, repo["branch"], head)
+    return identity
+
+
+def verify_drop_unpublished_on_pypi(version: str) -> None:
     try:
         with urllib.request.urlopen(f"https://pypi.org/pypi/heinzel/{version}/json", timeout=20):
             raise Stop(f"drop refused: heinzel {version} is on PyPI")
@@ -2028,9 +2056,12 @@ def drop_identity(version: str, expected: tuple[int, str] | None = None, *, reco
             raise Stop(f"drop refused: cannot prove {version} is absent from PyPI (HTTP {exc.code})") from exc
     except (urllib.error.URLError, OSError) as exc:
         raise Stop(f"drop refused: cannot prove {version} is absent from PyPI") from exc
+
+
+def read_drop_github_state(version: str, exact: bool) -> tuple[dict, list[dict]]:
     owner, name = CORE.split("/", 1)
     tag, head = f"v{version}", f"release/v{version}"
-    query = DROP_QUERY if expected is None else ADOPT_DROP_QUERY
+    query = ADOPT_DROP_QUERY if exact else DROP_QUERY
     code, output = hzlib.gh("api", "graphql", "-f", f"query={query}", "-f", f"owner={owner}",
                              "-f", f"name={name}", "-f", f"tag={tag}", "-f", f"head={head}",
                              "-f", f"ref=refs/tags/{tag}", "-f", f"branch=refs/heads/{head}")
@@ -2046,7 +2077,7 @@ def drop_identity(version: str, expected: tuple[int, str] | None = None, *, reco
             raise ValueError
     except (KeyError, TypeError, ValueError) as exc:
         raise Stop("drop refused: cannot prove the release state on GitHub (tag, release, PR, branch)") from exc
-    if expected is not None and any(type(pr.get("isCrossRepository")) is not bool for pr in prs):
+    if exact and any(type(pr.get("isCrossRepository")) is not bool for pr in prs):
         raise Stop("drop refused: cannot prove release PR repository ownership")
     prs = [pr for pr in prs if not pr.get("isCrossRepository")]  # a fork's PR of the same branch name is no release PR of ours
     if repo["ref"] is not None:
@@ -2056,15 +2087,23 @@ def drop_identity(version: str, expected: tuple[int, str] | None = None, *, reco
     merged = [pr["number"] for pr in prs if pr["state"] == "MERGED"]
     if merged:
         raise Stop(f"drop refused: release PR #{merged[0]} is merged")
-    if expected is not None:
-        require_exact_drop_candidate(prs, repo["branch"], head, expected, recorded=recorded)
-    running = drop_active_runs(head)
-    if running:
-        raise Stop(f"drop refused: candidate run {running[0]} on {head} is still active ({len(running)} in all); read every "
-                   f"failure first, then wait for it or cancel it (gh run cancel {running[0]} -R {CORE})")
-    return {"open": sorted(pr["number"] for pr in prs if pr["state"] == "OPEN"),
-            "closed": sorted(pr["number"] for pr in prs if pr["state"] == "CLOSED"),
-            "branch": repo["branch"] is not None}
+    return repo, prs
+
+
+def observed_drop_pin(prs: list[dict], branch: Any, name: str) -> tuple[int, str]:
+    """Bind a legacy cleanup to the unique eligible PR of the branch observed in this proof."""
+    target = branch.get("target") if isinstance(branch, dict) else None
+    sha = target.get("oid") if isinstance(target, dict) else None
+    if not isinstance(sha, str) or not re.fullmatch(r"[0-9a-f]{40}", sha):
+        raise Stop(f"drop refused: cannot prove the exact head of {name}")
+    matches = [pr for pr in prs if pr.get("headRefOid") == sha]
+    open_matches = [pr for pr in matches if pr["state"] == "OPEN"]
+    selected = open_matches or matches
+    if len(selected) != 1:
+        raise Stop(f"drop refused: cannot identify one release PR for {name} at {sha}")
+    pinned = selected[0]["number"], sha
+    require_exact_drop_candidate(prs, branch, name, pinned, recorded=True)
+    return pinned
 
 
 def require_exact_drop_candidate(prs: list[dict], branch: Any, name: str, expected: tuple[int, str], *, recorded: bool) -> None:
@@ -2077,8 +2116,10 @@ def require_exact_drop_candidate(prs: list[dict], branch: Any, name: str, expect
             or pr["autoMergeRequest"] is not None or (pr["state"] != "OPEN" and not recorded)
             or any(other["state"] == "OPEN" and other["number"] != number for other in prs)):
         raise Stop(f"drop refused: #{number} is not the exact eligible release PR at {sha}")
-    if branch is None and recorded and pr["state"] == "CLOSED":
-        return
+    if branch is None and recorded:
+        if pr["state"] == "CLOSED":
+            return
+        raise Stop(f"drop refused: {name} is absent but release PR #{number} is still open; the hold is retained")
     if (not isinstance(branch, dict) or branch.get("name") != name or not isinstance(branch.get("target"), dict)
             or branch["target"].get("oid") != sha):
         raise Stop(f"drop refused: {name} does not point to the exact candidate {sha}")
@@ -2136,11 +2177,51 @@ def drop_candidate(version: str, reason: str, close_pr: bool, *, adopt_pr: int |
     if RECEIPT_OVERRIDE is not None or tail_receipt(version).exists():
         raise Stop(f"drop refused: {version} is past its tag (it has a tail receipt); reject or absorb it instead")
     data = state()
-    expected = None
-    if adopt_pr is not None or adopt_head is not None:
-        if not close_pr or adopt_pr is None or adopt_pr <= 0 or not adopt_head or not re.fullmatch(r"[0-9a-f]{40}", adopt_head):
-            raise Stop("drop refused: adoption requires --close-pr, an exact PR number, and a full head SHA")
-        expected = (adopt_pr, adopt_head)
+    expected = drop_adoption_identity(close_pr, adopt_pr, adopt_head)
+    recorded = validate_drop_receipt(version, data, expected)
+    reviewed = reviewed_drop_mode(data)
+    opened = recorded_release_pr(data)
+    reviewed_identity = reviewed_drop_identity(version, data, opened) if reviewed else None
+    events = hold_events(data)
+    validate_drop_adoption(version, data, opened, expected)
+    owned = data.get("freeze_token") is not None
+    exists = owned and owned_hold_exists(version)
+    if owned and not exists and recorded is None and (not events or events[-1]["action"] != "pause"):
+        raise Stop("drop refused: the owned release hold is missing without a recorded pause")
+    hold_pin = pin_owned_hold(version) if exists else None
+    try:
+        evidence = prove_drop(version, data, opened, expected, reviewed, reviewed_identity, close_pr)
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        record = {"version": version, "token": data.get("freeze_token"), "reason": reason, "at": now_iso(),
+                  "hold": "owned" if exists else "paused" if owned else "none", "evidence": evidence}
+        record = persist_drop(version, record, recorded, hold_pin)
+    finally:
+        if hold_pin is not None:
+            os.close(hold_pin[0])
+    return report_dropped(version, stamp, record, reviewed)
+
+
+def persist_drop(version: str, record: dict, recorded: dict | None, hold_pin: tuple[int, tuple[int, int]] | None) -> dict:
+    if recorded is None:
+        remember(drop=record)  # durable intent before the hold goes: a retry may then find the hold absent
+    else:
+        record = recorded
+    if hold_pin is not None:
+        if not owned_hold_exists(version):
+            raise Stop("drop refused: the release hold disappeared while dropping")
+        unlink_pinned_hold(*hold_pin)
+    return record
+
+
+def drop_adoption_identity(close_pr: bool, adopt_pr: int | None, adopt_head: str | None) -> tuple[int, str] | None:
+    if adopt_pr is None and adopt_head is None:
+        return None
+    if not close_pr or adopt_pr is None or adopt_pr <= 0 or not adopt_head or not re.fullmatch(r"[0-9a-f]{40}", adopt_head):
+        raise Stop("drop refused: adoption requires --close-pr, an exact PR number, and a full head SHA")
+    return adopt_pr, adopt_head
+
+
+def validate_drop_receipt(version: str, data: dict, expected: tuple[int, str] | None) -> dict | None:
     if data.get("version") != version and not (expected is not None and not data):
         raise Stop(f"drop refused: the release receipt is for {data.get('version') or 'no release'}, not {version}")
     if data.get("finished"):
@@ -2152,72 +2233,132 @@ def drop_candidate(version: str, reason: str, close_pr: bool, *, adopt_pr: int |
     adoption = data.get("drop_adoption")
     if adoption is not None and (adoption is not True or expected is None):
         raise Stop("drop refused: retry the recorded adoption with the same --adopt-pr and --adopt-head")
-    pretag = {key: value for key, value in data.items() if key not in ("drop", "release_pr_opened", "drop_adoption")}
+    return recorded
+
+
+def reviewed_drop_mode(data: dict) -> bool:
+    from . import exact_queue
+
+    pretag = {key: value for key, value in data.items() if key not in ("drop", "drop_attempt", "release_pr_opened", "drop_adoption")}
+    reviewed = pretag.get("merge_route") == exact_queue.MODE
+    token = pretag.get("freeze_token")
+    if reviewed:
+        if not isinstance(token, str) or not exact_queue.TOKEN.fullmatch(token):
+            raise Stop("drop refused: reviewed release receipt has no valid owned hold token")
+        pretag.pop("merge_route")
     if not has_only_pretag_core_state(pretag):
         raise Stop("drop refused: the receipt records steps after the tag (PyPI, compose or acceptance)")
-    opened = recorded_release_pr(data)  # `sm release pr` records the PR it opened: pre-tag, if GitHub agrees below
-    events = hold_events(data)
-    if expected is not None:
-        if hzlib.merge_frozen() or pending_waiver(version) is not None:
-            raise Stop("drop refused: adoption requires no release hold, incident hold, or waiver")
-        if data and (adoption is not True or (opened, (data.get("release_pr_opened") or {}).get("head")) != expected):
-            raise Stop("drop refused: adoption would overwrite another release identity")
-    owned = data.get("freeze_token") is not None
-    exists = owned and owned_hold_exists(version)
-    if owned and not exists and recorded is None and (not events or events[-1]["action"] != "pause"):
-        raise Stop("drop refused: the owned release hold is missing without a recorded pause")
-    directory = held = None
-    if exists:
-        directory, held = pin_owned_hold(version)
+    return reviewed
+
+
+def reviewed_drop_identity(version: str, data: dict, opened: int | None) -> tuple[int, str] | None:
+    from . import exact_queue
+
+    token = data["freeze_token"]
+    reviewed_identity = None
     try:
-        identity = drop_identity(version) if expected is None else drop_identity(version, expected, recorded=bool(data))
-        if expected is not None and not data:
-            opened, sha = expected
-            remember(version=version, drop_adoption=True, release_pr_opened={"pr": opened, "head": sha, "at": now_iso()})
-        if opened is not None and opened not in identity["open"] + identity["closed"]:
-            raise Stop(f"drop refused: the receipt names release PR #{opened}, which GitHub does not show as an "
-                       f"unmerged PR of release/v{version}; nothing was dropped")
-        unmet = drop_unmet(version, identity)
-        if unmet and not close_pr:
-            raise Stop(f"drop refused: {unmet}; close the PR and delete the branch, or pass --close-pr")
-        closed_now, branch_deleted = [], False
-        if unmet:
-            for number in identity["open"]:
-                if hzlib.gh("pr", "close", str(number), "-R", CORE)[0] != 0:
-                    raise Stop(f"drop refused: cannot close release PR #{number}; nothing was dropped")
-                closed_now.append(number)
-            if expected is not None:
-                identity = drop_identity(version, expected, recorded=True)
-            if identity["branch"]:
-                # A failed delete is judged by the proof below: closing a PR may already have removed the branch.
-                hzlib.gh("api", "--method", "DELETE", f"repos/{CORE}/git/refs/heads/release/v{version}")
-                branch_deleted = True
-            identity = drop_identity(version) if expected is None else drop_identity(version, expected, recorded=True)
-            if unmet := drop_unmet(version, identity):
-                raise Stop(f"drop refused: {unmet} after --close-pr; nothing was dropped")
-        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        record = {"version": version, "token": data.get("freeze_token"), "reason": reason, "at": now_iso(),
-                  "hold": "owned" if exists else "paused" if owned else "none",
-                  "evidence": {"tag": False, "github_release": False, "pypi": 404, "merged_pr": False,
-                               "closed_prs": identity["closed"], "closed_by_drop": closed_now,
-                               "branch": False, "branch_deleted_by_drop": branch_deleted,
-                               **({"recorded_pr": opened} if opened is not None else {})}}
-        if recorded is None:
-            remember(drop=record)  # durable intent before the hold goes: a retry may then find the hold absent
-        else:
-            record = recorded
-        if exists:
-            if not owned_hold_exists(version):
-                raise Stop("drop refused: the release hold disappeared while dropping")
-            unlink_pinned_hold(directory, held)
-    finally:
-        if directory is not None:
-            os.close(directory)
+        candidate = exact_queue.read_candidate(version, token)
+    except exact_queue.ExactReleaseError as exc:
+        raise Stop(str(exc)) from exc
+    if opened is not None:
+        reviewed_identity = opened, data["release_pr_opened"]["head"]
+    if candidate:
+        if reviewed_identity and reviewed_identity != (candidate.pr, candidate.head):
+            raise Stop("drop refused: recorded PR and reviewed candidate identities disagree")
+        reviewed_identity = candidate.pr, candidate.head
+    return reviewed_identity
+
+
+def validate_drop_adoption(version: str, data: dict, opened: int | None, expected: tuple[int, str] | None) -> None:
+    if expected is None:
+        return
+    if hzlib.merge_frozen() or pending_waiver(version) is not None:
+        raise Stop("drop refused: adoption requires no release hold, incident hold, or waiver")
+    if data and (data.get("drop_adoption") is not True or (opened, (data.get("release_pr_opened") or {}).get("head")) != expected):
+        raise Stop("drop refused: adoption would overwrite another release identity")
+
+
+def close_drop_candidate(version: str, identity: dict, pinned: tuple[int, str] | None) -> tuple[dict, list[int], bool]:
+    if pinned is None or not identity["branch"]:
+        raise Stop("drop refused: remote cleanup needs the exact recorded release PR and branch head")
+    repository = identity.get("repository_id")
+    if not isinstance(repository, str) or not repository:
+        raise Stop("drop refused: cannot prove the release branch's repository identity")
+    number, sha = pinned
+    remember(drop_attempt={"pr": number, "head": sha})  # pin retries before the remote mutation
+    delete_drop_ref(repository, f"refs/heads/release/v{version}", sha)
+    # GitHub owns PR state after deletion. A separate close would act on any replacement PR head.
+    after = drop_identity(version, pinned, recorded=True)
+    if unmet := drop_unmet(version, after):
+        raise Stop(f"drop refused: {unmet} after --close-pr; nothing was dropped")
+    return after, identity["open"], True
+
+
+def delete_drop_ref(repository: str, ref: str, sha: str) -> None:
+    code, output = hzlib.gh("api", "graphql", "-f", f"query={DELETE_DROP_REF}", "-f", f"repository={repository}",
+                            "-f", f"ref={ref}", "-f", f"before={sha}")
+    try:
+        result = json.loads(output)
+        if code or result.get("errors") or not isinstance(result["data"]["updateRefs"], dict):
+            raise ValueError
+    except (AttributeError, KeyError, TypeError, ValueError) as exc:
+        raise Stop("drop refused: GitHub did not confirm conditional deletion of the exact release branch; retry to reconcile") from exc
+
+
+def prove_drop(version: str, data: dict, opened: int | None, expected: tuple[int, str] | None,
+               reviewed: bool, reviewed_identity: tuple[int, str] | None, close_pr: bool) -> dict:
+    recorded_pin = (opened, data["release_pr_opened"]["head"]) if opened is not None else None
+    pinned = drop_attempt_pin(data, expected or reviewed_identity or (recorded_pin if close_pr else None))
+    discover = close_pr and not reviewed and pinned is None
+    if pinned is not None:
+        identity = drop_identity(version, pinned, recorded=bool(data))
+    elif discover:
+        identity = drop_identity(version, discover=True)
+    else:
+        identity = drop_identity(version)
+    unmet = drop_unmet(version, identity)
+    if reviewed and reviewed_identity is None and unmet:
+        raise Stop("drop refused: the reviewed receipt cannot identify the release PR or branch")
+    if data.get("drop") is not None and unmet:
+        raise Stop(f"drop refused: {unmet} after the drop was recorded; preserving the receipt for review")
+    if expected is not None and not data:
+        opened, sha = expected
+        remember(version=version, drop_adoption=True, release_pr_opened={"pr": opened, "head": sha, "at": now_iso()})
+    if opened is not None and opened not in identity["open"] + identity["closed"]:
+        raise Stop(f"drop refused: the receipt names release PR #{opened}, which GitHub does not show as an "
+                   f"unmerged PR of release/v{version}; nothing was dropped")
+    if unmet and not close_pr:
+        raise Stop(f"drop refused: {unmet}; close the PR and delete the branch, or pass --close-pr")
+    identity, closed_now, branch_deleted = close_drop_candidate(version, identity, pinned or identity.get("pin")) if unmet else (identity, [], False)
+    evidence = {"tag": False, "github_release": False, "pypi": 404, "merged_pr": False, "closed_prs": identity["closed"],
+                "closed_by_drop": closed_now, "branch": False, "branch_deleted_by_drop": branch_deleted}
+    if opened is not None:
+        evidence["recorded_pr"] = opened
+    return evidence
+
+
+def drop_attempt_pin(data: dict, expected: tuple[int, str] | None) -> tuple[int, str] | None:
+    attempt = data.get("drop_attempt")
+    if attempt is None:
+        return expected
+    if (not isinstance(attempt, dict) or set(attempt) != {"pr", "head"} or type(attempt["pr"]) is not int or attempt["pr"] <= 0
+            or not isinstance(attempt["head"], str) or not re.fullmatch(r"[0-9a-f]{40}", attempt["head"])):
+        raise Stop("drop refused: the recorded branch deletion attempt is malformed")
+    pinned = attempt["pr"], attempt["head"]
+    if expected is not None and pinned != expected:
+        raise Stop("drop refused: the recorded branch deletion attempt belongs to a different candidate")
+    return pinned
+
+
+def report_dropped(version: str, stamp: str, record: dict, reviewed: bool) -> int:
     target = archive_dropped(version, stamp)
     hold = {"owned": "its owned hold was removed", "paused": "its owned hold was already removed by --pause",
             "none": "it owned no hold"}.get(record.get("hold"), "its owned hold is removed")
+    resume = f"sm release resume {version}"
+    if reviewed:
+        resume += " --snapshot-acceptance --reviewed-queue"
     hzlib.say(f"DROPPED {version}: {hold}; receipt archived at {target}. No workflow run was cancelled. "
-              f"A fresh `sm release resume {version}` starts clean.")
+              f"A fresh `{resume}` starts clean.")
     if hzlib.merge_frozen():
         hzlib.say("note: other merge holds remain (incident sentinel or another release's hold); they were not touched")
     return 0
@@ -2337,7 +2478,7 @@ def release_core(
     if reviewed_queue:
         # A previously verified merge resumes at the hosted tag check.
         try:
-            candidate = exact_queue.read_candidate(version)
+            candidate = exact_queue.read_candidate(version, str(state().get("freeze_token") or ""))
             merged = candidate and (existing := release_pr(tag)) and existing["state"] == "MERGED"
             ready = merged or exact_queue.base_ready(candidate.base if candidate else None)
         except exact_queue.ExactReleaseError as error:
@@ -2413,7 +2554,7 @@ def exact_queue_release(version: str, tag: str, timeout: float) -> None:
                     raise Stop(f"the active queue refused release PR #{candidate.pr}: {' '.join(result.errors or result.lines)}")
             step("release PR merged", lambda: bool((p := release_pr(tag)) and p["state"] == "MERGED"), None, timeout)
         else:
-            candidate = exact_queue.read_candidate(version)
+            candidate = exact_queue.read_candidate(version, str(state().get("freeze_token") or ""))
             if not candidate or candidate.pr != pr["number"]:
                 raise Stop("merged release PR has no exact candidate authorization")
         exact_queue.approve_required(candidate)
@@ -2974,8 +3115,8 @@ def main(argv: list[str]) -> int:
                         "owned hold and archive the receipt under release-dropped/ in the state directory; needs --reason; cancels no run")
     parser.add_argument("--adopt-pr", type=int)
     parser.add_argument("--adopt-head")
-    parser.add_argument("--close-pr", action="store_true", help="with --drop-candidate: close the open release PR and delete "
-                        "release/vX.Y.Z first, then prove the state again")
+    parser.add_argument("--close-pr", action="store_true", help="with --drop-candidate: conditionally delete the exact release branch "
+                        "and verify that its PR is closed")
     parser.add_argument("--reviewed-queue", action="store_true", help="use the active queue after independent candidate review; Core CI creates the tag")
     parser.add_argument("--snapshot-acceptance", action="store_true", help="allow core merges during acceptance of pinned release bytes")
     parser.add_argument("--acceptance-ref", help="explicit corrected acceptance harness ref")
@@ -3093,13 +3234,13 @@ def main(argv: list[str]) -> int:
                 if args.absorb and state().get("version") == args.absorb and state().get("finished"):
                     migrate_legacy_receipt()  # absorbing a finished legacy receipt: hand it off first
                     route_to_tail(args.absorb)
-            state()  # reject corruption before any network request or publication action
+            current = state()  # reject corruption before any network request or publication action
             if args.drop_candidate:
                 if args.adopt_pr is None and args.adopt_head is None:
                     return drop_candidate(args.version, args.reason, args.close_pr)
                 return drop_candidate(args.version, args.reason, args.close_pr, adopt_pr=args.adopt_pr, adopt_head=args.adopt_head)
-            if state().get("drop") is not None or state().get("drop_adoption") is not None:
-                dropping = state().get("version")
+            if any(current.get(field) is not None for field in ("drop", "drop_attempt", "drop_adoption")):
+                dropping = current.get("version")
                 raise Stop(f"a drop of {dropping} is recorded but unfinished; finish it first with "
                            f"`sm release drop {dropping} --reason ...`")
             if args.open_pr:  # a rejected release is never re-opened as a PR: the rejection history refuses first

@@ -22,38 +22,43 @@ class Remote:
         self.writes = []
         self.code = 0
         self.errors = None
-        self.close_fails = False
         self.delete_fails = False
-        self.on_close = None
+        self.auto_close = True
+        self.before_delete = None
+        self.after_delete = None
+        self.lost_delete_reply = False
         self.active = {}  # status -> runs on the release branch that have not completed
         self.runs_code = 0
         self.runs_total = None
 
     def gh(self, *args):
-        if args[:2] == ("pr", "close"):
+        if args[:2] == ("api", "graphql") and any("updateRefs(" in arg for arg in args):
             self.writes.append(args)
-            if self.close_fails:
-                return 1, ""
-            for pr in self.prs:
-                if pr["number"] == int(args[2]):
-                    pr["state"] = "CLOSED"
-            if self.on_close:
-                self.on_close()
-            return 0, ""
-        if "DELETE" in args:
-            self.writes.append(args)
-            if self.delete_fails:
-                return 1, ""
+            if self.before_delete:
+                self.before_delete()
+            sha = (self.branch or {}).get("target", {"oid": "a" * 40})["oid"]
+            if self.delete_fails or self.branch is None or f"before={sha}" not in args:
+                return 1, json.dumps({"errors": [{"message": "ref changed or deletion refused"}]})
             self.branch = None
-            return 0, ""
+            for pr in self.prs:
+                if self.auto_close and pr["state"] == "OPEN":
+                    pr["state"] = "CLOSED"
+            if self.after_delete:
+                self.after_delete()
+            if self.lost_delete_reply:
+                return 1, ""
+            return 0, json.dumps({"data": {"updateRefs": {"clientMutationId": None}}})
         if args[0] == "api" and "/actions/runs?" in args[1]:
             assert f"branch=release/v{VERSION}&status=" in args[1] and len(args) == 2  # a read, never a cancel
             runs = self.active.get(args[1].split("status=")[1].split("&")[0], [])
             return self.runs_code, json.dumps({"total_count": len(runs) if self.runs_total is None else self.runs_total, "workflow_runs": runs})
         assert args[:2] == ("api", "graphql"), args
         assert f"tag=v{VERSION}" in args and f"head=release/v{VERSION}" in args
-        reply = {"data": {"repository": {"ref": self.tag, "branch": self.branch, "release": self.release,
-                                         "pullRequests": {"nodes": self.prs}}}}
+        prs = ([{"isCrossRepository": False, "baseRefName": "main", "headRefOid": "a" * 40, "autoMergeRequest": None} | pr
+                for pr in self.prs] if self.prs is not None else None)
+        branch = None if self.branch is None else {"target": {"oid": "a" * 40}} | self.branch
+        reply = {"data": {"repository": {"id": "fixture-repository", "ref": self.tag, "branch": branch, "release": self.release,
+                                         "pullRequests": {"nodes": prs}}}}
         if self.errors:
             reply["errors"] = self.errors
         return self.code, json.dumps(reply)
@@ -283,16 +288,16 @@ def test_close_pr_closes_the_open_release_pr_and_deletes_its_branch_then_proves_
                   {"number": 794, "state": "OPEN", "headRefName": "release/v1.2.3"}]
     remote.branch = {"name": "release/v1.2.3"}
     assert rel.main([*DROP, "--close-pr"]) == 0
-    assert remote.writes == [("pr", "close", "794", "-R", rel.CORE),
-                             ("api", "--method", "DELETE", f"repos/{rel.CORE}/git/refs/heads/release/v1.2.3")]
+    [mutation] = remote.writes
+    assert mutation[:2] == ("api", "graphql") and f"before={'a' * 40}" in mutation
     evidence = json.loads(archives(rel)[0].read_text())["drop"]["evidence"]
     assert evidence["closed_prs"] == [792, 794] and evidence["closed_by_drop"] == [794] and evidence["branch_deleted_by_drop"] is True
     assert not rel.paths()[1].exists() and not rel.hzlib.release_holds_present()
 
 
 @pytest.mark.parametrize("case, unmet", [
-    ("close-fails", "cannot close release PR #794"),
-    ("delete-fails", "remote branch release/v1.2.3 exists after --close-pr"),
+    ("pr-stays-open", "release PR #794 is still open"),
+    ("delete-fails", "GitHub did not confirm conditional deletion"),
     ("merged-meanwhile", "release PR #794 is merged"),
     ("tagged-meanwhile", "tag v1.2.3 exists on the remote"),
 ])
@@ -300,18 +305,36 @@ def test_close_pr_that_cannot_be_proven_keeps_hold_and_receipt(candidate, capsys
     rel, remote = candidate
     remote.prs[0]["state"] = "OPEN"
     remote.branch = {"name": "release/v1.2.3"}
-    if case == "close-fails":
-        remote.close_fails = True
+    if case == "pr-stays-open":
+        remote.auto_close = False
     elif case == "delete-fails":
         remote.delete_fails = True
     elif case == "merged-meanwhile":
-        remote.on_close = lambda: remote.prs[0].update(state="MERGED")
+        remote.after_delete = lambda: remote.prs[0].update(state="MERGED")
     else:
-        remote.on_close = lambda: setattr(remote, "tag", {"name": "v1.2.3"})
+        remote.after_delete = lambda: setattr(remote, "tag", {"name": "v1.2.3"})
     before = rel.paths()[1].read_bytes()
     assert rel.main([*DROP, "--close-pr"]) == 1
-    assert f"drop refused: {unmet}" in capsys.readouterr().err
-    assert untouched(rel, before)
+    assert unmet in capsys.readouterr().err
+    assert rel.state() == json.loads(before) | {"drop_attempt": {"pr": 794, "head": "a" * 40}}
+    assert rel.snapshot_hold_path().read_text() == VERSION and archives(rel) == []
+
+
+def test_replacement_during_legacy_drop_preserves_branch_and_holds(candidate):
+    rel, remote = candidate
+    remote.prs[0].update(state="OPEN", headRefOid="a" * 40)
+    remote.branch = {"name": f"release/v{VERSION}", "target": {"oid": "a" * 40}}
+
+    def push_replacement():
+        remote.branch["target"]["oid"] = remote.prs[0]["headRefOid"] = "f" * 40
+
+    remote.before_delete = push_replacement
+    assert rel.main([*DROP, "--close-pr"]) == 1
+    assert rel.main([*DROP, "--close-pr"]) == 1
+    assert remote.branch["target"]["oid"] == "f" * 40 and remote.prs[0]["state"] == "OPEN"
+    assert rel.snapshot_hold_path().read_text() == VERSION and archives(rel) == []
+    assert rel.state()["drop_attempt"] == {"pr": 794, "head": "a" * 40}
+    assert len(remote.writes) == 1 and f"before={'a' * 40}" in remote.writes[0]
 
 
 def test_durable_drop_record_precedes_the_unlink_and_a_failed_unlink_is_retried(candidate, monkeypatch, capsys):
@@ -473,7 +496,7 @@ def test_a_recorded_open_release_pr_is_pre_tag_and_close_pr_closes_it(candidate)
     refused = rel.main(DROP)  # open PR without --close-pr: refused, nothing written
     assert refused != 0 and remote.writes == [] and rel.paths()[1].read_bytes() == before
     assert rel.main([*DROP, "--close-pr"]) == 0
-    assert remote.writes[0] == ("pr", "close", "794", "-R", rel.CORE)
+    assert remote.writes[0][:2] == ("api", "graphql")
     evidence = json.loads(archives(rel)[0].read_text())["drop"]["evidence"]
     assert evidence["recorded_pr"] == 794 and evidence["closed_by_drop"] == [794] and evidence["pypi"] == 404 and evidence["tag"] is False
 
@@ -485,7 +508,7 @@ def test_a_recorded_release_pr_is_judged_by_github_not_by_the_receipt(candidate,
     remote.prs = [{"number": 794, "state": "MERGED", "headRefName": f"release/v{VERSION}"}]
     assert rel.main([*DROP, "--close-pr"]) != 0 and "release PR #794 is merged" in capsys.readouterr().err
     remote.prs = [{"number": 801, "state": "OPEN", "headRefName": f"release/v{VERSION}"}]  # GitHub knows no #794
-    assert rel.main([*DROP, "--close-pr"]) != 0 and "names release PR #794" in capsys.readouterr().err
+    assert rel.main([*DROP, "--close-pr"]) != 0 and "cannot prove exact release PR #794" in capsys.readouterr().err
     remote.prs, remote.tag = [{"number": 794, "state": "CLOSED", "headRefName": f"release/v{VERSION}"}], {"name": "v1.2.3"}
     assert rel.main(DROP) != 0 and "tag v1.2.3 exists" in capsys.readouterr().err
     remote.tag, remote.pypi = None, 200
@@ -519,16 +542,16 @@ def unrecorded(tool, home, monkeypatch):
 
 def test_adopt_only_the_exact_unrecorded_candidate_then_finish_after_interruption(unrecorded):
     rel, remote = unrecorded
-    remote.delete_fails = True
+    remote.lost_delete_reply = True
     assert rel.main(ADOPT) == 1
     assert rel.state()["release_pr_opened"]["head"] == OPENED["head"]
     assert remote.prs[0]["state"] == "CLOSED" and archives(rel) == []
     assert rel.main([*DROP, "--close-pr"]) == 1
-    remote.delete_fails = False
+    assert remote.branch is None
     assert rel.main(ADOPT) == 0
     record = json.loads(archives(rel)[0].read_text())
     assert record["release_pr_opened"]["pr"] == 794 and record["drop"]["hold"] == "none"
-    assert [write[:2] for write in remote.writes] == [("pr", "close"), ("api", "--method"), ("api", "--method")]
+    assert [write[:2] for write in remote.writes] == [("api", "graphql")]
     assert rel.state() == {}
 
 
@@ -549,11 +572,14 @@ def test_adoption_false_proof_never_writes(unrecorded, target, key, value):
     assert not rel.paths()[1].exists() and not archives(rel) and not remote.writes
 
 
-def test_adoption_does_not_delete_a_branch_that_changed_after_close(unrecorded):
+def test_adoption_does_not_delete_a_replacement_branch_after_initial_proof(unrecorded):
     rel, remote = unrecorded
-    remote.on_close = lambda: remote.branch["target"].update(oid="f" * 40)
+    remote.before_delete = lambda: remote.branch["target"].update(oid="f" * 40)
     assert rel.main(ADOPT) == 1
-    assert remote.writes == [("pr", "close", "794", "-R", rel.CORE)]
+    assert [write[:2] for write in remote.writes] == [("api", "graphql")]
+    assert remote.branch["target"]["oid"] == "f" * 40 and remote.prs[0]["state"] == "OPEN"
+    assert archives(rel) == []
+
     assert rel.state()["release_pr_opened"]["head"] == OPENED["head"]
     assert rel.main(ADOPT) == 1 and len(remote.writes) == 1
 
@@ -583,9 +609,8 @@ def test_adoption_needs_both_pins_and_close_pr(unrecorded, args):
     assert not rel.paths()[1].exists() and not archives(rel) and not remote.writes
 
 
-def test_adoption_accepts_branch_already_deleted_when_pr_closes(unrecorded):
+def test_adoption_records_confirmed_branch_deletion_and_pr_closure(unrecorded):
     rel, remote = unrecorded
-    remote.on_close = lambda: setattr(remote, "branch", None)
     assert rel.main(ADOPT) == 0
     record = json.loads(archives(rel)[0].read_text())["drop"]["evidence"]
-    assert not record["branch_deleted_by_drop"] and record["closed_by_drop"] == [794]
+    assert record["branch_deleted_by_drop"] and record["closed_by_drop"] == [794]
