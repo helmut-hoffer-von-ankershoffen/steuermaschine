@@ -86,6 +86,8 @@ def test_a_document_change_runs_the_docs_style_test_the_selector_names_and_the_h
     assert found.ready and found.receipt and found.selector == "core" and found.changed == 1
     assert step(found, "docs").detail == "1 changed document(s): template, typos, tests green" and step(found, "web").detail == "no web file(s) changed"
     assert machine.ran("sync_template.py --check") and machine.ran("uv run typos") and machine.ran("tests/unit/documentation_test.py")
+    pytest_roots = {call[2]["PYTEST_DEBUG_TEMPROOT"] for call in machine.ran("uv run pytest")}
+    assert len(pytest_roots) == 1
     assert machine.ran("tests/integration/guides_test.py")  # the hook's early guard, as the hook prints it
     (selected,) = [call[0] for call in machine.ran("tests/unit/prose_rules_test.py")]  # the selector's test: no name of it exists in sm
     assert selected[:3] == ["uv", "run", "pytest"] and selected[-1] == "tests/unit/prose_rules_test.py"
@@ -512,3 +514,44 @@ def test_usage_errors_run_nothing(core, rt, tmp_path):  # noqa: F811
     assert done.exit_code == 2 and "the selector of" in done.stderr and "sm head select --repo" in done.stderr
     no_base = invoke(rt(Machine(**{"git merge-base": Result(1, "", "fatal: no merge base")})), ["check", str(core), "--base", "origin/nope"])
     assert no_base.exit_code == 2 and "has no merge-base with origin/nope" in no_base.stderr
+
+
+def test_concurrent_checks_keep_pytest_cleanup_private(tmp_path, monkeypatch):
+    import os
+    import subprocess
+    import sys
+    from concurrent.futures import ThreadPoolExecutor
+    from pathlib import Path
+    from threading import Barrier
+
+    monkeypatch.setenv("PYTEST_DEBUG_TEMPROOT", str(tmp_path))
+    case = tmp_path / "test_child.py"
+    case.write_text("import os\nfrom pathlib import Path\n"
+                    "def test_fixture(tmp_path):\n"
+                    "    assert Path(os.environ['PYTEST_DEBUG_TEMPROOT']) in tmp_path.parents\n"
+                    "    assert os.environ['CHECK_CASE'] == 'inherited'\n")
+    sentinel = tmp_path / "keep"
+    sentinel.touch()
+    overlap = Barrier(2)
+
+    def subprocess_gate(cmd, cwd, env):
+        result = subprocess.run(cmd, cwd=cwd, env=os.environ | env, text=True, capture_output=True, timeout=30)
+        return result.returncode, result.stdout + result.stderr
+
+    def check_worker():
+        with check.isolated_gate(subprocess_gate) as gate:
+            def call(*args):
+                return gate([sys.executable, *args], cwd=tmp_path, env={"CHECK_CASE": "inherited", "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1"})
+            root = Path(call("-c", "import os; print(os.environ['PYTEST_DEBUG_TEMPROOT'])")[1].strip())
+            overlap.wait(timeout=15)
+            rc, output = call("-m", "pytest", "-q", "-p", "no:cacheprovider", str(case))
+            assert rc == 0, output
+            assert list(root.glob("pytest-of-*/pytest-*/test_fixture*"))
+            assert call("-c", "import sys; print('failed child'); sys.exit(7)") == (7, "failed child\n")
+        return root
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        roots = list(executor.map(lambda _: check_worker(), range(2)))
+    assert roots[0] != roots[1]
+    assert all(root.parent == tmp_path and not root.exists() for root in roots)
+    assert sentinel.exists()
