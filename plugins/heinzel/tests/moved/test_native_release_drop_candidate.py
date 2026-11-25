@@ -106,6 +106,91 @@ def untouched(rel, before):
     return rel.paths()[1].read_bytes() == before and rel.snapshot_hold_path().read_text() == VERSION and archives(rel) == []
 
 
+@pytest.fixture
+def unpinned_reviewed(candidate, monkeypatch):
+    from steuermaschine_heinzel.native.release_lib import exact_queue
+
+    rel, remote = candidate
+    monkeypatch.setattr(exact_queue, "read_candidate", lambda *_: None)
+    rel.remember(merge_route="reviewed-release-queue")
+    head, base, tree = "a" * 40, "b" * 40, "c" * 40
+    stable_repo = {"full_name": rel.CORE, "node_id": "fixture-repository"}
+    branch = f"release/v{VERSION}"
+    remote.prs = [{"number": 962, "state": "OPEN", "headRefName": branch}]
+    remote.branch = {"name": branch}
+    pull = {"number": 962, "state": "open", "merged": False, "auto_merge": None, "title": f"chore(release): v{VERSION}",
+            "head": {"ref": branch, "sha": head, "repo": stable_repo.copy()},
+            "base": {"ref": "main", "sha": base, "repo": stable_repo.copy()}}
+    commit = {"sha": head, "parents": [{"sha": base}], "commit": {"tree": {"sha": tree}}}
+    monkeypatch.setattr(rel.hzlib, "ghj", lambda *args, **_kw: {
+        ("api", f"repos/{rel.CORE}/pulls/962"): pull, ("api", f"repos/{rel.CORE}/commits/{head}"): commit,
+    }.get(args))
+    monkeypatch.setattr(rel, "verify_release_pr_scope", lambda *_: head)
+    binding = ["962", head, base, tree, rel.state()["freeze_token"]]
+    return rel, remote, binding, pull
+
+
+def test_bind_legacy_reviewed_receipt_before_conditional_delete(unpinned_reviewed):
+    rel, remote, binding, _pull = unpinned_reviewed
+    hold = rel.snapshot_hold_path()
+    unrelated = hold.parent / ("d" * 32)
+    unrelated.write_text("9.9.9")
+    assert rel.main([*DROP, "--close-pr"]) == 1  # no ambient adoption
+    assert not remote.writes
+
+    def check_pin():
+        pinned = rel.state()["release_pr_opened"]
+        assert (pinned["pr"], pinned["head"]) == (962, binding[1])
+        assert hold.read_text() == VERSION
+
+    remote.before_delete = check_pin
+    assert rel.main([*DROP, "--close-pr", "--bind-owned-candidate", ",".join(binding)]) == 0
+    assert len(remote.writes) == 1 and f"before={binding[1]}" in remote.writes[0]
+    assert not hold.exists() and unrelated.read_text() == "9.9.9"
+    assert json.loads(archives(rel)[0].read_text())["drop"]["evidence"]["recorded_pr"] == 962
+
+
+@pytest.mark.parametrize("change", ["token", "number", "head", "base", "tree", "repo", "fork", "replacement", "closed", "prior-pin", "hold-replaced"])
+def test_unpinned_binding_refuses_inconsistent_ownership(unpinned_reviewed, monkeypatch, change):
+    rel, remote, binding, pull = unpinned_reviewed
+    if change in ("head", "base", "tree", "token"):
+        index = ("head", "base", "tree", "token").index(change) + 1
+        binding[index] = "e" * len(binding[index])
+    elif change == "number":
+        binding[0] = "963"
+    elif change == "repo":
+        pull["base"]["repo"]["node_id"] = "another-repository"
+    elif change == "fork":
+        pull["head"]["repo"]["full_name"] = "other-owner/repo"
+    elif change == "replacement":
+        remote.prs[0]["number"] = 963
+    elif change == "closed":
+        remote.prs[0]["state"] = "CLOSED"
+    elif change == "prior-pin":
+        rel.remember(release_pr_opened={"pr": 961, "head": "f" * 40, "at": rel.now_iso()})
+    elif change == "hold-replaced":
+        def replace_hold(*_):
+            path = rel.snapshot_hold_path()
+            path.rename(path.with_suffix(".old"))
+            path.write_text(VERSION)
+            return binding[1]
+
+        monkeypatch.setattr(rel, "verify_release_pr_scope", replace_hold)
+    before = rel.paths()[1].read_bytes()
+    assert rel.main([*DROP, "--close-pr", "--bind-owned-candidate", ",".join(binding)]) == 1
+    assert untouched(rel, before) and not remote.writes
+
+
+def test_bound_legacy_drop_reuses_saved_pin_after_a_lost_cas_reply(unpinned_reviewed):
+    rel, remote, binding, _pull = unpinned_reviewed
+    remote.lost_delete_reply = True
+    assert rel.main([*DROP, "--close-pr", "--bind-owned-candidate", ",".join(binding)]) == 1
+    assert rel.snapshot_hold_path().exists()
+    assert rel.state()["release_pr_opened"]["pr"] == 962
+    assert rel.main([*DROP, "--close-pr"]) == 0
+    assert len(remote.writes) == 1 and not rel.hzlib.release_holds_present()
+
+
 def test_drop_releases_only_its_own_hold_archives_the_receipt_and_a_fresh_release_starts_clean(candidate, capsys):
     rel, remote = candidate
     token = rel.state()["freeze_token"]
