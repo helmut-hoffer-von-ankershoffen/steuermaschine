@@ -514,7 +514,7 @@ class ReleaseDrop(Model):
 @native("release drop", writes=True, replaces=("hz-release",), help=H(
     "Drop a candidate that is provably before publication, so that a fresh cut of the same version starts clean.",
     "Use when a candidate failed and will be cut again (first-attempt rule: a failed candidate is never rerun green).",
-    "removes ONLY the hold this release owns and archives its receipt; with --close-pr it closes the release PR and deletes its branch.",
+    "removes ONLY the hold this release owns and archives its receipt; with --close-pr it conditionally deletes the exact release branch and verifies PR closure.",
     "sm release drop 0.9.40 --reason \"candidate red: Coverage, fix in #812\" --close-pr",
     "sm release resume VERSION --intro ...   (the fresh cut)",
     "Proves first, from typed replies: no tag, no GitHub release, PyPI answers 404, no merged release PR, the release PR\n"
@@ -523,7 +523,7 @@ class ReleaseDrop(Model):
     "another release's hold. Not for a release past its tag (reject or absorb), a finished one, or tag-on-green-main."))
 def release_drop(version: str = typer.Argument(..., metavar="VERSION", help="The exact version X.Y.Z of the candidate."),
                  reason: str = typer.Option(..., "--reason", help="Why the candidate is dropped; kept with the archived receipt."),
-                 close_pr: bool = typer.Option(False, "--close-pr", help="Close the open release PR and delete its branch first, then prove everything again."),
+                 close_pr: bool = typer.Option(False, "--close-pr", help="Delete the branch only at its verified head, then verify PR closure and release state."),
                  adopt_pr: int | None = typer.Option(None, "--adopt-pr", help="Recover a missing receipt for this exact open PR."),
                  adopt_head: str | None = typer.Option(None, "--adopt-head", help="Full commit SHA for --adopt-pr.")) -> ReleaseDrop:
     # The cut's own engine lock, held for the whole drop: a cut that is advancing saves its state after every step and would
