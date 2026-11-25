@@ -249,7 +249,7 @@ def test_a_base_that_is_not_an_ancestor_of_the_head_fails_closed(core):
 
 
 # ----------------------------------------------------------------------------- a policy without the focused-plan and merge-gate parts
-OPTIONAL = ("lanes", "focused_job", "gate_checks", "judge_workflow")
+OPTIONAL = ("lanes", "focused_job", "gate_checks", "judge_workflow", "acceptance")
 
 
 def _slim(**override) -> bytes:
@@ -263,6 +263,7 @@ def test_a_policy_without_the_optional_keys_is_read_with_empty_values():
     assert policy.lanes == {} and policy.focused_job == "" and policy.gate_checks == {} and policy.judge_workflow == ""
     assert policy.judge_file == "" and policy.api_checks == frozenset() and policy.lane_kind("web") is None
     assert policy.aggregate == "CI OK" and policy.required_contexts == {"CI OK"}
+    assert policy.acceptance is None
 
 
 def test_a_policy_without_merge_gate_in_the_required_contexts_is_read():
@@ -274,7 +275,7 @@ def test_a_policy_without_merge_gate_in_the_required_contexts_is_read():
 @pytest.mark.parametrize("dropped", OPTIONAL)
 def test_each_optional_key_alone_may_be_missing(dropped):
     data = kit.manifest("new")
-    data.pop(dropped)
+    data.pop(dropped, None)
     data["required_contexts"] = ["CI OK", "coverage-floor", "merge-gate"] if dropped != "gate_checks" else ["CI OK"]
     core_policy.at_commit_api(api(kit.files("new", policy=kit.encode(data))), C)
 
