@@ -59,7 +59,8 @@ def test_required_step_and_hosted_runner_cannot_be_omitted():
         hosted.good_job(job, ("Tests",))
 
 
-def test_hosted_evidence_rejects_identity_and_artifact_changes(monkeypatch):
+@pytest.mark.parametrize(("branch", "split"), [("feature", False), ("main", False), ("main", True)])
+def test_hosted_evidence_rejects_identity_and_artifact_changes(monkeypatch, branch, split):
     import copy
     import hashlib
     import io
@@ -84,9 +85,14 @@ def test_hosted_evidence_rejects_identity_and_artifact_changes(monkeypatch):
                 "steps": [{"name": step, "status": "completed", "conclusion": "success"} for step in steps]}
 
     run = {"id": 1, "run_attempt": 1, "status": "completed", "conclusion": "success", "event": "push",
-           "path": ".github/workflows/ci.yml", "head_sha": sha, "head_branch": "feature",
+           "path": ".github/workflows/ci.yml", "head_sha": sha, "head_branch": branch,
            "repository": {"id": 3}, "head_repository": {"id": 3}}
     jobs = [job("check", check_steps), job("Test (ubuntu-24.04, Python 3.15)", ("Tests",))]
+    if branch == "main":
+        jobs.extend((job("Test (macos-latest, Python 3.15)", ("Tests",)), job("badge", ("Write badges/coverage.svg",))))
+    if split:
+        jobs[0]["name"] = "Integration checks"
+        jobs.append(job("check", ("Set up job", "Require integration and test results", "Complete job")))
     artifact = {"id": 5, "name": "coverage", "expired": False, "size_in_bytes": len(data),
                 "digest": "sha256:" + hashlib.sha256(data).hexdigest(),
                 "workflow_run": {"id": 1, "head_sha": sha, "repository_id": 3, "head_repository_id": 3}}
@@ -111,7 +117,7 @@ def test_hosted_evidence_rejects_identity_and_artifact_changes(monkeypatch):
         if args[:3] == ("git", "remote", "get-url"):
             return f"https://github.com/{repo}.git".encode()
         if args[:3] == ("git", "branch", "--show-current"):
-            return b"feature"
+            return branch.encode()
         if args[:2] == ("git", "ls-files"):
             return ("\0".join(FILES) + "\0").encode()
         if args[:2] == ("gh", "api"):
@@ -134,6 +140,26 @@ def test_hosted_evidence_rejects_identity_and_artifact_changes(monkeypatch):
     with pytest.raises(hosted.Refused):
         hosted.verify(repo, 1, sha, Path("."))
     state["jobs"].append(saved)
+    bad_jobs = [job("unexpected", ("Tests",)), copy.deepcopy(jobs[0])]
+    for bad in bad_jobs:
+        state["jobs"].append(bad)
+        with pytest.raises(hosted.Refused):
+            hosted.verify(repo, 1, sha, Path("."))
+        state["jobs"].pop()
+    if split:
+        summary = state["jobs"][-1]
+        summary["steps"].append(copy.deepcopy(state["jobs"][0]["steps"][0]))
+        with pytest.raises(hosted.Refused):
+            hosted.verify(repo, 1, sha, Path("."))
+        summary["steps"].pop()
+        summary["steps"][1]["conclusion"] = "skipped"
+        with pytest.raises(hosted.Refused):
+            hosted.verify(repo, 1, sha, Path("."))
+        summary["steps"][1]["conclusion"] = "success"
+        summary["run_attempt"] = 2
+        with pytest.raises(hosted.Refused):
+            hosted.verify(repo, 1, sha, Path("."))
+        summary["run_attempt"] = 1
     state["jobs"][0]["steps"][0]["conclusion"] = "skipped"
     with pytest.raises(hosted.Refused):
         hosted.verify(repo, 1, sha, Path("."))
