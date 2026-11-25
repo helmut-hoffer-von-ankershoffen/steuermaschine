@@ -26,6 +26,43 @@ class DependencyCheck:
     names: dict[str, re.Pattern[str]]
 
 
+def workflow_jobs(text: str) -> dict[str, str]:
+    """Read top-level job keys and their exact bodies."""
+    _, jobs_marker, jobs_text = text.partition("\njobs:\n")
+    require(jobs_marker, "reviewed workflow jobs unavailable")
+    headers = list(JOB_HEADER.finditer(jobs_text))
+    possible_headers = re.findall(r"^  (?!#)\S[^\n]*$", jobs_text, re.MULTILINE)
+    require(len(headers) == len(possible_headers), "unsupported workflow job syntax")
+    blocks = {header[1]: jobs_text[header.end():headers[i + 1].start() if i + 1 < len(headers) else len(jobs_text)]
+              for i, header in enumerate(headers)}
+    require(len(blocks) == len(headers), "reviewed workflow has duplicate job keys")
+    return blocks
+
+
+def retry_dependents(text: str, selected: str) -> set[str]:
+    """Refuse a workflow whose dependency shape does not prove the retry's closure."""
+    blocks = workflow_jobs(text)
+    edges = {}
+    for name, body in blocks.items():
+        require(all(re.match(r"[a-z][a-z0-9_-]* *:", line)
+                    for line in re.findall(r"^    ((?!#)\S[^\n]*)$", body, re.MULTILINE)),
+                "unsupported workflow job mapping")
+        needs = re.findall(r"^    needs *: *(.*?) *(?:#.*)?$", body, re.MULTILINE)
+        require(len(needs) <= 1, "ambiguous workflow dependencies")
+        value = needs[0] if needs else ""
+        require(not needs or re.fullmatch(r"(?:[a-z][a-z0-9_-]*|\[[a-z0-9_, -]*\])", value),
+                "unsupported retry dependency syntax")
+        edges[name] = {key.strip() for key in value.strip("[]").split(",") if key.strip()}
+    require(selected in blocks and all(needs <= blocks.keys() for needs in edges.values()),
+            "incomplete retry dependency graph")
+    seen = {selected}
+    while True:
+        closure = seen | {name for name, needs in edges.items() if needs & seen}
+        if closure == seen:
+            return closure - {selected}
+        seen = closure
+
+
 def dependency_check(api, policy, head: str) -> DependencyCheck:
     """Read the owning workflow's current job labels and dependency-result step.
 
@@ -33,12 +70,7 @@ def dependency_check(api, policy, head: str) -> DependencyCheck:
     used by the reviewed workflow. A changed layout or logger needs fresh proof.
     """
     text = source_bytes(api, policy.workflow, head, (policy.workflow,)).decode()
-    _, jobs_marker, jobs_text = text.partition("\njobs:\n")
-    require(jobs_marker, "reviewed workflow jobs unavailable")
-    headers = list(JOB_HEADER.finditer(jobs_text))
-    blocks = {header[1]: jobs_text[header.end():headers[i + 1].start() if i + 1 < len(headers) else len(jobs_text)]
-              for i, header in enumerate(headers)}
-    require(len(blocks) == len(headers), "reviewed workflow has duplicate job keys")
+    blocks = workflow_jobs(text)
     labels = {key: re.findall(r"^    name: ([^\n#]+)", body, re.MULTILINE) for key, body in blocks.items()}
     aggregates = [key for key, names in labels.items() if [name.strip() for name in names] == [policy.aggregate]]
     require(len(aggregates) == 1, "reviewed workflow aggregate job is ambiguous")

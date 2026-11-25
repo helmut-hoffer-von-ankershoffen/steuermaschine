@@ -235,7 +235,7 @@ def test_release_merge_must_be_linked_to_the_pr_and_still_on_main(evidence):
 @pytest.mark.parametrize(("initial", "requested", "ready", "tagged", "error"), [
     ("", True, True, False, "queued"),
     (exact.MODE, False, True, False, "queued"),
-    (exact.MODE, False, False, False, "both original main CI lanes"),
+    (exact.MODE, False, False, False, "main CI workload is unproven"),
     ("legacy", True, True, False, "unrecognized merge route"),
     ("", True, True, True, "no reviewed queue authorization"),
     (exact.MODE, False, True, False, "refuses a candidate waiver"),
@@ -348,7 +348,7 @@ def test_replacement_release_uses_its_own_candidate_receipt(evidence, monkeypatc
 
 def test_candidate_proof_rejects_unavailable_main_ci(evidence, monkeypatch):
     monkeypatch.setattr(exact, "base_ready", lambda _: False)
-    with pytest.raises(exact.ExactReleaseError, match="both original main CI lanes"):
+    with pytest.raises(exact.ExactReleaseError, match="main CI workload is unproven"):
         exact.verify_open(CANDIDATE)
 
 

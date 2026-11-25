@@ -883,11 +883,31 @@ def rerun_restoration() -> dict:
 
 
 
+def recovered_main_capacity() -> bool:
+    """Only this exact pinned macOS incident can use second-attempt capacity evidence."""
+    from steuermaschine.native import runtime
+
+    from . import main_capacity_recovery
+
+    pinned = load().get("main_failure", {})
+    if not isinstance(pinned, dict) or not main_lanes.is_macos_lane(pinned):
+        return False
+    run = pinned.get("databaseId")
+    if (type(run) is not int or pinned.get("attempt") != 1
+            or (pinned.get("status"), pinned.get("conclusion")) != ("completed", "failure")):
+        return False
+    try:
+        proof = main_capacity_recovery.inspect_attempt(runtime().providers.store, run, api=main_checkpoint.get)
+    except (ValueError, OSError, KeyError, TypeError, RuntimeError):
+        return False
+    return proof.head == pinned.get("headSha")
+
+
 def restored_by_rerun() -> bool:
     """Gate hook: record each restoration once in the queue state and hz-note, so every waiver is auditable."""
     found = rerun_restoration()
     if not found:
-        return False
+        return recovered_main_capacity()
     if load().get("main_restored", {}).get("run") != found["run"]:
         label = f"restored-by-rerun(KNOWN: {', '.join(found['beads'])})"
         update(main_restored={**found, "label": label, "at": int(time.time())})
