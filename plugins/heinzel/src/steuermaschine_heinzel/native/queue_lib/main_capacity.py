@@ -39,30 +39,6 @@ def workflow_jobs(text: str) -> dict[str, str]:
     return blocks
 
 
-def retry_dependents(text: str, selected: str) -> set[str]:
-    """Refuse a workflow whose dependency shape does not prove the retry's closure."""
-    blocks = workflow_jobs(text)
-    edges = {}
-    for name, body in blocks.items():
-        require(all(re.match(r"[a-z][a-z0-9_-]* *:", line)
-                    for line in re.findall(r"^    ((?!#)\S[^\n]*)$", body, re.MULTILINE)),
-                "unsupported workflow job mapping")
-        needs = re.findall(r"^    needs *: *(.*?) *(?:#.*)?$", body, re.MULTILINE)
-        require(len(needs) <= 1, "ambiguous workflow dependencies")
-        value = needs[0] if needs else ""
-        require(not needs or re.fullmatch(r"(?:[a-z][a-z0-9_-]*|\[[a-z0-9_, -]*\])", value),
-                "unsupported retry dependency syntax")
-        edges[name] = {key.strip() for key in value.strip("[]").split(",") if key.strip()}
-    require(selected in blocks and all(needs <= blocks.keys() for needs in edges.values()),
-            "incomplete retry dependency graph")
-    seen = {selected}
-    while True:
-        closure = seen | {name for name, needs in edges.items() if needs & seen}
-        if closure == seen:
-            return closure - {selected}
-        seen = closure
-
-
 def workload_step(workflow: str, job: str, matches) -> str:
     """Identify the unique unconditional named workload step in the exact workflow."""
     blocks = workflow_jobs(workflow)

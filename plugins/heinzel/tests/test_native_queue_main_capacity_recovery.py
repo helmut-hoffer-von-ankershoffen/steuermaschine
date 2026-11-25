@@ -8,8 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from steuermaschine.defaults import FileStore
-from steuermaschine.native import NativeRuntime, using
-from steuermaschine.testing.fakes import MemoryStore, fake_providers
+from steuermaschine.testing.fakes import MemoryStore
 from steuermaschine_heinzel.native.queue_lib import hzlib, main_lanes
 from steuermaschine_heinzel.native.queue_lib import main_capacity_recovery as recovery
 from steuermaschine_heinzel.native.queue_lib.release_candidate import CandidateError
@@ -138,7 +137,7 @@ def test_original_exact_pair_produces_only_a_read_only_assessment(evidence):
 
 @pytest.mark.parametrize("defect", [
     "head", "extra run", "attempt", "runner", "steps", "annotation", "log", "aggregate",
-    "product failure", "incomplete jobs", "not split", "other dispatch", "extra dependency",
+    "product failure", "incomplete jobs", "not split", "other dispatch",
 ])
 def test_ambiguous_or_product_failures_produce_no_assessment(evidence, defect):
     responses, listing, hold, aggregate, notes, log = evidence
@@ -171,230 +170,89 @@ def test_ambiguous_or_product_failures_produce_no_assessment(evidence, defect):
         responses["actions/runs/1/attempts/1/jobs?per_page=100&page=1"]["jobs"][-1]["conclusion"] = "skipped"
     elif defect == "other dispatch":
         lane["display_title"] = f"CI {HEAD}"
-    elif defect == "extra dependency":
-        workflow = responses[f"contents/.github/workflows/ci.yml?ref={HEAD}"]
-        workflow["content"] = base64.b64encode((WORKFLOW + "  more-work:\n    needs: ci-ok\n").encode()).decode()
     with pytest.raises((CandidateError, recovery.candidate_capacity.InvalidCapacity)):
         assess(evidence)
 
-
-def prepare(store, evidence, *, head=HEAD, push=1):
+def dispatch(store, evidence, post, authorize=lambda: None):
     responses, _, _, _, _, lines = evidence
     log = "\n".join(f"2026-11-25T12:45:00.0000000Z {line}" for line in lines).encode()
-    return recovery.prepare(store, head, push, 2, api=responses.__getitem__, read_log=lambda _: log,
-                            now=datetime(2026, 11, 25, 13, tzinfo=UTC))
+    return recovery.dispatch(store, HEAD, 1, 2, api=responses.__getitem__, read_log=lambda _: log,
+                             now=lambda: datetime(2026, 11, 25, 13, tzinfo=UTC), authorize=authorize, post=post)
 
 
-def retry_rows(evidence, *, carrier=False):
-    responses, listing, _, _, _, _ = evidence
-    lane = responses["actions/runs/2"]
-    new = lane | {"run_attempt": 2, "conclusion": "success", "triggering_actor": {"id": 100},
-                  "previous_attempt_url": f"https://api.github.com/repos/{hzlib.CORE}/actions/runs/2/attempts/1"}
-    listing["workflow_runs"][0] = new
-    responses["actions/runs/2/attempts/2"] = new
-    replacement = execution(
-        job(30, MACOS, 2) | {"run_attempt": 2},
-        "Install Python 3.15 dependencies with the verified PyYAML compatibility build",
-        TEST_STEP, retry=True,
-    )
-    aggregate = execution(job(31, AGG, 2) | {"run_attempt": 2}, GUARD, DIRECT, retry=True)
-    jobs = [replacement, aggregate]
-    if carrier:
-        old = responses["actions/runs/2/attempts/1/jobs?per_page=100&page=1"]["jobs"][-1]
-        jobs.append(old | {"id": 32, "run_attempt": 2})
-    responses["actions/runs/2/attempts/2/jobs?per_page=100&page=1"] = {"total_count": len(jobs), "jobs": jobs}
-    return new, jobs
+def replacement(evidence, **overrides):
+    responses = evidence[0]
+    run = responses["actions/runs/2"] | {"id": 3, "status": "queued", "conclusion": None} | overrides
+    responses["actions/runs/3"] = run
+    return {"workflow_run_id": 3, "html_url": f"https://github.com/{hzlib.CORE}/actions/runs/3"}
 
 
-def test_intent_is_exact_create_once_and_never_sends(evidence, tmp_path):
-    saved = prepare(FileStore(tmp_path), evidence)
+def test_one_fresh_dispatch_persists_and_reuses_only_the_response_id(evidence, tmp_path):
     store = FileStore(tmp_path)
-    assert (saved["expected_attempt"], saved["status"]) == (2, "prepared")
-    assert saved["request_path"] == f"repos/{hzlib.CORE}/actions/jobs/20/rerun"
-    assert prepare(store, evidence) == saved
-    with pytest.raises(CandidateError, match="conflicting original request"):
-        prepare(store, evidence, head="b" * 40)
-    with pytest.raises(CandidateError, match=r"actual-main CI run 2 .* failure"):
-        recovery.inspect_attempt(store, 2, api=evidence[0].__getitem__)
-
-
-@pytest.mark.parametrize("carrier", [False, True])
-def test_completed_retry_stays_diagnostic_without_request_provenance(evidence, carrier):
-    store = MemoryStore()
-    saved = prepare(store, evidence)
-    retry_rows(evidence, carrier=carrier)
-    result = recovery.inspect_attempt(store, 2, api=evidence[0].__getitem__)
-    assert result == recovery.ObservedMainRetry(HEAD, 2, 30, 31, saved["intent_sha256"])
-    assert store.get_receipt(recovery.INTENT, "2") == saved
-
-
-@pytest.mark.parametrize("defect", [
-    "new main", "new run", "another attempt", "duplicate", "product failure", "skipped target step",
-    "missing aggregate judge", "changed original", "changed carrier", "receipt tampering",
-])
-def test_retry_reader_refuses_ambiguous_or_nonexecuting_evidence(evidence, defect):
-    store = MemoryStore()
-    saved = prepare(store, evidence)
-    run, jobs = retry_rows(evidence, carrier=True)
-    responses, listing, _, _, _, _ = evidence
-    if defect == "new main":
-        responses["git/ref/heads/main"]["object"]["sha"] = "b" * 40
-    elif defect == "new run":
-        listing["workflow_runs"].append(run | {"id": 8})
-        listing["total_count"] += 1
-    elif defect == "another attempt":
-        run["run_attempt"] = 3
-    elif defect == "duplicate":
-        jobs[0]["id"] = jobs[1]["id"]
-    elif defect == "product failure":
-        jobs[0]["conclusion"] = "failure"
-    elif defect == "skipped target step":
-        jobs[0]["steps"][1]["conclusion"] = "skipped"
-    elif defect == "missing aggregate judge":
-        jobs[1]["steps"].pop()
-    elif defect == "changed original":
-        responses["actions/runs/2/attempts/1/jobs?per_page=100&page=1"]["jobs"][-1]["runner_id"] = 40
-    elif defect == "changed carrier":
-        jobs[-1]["runner_name"] = "Another runner"
-    else:
-        store.receipts[(recovery.INTENT, "2")] = saved | {"request_path": "/invalid"}
-    with pytest.raises((CandidateError, recovery.candidate_capacity.InvalidCapacity)):
-        recovery.inspect_attempt(store, 2, api=responses.__getitem__)
-
-
-@pytest.mark.parametrize("acknowledged", [True, False, None])
-def test_request_is_recorded_before_one_exact_post_and_never_repeated(evidence, tmp_path, acknowledged):
-    store = FileStore(tmp_path)
-    saved = prepare(store, evidence)
     sent = []
-    responses, _, _, _, _, lines = evidence
-    log = "\n".join(f"2026-11-25T12:45:00.0000000Z {line}" for line in lines).encode()
 
-    def post(path):
-        assert store.get_receipt(recovery.REQUEST, "2")["path"] == path
-        sent.append(path)
-        if acknowledged is None:
-            raise TimeoutError("connection closed after request")
-        return acknowledged
+    def post(workflow):
+        intent = store.get_receipt(recovery.DISPATCH, HEAD)
+        assert (intent["head"], intent["lane"], intent["jobs"]) == (HEAD, "macos", [20])
+        sent.append(workflow)
+        return replacement(evidence)
 
-    def request():
-        return recovery.request_once(store, 2, saved["intent_sha256"], api=responses.__getitem__,
-                                     read_log=lambda _: log, now=lambda: datetime(2026, 11, 25, 13, tzinfo=UTC), post=post,
-                                     authorize=lambda: None)
+    got = dispatch(store, evidence, post)
+    assert got["run"] == 3 and got["head"] == HEAD and got["status"] == "queued"
+    assert dispatch(FileStore(tmp_path), evidence, post) == got
+    assert sent == ["ci.yml"]
 
-    if acknowledged:
-        assert request()["attempt_origin"] == "unproven"
-    else:
-        with pytest.raises(CandidateError, match="request outcome ambiguous"):
-            request()
-        assert store.get_receipt(recovery.REQUEST, "2-ack") is None
-    with pytest.raises(CandidateError, match="request already intended"):
-        request()
-    assert sent == [f"repos/{hzlib.CORE}/actions/jobs/20/rerun"]
-    retry_rows(evidence)
-    assert recovery.verify_requested_attempt(store, 2, api=responses.__getitem__).attempt_origin == "unproven"
 
-def test_queue_recovery_is_scoped_to_the_existing_exact_pin(evidence, monkeypatch):
-    from steuermaschine_heinzel.native.queue_lib import queue_daemon as queue
-
+@pytest.mark.parametrize("wrong", ["timeout", "no-id", "url", "head", "branch", "event", "attempt", "name", "repo", "moved", "not-visible"])
+def test_unbound_or_mismatched_dispatch_never_sends_a_second_post(evidence, wrong):
     store = MemoryStore()
-    prepare(store, evidence)
-    pin = {"databaseId": 2, "attempt": 1, "headSha": HEAD, "event": "workflow_dispatch",
-           "displayTitle": f"CI macOS main {HEAD}", "status": "completed", "conclusion": "failure"}
-    monkeypatch.setattr(queue, "load", lambda: {"main_failure": pin})
-    monkeypatch.setattr(queue.main_checkpoint, "get", evidence[0].__getitem__)
-    monkeypatch.setattr(queue, "update", lambda **_: pytest.fail("must retain original pin"))
-    rt = NativeRuntime(fake_providers(store=store), {}, None)
-    with using(rt):
-        retry_rows(evidence)
-        assert not queue.recovered_main_capacity()
-        evidence[1]["workflow_runs"][0] = evidence[0]["actions/runs/2"]
-        request_intent(store, evidence)
-        retry_rows(evidence)
-        assert queue.recovered_main_capacity()
-        pin["headSha"] = "b" * 40
-        assert not queue.recovered_main_capacity()
-        pin["headSha"] = HEAD
-        pin["event"] = "schedule"
-        assert not queue.recovered_main_capacity()
+    calls = []
 
-def test_exact_release_base_uses_verified_attempt_two_without_touching_candidate(evidence, monkeypatch):
-    from steuermaschine_heinzel.native.release_lib import exact_queue
+    def post(workflow):
+        calls.append(workflow)
+        if wrong == "timeout":
+            raise TimeoutError("response lost")
+        if wrong == "no-id":
+            return {}
+        if wrong == "url":
+            return {"workflow_run_id": 3, "html_url": "unbound"}
+        if wrong == "moved":
+            evidence[0]["git/ref/heads/main"]["object"]["sha"] = "b" * 40
+        if wrong == "not-visible":
+            return {"workflow_run_id": 3, "html_url": f"https://github.com/{hzlib.CORE}/actions/runs/3"}
+        changes = {
+            "head": {"head_sha": "b" * 40}, "branch": {"head_branch": "other"}, "event": {"event": "schedule"},
+            "attempt": {"run_attempt": 2}, "name": {"display_title": f"CI {HEAD}"}, "repo": {"repository": {}},
+        }
+        return replacement(evidence, **changes.get(wrong, {}))
 
+    for _ in range(2):
+        with pytest.raises((CandidateError, KeyError)):
+            dispatch(store, evidence, post)
+    assert calls == ["ci.yml"]
+
+
+def test_hold_blocks_dispatch_before_creating_intent(evidence):
     store = MemoryStore()
-    prepare(store, evidence)
-    _, jobs = retry_rows(evidence)
-    monkeypatch.setattr(exact_queue, "_api", evidence[0].__getitem__)
-    monkeypatch.setattr(exact_queue, "store", lambda: store)
-    monkeypatch.setattr(exact_queue.core_facts, "ci_file", lambda: "ci.yml")
-    monkeypatch.setattr(exact_queue.hzlib, "ghj", lambda *_, **__: [
-        {"databaseId": 1, "event": "push", "headSha": HEAD, "attempt": 1, "status": "completed", "conclusion": "success"},
-        {"databaseId": 2, "event": "workflow_dispatch", "displayTitle": f"CI macOS main {HEAD}",
-         "headSha": HEAD, "attempt": 2, "status": "completed", "conclusion": "success"},
-    ])
-    assert not exact_queue.base_ready(HEAD)
-    evidence[1]["workflow_runs"][0] = evidence[0]["actions/runs/2"]
-    request_intent(store, evidence)
-    _, jobs = retry_rows(evidence)
-    assert exact_queue.base_ready(HEAD)
-    assert not exact_queue.base_ready("b" * 40)
-    jobs[0]["steps"][1]["conclusion"] = "skipped"
-    assert not exact_queue.base_ready(HEAD)
 
-def request_intent(store, evidence, *, at=None, authorize=lambda: None, post=lambda _path: True):
-    saved = store.get_receipt(recovery.INTENT, "2")
-    responses, _, _, _, _, lines = evidence
-    log = "\n".join(f"2026-11-25T12:45:00.0000000Z {line}" for line in lines).encode()
-    return recovery.request_once(store, 2, saved["intent_sha256"], api=responses.__getitem__, read_log=lambda _: log,
-                                 now=lambda: at or datetime(2026, 11, 25, 13, tzinfo=UTC), post=post, authorize=authorize)
-
-
-@pytest.mark.parametrize("run, name, witness", [
-    (1, LINUX, TEST_STEP),
-    (1, LINUX_UNIT, TEST_STEP),
-    (2, MACOS_UNIT, TEST_STEP),
-    (1, AGG, GUARD),
-    (1, AGG, DIRECT),
-])
-@pytest.mark.parametrize("defect", ["skip", "missing", "setup-only"])
-def test_preparation_refuses_incomplete_original_workload(evidence, run, name, witness, defect):
-    page = evidence[0][f"actions/runs/{run}/attempts/1/jobs?per_page=100&page=1"]
-    original = next(row for row in page["jobs"] if row["name"] == name)
-    step = next(step for step in original["steps"] if step["name"] == witness)
-    if defect == "skip":
-        step["conclusion"] = "skipped"
-    elif defect == "missing":
-        original["steps"].remove(step)
-    else:
-        original["steps"] = [{"name": "Set up job", "conclusion": "success", "status": "completed"}]
-    with pytest.raises((CandidateError, recovery.candidate_capacity.InvalidCapacity)):
-        prepare(MemoryStore(), evidence)
-
-
-def test_admission_uses_outbound_time_boundary_and_requires_exact_job(evidence):
-    store = MemoryStore()
-    saved = prepare(store, evidence)
-    request_intent(store, evidence, at=datetime(2026, 11, 25, 13, 1, 30, tzinfo=UTC))
-    retry_rows(evidence)
-    assert recovery.inspect_attempt(store, 2, api=evidence[0].__getitem__).attempt_origin == "unproven"
-    with pytest.raises(recovery.candidate_capacity.InvalidCapacity, match="replacement execution predates intent"):
-        recovery.verify_requested_attempt(store, 2, api=evidence[0].__getitem__)
-    assert saved["jobs"] == [20]
-    store.receipts[(recovery.REQUEST, "2")]["job"] = 999
-    with pytest.raises(CandidateError, match="no matching authorized outbound"):
-        recovery.verify_requested_attempt(store, 2, api=evidence[0].__getitem__)
-
-
-def test_refused_operator_authorization_creates_no_request_receipt(evidence):
-    store = MemoryStore()
-    prepare(store, evidence)
-
-    def held():
+    def authorize():
         raise CandidateError("operator hold")
 
     with pytest.raises(CandidateError, match="operator hold"):
-        request_intent(store, evidence, authorize=held, post=lambda _path: pytest.fail("must not post"))
-    assert store.get_receipt(recovery.REQUEST, "2") is None
-    retry_rows(evidence)
-    with pytest.raises(CandidateError, match="no matching authorized outbound"):
-        recovery.verify_requested_attempt(store, 2, api=evidence[0].__getitem__)
+        dispatch(store, evidence, lambda _: pytest.fail("must not post"), authorize)
+    assert not store.receipts
+
+
+@pytest.mark.parametrize(("run", "name", "witness"), [(1, LINUX, TEST_STEP), (1, LINUX_UNIT, TEST_STEP),
+                                                   (2, MACOS_UNIT, TEST_STEP), (1, AGG, GUARD), (1, AGG, DIRECT)])
+@pytest.mark.parametrize("damage", ["skip", "remove"])
+def test_original_workload_must_have_run_before_dispatch(evidence, run, name, witness, damage):
+    page = evidence[0][f"actions/runs/{run}/attempts/1/jobs?per_page=100&page=1"]
+    original = next(row for row in page["jobs"] if row["name"] == name)
+    step = next(step for step in original["steps"] if step["name"] == witness)
+    if damage == "skip":
+        step["conclusion"] = "skipped"
+    else:
+        original["steps"].remove(step)
+    with pytest.raises((CandidateError, recovery.candidate_capacity.InvalidCapacity)):
+        dispatch(MemoryStore(), evidence, lambda _: pytest.fail("must not post"))

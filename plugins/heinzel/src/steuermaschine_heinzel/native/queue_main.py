@@ -1,4 +1,4 @@
-"""The queue and a red main: `sm queue main-rerun` and `sm queue checkpoint`.
+"""The queue and a red main: rerun, checkpoint and macOS capacity recovery.
 
 Both are the moved queue code (`queue_lib/queue_daemon.py`: `main_rerun`, and `main_checkpoint.establish`), reached
 through the queue's own argument parser; this module only gives them typed options and a result model. A separate
@@ -8,7 +8,6 @@ module so that a change here does not touch the reviewed queue commands; its rev
 from __future__ import annotations
 
 import json
-import re
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -91,46 +90,42 @@ def queue_checkpoint(
     return _call("checkpoint", ["checkpoint", "--pr", str(pr), "--run", str(run), "--core-repo", str(core_repo), *(["--apply"] if apply else [])])
 
 @native("queue main-capacity", writes=True, help=H(
-    "Prepare or request a targeted retry for a verified never-acquired exact-main macOS test job.",
-    "Use on the original split-main pair before any replacement or retry exists.",
-    "Writes one local receipt. With --request, requests one bound job and its CI aggregate once.",
-    "sm queue main-capacity --head SHA --push-run RUN --macos-run RUN", "sm queue why",
-    "The request option requires the prepared receipt fingerprint. An ambiguous response is never retried. A verified "
-    "same-run attempt two can restore queue progress while retaining the original incident. Candidate CI and release "
-    "first-attempt rules still apply."))
+    "Verify a macOS runner capacity failure and optionally dispatch the full macOS main lane.",
+    "Use for the exact original split-main pair before a replacement exists.",
+    "Without --dispatch, reads evidence only. With --dispatch, records one intent and requests lane=macos on main.",
+    "sm queue main-capacity --head SHA --push-run RUN --macos-run RUN --dispatch", "sm queue why",
+    "A replay only reads back the recorded run. An ambiguous response never sends another request. Queue and release "
+    "admission still use their existing rules."))
 def queue_main_capacity(
     head: str = typer.Option(..., "--head", help="Exact current main commit."),
     push_run: int = typer.Option(..., "--push-run", min=1, help="Original Linux push run."),
     macos_run: int = typer.Option(..., "--macos-run", min=1, help="Original coalesced macOS dispatch."),
-    request: str | None = typer.Option(None, "--request", help="Submit once using this prepared receipt fingerprint."),
+    dispatch: bool = typer.Option(False, "--dispatch", help="Send one official full macOS dispatch."),
 ) -> QueueMain:
     rt = runtime()
-    store = rt.providers.store
-    def now() -> datetime:
-        return datetime.fromtimestamp(rt.providers.clock.now(), UTC)
+
+    def authorize() -> None:
+        if hzlib.merge_frozen() or queue_hold.current(rt):
+            raise Refuse("a release, incident or operator hold blocks the dispatch", "sm queue why")
+
+    def post(workflow: str):
+        return hzlib.ghj(
+            "api", "--method", "POST", "-H", "X-GitHub-Api-Version: 2026-03-10",
+            f"repos/{hzlib.CORE}/actions/workflows/{workflow}/dispatches", "-f", "ref=main",
+            "-f", "inputs[lane]=macos", "-F", "return_run_details=true", default=None,
+        )
 
     try:
-        if request is None:
-            data = main_capacity_recovery.prepare(store, head, push_run, macos_run, api=main_checkpoint.get,
-                                                  read_log=main_capacity.read_aggregate_log, now=now())
-            return QueueMain(action="main-capacity", lines=[f"PREPARED {data['intent_sha256']} for {data['request_path']}"],
-                             proof={"intent_sha256": data["intent_sha256"], "job": data["jobs"][0]})
-        saved = store.get_receipt(main_capacity_recovery.INTENT, str(macos_run))
-        if saved is None or (saved.get("head"), saved.get("push_run")) != (head, push_run):
-            raise Refuse("main retry request differs from its prepared identity", "sm queue why")
-
-        def authorize() -> None:
-            if hzlib.merge_frozen() or queue_hold.current(rt):
-                raise Refuse("a release, incident or operator hold blocks the retry", "sm queue why")
-
-        def post(path: str) -> bool:
-            code, response = hzlib.gh("api", "--include", "--method", "POST", path)
-            return code == 0 and re.match(r"^HTTP/\S+\s+201(?:\s|$)", response) is not None
-
-        authorize()
-        proof = main_capacity_recovery.request_once(store, macos_run, request, api=main_checkpoint.get,
-                                                      read_log=main_capacity.read_aggregate_log, now=now, post=post, authorize=authorize)
-        return QueueMain(action="main-capacity", proof=proof,
-                         lines=[f"REQUEST ACCEPTED for original run {macos_run}. Attempt origin remains unproven."])
+        if not dispatch:
+            proof = main_capacity_recovery.assess(head, push_run, macos_run, api=main_checkpoint.get,
+                                                  read_log=main_capacity.read_aggregate_log)
+            return QueueMain(action="main-capacity", lines=[f"Capacity-only original macOS run {macos_run}."],
+                             proof={"head": head, "jobs": list(proof.jobs), "inventory_sha256": proof.inventory_sha256})
+        found = main_capacity_recovery.dispatch(
+            rt.providers.store, head, push_run, macos_run, api=main_checkpoint.get,
+            read_log=main_capacity.read_aggregate_log, now=lambda: datetime.fromtimestamp(rt.providers.clock.now(), UTC),
+            authorize=authorize, post=post,
+        )
+        return QueueMain(action="main-capacity", proof=found, lines=[f"Bound full macOS replacement run {found['run']} ({found['status']}): {found['url']}"])
     except (ValueError, OSError, KeyError, TypeError) as error:
         raise Refuse(f"main capacity recovery refused: {error}", "sm queue why") from None

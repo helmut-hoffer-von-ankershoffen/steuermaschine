@@ -2561,7 +2561,7 @@ def release_core(
         except exact_queue.ExactReleaseError as error:
             raise Stop(str(error)) from error
         if not ready:
-            raise Stop("main CI workload is unproven on the current base before the release PR")
+            raise Stop("both original main CI lanes must pass on the current base before the release PR")
     elif candidate_gate:
         step("main gate (train path)", lambda: has_tag(CORE, tag) or main_candidate_gate(version), None, timeout)
     else:

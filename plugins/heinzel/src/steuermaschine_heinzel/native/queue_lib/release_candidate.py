@@ -131,17 +131,16 @@ def quarantine_lane(jobs: list[dict[str, Any]], run_id: object, head: str, polic
     return [job for job in jobs if job.get("name") not in names]
 
 
-def job_inventory(get: Callable[[str], Any], run_id: int, *, attempt: int = 1) -> list[dict[str, Any]]:
-    """Exhaust the immutable exact-attempt job pages and refuse inconsistent totals or duplicate IDs.
+def job_inventory(get: Callable[[str], Any], run_id: int) -> list[dict[str, Any]]:
+    """Exhaust the immutable first-attempt job pages and refuse inconsistent totals or duplicate IDs.
 
     Raises:
         CandidateError: The complete bounded inventory cannot be collected.
     """
-    require(type(attempt) is int and attempt in (1, 2), "unsupported job inventory attempt")
     rows: list[Any] = []
     total = None
     for page in range(1, 11):
-        data = get(f"actions/runs/{run_id}/attempts/{attempt}/jobs?per_page=100&page={page}")
+        data = get(f"actions/runs/{run_id}/attempts/1/jobs?per_page=100&page={page}")
         require(
             isinstance(data, dict) and type(data.get("total_count")) is int and isinstance(data.get("jobs"), list),
             "malformed candidate job page",

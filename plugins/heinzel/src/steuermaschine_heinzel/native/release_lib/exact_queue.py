@@ -12,7 +12,7 @@ from steuermaschine.hashing import canonical_sha256
 from steuermaschine.native import runtime
 
 from ... import state as statedir
-from ..queue_lib import core_facts, hzlib, main_capacity_recovery, main_lanes
+from ..queue_lib import core_facts, hzlib, main_lanes
 from . import candidate_policy
 
 MODE = "reviewed-release-queue"
@@ -157,36 +157,25 @@ def _api(path: str) -> dict:
 
 
 def base_ready(expected: str | None = None) -> bool:
-    """The current main SHA needs original Linux and verified macOS workload."""
+    """Both original main CI lanes must prove the same current Core commit."""
     tip = _api("git/ref/heads/main").get("object")
     sha = tip.get("sha") if isinstance(tip, dict) and tip.get("type") == "commit" else None
     if not isinstance(sha, str) or not SHA.fullmatch(sha) or (expected is not None and expected != sha):
         return False
     rows = hzlib.ghj("run", "list", "-R", hzlib.CORE, "--workflow", core_facts.ci_file(), "--branch", "main",
-                     "--commit", sha, "-L", "10", "--json", "databaseId,event,displayTitle,headSha,status,conclusion,attempt", default=None)
+                     "--commit", sha, "-L", "10", "--json", "event,displayTitle,headSha,status,conclusion,attempt", default=None)
     if not isinstance(rows, list) or not all(isinstance(row, dict) and row.get("headSha") == sha for row in rows):
         return False
     push = next((row for row in rows if row.get("event") == "push"), {})
     mac = next((row for row in rows if row.get("event") == "workflow_dispatch" and main_lanes.is_macos_lane(row)), {})
-    if (push.get("status"), push.get("conclusion"), push.get("attempt")) != ("completed", "success", 1):
-        return False
-    status = mac.get("status"), mac.get("conclusion"), mac.get("attempt")
-    if status == ("completed", "success", 1):
-        return True
-    run = mac.get("databaseId")
-    if status != ("completed", "success", 2) or type(run) is not int:
-        return False
-    try:
-        recovered = main_capacity_recovery.verify_requested_attempt(store(), run, api=_api)
-    except (ValueError, OSError, KeyError, TypeError, RuntimeError):
-        return False
-    return recovered.head == sha
+    return all((row.get("status"), row.get("conclusion"), row.get("attempt")) == ("completed", "success", 1)
+               for row in (push, mac))
 
 
 def verify_open(candidate: Candidate, evidence: dict | None = None) -> None:
     require_hold(candidate)
     if not base_ready(candidate.base):
-        raise ExactReleaseError("main CI workload is unproven on the reviewed base")
+        raise ExactReleaseError("both original main CI lanes must pass on the reviewed base")
     data = evidence if evidence is not None else candidate_policy.verify_pr(candidate.pr)
     if (data["head"], data["base"], data["tree"], data["run_id"], data["run_attempt"]) != (
             candidate.head, candidate.base, candidate.tree, candidate.run, 1):
