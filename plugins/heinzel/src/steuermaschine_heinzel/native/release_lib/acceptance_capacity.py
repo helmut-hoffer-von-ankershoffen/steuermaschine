@@ -1,4 +1,4 @@
-"""Replace one tagged public acceptance run whose Mac job never acquired a runner."""
+"""Replace each independently audited tagged acceptance run lost to Mac capacity."""
 
 from __future__ import annotations
 
@@ -7,7 +7,6 @@ import hashlib
 import io
 import json
 import re
-import uuid
 import zipfile
 from typing import Any
 
@@ -63,6 +62,10 @@ def validate_replacement(data: dict[str, Any], run: dict[str, Any], core: str, r
         return  # A later independently reviewed harness change uses the ordinary replacement route.
     remote.require(type(run_id) is int and run_id > 0 and run_id != intent["failed_run"],
                    "capacity replacement is not a fresh run")
+    history = data.get("acceptance_attempts", [])
+    remote.require(isinstance(history, list) and all(isinstance(row, dict) for row in history)
+                   and not any(row.get("acceptance_run_id") == run_id for row in history),
+                   "capacity replacement reuses an archived run")
     remote.require(data.get("acceptance_identity") == intent["identity"], "capacity replacement snapshot changed")
     exact_run(run, core, intent["identity"], intent["marker"], run_id, 1)
 
@@ -187,8 +190,8 @@ def _receipt(rel: Any, version: str, run_id: int, attempt: int, expected: str) -
     remote.require(hashlib.sha256(raw).hexdigest() == expected, "release receipt changed")
     data = rel.release_rejection.decode(raw)
     remote.require(data.get("version") == version and data.get("finished") is True and data.get("accepted") is False
-                   and data.get("absorbed_by") is None and data.get("acceptance_capacity") is None,
-                   "the tail is not an eligible rejected release or already has a capacity request")
+                   and data.get("absorbed_by") is None,
+                   "the tail is not an eligible rejected release")
     remote.require(data.get("acceptance_snapshot_mode") is True and data.get("acceptance_requested") is True
                    and data.get("acceptance_run") == run_id and data.get("acceptance_run_id") == run_id
                    and type(data.get("acceptance_run_attempt")) is int and data["acceptance_run_attempt"] == attempt,
@@ -205,13 +208,92 @@ def _receipt(rel: Any, version: str, run_id: int, attempt: int, expected: str) -
                    and all(isinstance(snapshot.get(key), str) and DIGEST.fullmatch(snapshot[key])
                            for key in ("wheel_sha256", "profile_sha256")),
                    "tail does not bind the exact tagged harness and published snapshot")
+    _lineage(rel, data, identity)
     return raw, data, identity
+
+
+def _lineage(rel: Any, data: dict[str, Any], identity: dict[str, Any]) -> None:
+    """Authenticate the complete capacity chain; corrected-harness history is a separate route.
+
+    Each link retains its preceding receipt verbatim. No link may consume the same run or marker twice.
+    The existing receipt byte limit also bounds this backwards walk (each predecessor has one fewer link).
+    """
+    current = data.get("acceptance_run_id")
+    runs, markers = ({current} if type(current) is int else set()), set()
+    while True:
+        marker = data.get("acceptance_marker")
+        remote.require(isinstance(marker, str) and MARKER.fullmatch(marker) and marker not in markers,
+                       "capacity history has a duplicate or invalid marker")
+        markers.add(marker)
+        history, intent = data.get("acceptance_attempts", []), data.get("acceptance_capacity")
+        remote.require(isinstance(history, list) and all(isinstance(row, dict) for row in history),
+                       "capacity history is invalid")
+        if intent is None:
+            remote.require(not history, "capacity recovery cannot reuse corrected-harness history")
+            return
+        remote.require(isinstance(intent, dict) and intent.get("schema") == SCHEMA
+                       and intent.get("identity") == identity and data.get("acceptance_identity") == identity
+                       and intent.get("marker") == marker and bool(history),
+                       "capacity history identity or marker changed")
+        audit, archived = intent.get("audit"), history[-1]
+        remote.require(isinstance(audit, dict) and intent.get("audit_sha256") == remote.digest(audit),
+                       "capacity history audit digest differs")
+        failed = intent.get("failed_run")
+        remote.require(type(failed) is int and failed > 0 and failed not in runs
+                       and failed != data.get("acceptance_run_id"), "capacity history repeats a consumed run")
+        runs.add(failed)
+        encoded = archived.get("receipt_base64")
+        remote.require(isinstance(encoded, str), "capacity history lacks the original receipt")
+        try:
+            raw = base64.b64decode(encoded, validate=True)
+        except ValueError as exc:
+            raise remote.InvalidCapacity("capacity history receipt encoding is invalid") from exc
+        digest = hashlib.sha256(raw).hexdigest()
+        previous = rel.release_rejection.decode(raw)
+        fields = {key: value for key, value in previous.items() if key.startswith("acceptance") and key != "acceptance_attempts"}
+        remote.require(archived.get("receipt_sha256") == digest
+                       and all(archived.get(key) == value for key, value in fields.items())
+                       and previous.get("acceptance_attempts", []) == history[:-1]
+                       and previous.get("version") == identity["version"] and previous.get("snapshot") == identity["snapshot"]
+                       and previous.get("acceptance_identity") == identity
+                       and previous.get("acceptance_commit") == identity["commit"]
+                       and previous.get("acceptance_snapshot_mode") is True and previous.get("acceptance_requested") is True
+                       and previous.get("finished") is True and previous.get("accepted") is False
+                       and previous.get("absorbed_by") is None
+                       and previous.get("acceptance_run") == failed and previous.get("acceptance_run_id") == failed
+                       and previous.get("acceptance_run_attempt") == 1
+                       and audit.get("schema") == SCHEMA and audit.get("receipt_sha256") == digest
+                       and audit.get("identity") == identity and audit.get("marker") == previous.get("acceptance_marker")
+                       and audit.get("failed_run") == failed and audit.get("failed_attempt") == 1,
+                       "capacity history does not bind the original rejection")
+        data = previous
+
+
+def _recorded_request(rel: Any, version: str, run_id: int, receipt_sha: str, audit_sha: str) -> dict[str, Any] | None:
+    """An interrupted/duplicated request observes its intent, never sends a second POST."""
+    remote.require(rel.paths()[1] == rel.tail_receipt(version), "the exact release tail is required")
+    data = rel.release_rejection.decode(rel.release_rejection.private_read(rel.paths()[1]))
+    intent = data.get("acceptance_capacity")
+    if not isinstance(intent, dict) or intent.get("failed_run") != run_id or intent.get("audit_sha256") != audit_sha:
+        return None
+    identity, audit = intent.get("identity"), intent.get("audit")
+    remote.require(isinstance(identity, dict) and isinstance(audit, dict)
+                   and identity.get("version") == version and data.get("version") == version
+                   and data.get("snapshot") == identity.get("snapshot") and audit.get("receipt_sha256") == receipt_sha,
+                   "recorded capacity request differs")
+    _lineage(rel, data, identity)
+    evidence = audit["evidence"]
+    return {"audit_sha256": audit_sha, "replacement_marker": intent["marker"], "head": identity["commit"],
+            "mac_job": next(job["id"] for job in evidence["jobs"] if job["name"] == MAC),
+            "linux_artifact": evidence["linux_receipt"]["id"], "request_recorded": True}
 
 
 def recover(rel: Any, version: str, run_id: int, attempt: int, receipt_sha: str, audit_sha: str | None) -> dict[str, Any]:
     """Audit in prepare mode. Request with a reviewed digest under the exact tail lock."""
     remote.require(type(run_id) is int and run_id > 0 and type(attempt) is int and attempt == 1
                    and DIGEST.fullmatch(receipt_sha), "exact original run, attempt 1 and receipt digest required")
+    if audit_sha is not None and (recorded := _recorded_request(rel, version, run_id, receipt_sha, audit_sha)) is not None:
+        return recorded
     raw, data, identity = _receipt(rel, version, run_id, attempt, receipt_sha)
     marker = data["acceptance_marker"]
     remote.require(rel.release_snapshot.capture(version) == identity["snapshot"]
@@ -229,8 +311,10 @@ def recover(rel: Any, version: str, run_id: int, attempt: int, receipt_sha: str,
         return report
     remote.require(digest == audit_sha, "reviewed acceptance capacity audit digest differs")
 
-    replacement = "release-" + uuid.uuid4().hex
-    remote.require(replacement != marker, "replacement marker collides with original")
+    replacement = "release-" + digest[:32]
+    remote.require(replacement != marker and all(entry.get("acceptance_marker") != replacement
+                                                for entry in data.get("acceptance_attempts", [])),
+                   "replacement marker collides with history")
     history = data.get("acceptance_attempts", [])
     remote.require(isinstance(history, list) and all(isinstance(entry, dict) for entry in history)
                    and not any(entry.get("acceptance_run_id") == run_id for entry in history),

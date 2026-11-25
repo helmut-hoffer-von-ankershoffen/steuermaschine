@@ -1,4 +1,4 @@
-"""Exercise the one-shot published acceptance recovery without GitHub or release state."""
+"""Exercise independently audited published acceptance recovery without GitHub or release state."""
 
 import base64
 import hashlib
@@ -130,8 +130,8 @@ def test_prepare_then_request_preserves_original_and_pins_fresh_dispatch(proof):
         "-f", f"expected_wheel_sha256={'c' * 64}", "-f", f"expected_profile_sha256={'d' * 64}",
         "-f", f"release_attempt={marker}",
     )
-    with pytest.raises(capacity.remote.InvalidCapacity, match="receipt changed"):
-        recover(proof, plan["audit_sha256"])
+    repeated = recover(proof, plan["audit_sha256"])
+    assert repeated["request_recorded"] is True and repeated["replacement_marker"] == marker
     assert len(proof.calls) == 2
 
 
@@ -142,9 +142,10 @@ def test_ambiguous_dispatch_leaves_intent_and_rejects_duplicate_with_updated_dig
         recover(proof, plan["audit_sha256"])
     state = json.loads(proof.path.read_bytes())
     assert state["acceptance_requested"] and state["acceptance_capacity"]["marker"] == state["acceptance_marker"]
-    proof.receipt_sha = hashlib.sha256(proof.path.read_bytes()).hexdigest()
-    with pytest.raises(capacity.remote.InvalidCapacity, match="already has a capacity request"):
-        recover(proof, plan["audit_sha256"])
+    repeated = recover(proof, plan["audit_sha256"])
+    assert repeated["request_recorded"] is True
+    with pytest.raises(capacity.remote.InvalidCapacity, match="not an eligible rejected release"):
+        capacity.recover(proof.rel, VERSION, RUN, 1, hashlib.sha256(proof.path.read_bytes()).hexdigest(), None)
     assert len(proof.calls) == 2
 
 
@@ -312,3 +313,135 @@ def test_a_sharded_run_needs_starvation_and_a_failed_mac_verdict(proof, monkeypa
     shard(proof, monkeypatch, starved=starved, mac_verdict=verdict)
     with pytest.raises(capacity.remote.InvalidCapacity, match=error):
         recover(proof)
+
+
+def rejected_replacement(proof, run_id):
+    """A normal release resume records the replacement's completed, rejected verdict."""
+    state = json.loads(proof.path.read_bytes())
+    state.update(finished=True, accepted=False, accepted_verdict=[f"run {run_id}: NOT ACCEPTED"],
+                 acceptance_run=run_id, acceptance_run_id=run_id, acceptance_run_attempt=1)
+    proof.path.write_text(json.dumps(state))
+    proof.run.update(id=run_id, display_title=f"Acceptance {VERSION} {state['acceptance_marker']}")
+    proof.latest.update(proof.run)
+    for job in getattr(proof, "jobs", [proof.linux, proof.mac]):
+        job["run_id"] = run_id
+    proof.artifact["workflow_run"]["id"] = run_id
+    proof.result["ci"]["run_id"] = str(run_id)
+    update_archive(proof)
+    return state
+
+
+def recover_current(proof, run_id, audit=None):
+    digest = hashlib.sha256(proof.path.read_bytes()).hexdigest()
+    return capacity.recover(proof.rel, VERSION, run_id, 1, digest, audit)
+
+
+def test_each_distinct_capacity_loss_requires_a_fresh_audit_and_preserves_every_receipt(proof, monkeypatch):
+    shard(proof, monkeypatch)
+    raw_receipts, markers, audits = [], [], []
+    for run_id in (RUN, RUN + 1, RUN + 2):
+        if run_id != RUN:
+            rejected_replacement(proof, run_id)
+        raw = proof.path.read_bytes()
+        raw_receipts.append(raw)
+        plan = recover_current(proof, run_id)
+        audits.append(plan["audit_sha256"])
+        assert proof.path.read_bytes() == raw
+        if len(audits) > 1:
+            with pytest.raises(capacity.remote.InvalidCapacity, match="audit digest differs"):
+                recover_current(proof, run_id, audits[-2])
+        requested = recover_current(proof, run_id, audits[-1])
+        markers.append(requested["replacement_marker"])
+        assert markers[-1] == "release-" + audits[-1][:32]
+    state = json.loads(proof.path.read_bytes())
+    assert len(set(markers)) == len(set(audits)) == 3
+    assert [base64.b64decode(row["receipt_base64"]) for row in state["acceptance_attempts"]] == raw_receipts
+    assert [json.loads(raw)["accepted_verdict"] for raw in raw_receipts] == [
+        ["original rejection"], [f"run {RUN + 1}: NOT ACCEPTED"], [f"run {RUN + 2}: NOT ACCEPTED"]]
+    assert len(proof.calls) == 6  # one tag verification and one explicit dispatch per reviewed rejection
+    assert state["accepted"] is False and state["finished"] is False
+
+
+@pytest.mark.parametrize(("target", "key", "value", "error"), [
+    ("mac", "runner_id", 7, "never-acquired"),
+    ("linux", "conclusion", "failure", "Linux acceptance job"),
+    ("latest", "run_attempt", 2, "workflow identity changed"),
+    ("published_snapshot", "profile_sha256", "e" * 64, "snapshot or tagged harness"),
+])
+def test_a_later_failure_must_pass_all_original_capacity_evidence(proof, target, key, value, error):
+    recover(proof, recover(proof)["audit_sha256"])
+    rejected_replacement(proof, RUN + 1)
+    raw = proof.path.read_bytes()
+    getattr(proof, target)[key] = value
+    with pytest.raises(capacity.remote.InvalidCapacity, match=error):
+        recover_current(proof, RUN + 1)
+    assert proof.path.read_bytes() == raw and len(proof.calls) == 2
+
+
+@pytest.mark.parametrize("damage", ["receipt", "encoding", "audit", "duplicate_run", "duplicate_marker", "corrected_harness", "extra_history"])
+def test_corrupt_or_cross_route_history_cannot_authorize_another_run(proof, damage):
+    recover(proof, recover(proof)["audit_sha256"])
+    state = rejected_replacement(proof, RUN + 1)
+    if damage == "receipt":
+        state["acceptance_attempts"][0]["receipt_base64"] = base64.b64encode(b"{}").decode()
+    elif damage == "encoding":
+        state["acceptance_attempts"][0]["receipt_base64"] = "not base64!"
+    elif damage == "audit":
+        state["acceptance_capacity"]["audit"]["failed_run"] = 999
+    elif damage == "duplicate_run":
+        state.update(acceptance_run=RUN, acceptance_run_id=RUN)
+    elif damage == "duplicate_marker":
+        state["acceptance_marker"] = MARKER
+        state["acceptance_capacity"]["marker"] = MARKER
+    elif damage == "corrected_harness":
+        state["acceptance_identity"]["commit"] = "e" * 40
+    else:
+        state["acceptance_attempts"].insert(0, {"acceptance_run_id": 999})
+    proof.path.write_text(json.dumps(state))
+    raw = proof.path.read_bytes()
+    with pytest.raises(capacity.remote.InvalidCapacity):
+        recover_current(proof, state["acceptance_run_id"])
+    assert proof.path.read_bytes() == raw and len(proof.calls) == 2
+
+
+def test_corrected_harness_history_without_capacity_intent_is_not_capacity_recovery(proof):
+    state = proof.original | {"acceptance_attempts": [{"acceptance_run_id": 99}]}
+    proof.path.write_text(json.dumps(state))
+    with pytest.raises(capacity.remote.InvalidCapacity, match="corrected-harness history"):
+        recover_current(proof, RUN)
+    assert proof.calls == []
+
+
+def test_adoption_cannot_cycle_back_to_an_older_consumed_run(proof):
+    recover(proof, recover(proof)["audit_sha256"])
+    rejected_replacement(proof, RUN + 1)
+    recover_current(proof, RUN + 1, recover_current(proof, RUN + 1)["audit_sha256"])
+    state = json.loads(proof.path.read_bytes())
+    forged = proof.run | {"id": RUN, "display_title": f"Acceptance {VERSION} {state['acceptance_marker']}"}
+    with pytest.raises(capacity.remote.InvalidCapacity, match="archived run"):
+        capacity.validate_replacement(state, forged, runner.CORE, RUN)
+
+
+def test_recorded_request_is_idempotent_after_failure_without_network_or_receipt_write(proof, monkeypatch):
+    plan = recover(proof)
+    recover(proof, plan["audit_sha256"])
+    rejected_replacement(proof, RUN + 1)
+    raw = proof.path.read_bytes()
+    monkeypatch.setattr(capacity.remote, "get", lambda *_: pytest.fail("must not query provider on duplicate request"))
+    result = recover(proof, plan["audit_sha256"])
+    assert result["request_recorded"] is True
+    assert proof.path.read_bytes() == raw and len(proof.calls) == 2
+
+
+def test_corrected_harness_can_be_adopted_but_cannot_be_replaced_via_capacity(proof):
+    recover(proof, recover(proof)["audit_sha256"])
+    state = rejected_replacement(proof, RUN + 1)
+    # The ordinary corrected-harness route retains the capacity intent as history, with a new identity and marker.
+    state["acceptance_identity"] = state["acceptance_identity"] | {"ref": "main", "commit": "e" * 40}
+    state["acceptance_marker"] = "release-" + "f" * 32
+    state["acceptance_commit"] = "e" * 40
+    capacity.validate_replacement(state, {}, runner.CORE, RUN + 2)
+    proof.path.write_text(json.dumps(state))
+    with pytest.raises(capacity.remote.InvalidCapacity, match="exact tagged harness"):
+        recover_current(proof, RUN + 1)
+    assert len(proof.calls) == 2
