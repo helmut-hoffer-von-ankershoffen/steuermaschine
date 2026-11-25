@@ -340,11 +340,10 @@ def test_a_budget_spent_between_steps_exits_75_and_is_never_ready(core, rt):  # 
     done = invoke(runtime, ["check", str(core)])
     assert done.exit_code == 75, done
     assert "local budget of 90 s is spent" in done.stderr and "types, hook, parity, web, docs, standards, tests" in done.stderr
-    assert split(done.stderr.splitlines()[-1]) == ["sm", "check", str(core), "--allow-full"]
-    assert "for the coordinator on the unchanged head" in done.stderr
-    assert "heavy lane, may run the full unit suite" in done.stderr
+    assert split(done.stderr.splitlines()[-1]) == ["sm", "check", str(core), "--extended"]
+    assert "the same focused checks more time" in done.stderr
     assert "rerun your original sm head admit command to adopt that receipt" in done.stderr
-    assert "retry the original command on a quieter machine" in done.stderr
+    assert "retry on a quieter machine" in done.stderr
     assert not machine.ran("mypy") and runtime.providers.store.get_receipt(verdicts.CHECKS, HEAD) is None
 
 
@@ -367,11 +366,84 @@ def test_budget_next_is_a_runnable_command_that_preserves_non_receipting_options
     assert done.exit_code == 75, done
     message = json.loads(done.stdout)
     retry = split(message["hint"])
-    assert retry == ["sm", "check", str(wt), "--allow-full", *options]
+    assert retry == ["sm", "check", str(wt), "--extended", *options]
     assert "An admission receipt requires the default base and every check." in message["error"]
     assert "adopt" not in message["error"]
     assert invoke(runtime, retry[1:]).exit_code == 0
     assert runtime.providers.store.get_receipt(verdicts.CHECKS, HEAD) is None
+
+
+def test_extended_budget_runs_selected_guards_without_the_whole_suite(core, rt, tmp_path, monkeypatch):  # noqa: F811
+    sel = tmp_path / "owning.json"
+    sel.write_text('{"python": ["tests/unit/x_test.py"]}')
+    machine = checkout(core, DOCS).on("git diff --name-only", "pyproject.toml").on("scripts/related_tests.py", "ALL\n")
+    runtime = rt(machine)
+
+    def slow_docs(argv):
+        runtime.providers.clock.t += 91
+        return Result(0, "", "")
+
+    calls = []
+    original = check._preflight.gated
+
+    def observe(allow_full, full, timeout):
+        calls.append((allow_full, full, timeout))
+        return original(allow_full, full, timeout)
+
+    monkeypatch.setattr(check._preflight, "gated", observe)
+    machine.on("uv run typos", slow_docs)
+    found = report(invoke(runtime, ["--format", "json", "check", str(core), "--extended", "--sel", str(sel)]))
+    assert found.ready and found.receipt
+    assert step(found, "tests").data["unit_suite"] is False
+    assert machine.ran("tests/integration/guides_test.py")
+    assert machine.ran("tests/unit/x_test.py") and not machine.ran("unit and not perf")
+    assert calls and all(not allow_full and not full and 0 < timeout <= check.cheap.FAST_SECONDS for allow_full, full, timeout in calls)
+    receipt = runtime.providers.store.get_receipt(verdicts.CHECKS, HEAD)
+    assert receipt["head"] == HEAD and receipt["base"] == MAIN
+
+
+@pytest.mark.parametrize(("elapsed", "rc", "expected"), [(150, 124, 1), (601, 124, 75), (150, 1, 1)])
+def test_extended_budget_does_not_accept_unfinished_or_failed_mandatory_work(core, rt, elapsed, rc, expected):  # noqa: F811
+    machine = src_change(core)
+    runtime = rt(machine)
+
+    def stopped_type_check(argv):
+        runtime.providers.clock.t += elapsed
+        return Result(rc, "", "")
+
+    machine.on("uv run mypy", stopped_type_check)
+    done = invoke(runtime, ["check", str(core), "--extended"])
+    assert done.exit_code == expected
+    assert runtime.providers.store.get_receipt(verdicts.CHECKS, HEAD) is None
+    if expected == 75:
+        assert "local budget of 600 s is spent" in done.stderr
+        assert "the extended budget is already in use" in done.stderr
+    else:
+        assert "types:" in done.stdout
+
+
+@pytest.mark.parametrize("full_option", ["--allow-full", "--full"])
+def test_extended_and_full_modes_are_mutually_exclusive(core, rt, full_option):  # noqa: F811
+    machine = checkout(core)
+    done = invoke(rt(machine), ["check", str(core), "--extended", full_option])
+    assert done.exit_code == 2 and "applies to focused checks" in done.stderr
+    assert machine.calls == []
+
+
+def test_extended_refuses_plugin_gallery_checks_before_running_them(core, rt):  # noqa: F811
+    (core / ".git").touch()
+    machine = checkout(core).on("remote get-url origin", "https://github.com/example/heinzel-plugins.git")
+    machine.on("screenshots-check --all --json", '{"ok": true, "stale": [], "failed": []}')
+    runtime = rt(machine)
+
+    done = invoke(runtime, ["check", str(core), "--extended"])
+    assert done.exit_code == 2 and "--extended applies to Core checks" in done.stderr
+    assert machine.ran("remote get-url origin") and not machine.ran("screenshots-check")
+
+    found = report(invoke(runtime, ["--format", "json", "check", str(core)]))
+    assert found.ready and not found.receipt
+    assert step(found, "gallery").detail.startswith("every screenshot gallery is fresh")
+    assert machine.ran("screenshots-check") and not machine.ran("git merge-base")
 
 
 def test_a_failure_before_the_budget_ends_still_fails_the_run(core, rt):  # noqa: F811
