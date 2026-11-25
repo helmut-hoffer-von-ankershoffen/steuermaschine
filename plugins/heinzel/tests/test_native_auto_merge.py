@@ -99,7 +99,7 @@ def test_live_selection_can_act_only_on_the_named_repository_and_pr(world_of_prs
 
 
 @pytest.mark.parametrize("hold_kind", ["owned", "incident", "missing receipt", "wrong token", "wrong version", "extra hold", "symlink", "duplicate keys", "missing file", "missing directory"])
-def test_only_a_verified_core_owned_hold_allows_an_independent_tooling_merge(world_of_prs, tmp_path, monkeypatch, hold_kind):
+def test_release_and_incident_holds_block_direct_tooling_merges(world_of_prs, tmp_path, monkeypatch, hold_kind):
     gh = FakeGh().on("pr merge", "")
     comment = said(auto_review.comment_body(HEAD, "opus", "sonnet", "ok", "APPROVE"))
     rt = world_of_prs([row(repo="steuermaschine", number=9)], gh, reasons=["workflow"], comments=[comment])
@@ -132,11 +132,7 @@ def test_only_a_verified_core_owned_hold_allows_an_independent_tooling_merge(wor
     elif hold_kind == "duplicate keys":
         receipt.write_text(f'{{"version":"0.9.56","version":"{version}","freeze_token":"{token}"}}')
     out = invoke(rt, ["queue", "auto", "--repo", f"{OWNER}/steuermaschine", "--pr", "9", "--live"])
-    if hold_kind == "owned":
-        assert out.stdout.strip() == "steuermaschine #9: merged"
-        assert merged_cmds(gh) == [f"pr merge 9 -R {OWNER}/steuermaschine --squash --match-head-commit {HEAD}"]
-    else:
-        assert "waiting (merge freeze is on)" in out.stdout and not gh.writes()
+    assert "waiting (merge freeze is on)" in out.stdout and not gh.writes()
 
 
 def test_direct_merge_observes_an_incident_started_during_verification(world_of_prs, tmp_path, monkeypatch):
@@ -155,7 +151,7 @@ def test_direct_merge_observes_an_incident_started_during_verification(world_of_
     assert not gh.writes()
 
 
-def test_shared_arm_policy_keeps_core_and_dependencies_held(tmp_path, monkeypatch):
+def test_shared_arm_policy_holds_core_dependencies_and_tooling(tmp_path, monkeypatch):
     monkeypatch.setattr(hzlib.statedir, "path", lambda name: tmp_path / name)
     token, version = "a" * 32, "0.9.55"
     receipt = {"version": version, "freeze_token": token, "merge_route": "reviewed-release-queue"}
@@ -163,22 +159,24 @@ def test_shared_arm_policy_keeps_core_and_dependencies_held(tmp_path, monkeypatc
     directory = tmp_path / "release-holds"
     directory.mkdir()
     (directory / token).write_text(version)
-    assert hzlib.freeze_scope(tmp_path) == "core"
+    assert hzlib.freeze_scope(tmp_path) == "release"
     assert auto_arm.freeze_without_candidate(hzlib.CORE)
     assert auto_arm.freeze_without_candidate(hzlib.PLUGINS)
-    assert auto_arm.freeze_without_candidate(f"{OWNER}/steuermaschine") == ""
+    assert auto_arm.freeze_without_candidate(f"{OWNER}/steuermaschine")
+    assert auto_arm.freeze_without_candidate(f"{OWNER}/heinzel-management")
 
     (directory / token).unlink()
     assert hzlib.freeze_scope(tmp_path) == "uncertain"
     assert auto_arm.freeze_without_candidate(hzlib.CORE)
     assert auto_arm.freeze_without_candidate(hzlib.PLUGINS)
     assert auto_arm.freeze_without_candidate(f"{OWNER}/steuermaschine")
+    assert auto_arm.freeze_without_candidate(f"{OWNER}/heinzel-management")
 
 
 def test_an_incident_starting_during_owned_hold_verification_wins(monkeypatch):
     incident = iter((False, True))
     monkeypatch.setattr(hzlib, "incident_frozen", lambda *_: next(incident))
-    monkeypatch.setattr(hzlib, "release_freeze_scope", lambda *_: "core")
+    monkeypatch.setattr(hzlib, "release_freeze_scope", lambda *_: "release")
     assert auto_arm.freeze_without_candidate(f"{OWNER}/steuermaschine") == "merge freeze is on"
 
 

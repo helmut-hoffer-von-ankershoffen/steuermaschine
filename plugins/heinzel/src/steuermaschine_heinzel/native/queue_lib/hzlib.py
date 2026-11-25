@@ -22,10 +22,6 @@ OWNER = "helmut-hoffer-von-ankershoffen"
 CORE = f"{OWNER}/heinzel"
 PLUGINS = f"{OWNER}/heinzel-plugins"
 SHORT = {"": CORE, "core": CORE, "plugins": PLUGINS, "acme": f"{OWNER}/heinzel-acme", "sf": f"{OWNER}/heinzel-sf"}
-UNQUEUED = (f"{OWNER}/steuermaschine", f"{OWNER}/heinzel-management")
-"""The repositories `sm ship` opens PRs in that the merge queue does not know: the public tool and the private management
-repository. Their PRs merge when CI and the Gate review are green (`sm queue auto` squashes them); there is no queue entry."""
-
 RUN_URL = re.compile(r"/runs/(\d+)")
 
 
@@ -95,7 +91,7 @@ def incident_frozen(legacy: Path | None = None) -> bool:
     return True
 
 
-FreezeScope = Literal["open", "incident", "uncertain", "core"]
+FreezeScope = Literal["open", "incident", "uncertain", "release"]
 OPEN_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
 
 
@@ -202,14 +198,14 @@ def inspect_release_holds(root: Path, token: str | None, version: str, allowed_a
         if (os.listdir(directory) == [token]
                 and same_file_snapshot(hold, os.stat(token, dir_fd=directory, follow_symlinks=False))
                 and same_file_snapshot(started, root.lstat())):
-            return "core"
+            return "release"
         return "uncertain"
     finally:
         os.close(directory)
 
 
 def merge_frozen(legacy: Path | None = None) -> bool:
-    """Check the merge freeze for Core and its queued dependencies."""
+    """Check whether incident or release state blocks ordinary merges."""
     return freeze_scope(legacy=legacy) != "open"
 
 

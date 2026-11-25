@@ -302,7 +302,7 @@ def test_queue_verdict_and_waits_from_what_the_last_tick_recorded():
     assert waits == ["item 790: waiting 277 min: BLOCKED with green checks"]
     data = {"items": items, "blocked": ""}
     assert probes.queue_verdict(data, "open", waits) == "no queue-level block recorded, but 790: waiting 277 min: BLOCKED with green checks"
-    assert probes.queue_verdict(data, "core", waits) == probes.FREEZE_STATUS["core"]
+    assert probes.queue_verdict(data, "release", waits) == probes.FREEZE_STATUS["release"]
     assert probes.queue_verdict({"items": [], "blocked": ""}, "open", []) == "nothing queued"
     assert probes.queue_verdict({"items": items, "blocked": "main's latest run is not green"}, "open", []) == "last tick: main's latest run is not green"
 

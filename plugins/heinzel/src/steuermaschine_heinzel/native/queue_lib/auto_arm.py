@@ -21,8 +21,8 @@ pinned head, main an ancestor of it, and a recorded independent verdict for prot
 ruleset requires). The rule is read again every tick on an armed PR: one that no longer meets it is switched off. The red-main hold is the old `gate()`: main's latest run not green or unknown holds all
 Core arming except a PR that fixes main (fixes_main, fix-forward, or a reviewed safety fix, mitigation, diagnostic).
 
-The shared incident sentinel or uncertain hold freezes every repository. A verified Core-owned hold leaves
-independent tooling free to merge. An open release/* PR also holds Core. The reviewed release's exact candidate
+An incident, verified release hold, or uncertain hold state freezes every repository.
+An open release/* PR also holds Core. The reviewed release's exact candidate
 uses an immediate protected squash after rechecking its evidence.
 """
 
@@ -53,9 +53,7 @@ def release_pr_open() -> str:
 
 def freeze_without_candidate(repo: str) -> str:
     """One hold policy for queued arms and direct merges outside the queue."""
-    scope = hzlib.freeze_scope()
-    tooling = repo.lower() in {known.lower() for known in hzlib.UNQUEUED}
-    if scope in ("incident", "uncertain") or (scope == "core" and not tooling):
+    if hzlib.merge_frozen():
         return "merge freeze is on"
     return release_pr_open() if repo.lower() == hzlib.CORE.lower() else ""
 

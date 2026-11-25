@@ -173,7 +173,7 @@ def queue_waits(items: list[dict], now: float) -> list[str]:
 
 
 FREEZE_STATUS = {
-    "core": "The release holds Core and dependency PRs. Independent tooling is outside that hold",
+    "release": "the verified release hold blocks ordinary merges across all repositories, including tooling",
     "incident": "the incident merge freeze holds every repository",
     "uncertain": "unverified release hold state blocks every repository",
 }

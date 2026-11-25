@@ -227,7 +227,7 @@ def test_wait_sees_holds_and_queue_waits(tmp_path):
     assert "queue         item 790: waiting 10 min: BEHIND" in out.stdout
 
 
-@pytest.mark.parametrize("scope", ["core", "uncertain", "incident"])
+@pytest.mark.parametrize("scope", ["release", "uncertain", "incident"])
 def test_wait_reports_the_same_hold_scope_as_the_merge_gate(tmp_path, monkeypatch, scope):
     state = tmp_path / "state"
     holds = state / "release-holds"
@@ -239,7 +239,7 @@ def test_wait_reports_the_same_hold_scope_as_the_merge_gate(tmp_path, monkeypatc
     if scope == "incident":
         (state / "merge-freeze").touch()
     monkeypatch.setattr(hzlib.statedir, "path", lambda name: state / name)
-    assert bool(auto_arm.freeze_without_candidate(hzlib.UNQUEUED[0])) == (scope != "core")
+    assert auto_arm.freeze_without_candidate(f"{hzlib.OWNER}/steuermaschine")
     assert probes.FREEZE_STATUS[scope] in view(tmp_path, scripted(), "wait").stdout.splitlines()[0]
 
 
