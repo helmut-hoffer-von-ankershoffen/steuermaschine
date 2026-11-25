@@ -190,3 +190,27 @@ def test_status_write_refuses_an_append_past_the_cap_and_writes_nothing(tmp_path
     with using(NativeRuntime(rt.providers, rt.settings, rt.project, commands=lambda: [])), pytest.raises(Refuse, match="over the cap"):
         status_mod.write_document(False, status_mod.Status())
     assert doc.read_text() == before
+    assert not list((tmp_path / "log").glob("*.md"))
+
+
+def test_status_write_archives_changed_facts_when_the_checkpoint_is_identical(tmp_path, monkeypatch):
+    from steuermaschine.native import NativeRuntime, using
+    from steuermaschine_heinzel.native import alarm
+    from steuermaschine_heinzel.native import status as status_mod
+    from steuermaschine_heinzel.native.handoff_lib import hour
+
+    doc = tmp_path / "AGENTS.md"
+    doc.write_text("# Doc\n")
+    asks = ["--keep-this-", "second", "third", "old tail"]
+    monkeypatch.setattr(alarm, "alarm_list", lambda check=False: alarm.Alarms(checked=False))
+    monkeypatch.setattr(alarm, "owner_asks", lambda: asks)
+    monkeypatch.setattr(hour, "build", lambda *a, **k: SimpleNamespace(render=lambda: ["facts"]))
+    rt = app_runtime(tmp_path, coord_document=str(doc), coord_log_dir=str(tmp_path / "log"))
+    with using(NativeRuntime(rt.providers, rt.settings, rt.project, commands=lambda: [])):
+        status_mod.write_document(False, status_mod.Status())
+        first = doc.read_text()
+        asks[-1] = "new tail"
+        status_mod.write_document(False, status_mod.Status())
+    assert doc.read_text() == first and "--keep-this-" in first
+    archive = next((tmp_path / "log").glob("*.md")).read_text()
+    assert "old tail" in archive and "new tail" in archive

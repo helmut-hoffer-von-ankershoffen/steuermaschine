@@ -35,7 +35,7 @@ class StatusSettings(BaseModel):
                                          description="Repositories of the pull request table (same owner as `repo`): name -> prefix of its keys in the action table.")
     status_gate_repos: list[str] = Field(default=list(DEFAULT_REPOS), description="Repositories whose merge gate is read (Sonar, coverage badge, ruleset).")
     status_gate_notes: dict[str, str] = Field(default={}, description="Repositories without a readable gate: name -> the one line shown for it.")
-    status_doc_cap_bytes: int = Field(16 * 1024, description="`sm status --write`: the size the tracking document may not grow past; older checkpoints and log lines move out.")
+    status_doc_cap_bytes: int = Field(16 * 1024, description="`sm status --write`: refuse growth past this size; archive older checkpoints and log lines. Existing excess may remain with a warning.")
     status_keep_checkpoints: int = Field(3, description="`sm status --write`: the newest checkpoints that stay in the tracking document.")
     status_pr_repos: list[str] = Field(default=prtable.DEFAULT_REPOS, description="Repositories of `sm status --prs` and the owner update (same owner as `repo`).")
     status_decisions_file: Path | None = Field(None, description="The owner's open decisions, one per line (`- [ ] text`; `- [x]` is closed); `sm status --owner` lists the open ones.")
@@ -233,7 +233,9 @@ def collect(w: probes.World, view: str = "table", check: bool = False) -> Status
     "diagnostic `Focused ...` run never put a pull request under Needs work; the checks merge-gate and coverage-floor\n"
     "do only once main requires them. A pull request without a row in the action table prints NO OWNER.\n"
     "--write takes over the hourly update, the handoff and the checkpoint upkeep (the old `doc hour`, `doc handoff`): the\n"
-    "tracking document never grows past the setting status_doc_cap_bytes; the newest status_keep_checkpoints stay.\n"
+    "tracking document cannot grow beyond status_doc_cap_bytes; existing excess may remain with a warning.\n"
+    "The checkpoint has at most 25 lines, three items per list, clipped to 160 characters; full facts append to the dated\n"
+    "log on every successful write. Older checkpoints and log lines are archived; status_keep_checkpoints stay.\n"
     "--prs: one table over gh of every repository (setting status_pr_repos): merge state, CI (the advisory review check and\n"
     "Focused runs never count), Sonar, unresolved review threads, age as a duration, author. Nothing is stored.\n"
     "--owner [--since 2h]: the owner update, rendered from reads only: releases since the time, pull requests per repository,\n"
@@ -299,7 +301,7 @@ def state_block(found: Status, now: float, archive: Path | None = None) -> tuple
     full = "\n".join([f"### State facts {stamp}", *(f"**{name}**\n" + "\n".join(f"- {line}" for line in items) for name, items in parts.items())])
     out = [BEGIN, f"## State now (written by `sm status --write` at {stamp}; {where})"]
     for name, items in parts.items():
-        out += [f"- **{name}** ({len(items)})", *(f"  - {item.strip('- ')[:LINE_WIDTH]}" for item in items[:SHOWN])]
+        out += [f"- **{name}** ({len(items)})", *(f"  - {item.removeprefix('- ')[:LINE_WIDTH]}" for item in items[:SHOWN])]
         out += [f"  - ... {len(items) - SHOWN} more" for _ in range(len(items) - SHOWN > 0)]
     out = [*out[:CHECKPOINT_LINES - 1], END]
     return "\n".join(out), full
@@ -334,19 +336,17 @@ def write_document(live: bool, found: Status | None = None) -> list[str]:
         placed = place(text, block)
         capped, moved = cap.apply(placed, limits)
         if len(capped.encode()) > limits.limit and len(capped.encode()) > len(text.encode()):  # never grow a document past its cap
-            raise Refuse(f"{path.name} would grow to {len(capped.encode())} bytes, over the cap of {limits.limit}: nothing written", "sm status --write")
-        return capped, moved or ("\n" if placed != text else "")  # a new state section is a change even when nothing moves
+            raise Refuse(f"{path.name} would grow to {len(capped.encode())} bytes, over the cap of {limits.limit}: nothing written. "
+                         "Shorten non-checkpoint content or raise status_doc_cap_bytes in the project settings.", "sm self config")
+        return capped, moved or "\n"  # archive full facts on every successful write, even when the checkpoint is unchanged
 
-    def keep(moved: str) -> None:  # the moved text is safe before the document shrinks
-        if not moved.strip():
-            return
+    def keep(moved: str) -> None:  # under the journal lock, after cap validation and before replacing the document
         archive.parent.mkdir(parents=True, exist_ok=True)
         with archive.open("a", encoding="utf-8") as handle:
-            handle.write(f"\n## Moved from {path.name} by sm status --write\n\n{moved}\n")
+            handle.write(f"\n{facts}\n")
+            if moved.strip():
+                handle.write(f"\n## Moved from {path.name} by sm status --write\n\n{moved}\n")
 
-    archive.parent.mkdir(parents=True, exist_ok=True)
-    with archive.open("a", encoding="utf-8") as handle:  # the long facts live in the log, not in the tracking document
-        handle.write(f"\n{facts}\n")
     text, capped = core_journal.rewrite(path, change, keep, [journal_lock(s)])
     out.append(f"{path.name}: state section written; {len(text.encode())} -> {len(capped.encode())} bytes" +
                (f"; older checkpoints and log lines moved to {archive}" if len(capped) < len(place(text, block)) else ""))
