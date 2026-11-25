@@ -108,7 +108,7 @@ jobs:
       matrix:
         os: [ubuntu-24.04]
         python: ["3.15"]
-        include: ${{ fromJSON(github.event_name == 'push' && github.ref == 'refs/heads/main' && '[{"os":"macos-latest","python":"3.15"}]' || '[]') }}
+        include: ${{ fromJSON(github.event_name == 'push' && github.ref == 'refs/heads/main' && '[{"os":"macos-15","python":"3.15"}]' || '[]') }}
     env:
       # uv's own Python builds, as the stable install uses, never a runner's system Python.
       UV_PYTHON_PREFERENCE: only-managed
@@ -125,6 +125,10 @@ jobs:
           enable-cache: true
       # PyYAML (a commitizen dependency, unused by the tests) has no wheel for 3.15 yet: skip it instead of building.
       - run: uv sync --all-packages --locked --no-build --no-install-package pyyaml
+      - name: Require native Apple Silicon Python 3.15
+        if: matrix.os == 'macos-15'
+        run: |
+          uv run --no-sync python -c 'import platform,sys; sys.exit(0 if platform.mac_ver()[0].split(".")[0] == "15" and platform.machine() == "arm64" and sys.version_info[:2] == (3, 15) else "Expected macOS 15 arm64 and Python 3.15")'
       - name: Tests
         if: github.event_name == 'push'
         run: env -u GITHUB_ACTIONS -u FORCE_COLOR -u PY_COLORS uv run --no-sync pytest -q -p no:cacheprovider

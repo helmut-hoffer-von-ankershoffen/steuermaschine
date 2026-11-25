@@ -78,17 +78,26 @@ def test_a_failed_finalize_run_stops(rel, monkeypatch):
         rel.compose_step("1.2.4", 60)
 
 
-def test_compose_starts_beside_the_pypi_upload_and_never_twice(rel, monkeypatch):
-    """Speedup: compose is dispatched from the release's wheel asset right after PyPI, before PyPI has the version."""
-    seen = world(rel, monkeypatch, core_held=False, apps=[None], runs=[RUNNING])
-    order = []
-    monkeypatch.setattr(rel, "pypi_has", lambda *a: False)
-    monkeypatch.setattr(rel, "pypi_dispatch", lambda *a: order.append("pypi"))
+@pytest.mark.parametrize("core_held", [False, True])
+def test_only_held_core_can_compose_before_pypi(rel, monkeypatch, core_held):
+    seen = world(rel, monkeypatch, core_held=core_held, apps=[None], runs=[RUNNING])
+    upload = []
+    monkeypatch.setattr(rel, "pypi_has", lambda name, version: upload == [("heinzel", "1.2.4", "v1.2.4"), "published"])
+
+    def start_upload(name, version, tag, _timeout):
+        upload.append((name, version, tag))
+
+    monkeypatch.setattr(rel, "pypi_dispatch", start_upload)
     rel.compose_beside_pypi("1.2.4", "v1.2.4", 60)
-    order += [key for key, _ in seen["dispatch"]]
-    assert order == ["pypi", "compose"]
-    rel.compose_step("1.2.4", 60, wait_for=False)  # a resume adopts the dispatched run instead of a second one
-    assert [key for key, _ in seen["dispatch"]] == ["compose"]
+    assert upload == [("heinzel", "1.2.4", "v1.2.4")]
+    assert seen["dispatch"] == ([("compose", {})] if core_held else [])
+
+    upload.append("published")
+    seen["apps"] = [None, None, "final"]
+    seen["runs"] = [DONE]
+    rel.compose_step("1.2.4", 60)
+    explicit = {"version": "1.2.4", "core_wheel": "https://example.invalid/heinzel-1.2.4-py3-none-any.whl"}
+    assert seen["dispatch"] == [("compose", {} if core_held else explicit)]
 
 
 def test_compose_beside_pypi_does_nothing_once_the_final_app_exists(rel, monkeypatch):

@@ -34,6 +34,8 @@ CHECK_STEPS = (
 )
 INTEGRATION_JOB = "Integration checks"
 SUMMARY_STEP = "Require integration and test results"
+MACOS_15_JOB = "Test (macos-15, Python 3.15)"
+MACOS_15_STEP = "Require native Apple Silicon Python 3.15"
 
 
 class Refused(ValueError):
@@ -102,7 +104,12 @@ def verify_jobs(jobs: list, run_id: int, sha: str, branch: str) -> None:
 
     required = {"check": CHECK_STEPS, "Test (ubuntu-24.04, Python 3.15)": ("Tests",)}
     if branch == "main":
-        required["Test (macos-latest, Python 3.15)"] = ("Tests",)
+        if MACOS_15_JOB in by_name:
+            mac = by_name[MACOS_15_JOB]
+            require(INTEGRATION_JOB in by_name and mac.get("labels") == ["macos-15"], "macOS 15 job lacks its exact hosted layout or label")
+            required[MACOS_15_JOB] = (MACOS_15_STEP, "Tests")
+        else:
+            required["Test (macos-latest, Python 3.15)"] = ("Tests",)
         required["badge"] = ("Write badges/coverage.svg",)
     legacy = set(required)
     split = legacy | {INTEGRATION_JOB}

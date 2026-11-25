@@ -20,6 +20,7 @@ HEAD = "a" * 40
 LINUX = "Test (ubuntu-24.04, Python 3.15, integration)"
 MACOS = "Test (macos-latest, Python 3.15, integration)"
 LINUX_UNIT = "Test (ubuntu-24.04, Python 3.15, unit)"
+ELECTRON = "Electron (macos-latest)"
 MACOS_UNIT = "Test (macos-latest, Python 3.15, unit)"
 TEST_STEP = "Unit and integration tests (unit first, 4 workers, stop at the first failure)"
 AGG = "CI OK"
@@ -82,6 +83,7 @@ def execution(row, *names, retry=False):
 def evidence(monkeypatch):
     policy = SimpleNamespace(aggregate=AGG, test_jobs=frozenset({LINUX, MACOS, LINUX_UNIT, MACOS_UNIT}),
                              workflow=".github/workflows/ci.yml", workflow_runs="actions/workflows/ci.yml/runs")
+    policy.expected_jobs = lambda event: {name: "success" for name in policy.test_jobs | {ELECTRON}}
     monkeypatch.setattr(recovery.core_policy, "at_commit_api", lambda *_: policy)
     hosted = recovery.candidate_capacity
     hold = job(20, MACOS, 2, "cancelled", runner_id=0, runner_name="", steps=[], labels=["macos-latest"],
@@ -136,6 +138,30 @@ def test_original_exact_pair_produces_only_a_read_only_assessment(evidence):
     assert result == assess(evidence)
     assert (result.head, result.push_run, result.macos_run, result.aggregate_job, result.jobs) == (HEAD, 1, 2, 21, (20,))
     assert len(result.inventory_sha256) == 64
+
+
+@pytest.mark.parametrize("defect", ["", "optional", "different dependency"])
+def test_electron_failure_is_capacity_only_when_policy_and_aggregate_bind_it(evidence, defect, monkeypatch):
+    responses, _, hold, _, _, log = evidence
+    policy = recovery.core_policy.at_commit_api(None, HEAD)
+    if defect == "optional":
+        monkeypatch.setattr(policy, "expected_jobs", lambda _: {ELECTRON: "skipped"})
+    hold["name"] = ELECTRON
+    inventory = responses["actions/runs/2/attempts/1/jobs?per_page=100&page=1"]
+    inventory["jobs"].append(execution(job(23, MACOS, 2), TEST_STEP))
+    inventory["total_count"] += 1
+    workflow = WORKFLOW.replace("  ci-ok:", "  electron:\n    name: Electron (${{ matrix.os }})\n  ci-ok:")
+    workflow = workflow.replace("needs: [test]", "needs: [test, electron]")
+    responses[f"contents/{policy.workflow}?ref={HEAD}"]["content"] = base64.b64encode(workflow.encode()).decode()
+    failed = "test" if defect == "different dependency" else "electron"
+    needs = {name: {"result": "abandoned" if name == failed else "success"} for name in ("test", "electron")}
+    log[1] = "  NEEDS: " + json.dumps(needs, indent=2)
+    log[3] = f"##[error]Required job {failed} ended with abandoned"
+    if defect:
+        with pytest.raises(CandidateError):
+            assess(evidence)
+    else:
+        assert assess(evidence).jobs == (20,)
 
 
 @pytest.mark.parametrize("defect", [

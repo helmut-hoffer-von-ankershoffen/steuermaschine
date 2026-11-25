@@ -1339,10 +1339,9 @@ def pypi_step(name: str, version: str, tag: str, timeout: float) -> None:
 
 
 def compose_beside_pypi(version: str, tag: str, timeout: float) -> None:
-    """Start PyPI and compose side by side from the published release; `pypi_step` and `compose_step` then wait.
+    """Start PyPI and any held-Core composition. The explicit selector requires exact-version PyPI metadata.
 
-    Compose builds from the release's own wheel asset, not from PyPI, so it no longer waits for the upload. A failed
-    upload still stops the tail before acceptance, and a held core's finalize still follows PyPI (`compose_step`).
+    The release tail runs `pypi_step` before waiting for the final app or starting explicit composition.
     """
     if not pypi_has("heinzel", version):
         pypi_dispatch("heinzel", version, tag, timeout)
@@ -1391,8 +1390,8 @@ def compose_step(version: str, timeout: float, *, wait_for: bool = True) -> None
             raise Stop(f"v{version} is no published core release")
         return core["prerelease"]
 
-    def dispatch_compose() -> None:
-        if held():
+    def dispatch_compose(held_core: bool) -> None:
+        if held_core:
             dispatch(PLUGINS, "compose.yml", "main", "compose")
             return
         _, out = hzlib.gh("release", "view", f"v{version}", "-R", CORE, "--json", "assets", "--jq", ".assets[].url")
@@ -1406,8 +1405,13 @@ def compose_step(version: str, timeout: float, *, wait_for: bool = True) -> None
             return  # released() verified or refused the one bound replacement; never dispatch it again.
         if ours(PLUGINS, "compose.yml", "compose"):
             return
+        held_core = held()
+        if not wait_for and not held_core:
+            return  # explicit selection validates the wheel against PyPI; the tail must run pypi_step first
         wait("compose queue", lambda: not compose_busy(), timeout)
-        dispatch_compose()
+        dispatch_compose(held_core)
+        if not wait_for:
+            hzlib.say(f"go   compose {app} (held Core, beside PyPI)")
 
     def check() -> None:
         for key in ("compose", "compose_finalize"):
@@ -1422,7 +1426,7 @@ def compose_step(version: str, timeout: float, *, wait_for: bool = True) -> None
                     remember(compose_replaced=[*state().get("compose_replaced", []), fix | {"at": now_iso()}])
                     hzlib.say(f"compose run {run['databaseId']} ended {run['conclusion']}; plugins main moved and published "
                               f"{', '.join(f'{d} {o} -> {n}' for d, (o, n) in sorted(fix['plugins'].items()))}: dispatching a fresh compose")
-                    dispatch_compose()
+                    dispatch_compose(held())
                     return
                 raise Stop(f"compose run {run['databaseId']} ended {run['conclusion']}: sm ci watch {run['databaseId']} -R {PLUGINS}")
         run = ours(PLUGINS, "compose.yml", "compose")
@@ -1432,8 +1436,7 @@ def compose_step(version: str, timeout: float, *, wait_for: bool = True) -> None
 
     if not wait_for:
         if not released():
-            act()  # compose builds from the release's own wheel asset, so it runs beside the PyPI upload
-            hzlib.say(f"go   compose {app} (beside PyPI)")
+            act()
         return
     step(f"compose {app}", released, act, timeout, check)
 
