@@ -167,6 +167,8 @@ def plugins_check(rt: Any, wt: Path) -> HeadCheck:
     "fails (exit 1). Only a selection of more than 40 test files (and a change nothing narrows) is left to CI: the receipt then\n"
     "stores deferred: true and ci_must_run, and `sm check`, `sm ship` and `sm review verdict --approve` print \"deferred to CI: ...\".\n"
     "A type check stopped at its own limit (124) or without a slot (75) still fails.\n"
+    "--extended gives the same focused work a 600 s wall budget. It keeps each command limit and leaves whole-suite\n"
+    "selection to the existing rules. It cannot be combined with --allow-full.\n"
     "E2E lanes never run here. --sel FILE adds tests ({\"python\": [files]}).\n"
     "The receipt is bound to the commit and names the base it was measured from: any new commit needs a new run, and\n"
     "an approval needs the receipt's base to be the base the reviewed packet builds the head on. A run with --skip or\n"
@@ -179,11 +181,14 @@ def check(worktree: Path | None = typer.Argument(None, metavar="WORKTREE", help=
           base: str | None = typer.Option(None, "--base", metavar="REV", help="The ref the head branched from (default: the setting preflight_base)."),
           sel: Path | None = typer.Option(None, "--sel", metavar="FILE", help='More tests to run: JSON {"python": [test files]}.'),
           skip: list[str] | None = typer.Option(None, "--skip", metavar="NAME", help="Leave one check out (repeatable); named in the verdict, and no receipt is written."),
+          extended: bool = typer.Option(False, "--extended", help="Give the focused checks up to 600 seconds in total, with their usual command limits."),
           allow_full: bool = typer.Option(False, "--allow-full", help="Let the run lock run the whole unit suite when nothing narrows the change (the coordinator's call; logged)."),
           full: bool = typer.Option(False, "--full", hidden=True, help="A full local run: the whole unit suite when nothing narrows the change, "
                                                                       "through the heavy lane (load bar, exclusive push lane); logged.")) -> HeadCheck:
     rt, usage = runtime(), "sm check --help"
     providers: Any = rt.providers
+    if extended and (allow_full or full):
+        raise Refuse("--extended applies to focused checks; use it separately from --allow-full or --full", usage, code=USAGE)
     wt = _preflight.core_worktree(worktree or Path.cwd(), usage)
     skipped = list(skip or [])
     registry = cheap.checks()
@@ -191,6 +196,8 @@ def check(worktree: Path | None = typer.Argument(None, metavar="WORKTREE", help=
         raise Refuse(f"--skip takes one of {', '.join(cheap.STEPS)}; unknown: {', '.join(unknown)}", usage, code=USAGE)
     target = (worktree or Path.cwd()).expanduser().resolve()
     if (target / ".git").exists() and gallery_sync.is_plugins(gallery_sync.origin_repo(providers.commands, target)):
+        if extended:
+            raise Refuse("--extended applies to Core checks", usage, code=USAGE)
         return plugins_check(rt, target)
     default = str(_preflight.setting(rt, "preflight_base"))
     ref = base or default
@@ -201,7 +208,8 @@ def check(worktree: Path | None = typer.Argument(None, metavar="WORKTREE", help=
                     demote=lambda: slots.lower_priority(providers.commands)) as grant:
         if grant.granted:
             if not (full or allow_full):  # the local run is a signal with a wall budget (check_lib/budget.py); --full is the coordinator's call
-                c.budget = budget.Budget(clock.now)
+                seconds = budget.EXTENDED_SECONDS if extended else budget.BUDGET_SECONDS
+                c.budget = budget.Budget(clock.now, seconds=seconds)
                 c.gate = budget.gated(c.budget, lambda seconds: _preflight.gated(False, False, seconds), cheap.FAST_SECONDS)
             try:
                 selection = affected.selection(select.Repo(wt), c.changed())
@@ -213,11 +221,14 @@ def check(worktree: Path | None = typer.Argument(None, metavar="WORKTREE", help=
         else:  # no slot, or a loaded machine: nothing ran, so nothing is READY: exit 75, the same command again later
             raise Wait(f"sm check ran nothing: {grant.deferred}", "a free check slot and a quieter machine; run the same command again")
     if c.deferred and not [s for s in steps if s.failures]:  # the budget ran out and nothing failed: part of the run did not happen, so it is not READY
-        retry = join(["sm", "check", str(wt), "--allow-full", *(["--base", base] if base else []),
+        retry = join(["sm", "check", str(wt), "--extended", *(["--base", base] if base else []),
                       *(["--sel", str(sel.expanduser().resolve())] if sel else []),
                       *(arg for name in skipped for arg in ("--skip", name))])
-        recovery = ("The suggested command is for the coordinator on the unchanged head "
-                    "(heavy lane, may run the full unit suite). Otherwise, retry the original command on a quieter machine.")
+        recovery = (
+            "Retry on a quieter machine; the extended budget is already in use."
+            if extended
+            else "The suggested command gives the same focused checks more time. Otherwise, retry on a quieter machine."
+        )
         if not skipped and ref == default:
             recovery += (" Once READY with a receipt, rerun your original sm head admit command "
                          "to adopt that receipt if admission was in progress")
