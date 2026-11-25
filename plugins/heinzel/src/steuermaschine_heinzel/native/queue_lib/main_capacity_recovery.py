@@ -106,7 +106,8 @@ def assess(head: str, push_run: int, macos_run: int, *, api: Callable[[str], Any
     workflow = source_bytes(api, policy.workflow, head, (policy.workflow,)).decode()
     require(main_capacity.retry_dependents(workflow, "test") == {"ci-ok"},
             "targeted test rerun has unreviewed dependent jobs")
-    logger = main_capacity.dependency_check(api, policy, head)
+    logger = main_capacity.dependency_check(api, policy, head, workflow=workflow)
+    verify_original_workload(workflow, policy, linux_jobs, mac_jobs, cancelled, logger)
     main_capacity.check_aggregate(aggregate, logger, cancelled, lambda _: raw_log)
     require(main_checkpoint.main_ci_inventory(api, head) == runs
             and api("git/ref/heads/main")["object"]["sha"] == head, "main or run inventory changed")
@@ -115,6 +116,20 @@ def assess(head: str, push_run: int, macos_run: int, *, api: Callable[[str], Any
     identity = candidate_capacity.digest(evidence)
     return MainCapacityRecovery(head, push_run, macos_run, aggregate["id"],
                                 tuple(sorted(mac_jobs[name]["id"] for name in cancelled)), identity, evidence)
+
+
+def verify_original_workload(workflow: str, policy: core_policy.Policy, linux: dict, macos: dict,
+                             cancelled: set[str], logger: main_capacity.DependencyCheck) -> None:
+    """An original job's green conclusion counts only with its actual required workload."""
+    step = main_capacity.test_step(workflow)
+    for name in sorted(policy.test_jobs - cancelled):
+        lane = macos if main_lanes.is_macos_cell(name) else linux
+        job = lane[name]
+        candidate_capacity.executed(job)
+        main_capacity.passed_steps(job, step)
+    aggregate = linux[policy.aggregate]
+    candidate_capacity.executed(aggregate)
+    main_capacity.passed_steps(aggregate, logger.step, main_capacity.aggregate_workload_step(workflow))
 
 
 def prepare(store: Store, head: str, push_run: int, macos_run: int, *, api: Callable[[str], Any],
@@ -162,7 +177,8 @@ def validate_intent(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def request_once(store: Store, macos_run: int, expected: str, *, api: Callable[[str], Any],
-                 read_log: Callable[[int], bytes], now: datetime, post: Callable[[str], bool]) -> dict[str, Any]:
+                 read_log: Callable[[int], bytes], now: Callable[[], datetime], post: Callable[[str], bool],
+                 authorize: Callable[[], None]) -> dict[str, Any]:
     """Record the sole outbound intention before submitting through the supplied adapter."""
     require(type(macos_run) is int and macos_run > 0, "invalid retry run")
     key = str(macos_run)
@@ -175,9 +191,12 @@ def request_once(store: Store, macos_run: int, expected: str, *, api: Callable[[
                 "approved retry intent fingerprint differs")
         fresh = assess(data["head"], data["push_run"], macos_run, api=api, read_log=read_log)
         require(fresh.inventory_sha256 == data["inventory_sha256"], "original job evidence changed")
-        require(now.utcoffset() is not None and now >= candidate_capacity.clock(data["prepared_at"]),
+        authorize()
+        requested_at = now()
+        require(requested_at.utcoffset() is not None and requested_at >= candidate_capacity.clock(data["prepared_at"]),
                 "request clock predates original preparation")
-        request = {"intent_sha256": expected, "attempt": 2, "path": data["request_path"], "requested_at": now.isoformat()}
+        request = {"intent_sha256": expected, "run": macos_run, "job": data["jobs"][0], "head": data["head"],
+                   "attempt": 2, "path": data["request_path"], "requested_at": requested_at.isoformat()}
         store.put_receipt(REQUEST, key, request)
         try:
             accepted = post(request["path"])
@@ -203,11 +222,32 @@ class ObservedMainRetry:
 
 def inspect_attempt(store: Store, macos_run: int, *, api: Callable[[str], Any]) -> ObservedMainRetry:
     """Verify physical execution and retained jobs without asserting which request caused them."""
+    return _inspect_attempt(store, macos_run, api=api, admission=False)
+
+
+def verify_requested_attempt(store: Store, macos_run: int, *, api: Callable[[str], Any]) -> ObservedMainRetry:
+    """Verify execution after a durably authorized outbound request."""
+    return _inspect_attempt(store, macos_run, api=api, admission=True)
+
+
+def _inspect_attempt(store: Store, macos_run: int, *, api: Callable[[str], Any], admission: bool) -> ObservedMainRetry:
     require(type(macos_run) is int and macos_run > 0, "invalid retry run")
     saved = store.get_receipt(INTENT, str(macos_run))
     require(saved is not None, "no durable main retry intent")
     data = validate_intent(saved)
     head, push = data["head"], data["push_run"]
+    intent = candidate_capacity.clock(data["prepared_at"])
+    if admission:
+        request = store.get_receipt(REQUEST, str(macos_run))
+        require(isinstance(request, dict) and type(request.get("attempt")) is int
+                and type(request.get("run")) is int and type(request.get("job")) is int
+                and (request.get("intent_sha256"), request["run"], request["job"], request["attempt"],
+                     request.get("path"), request.get("head")) ==
+                    (data["intent_sha256"], macos_run, data["jobs"][0], 2, data["request_path"], head),
+                "no matching authorized outbound retry request")
+        boundary = candidate_capacity.clock(request.get("requested_at"))
+        require(boundary >= intent, "outbound request predates preparation")
+        intent = boundary
     require(data["macos_run"] == macos_run and api("git/ref/heads/main")["object"]["sha"] == head, "main or run moved")
     runs = main_checkpoint.actual_main_ci(api, head, push)
     require(set(runs) == {push, macos_run} and runs[macos_run][1:5] == ("workflow_dispatch", 2, "completed", "success"),
@@ -231,7 +271,9 @@ def inspect_attempt(store: Store, macos_run: int, *, api: Callable[[str], Any]) 
     after = exact_jobs(api, macos_run, head, attempt=2)
     require(set(after) in (requested, set(before)), "extra or incomplete replacement jobs")
     original_ids = {job["id"] for jobs in (original["push"], before) for job in jobs.values()}
-    intent = candidate_capacity.clock(data["prepared_at"])
+    workflow = source_bytes(api, policy.workflow, head, (policy.workflow,)).decode()
+    logger = main_capacity.dependency_check(api, policy, head, workflow=workflow)
+    verify_original_workload(workflow, policy, original["push"], before, {name}, logger)
     for original_jobs in (original["push"], before):
         for job in original_jobs.values():
             if job["conclusion"] == "success":
@@ -255,12 +297,8 @@ def inspect_attempt(store: Store, macos_run: int, *, api: Callable[[str], Any]) 
         candidate_capacity.executed(job)
         candidate_capacity.execution_boundary(job, intent, reused=False)
     candidate_capacity.replacement_steps(after[name])
-    logger = main_capacity.dependency_check(api, policy, head)
-    required = "Require the complete direct CI workload"
-    require(required in logger.steps and all(
-        sum(s.get("name") == step and s.get("conclusion") == "success" for s in after[policy.aggregate]["steps"]) == 1
-        for step in (logger.step, required)
-    ), "replacement aggregate did not verify the complete workload")
+    main_capacity.passed_steps(after[name], main_capacity.test_step(workflow))
+    main_capacity.passed_steps(after[policy.aggregate], logger.step, main_capacity.aggregate_workload_step(workflow))
     require(main_checkpoint.actual_main_ci(api, head, push) == runs
             and api("git/ref/heads/main")["object"]["sha"] == head, "main or run inventory changed")
     return ObservedMainRetry(head, macos_run, after[name]["id"], after[policy.aggregate]["id"], data["intent_sha256"])

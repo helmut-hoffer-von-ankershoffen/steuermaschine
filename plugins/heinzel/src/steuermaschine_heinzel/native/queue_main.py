@@ -106,28 +106,30 @@ def queue_main_capacity(
 ) -> QueueMain:
     rt = runtime()
     store = rt.providers.store
-    now = datetime.fromtimestamp(rt.providers.clock.now(), UTC)
+    def now() -> datetime:
+        return datetime.fromtimestamp(rt.providers.clock.now(), UTC)
+
     try:
         if request is None:
             data = main_capacity_recovery.prepare(store, head, push_run, macos_run, api=main_checkpoint.get,
-                                                  read_log=main_capacity.read_aggregate_log, now=now)
+                                                  read_log=main_capacity.read_aggregate_log, now=now())
             return QueueMain(action="main-capacity", lines=[f"PREPARED {data['intent_sha256']} for {data['request_path']}"],
                              proof={"intent_sha256": data["intent_sha256"], "job": data["jobs"][0]})
         saved = store.get_receipt(main_capacity_recovery.INTENT, str(macos_run))
         if saved is None or (saved.get("head"), saved.get("push_run")) != (head, push_run):
             raise Refuse("main retry request differs from its prepared identity", "sm queue why")
 
-        def post(path: str) -> bool:
+        def authorize() -> None:
             if hzlib.merge_frozen() or queue_hold.current(rt):
                 raise Refuse("a release, incident or operator hold blocks the retry", "sm queue why")
+
+        def post(path: str) -> bool:
             code, response = hzlib.gh("api", "--include", "--method", "POST", path)
             return code == 0 and re.match(r"^HTTP/\S+\s+201(?:\s|$)", response) is not None
 
-        if hzlib.merge_frozen() or queue_hold.current(rt):
-            raise Refuse("a release, incident or operator hold blocks the retry", "sm queue why")
-
+        authorize()
         proof = main_capacity_recovery.request_once(store, macos_run, request, api=main_checkpoint.get,
-                                                      read_log=main_capacity.read_aggregate_log, now=now, post=post)
+                                                      read_log=main_capacity.read_aggregate_log, now=now, post=post, authorize=authorize)
         return QueueMain(action="main-capacity", proof=proof,
                          lines=[f"REQUEST ACCEPTED for original run {macos_run}. Attempt origin remains unproven."])
     except (ValueError, OSError, KeyError, TypeError) as error:

@@ -177,7 +177,7 @@ def base_ready(expected: str | None = None) -> bool:
     if status != ("completed", "success", 2) or type(run) is not int:
         return False
     try:
-        recovered = main_capacity_recovery.inspect_attempt(store(), run, api=_api)
+        recovered = main_capacity_recovery.verify_requested_attempt(store(), run, api=_api)
     except (ValueError, OSError, KeyError, TypeError, RuntimeError):
         return False
     return recovered.head == sha

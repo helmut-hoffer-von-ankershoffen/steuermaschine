@@ -63,13 +63,42 @@ def retry_dependents(text: str, selected: str) -> set[str]:
         seen = closure
 
 
-def dependency_check(api, policy, head: str) -> DependencyCheck:
+def workload_step(workflow: str, job: str, matches) -> str:
+    """Identify the unique unconditional named workload step in the exact workflow."""
+    blocks = workflow_jobs(workflow)
+    require(job in blocks, "reviewed workload job missing")
+    steps = re.split(r"^      - ", blocks[job], flags=re.MULTILINE)[1:]
+    hits = [step for step in steps if not re.search(r"^        if:", step, re.MULTILINE) and matches(step)]
+    require(len(hits) == 1 and not re.search(r"^        continue-on-error:", hits[0], re.MULTILINE),
+            "reviewed unconditional workload step is missing, ambiguous or advisory")
+    label = re.match(r"name: ([^\n#]+)", hits[0])
+    require(label is not None, "reviewed workload step lacks a stable display name")
+    return label[1].strip()
+
+
+def test_step(workflow: str) -> str:
+    return workload_step(workflow, "test", lambda step: re.search(r"^        run: make test-parallel *(?:#.*)?$", step, re.MULTILINE))
+
+
+def aggregate_workload_step(workflow: str) -> str:
+    return workload_step(workflow, "ci-ok", lambda step: re.search(r"^          required=\(", step, re.MULTILINE)
+                         and '.[$job].result == "success"' in step)
+
+
+def passed_steps(job: dict, *names: str) -> None:
+    require(all(sum(isinstance(step, dict) and step.get("name") == name
+                    and step.get("status") == "completed" and step.get("conclusion") == "success"
+                    for step in job.get("steps", [])) == 1 for name in names),
+            f"required workload step did not execute successfully: {job['name']}")
+
+
+def dependency_check(api, policy, head: str, *, workflow: str | None = None) -> DependencyCheck:
     """Read the owning workflow's current job labels and dependency-result step.
 
     This deliberately recognizes only the inline needs and named run steps
     used by the reviewed workflow. A changed layout or logger needs fresh proof.
     """
-    text = source_bytes(api, policy.workflow, head, (policy.workflow,)).decode()
+    text = source_bytes(api, policy.workflow, head, (policy.workflow,)).decode() if workflow is None else workflow
     blocks = workflow_jobs(text)
     labels = {key: re.findall(r"^    name: ([^\n#]+)", body, re.MULTILINE) for key, body in blocks.items()}
     aggregates = [key for key, names in labels.items() if [name.strip() for name in names] == [policy.aggregate]]

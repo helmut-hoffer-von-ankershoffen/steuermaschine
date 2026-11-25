@@ -897,7 +897,7 @@ def recovered_main_capacity() -> bool:
             or (pinned.get("status"), pinned.get("conclusion")) != ("completed", "failure")):
         return False
     try:
-        proof = main_capacity_recovery.inspect_attempt(runtime().providers.store, run, api=main_checkpoint.get)
+        proof = main_capacity_recovery.verify_requested_attempt(runtime().providers.store, run, api=main_checkpoint.get)
     except (ValueError, OSError, KeyError, TypeError, RuntimeError):
         return False
     return proof.head == pinned.get("headSha")

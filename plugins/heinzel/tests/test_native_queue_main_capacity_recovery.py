@@ -17,13 +17,20 @@ from steuermaschine_heinzel.native.queue_lib.release_candidate import CandidateE
 HEAD = "a" * 40
 LINUX = "Test (ubuntu-24.04, Python 3.15, integration)"
 MACOS = "Test (macos-latest, Python 3.15, integration)"
+LINUX_UNIT = "Test (ubuntu-24.04, Python 3.15, unit)"
+MACOS_UNIT = "Test (macos-latest, Python 3.15, unit)"
+TEST_STEP = "Unit and integration tests (unit first, 4 workers, stop at the first failure)"
 AGG = "CI OK"
 GUARD = "Fail if any required job failed, naming each with its verdict"
 DIRECT = "Require the complete direct CI workload"
+FOCUSED = "Require successful focused workload and all owning checks"
 WORKFLOW = r'''name: CI
 jobs:
   test:
     name: Test (${{ matrix.os }}, Python ${{ matrix.python }}, ${{ matrix.level }})
+    steps:
+      - name: Unit and integration tests (unit first, 4 workers, stop at the first failure)
+        run: make test-parallel
   ci-ok:
     name: CI OK
     needs: [test]
@@ -36,7 +43,19 @@ jobs:
             | "::error::Required job \(.key) ended with \(.value.result)"' <<< "$NEEDS"
           for result in $RESULTS; do
             *) echo "A required job ended with: $result"; exit 1 ;;
+      - name: Require successful focused workload and all owning checks
+        if: needs.changes.outputs.focused_mode != ''
+        run: |
+          required=(focused-tests)
+          for job in "${required[@]}"; do
+            jq -e --arg job "$job" '.[$job].result == "success"' <<< "$RESULTS"
+          done
       - name: Require the complete direct CI workload
+        run: |
+          required=(test)
+          for job in "${required[@]}"; do
+            jq -e --arg job "$job" '.[$job].result == "success"' <<< "$RESULTS"
+          done
 '''
 COMMAND = next(line.strip() for line in WORKFLOW.splitlines() if "jq -r" in line)
 
@@ -59,7 +78,7 @@ def execution(row, *names, retry=False):
 
 @pytest.fixture
 def evidence(monkeypatch):
-    policy = SimpleNamespace(aggregate=AGG, test_jobs=frozenset({LINUX, MACOS}),
+    policy = SimpleNamespace(aggregate=AGG, test_jobs=frozenset({LINUX, MACOS, LINUX_UNIT, MACOS_UNIT}),
                              workflow=".github/workflows/ci.yml", workflow_runs="actions/workflows/ci.yml/runs")
     monkeypatch.setattr(recovery.core_policy, "at_commit_api", lambda *_: policy)
     hosted = recovery.candidate_capacity
@@ -68,7 +87,8 @@ def evidence(monkeypatch):
     aggregate = job(21, AGG, 2, "failure", steps=[
         {"number": i, "name": name, "status": "completed", "conclusion": verdict}
         for i, (name, verdict) in enumerate((
-            ("Set up job", "success"), (GUARD, "failure"), (DIRECT, "skipped"), ("Complete job", "success"),
+            ("Set up job", "success"), (GUARD, "failure"), (FOCUSED, "skipped"),
+            (DIRECT, "skipped"), ("Complete job", "success"),
         ), 1)
     ])
     notes = [
@@ -82,8 +102,9 @@ def evidence(monkeypatch):
     push = bound | {"id": 1, "event": "push", "conclusion": "success", "created_at": "2026-11-25T12:00:00Z"}
     lane = bound | {"id": 2, "event": "workflow_dispatch", "conclusion": "failure",
                     "created_at": "2026-11-25T12:01:00Z", "display_title": f"CI macOS main {HEAD}"}
-    ready = [execution(job(10, LINUX, 1)), execution(job(11, AGG, 1)), execution(job(12, main_lanes.DISPATCH_JOB, 1))]
-    other = execution(job(22, "More successful work", 2))
+    ready = [execution(job(10, LINUX, 1), TEST_STEP), execution(job(11, AGG, 1), GUARD, DIRECT),
+             execution(job(12, main_lanes.DISPATCH_JOB, 1)), execution(job(13, LINUX_UNIT, 1), TEST_STEP)]
+    other = execution(job(22, MACOS_UNIT, 2), TEST_STEP)
     listing = {"total_count": 2, "workflow_runs": [lane, push]}
     responses = {
         "git/ref/heads/main": {"object": {"sha": HEAD, "type": "commit"}},
@@ -174,7 +195,7 @@ def retry_rows(evidence, *, carrier=False):
     replacement = execution(
         job(30, MACOS, 2) | {"run_attempt": 2},
         "Install Python 3.15 dependencies with the verified PyYAML compatibility build",
-        "Unit and integration tests (unit first, 4 workers, stop at the first failure)", retry=True,
+        TEST_STEP, retry=True,
     )
     aggregate = execution(job(31, AGG, 2) | {"run_attempt": 2}, GUARD, DIRECT, retry=True)
     jobs = [replacement, aggregate]
@@ -258,7 +279,8 @@ def test_request_is_recorded_before_one_exact_post_and_never_repeated(evidence, 
 
     def request():
         return recovery.request_once(store, 2, saved["intent_sha256"], api=responses.__getitem__,
-                                     read_log=lambda _: log, now=datetime(2026, 11, 25, 13, tzinfo=UTC), post=post)
+                                     read_log=lambda _: log, now=lambda: datetime(2026, 11, 25, 13, tzinfo=UTC), post=post,
+                                     authorize=lambda: None)
 
     if acknowledged:
         assert request()["attempt_origin"] == "unproven"
@@ -270,14 +292,13 @@ def test_request_is_recorded_before_one_exact_post_and_never_repeated(evidence, 
         request()
     assert sent == [f"repos/{hzlib.CORE}/actions/jobs/20/rerun"]
     retry_rows(evidence)
-    assert recovery.inspect_attempt(store, 2, api=responses.__getitem__).attempt_origin == "unproven"
+    assert recovery.verify_requested_attempt(store, 2, api=responses.__getitem__).attempt_origin == "unproven"
 
 def test_queue_recovery_is_scoped_to_the_existing_exact_pin(evidence, monkeypatch):
     from steuermaschine_heinzel.native.queue_lib import queue_daemon as queue
 
     store = MemoryStore()
     prepare(store, evidence)
-    retry_rows(evidence)
     pin = {"databaseId": 2, "attempt": 1, "headSha": HEAD, "event": "workflow_dispatch",
            "displayTitle": f"CI macOS main {HEAD}", "status": "completed", "conclusion": "failure"}
     monkeypatch.setattr(queue, "load", lambda: {"main_failure": pin})
@@ -285,6 +306,11 @@ def test_queue_recovery_is_scoped_to_the_existing_exact_pin(evidence, monkeypatc
     monkeypatch.setattr(queue, "update", lambda **_: pytest.fail("must retain original pin"))
     rt = NativeRuntime(fake_providers(store=store), {}, None)
     with using(rt):
+        retry_rows(evidence)
+        assert not queue.recovered_main_capacity()
+        evidence[1]["workflow_runs"][0] = evidence[0]["actions/runs/2"]
+        request_intent(store, evidence)
+        retry_rows(evidence)
         assert queue.recovered_main_capacity()
         pin["headSha"] = "b" * 40
         assert not queue.recovered_main_capacity()
@@ -306,7 +332,69 @@ def test_exact_release_base_uses_verified_attempt_two_without_touching_candidate
         {"databaseId": 2, "event": "workflow_dispatch", "displayTitle": f"CI macOS main {HEAD}",
          "headSha": HEAD, "attempt": 2, "status": "completed", "conclusion": "success"},
     ])
+    assert not exact_queue.base_ready(HEAD)
+    evidence[1]["workflow_runs"][0] = evidence[0]["actions/runs/2"]
+    request_intent(store, evidence)
+    _, jobs = retry_rows(evidence)
     assert exact_queue.base_ready(HEAD)
     assert not exact_queue.base_ready("b" * 40)
     jobs[0]["steps"][1]["conclusion"] = "skipped"
     assert not exact_queue.base_ready(HEAD)
+
+def request_intent(store, evidence, *, at=None, authorize=lambda: None, post=lambda _path: True):
+    saved = store.get_receipt(recovery.INTENT, "2")
+    responses, _, _, _, _, lines = evidence
+    log = "\n".join(f"2026-11-25T12:45:00.0000000Z {line}" for line in lines).encode()
+    return recovery.request_once(store, 2, saved["intent_sha256"], api=responses.__getitem__, read_log=lambda _: log,
+                                 now=lambda: at or datetime(2026, 11, 25, 13, tzinfo=UTC), post=post, authorize=authorize)
+
+
+@pytest.mark.parametrize("run, name, witness", [
+    (1, LINUX, TEST_STEP),
+    (1, LINUX_UNIT, TEST_STEP),
+    (2, MACOS_UNIT, TEST_STEP),
+    (1, AGG, GUARD),
+    (1, AGG, DIRECT),
+])
+@pytest.mark.parametrize("defect", ["skip", "missing", "setup-only"])
+def test_preparation_refuses_incomplete_original_workload(evidence, run, name, witness, defect):
+    page = evidence[0][f"actions/runs/{run}/attempts/1/jobs?per_page=100&page=1"]
+    original = next(row for row in page["jobs"] if row["name"] == name)
+    step = next(step for step in original["steps"] if step["name"] == witness)
+    if defect == "skip":
+        step["conclusion"] = "skipped"
+    elif defect == "missing":
+        original["steps"].remove(step)
+    else:
+        original["steps"] = [{"name": "Set up job", "conclusion": "success", "status": "completed"}]
+    with pytest.raises((CandidateError, recovery.candidate_capacity.InvalidCapacity)):
+        prepare(MemoryStore(), evidence)
+
+
+def test_admission_uses_outbound_time_boundary_and_requires_exact_job(evidence):
+    store = MemoryStore()
+    saved = prepare(store, evidence)
+    request_intent(store, evidence, at=datetime(2026, 11, 25, 13, 1, 30, tzinfo=UTC))
+    retry_rows(evidence)
+    assert recovery.inspect_attempt(store, 2, api=evidence[0].__getitem__).attempt_origin == "unproven"
+    with pytest.raises(recovery.candidate_capacity.InvalidCapacity, match="replacement execution predates intent"):
+        recovery.verify_requested_attempt(store, 2, api=evidence[0].__getitem__)
+    assert saved["jobs"] == [20]
+    store.receipts[(recovery.REQUEST, "2")]["job"] = 999
+    with pytest.raises(CandidateError, match="no matching authorized outbound"):
+        recovery.verify_requested_attempt(store, 2, api=evidence[0].__getitem__)
+
+
+def test_refused_operator_authorization_creates_no_request_receipt(evidence):
+    store = MemoryStore()
+    prepare(store, evidence)
+
+    def held():
+        raise CandidateError("operator hold")
+
+    with pytest.raises(CandidateError, match="operator hold"):
+        request_intent(store, evidence, authorize=held, post=lambda _path: pytest.fail("must not post"))
+    assert store.get_receipt(recovery.REQUEST, "2") is None
+    retry_rows(evidence)
+    with pytest.raises(CandidateError, match="no matching authorized outbound"):
+        recovery.verify_requested_attempt(store, 2, api=evidence[0].__getitem__)
