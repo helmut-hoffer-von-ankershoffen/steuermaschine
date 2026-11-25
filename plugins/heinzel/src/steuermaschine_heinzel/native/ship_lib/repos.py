@@ -10,19 +10,15 @@ from typing import Any
 
 from ..queue_lib import hzlib
 
-UNQUEUED = (f"{hzlib.OWNER}/steuermaschine", f"{hzlib.OWNER}/heinzel-management")
-"""The repositories `sm ship` opens PRs in that the merge queue does not know: the public tool and the private management
-repository. Their PRs merge when CI and the Gate review are green (`sm queue auto` squashes them); there is no queue entry."""
-
 
 def shippable() -> list[str]:
     """The repositories `sm ship` takes a worktree of: the queue's and the two without a queue."""
-    return sorted({*(v for v in hzlib.SHORT.values()), *UNQUEUED})
+    return sorted({*(v for v in hzlib.SHORT.values()), *hzlib.UNQUEUED})
 
 
 def queued(repo: str) -> bool:
     """Whether the merge queue knows the repository (it has a PR key); False for the two that merge by `sm queue auto`."""
-    return repo.lower() not in (r.lower() for r in UNQUEUED)
+    return repo.lower() not in (r.lower() for r in hzlib.UNQUEUED)
 
 
 def slug_of(url: str) -> str:

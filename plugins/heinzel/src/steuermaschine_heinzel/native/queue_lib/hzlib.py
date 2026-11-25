@@ -21,6 +21,10 @@ OWNER = "helmut-hoffer-von-ankershoffen"
 CORE = f"{OWNER}/heinzel"
 PLUGINS = f"{OWNER}/heinzel-plugins"
 SHORT = {"": CORE, "core": CORE, "plugins": PLUGINS, "acme": f"{OWNER}/heinzel-acme", "sf": f"{OWNER}/heinzel-sf"}
+UNQUEUED = (f"{OWNER}/steuermaschine", f"{OWNER}/heinzel-management")
+"""The repositories `sm ship` opens PRs in that the merge queue does not know: the public tool and the private management
+repository. Their PRs merge when CI and the Gate review are green (`sm queue auto` squashes them); there is no queue entry."""
+
 RUN_URL = re.compile(r"/runs/(\d+)")
 
 
