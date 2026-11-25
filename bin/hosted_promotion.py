@@ -25,6 +25,14 @@ PLUGIN = "plugins/heinzel/src/steuermaschine_heinzel/"
 TRUSTED = (".github/workflows/ci.yml", "Makefile", "pyproject.toml", "uv.lock", "docs/debt.json")
 MAX_ARCHIVE = 10 * 1024 * 1024
 MAX_XML = 50 * 1024 * 1024
+CHECK_STEPS = (
+    "Public history guard (every pushed or proposed commit descends from the public root)",
+    "Private-term deny-list (tree and commit messages)",
+    "Conventional Commits (the commits this push or PR adds)",
+    "Run make install", "Run make check", "Run make audit", "Coverage summary",
+    "Run actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
+)
+SUMMARY_STEP = "Require integration and test results"
 
 
 class Refused(ValueError):
@@ -81,6 +89,44 @@ def good_job(job: dict, required_steps: tuple[str, ...]) -> None:
         found = [step for step in steps if isinstance(step, dict) and step.get("name") == name]
         require(len(found) == 1 and found[0].get("status") == "completed" and found[0].get("conclusion") == "success",
                 f"required step missing or unsuccessful: {name}")
+
+
+def verify_jobs(jobs: list, run_id: int, sha: str, branch: str) -> None:
+    """Require the complete legacy or split CI layout for this exact push."""
+    by_name = {}
+    for job in jobs:
+        require(isinstance(job, dict) and isinstance(job.get("name"), str) and job["name"] not in by_name,
+                "malformed or duplicate hosted job")
+        by_name[job["name"]] = job
+
+    required = {"check": CHECK_STEPS, "Test (ubuntu-24.04, Python 3.15)": ("Tests",)}
+    if branch == "main":
+        required["Test (macos-latest, Python 3.15)"] = ("Tests",)
+        required["badge"] = ("Write badges/coverage.svg",)
+    legacy = set(required)
+    split = legacy | {"Integration checks"}
+    names = set(by_name)
+    # The badge is a main-only job. Older non-main push evidence can include
+    # the skipped badge row, which never contributes a successful gate.
+    if branch != "main":
+        names.discard("badge")
+    require(names in (legacy, split), "hosted jobs do not match a complete CI layout")
+    if names == split:
+        required["check"] = (SUMMARY_STEP,)
+        required["Integration checks"] = CHECK_STEPS
+    for name, steps in required.items():
+        job = by_name[name]
+        require(type(job.get("run_id")) is int and job["run_id"] == run_id
+                and type(job.get("run_attempt")) is int and job["run_attempt"] == 1
+                and job.get("head_sha") == sha, "job identity differs")
+        good_job(job, steps)
+    if names == split:
+        allowed = {"Set up job", SUMMARY_STEP, "Complete job"}
+        require(all(isinstance(step, dict) and step.get("name") in allowed for step in by_name["check"]["steps"]),
+                "hosted summary job contains unexpected steps")
+    integration = by_name["Integration checks" if names == split else "check"]
+    require(not any(isinstance(step, dict) and step.get("name") == SUMMARY_STEP for step in integration["steps"]),
+            "hosted integration job contains a summary step")
 
 
 def coverage(xml: bytes, expected_files: set[str], baseline: dict) -> dict[str, float]:
@@ -153,23 +199,7 @@ def verify(repo: str, run_id: int, sha: str, installed: Path) -> dict:
             and (run.get("repository") or {}).get("id") == repository["id"]
             and (run.get("head_repository") or {}).get("id") == repository["id"], "hosted run identity or result differs")
     jobs = inventory(api(f"repos/{repo}/actions/runs/{run_id}/attempts/1/jobs?per_page=100"), "jobs")
-    required_jobs = [("check", ("Public history guard (every pushed or proposed commit descends from the public root)",
-                                  "Private-term deny-list (tree and commit messages)",
-                                  "Conventional Commits (the commits this push or PR adds)", "Run make install",
-                                  "Run make check", "Run make audit", "Coverage summary",
-                                  "Run actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9")),
-                        ("Test (ubuntu-24.04, Python 3.15)", ("Tests",))]
-    if branch == "main":
-        required_jobs.append(("Test (macos-latest, Python 3.15)", ("Tests",)))
-    for name, steps in required_jobs:
-        found = [job for job in jobs if isinstance(job, dict) and job.get("name") == name]
-        require(len(found) == 1, f"required job missing or duplicated: {name}")
-        require(found[0].get("run_id") == run_id and found[0].get("run_attempt") == 1
-                and found[0].get("head_sha") == sha, "job identity differs")
-        good_job(found[0], steps)
-    allowed_jobs = {name for name, _ in required_jobs} | {"badge"}
-    require(all(isinstance(job, dict) and job.get("name") in allowed_jobs for job in jobs),
-            "unexpected hosted jobs")
+    verify_jobs(jobs, run_id, sha, branch)
     artifacts = inventory(api(f"repos/{repo}/actions/runs/{run_id}/artifacts?per_page=100"), "artifacts")
     matches = [item for item in artifacts if isinstance(item, dict) and item.get("name") == "coverage"]
     require(len(matches) == 1, "coverage artifact missing or duplicated")
