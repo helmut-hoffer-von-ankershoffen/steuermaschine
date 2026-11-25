@@ -40,9 +40,13 @@ def test_release_pr_prepares_locally_then_uses_scoped_normal_push(tool, monkeypa
             return SimpleNamespace(returncode=0, stdout="v0.9.17\n", stderr="")
         if "push" in command:
             pushed = True
-        return SimpleNamespace(returncode=0, stdout="https://github.com/example/heinzel/pull/700\n", stderr="")
+        return SimpleNamespace(returncode=0, stdout=f"https://github.com/{release.CORE}/pull/700\n", stderr="")
 
     monkeypatch.setattr(release.subprocess, "run", run)
+    monkeypatch.setattr(release.hzlib, "ghj", lambda *_, **__: {
+        "number": 700, "state": "OPEN", "title": "chore(release): v0.9.17", "baseRefName": "main", "headRefOid": checked,
+        "headRefName": "release/v0.9.17", "isCrossRepository": False, "autoMergeRequest": None, "body": "Notes",
+    })
     monkeypatch.setattr(release, "verify_release_pr_scope", lambda *_: checked)
     from steuermaschine.testing import fake_providers
     from steuermaschine_heinzel.native.release_lib import exact_queue
@@ -50,8 +54,11 @@ def test_release_pr_prepares_locally_then_uses_scoped_normal_push(tool, monkeypa
     monkeypatch.setenv("STEUERMASCHINE_AGENT", "builder")
     store = fake_providers().store
     monkeypatch.setattr(exact_queue, "store", lambda: store)
+    release.remember(version="0.9.17", merge_route="reviewed-release-queue", freeze_token="c" * 32)
     release.open_release_pr("v0.9.17", "patch", "Preserve update hashes")
     assert store.get_receipt(exact_queue.SOURCE_KIND, checked) == {"head": checked, "version": "0.9.17", "author": "builder"}
+    assert release.state()["release_pr_opened"]["pr"] == 700
+    assert release.state()["release_pr_opened"]["head"] == checked
 
     work = str(tmp_path / "release-work")
     gate = release.edge.gate()

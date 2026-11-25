@@ -127,12 +127,12 @@ def test_queue_waits_and_verdict():
     assert waits[0] == "item 2: waiting 10 min: why" and "reason not recorded" in waits[1]
     assert waits[2].startswith("item 4: ready and unmerged for 60 min") and len(waits) == 3
     q = {"items": [{"key": "9", "status": "queued"}]}
-    assert probes.queue_verdict({"items": []}, False, []) == "nothing queued"
-    assert "freeze holds" in probes.queue_verdict(q, True, [])
-    assert "lifted" in probes.queue_verdict(q | {"blocked": "merge freeze is on"}, False, [])
-    assert probes.queue_verdict(q | {"blocked": "ci red"}, False, []) == "last tick: ci red"
-    assert "but 2: waiting" in probes.queue_verdict(q, False, ["item 2: waiting"])
-    assert "next tick should merge" in probes.queue_verdict(q, False, [])
+    assert probes.queue_verdict({"items": []}, "open", []) == "nothing queued"
+    assert probes.queue_verdict(q, "incident", []) == probes.FREEZE_STATUS["incident"]
+    assert "lifted" in probes.queue_verdict(q | {"blocked": "merge freeze is on"}, "open", [])
+    assert probes.queue_verdict(q | {"blocked": "ci red"}, "open", []) == "last tick: ci red"
+    assert "but 2: waiting" in probes.queue_verdict(q, "open", ["item 2: waiting"])
+    assert "next tick should merge" in probes.queue_verdict(q, "open", [])
 
 
 def test_main_runs(tmp_path):

@@ -56,7 +56,12 @@ def test_owned_reviewed_release_freeze_only_arms_exact_candidate(rt, gh, monkeyp
     queue_one(rt, key="plugins #803", pr="803", repo=PLUGINS)
     gh.on("pr list", []).on("pr merge", "").on("pr view 802", PR).on("pr view 803", PR)
     gh.on(f"repos/{CORE}/git/matching-refs/tags/v0.9.55", [])
-    monkeypatch.setattr(exact_queue, "reviewed_freeze_active", lambda: True)
+    hold_dir = exact_queue.hzlib.release_holds()
+    hold_dir.mkdir()
+    (hold_dir / candidate.token).write_text(candidate.version)
+    exact_queue.hzlib.statedir.path("release.json").write_text(json.dumps({
+        "version": candidate.version, "freeze_token": candidate.token, "merge_route": exact_queue.MODE,
+    }))
     monkeypatch.setattr(exact_queue, "queue_candidate", lambda item: candidate if item["key"] == "801" else None)
     verified = []
     monkeypatch.setattr(exact_queue, "verify_open", verified.append)

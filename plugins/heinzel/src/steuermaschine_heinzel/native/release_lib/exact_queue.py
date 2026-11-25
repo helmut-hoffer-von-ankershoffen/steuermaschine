@@ -109,9 +109,9 @@ def require_hold(candidate: Candidate) -> None:
     events = data.get("hold_events", [])
     if (data.get("version"), data.get("freeze_token"), data.get("merge_route")) != (candidate.version, candidate.token, MODE):
         raise ExactReleaseError("the candidate does not own this Core release")
-    if (data.get("finished") or not isinstance(events, list) or
+    if (data.get("finished") or data.get("drop") is not None or data.get("drop_attempt") is not None or not isinstance(events, list) or
             (events and (not isinstance(events[-1], dict) or events[-1].get("action") in {"pause", "pause-request"}))):
-        raise ExactReleaseError("the Core release is paused or finished")
+        raise ExactReleaseError("the Core release is paused, dropping, or finished")
     root = hzlib.release_holds()
     try:
         hold = root / candidate.token
@@ -122,8 +122,13 @@ def require_hold(candidate: Candidate) -> None:
         raise ExactReleaseError("cannot verify the ownership of the release freeze") from error
 
 
-def read_candidate(version: str) -> Candidate | None:
-    raw = store().get_receipt(KIND, version)
+def read_candidate(version: str, token: str) -> Candidate | None:
+    """Read one hold's candidate, including old receipts keyed by version alone."""
+    if not TOKEN.fullmatch(token):
+        raise ExactReleaseError("invalid reviewed release hold token")
+    records = store()
+    scoped = records.get_receipt(KIND, f"{version}.{token}")
+    raw = scoped if scoped is not None else records.get_receipt(KIND, version)
     if raw is None:
         return None
     try:
@@ -132,6 +137,10 @@ def read_candidate(version: str) -> Candidate | None:
         raise ExactReleaseError("malformed exact release candidate receipt") from error
     if candidate.version != version:
         raise ExactReleaseError("release candidate receipt belongs to a different version")
+    if candidate.token != token:
+        if scoped is not None:
+            raise ExactReleaseError("candidate receipt belongs to a different hold")
+        return None
     return candidate
 
 
@@ -215,7 +224,7 @@ def verify_open(candidate: Candidate, evidence: dict | None = None) -> None:
 def prepare(version: str, token: str, pr: int) -> Candidate:
     records = store()
     with records.lock(f"{KIND}.{version}"):
-        if previous := read_candidate(version):
+        if previous := read_candidate(version, token):
             if (previous.token, previous.pr) != (token, pr):
                 raise ExactReleaseError("the preserved review belongs to another release hold or PR")
             verify_open(previous)
@@ -224,17 +233,8 @@ def prepare(version: str, token: str, pr: int) -> Candidate:
         candidate = Candidate(version, token, pr, data["head"], data["base"], data["tree"], data["run_id"])
         verify_open(candidate, data)
         verdicts.register(records, candidate.digest, KIND)
-        records.put_receipt(KIND, version, asdict(candidate))
+        records.put_receipt(KIND, f"{version}.{token}", asdict(candidate))
         return candidate
-
-
-def reviewed_freeze_active() -> bool:
-    if not hzlib.release_holds_present():
-        return False
-    try:
-        return active_receipt().get("merge_route") == MODE
-    except ExactReleaseError:
-        return True
 
 
 def queue_candidate(item: dict) -> Candidate | None:
@@ -249,7 +249,10 @@ def queue_candidate(item: dict) -> Candidate | None:
     version = data.get("version")
     if data.get("merge_route") != MODE or not isinstance(version, str) or not VERSION.fullmatch(version):
         return None
-    candidate = read_candidate(version)
+    token = data.get("freeze_token")
+    if not isinstance(token, str) or not TOKEN.fullmatch(token):
+        return None
+    candidate = read_candidate(version, token)
     if not candidate or (item.get("pr"), item.get("reviewed_head")) != (str(candidate.pr), candidate.head):
         return None
     require_hold(candidate)

@@ -18,8 +18,9 @@ from steuermaschine.plugins import stack_of
 from steuermaschine.protocols import Result
 from steuermaschine.testing import FakeCommands, fake_providers, invoke
 from steuermaschine_heinzel.native import go as go_mod
-from steuermaschine_heinzel.native.go_lib import legacy, views
+from steuermaschine_heinzel.native.go_lib import legacy, probes, views
 from steuermaschine_heinzel.native.go_lib import views_moved as moved
+from steuermaschine_heinzel.native.queue_lib import auto_arm, hzlib
 from steuermaschine_heinzel.plugin import plugin
 
 EMPTY_PRS = {"data": {"repository": {"pullRequests": {"nodes": []}}}}
@@ -222,8 +223,24 @@ def test_wait_sees_holds_and_queue_waits(tmp_path):
     (state / "release-holds" / "v0.9.40").write_text("")
     (state / "queue.json").write_text(json.dumps({"items": [{"key": "790", "status": "queued", "waiting_since": NOW - 600, "wait_reason": "BEHIND"}]}))
     out = view(tmp_path, scripted(), "wait")
-    assert out.stdout.splitlines()[0] == "BIGGEST WAIT  Merges blocked: release hold v0.9.40"
+    assert out.stdout.splitlines()[0] == "BIGGEST WAIT  Merges blocked: unverified release hold state blocks every repository, release hold v0.9.40"
     assert "queue         item 790: waiting 10 min: BEHIND" in out.stdout
+
+
+@pytest.mark.parametrize("scope", ["release", "uncertain", "incident"])
+def test_wait_reports_the_same_hold_scope_as_the_merge_gate(tmp_path, monkeypatch, scope):
+    state = tmp_path / "state"
+    holds = state / "release-holds"
+    holds.mkdir(parents=True)
+    token, version = "a" * 32, "0.9.55"
+    (state / "release.json").write_text(json.dumps({"version": version, "freeze_token": token}))
+    if scope != "uncertain":
+        (holds / token).write_text(version)
+    if scope == "incident":
+        (state / "merge-freeze").touch()
+    monkeypatch.setattr(hzlib.statedir, "path", lambda name: state / name)
+    assert auto_arm.freeze_without_candidate(f"{hzlib.OWNER}/steuermaschine")
+    assert probes.FREEZE_STATUS[scope] in view(tmp_path, scripted(), "wait").stdout.splitlines()[0]
 
 
 # ------------------------------------------------------------------ tick

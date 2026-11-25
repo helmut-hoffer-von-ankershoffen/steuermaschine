@@ -57,12 +57,12 @@ def test_release_review_survives_restart_but_belongs_to_one_candidate_and_hold(e
         exact.queue_candidate(item)
     approve(records)
     assert exact.prepare(CANDIDATE.version, CANDIDATE.token, CANDIDATE.pr) == CANDIDATE
-    assert records.get_receipt(exact.KIND, CANDIDATE.version) == asdict(CANDIDATE)
+    assert records.get_receipt(exact.KIND, f"{CANDIDATE.version}.{CANDIDATE.token}") == asdict(CANDIDATE)
     assert exact.queue_candidate(item) == CANDIDATE
     assert exact.queue_candidate({**item, "pr": "802"}) is None
     assert exact.queue_candidate({**item, "reviewed_head": "e" * 40}) is None
     with pytest.raises(exact.ExactReleaseError, match="preserved review"):
-        exact.prepare(CANDIDATE.version, "2" * 32, CANDIDATE.pr)
+        exact.prepare(CANDIDATE.version, CANDIDATE.token, CANDIDATE.pr + 1)
     (tmp_path / ("3" * 32)).write_text("unrelated release")
     with pytest.raises(exact.ExactReleaseError, match="sole release hold"):
         exact.queue_candidate(item)
@@ -134,7 +134,7 @@ def test_runner_waits_for_the_hosted_tag_and_rejects_a_different_commit(monkeypa
     from steuermaschine_heinzel.native.release_lib import runner
 
     monkeypatch.setattr(runner, "release_pr", lambda tag: {"state": "MERGED", "number": CANDIDATE.pr})
-    monkeypatch.setattr(exact, "read_candidate", lambda _: CANDIDATE)
+    monkeypatch.setattr(exact, "read_candidate", lambda *_: CANDIDATE)
     monkeypatch.setattr(exact, "approve_required", lambda _: None)
     monkeypatch.setattr(exact, "merged_commit", lambda _: MERGE)
     hosted_tag = []
@@ -197,9 +197,7 @@ def test_bad_or_unrelated_release_state_never_opens_the_freeze(monkeypatch, tmp_
     monkeypatch.setattr(exact.hzlib, "release_holds_present", lambda: True)
     item = {"repo": exact.hzlib.CORE, "pr": str(CANDIDATE.pr), "reviewed_head": CANDIDATE.head}
     assert exact.queue_candidate(item) is None
-    assert exact.reviewed_freeze_active() == (contents != '{"merge_route":"another-route"}')
     monkeypatch.setattr(exact.hzlib, "release_holds_present", lambda: False)
-    assert not exact.reviewed_freeze_active()
     assert exact.queue_candidate(item) is None
 
 
@@ -264,7 +262,7 @@ def test_resume_adopts_only_the_current_open_release_without_legacy_merge(monkey
     sequence = []
     monkeypatch.setattr(runner, "acquire_snapshot_freeze", lambda version: sequence.append(("freeze", version)))
     monkeypatch.setattr(runner, "disarm_core_auto_merge", lambda: sequence.append("disarm"))
-    def read_candidate(_):
+    def read_candidate(*_):
         if error == "candidate receipt unavailable":
             raise exact.ExactReleaseError(error)
         return None
@@ -306,7 +304,7 @@ def test_persisted_candidate_receipt_cannot_be_rebound(evidence, data, reason):
     records, _, _ = evidence
     records.put_receipt(exact.KIND, CANDIDATE.version, data)
     with pytest.raises(exact.ExactReleaseError, match=reason):
-        exact.read_candidate(CANDIDATE.version)
+        exact.read_candidate(CANDIDATE.version, CANDIDATE.token)
 
 
 def test_freeze_token_must_still_belong_to_candidate(evidence, monkeypatch, tmp_path):
@@ -318,6 +316,34 @@ def test_freeze_token_must_still_belong_to_candidate(evidence, monkeypatch, tmp_
     monkeypatch.setattr(exact.hzlib, "release_holds", lambda: tmp_path / "missing")
     with pytest.raises(exact.ExactReleaseError, match="cannot verify the ownership"):
         exact.require_hold(CANDIDATE)
+
+
+@pytest.mark.parametrize("legacy", [True, False])
+def test_replacement_release_uses_its_own_candidate_receipt(evidence, monkeypatch, tmp_path, legacy):
+    records, remote, receipt = evidence
+    old_key = CANDIDATE.version if legacy else f"{CANDIDATE.version}.{CANDIDATE.token}"
+    records.put_receipt(exact.KIND, old_key, asdict(CANDIDATE))
+    verdicts.register(records, CANDIDATE.digest, exact.KIND)
+    approve(records)
+    exact.approve_required(CANDIDATE)
+    assert exact.read_candidate(CANDIDATE.version, CANDIDATE.token) == CANDIDATE
+
+    replacement = exact.Candidate(**(asdict(CANDIDATE) | {"token": "2" * 32, "pr": 802, "head": "e" * 40, "run": 1235}))
+    (tmp_path / CANDIDATE.token).unlink()
+    (tmp_path / replacement.token).write_text(replacement.version)
+    receipt["freeze_token"] = replacement.token
+    assert exact.read_candidate(replacement.version, replacement.token) is None
+    remote[f"pulls/{replacement.pr}"] = pr(number=replacement.pr, head=pr()["head"] | {"sha": replacement.head})
+    remote[f"commits/{replacement.head}"] = commit(replacement.head)
+    proof = APPROVED | {"head": replacement.head, "run_id": replacement.run}
+    monkeypatch.setattr(exact.candidate_policy, "verify_pr", lambda number: proof if number == replacement.pr else {})
+
+    assert exact.prepare(replacement.version, replacement.token, replacement.pr) == replacement
+    assert records.get_receipt(exact.KIND, old_key) == asdict(CANDIDATE)
+    assert exact.read_candidate(replacement.version, replacement.token) == replacement
+    assert replacement.digest != CANDIDATE.digest
+    with pytest.raises(Refuse, match="no verdict"):
+        exact.approve_required(replacement)
 
 
 def test_candidate_proof_rejects_unavailable_main_ci(evidence, monkeypatch):
@@ -349,7 +375,7 @@ def test_unreadable_merged_source_stops_before_matching_a_tag(monkeypatch):
         raise exact.ExactReleaseError("cannot prove the resulting tree")
 
     monkeypatch.setattr(runner, "release_pr", lambda _: {"state": "MERGED", "number": CANDIDATE.pr})
-    monkeypatch.setattr(exact, "read_candidate", lambda _: CANDIDATE)
+    monkeypatch.setattr(exact, "read_candidate", lambda *_: CANDIDATE)
     monkeypatch.setattr(exact, "approve_required", lambda _: None)
     monkeypatch.setattr(exact, "merged_commit", fail)
     monkeypatch.setattr(runner, "has_tag", lambda *_: pytest.fail("the tree must be proven before reading the tag"))

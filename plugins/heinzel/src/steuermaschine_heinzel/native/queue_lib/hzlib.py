@@ -3,6 +3,7 @@
 import importlib.machinery
 import importlib.util
 import json
+import os
 import re
 import stat
 import subprocess
@@ -11,6 +12,7 @@ import time
 import tomllib
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Literal
 from . import edge  # moved: records, processes and what used to be separate scripts
 from . import ruleset
 from ... import state as statedir  # the plugin's state paths
@@ -89,9 +91,122 @@ def incident_frozen(legacy: Path | None = None) -> bool:
     return True
 
 
+FreezeScope = Literal["open", "incident", "uncertain", "release"]
+OPEN_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+
+
+def intentional_hold_absence(data: dict, token: str, version: str) -> bool:
+    """A durable tag handoff or completed pause authorizes an absent owned hold."""
+    stamp = r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z"
+    lifted = data.get("freeze_lifted_at")
+    if isinstance(lifted, str) and re.fullmatch(stamp, lifted):
+        return True
+    events = data.get("hold_events", [])
+    if not isinstance(events, list) or len(events) < 2:
+        return False
+    request, pause = events[-2:]
+    if not all(
+        isinstance(event, dict) and event.get("token") == token and event.get("version") == version
+        and isinstance(event.get("at"), str) and re.fullmatch(stamp, event["at"])
+        for event in (request, pause)
+    ):
+        return False
+    if (request.get("action") != "pause-request" or pause.get("action") != "pause"
+            or pause.get("draft") is not True or type(request.get("was_ready")) is not bool
+            or not all({"pr", "head"} <= event.keys() for event in (request, pause))):
+        return False
+    pr, head = request["pr"], request["head"]
+    if (pr, head) != (pause["pr"], pause["head"]):
+        return False
+    if pr is None:
+        return head is None and request["was_ready"] is False
+    return (type(pr) is int and pr > 0 and type(pause["pr"]) is int
+            and isinstance(head, str) and re.fullmatch(r"[0-9a-f]{40}", head) is not None)
+
+
+def freeze_scope(state_dir: Path | None = None, legacy: Path | None = None) -> FreezeScope:
+    """Classify the incident sentinel and the receipt/hold pair together."""
+    incident = legacy or (state_dir / "merge-freeze" if state_dir is not None else None)
+    try:
+        if incident_frozen(incident):
+            return "incident"
+        root = state_dir / "release-holds" if state_dir is not None else release_holds()
+        receipt = state_dir / "release.json" if state_dir is not None else statedir.path("release.json")
+        scope = release_freeze_scope(root, receipt)
+        return "incident" if incident_frozen(incident) else scope
+    except OSError:
+        return "uncertain"
+
+
+def release_freeze_scope(root: Path, receipt: Path) -> FreezeScope:
+    from .release_candidate import unique_object
+
+    try:
+        try:
+            with os.fdopen(os.open(receipt, OPEN_FLAGS), "rb") as stream:
+                recorded = os.fstat(stream.fileno())
+                if not stat.S_ISREG(recorded.st_mode) or recorded.st_size > 64 * 1024:
+                    return "uncertain"
+                data = json.loads(stream.read(64 * 1024 + 1), object_pairs_hook=unique_object)
+            if not isinstance(data, dict):
+                return "uncertain"
+        except FileNotFoundError:
+            recorded, data = None, {}
+
+        token, version = data.get("freeze_token"), data.get("version")
+        owns = "freeze_token" in data
+        if owns and (not isinstance(token, str) or not re.fullmatch(r"[0-9a-f]{32}", token)
+                     or not isinstance(version, str) or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version)):
+            return "uncertain"
+        needs_hold = owns or data.get("merge_route") == "reviewed-release-queue"
+        allowed_absence = not needs_hold or (owns and intentional_hold_absence(data, token, version))
+        active_token = token if owns and data.get("finished", False) is False else None
+        scope = inspect_release_holds(root, active_token, version, allowed_absence)
+        try:
+            current = receipt.lstat()
+        except FileNotFoundError:
+            return scope if recorded is None else "uncertain"
+        if recorded is None or not same_file_snapshot(recorded, current):
+            return "uncertain"
+        return scope
+    except (OSError, ValueError):
+        return "uncertain"
+
+
+def same_file_snapshot(before: os.stat_result, after: os.stat_result) -> bool:
+    return os.path.samestat(before, after) and (before.st_size, before.st_ctime_ns) == (after.st_size, after.st_ctime_ns)
+
+
+def inspect_release_holds(root: Path, token: str | None, version: str, allowed_absence: bool) -> FreezeScope:
+    try:
+        directory = os.open(root, os.O_RDONLY | os.O_NOFOLLOW | os.O_DIRECTORY)
+    except FileNotFoundError:
+        return "open" if allowed_absence else "uncertain"
+    try:
+        started = os.fstat(directory)
+        entries = os.listdir(directory)
+        if not entries:
+            if allowed_absence and not os.listdir(directory) and same_file_snapshot(started, root.lstat()):
+                return "open"
+            return "uncertain"
+        if token is None or entries != [token]:
+            return "uncertain"
+        with os.fdopen(os.open(token, OPEN_FLAGS, dir_fd=directory), "rb") as stream:
+            hold = os.fstat(stream.fileno())
+            if not stat.S_ISREG(hold.st_mode) or stream.read(len(version) + 1) != version.encode("ascii"):
+                return "uncertain"
+        if (os.listdir(directory) == [token]
+                and same_file_snapshot(hold, os.stat(token, dir_fd=directory, follow_symlinks=False))
+                and same_file_snapshot(started, root.lstat())):
+            return "release"
+        return "uncertain"
+    finally:
+        os.close(directory)
+
+
 def merge_frozen(legacy: Path | None = None) -> bool:
-    """Honor the shared incident hold and every release-owned hold."""
-    return incident_frozen(legacy) or release_holds_present()
+    """Check whether incident or release state blocks ordinary merges."""
+    return freeze_scope(legacy=legacy) != "open"
 
 
 RULES_TTL = 120.0  # seconds: one queue tick reads each repository's rules once
