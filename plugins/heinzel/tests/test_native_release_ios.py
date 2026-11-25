@@ -155,6 +155,108 @@ def test_assigns_a_valid_build_outside_the_group(tmp_path):
     m.auto_group = False
     out = m.run()
     assert out.exit_code == 0 and "ios: assigned build 32 to the internal group" in out.stdout
+    assert m.rt.providers.clock.slept == [30] * 4
+
+
+def test_automatic_group_membership_catches_up_after_valid(tmp_path):
+    m = Mini(tmp_path)
+    m.auto_group = False
+    m.beta = ["READY_FOR_BETA_SUBMISSION", "IN_BETA_TESTING"]
+    verbs = []
+    stale_reads = 0
+
+    def propagate(argv):
+        nonlocal stale_reads
+        verb = argv[5]
+        verbs.append(verb)
+        result = m.testflight(argv)
+        if verb == "status" and f"{m.version} (32) VALID expired=False NOT-in-group" in result.out:
+            stale_reads += 1
+            m.auto_group = stale_reads == 4
+        return result
+
+    m.commands.on(["uv", "run", "--quiet", "--script"], propagate)
+    out = m.run()
+    assert out.exit_code == 0
+    assert "assign" not in verbs
+    assert verbs.count("upload") == 1 and verbs.count("beta") == 2
+    assert m.rt.providers.clock.slept == [30] * 5
+    receipt = m.receipt()
+    assert receipt["clean"] and receipt["in_group"] and receipt["beta"] == "IN_BETA_TESTING" and receipt["notes"]
+    assert m.notes == ["Heinzel 0.9.53\n\n- Faster chats\n"]
+
+
+def test_the_assignment_grace_does_not_extend_the_confirmation_deadline(tmp_path):
+    m = Mini(tmp_path, ios_wait_minutes=1)
+    m.auto_group = False
+    clock = m.rt.providers.clock
+
+    def late_status(argv):
+        result = m.testflight(argv)
+        if argv[5] == "status" and not m.rt.providers.clock.slept and "(32) VALID" in result.out:
+            clock.sleep(55)  # first VALID row arrives five seconds before confirmation ends
+        return result
+
+    m.commands.on(["uv", "run", "--quiet", "--script"], late_status)
+    out = m.run()
+    assert out.exit_code == 1 and "not in the internal group" in out.stdout
+    assert "assigned build" not in out.stdout
+    assert not m.notes and clock.slept == [55, 5]
+
+
+def test_unrelated_assignment_errors_still_fail_after_the_grace(tmp_path):
+    m = Mini(tmp_path)
+    m.auto_group = False
+    m.fail["assign"] = Result(1, "", "GET /v1/apps/demo/betaGroups: HTTP 403 forbidden")
+    out = m.run()
+    assert out.exit_code == 1 and "HTTP 403 forbidden" in out.stdout
+    assert not m.notes and not m.receipt()["clean"]
+    assert m.rt.providers.clock.slept == [30] * 4
+
+
+GROUP_POST = "POST /v1/betaGroups/example/relationships/builds: HTTP 422 "
+GROUP_REFUSAL = {
+    "code": "ENTITY_UNPROCESSABLE",
+    "title": "Builds cannot be assigned to this internal group.",
+    "detail": "Cannot add internal group to a build.",
+}
+
+
+@pytest.mark.parametrize("membership_appears", [True, False])
+def test_known_assignment_refusal_requires_positive_membership_before_success(tmp_path, membership_appears):
+    m = Mini(tmp_path, ios_wait_minutes=3)
+    m.auto_group = False
+    verbs = []
+
+    def assign_race(argv):
+        verb = argv[5]
+        verbs.append(verb)
+        if verb == "assign":
+            m.auto_group = membership_appears
+            return Result(1, "", GROUP_POST + json.dumps({"errors": [GROUP_REFUSAL]}, indent=2))
+        return m.testflight(argv)
+
+    m.commands.on(["uv", "run", "--quiet", "--script"], assign_race)
+    out = m.run()
+    assert verbs.count("assign") == verbs.count("upload") == 1
+    assert m.receipt()["clean"] is membership_appears
+    assert bool(m.notes) is membership_appears
+    if membership_appears:
+        assert out.exit_code == 0 and m.receipt()["in_group"] and m.receipt()["beta"] == "IN_BETA_TESTING"
+        assert "assigned build" not in out.stdout
+    else:
+        assert out.exit_code == 1 and "did not appear in the group before the deadline" in out.stdout
+        assert "beta" not in verbs
+
+
+@pytest.mark.parametrize("other", [
+    GROUP_POST + json.dumps({"errors": [{**GROUP_REFUSAL, "detail": "different rejection"}]}),
+    GROUP_POST + json.dumps({"errors": [GROUP_REFUSAL, {"code": "FORBIDDEN"}]}),
+    "GET /v1/betaGroups/example/relationships/builds: HTTP 422 " + json.dumps({"errors": [GROUP_REFUSAL]}),
+    GROUP_POST + '{"errors":',
+])
+def test_other_assignment_errors_are_never_treated_as_propagation(other):
+    assert not ios.internal_group_refusal(other)
 
 
 @pytest.mark.parametrize(("change", "reason"), [
