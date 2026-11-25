@@ -311,3 +311,22 @@ def test_native_dispatch_uses_versioned_gh_arguments_and_binds_only_a_real_reply
         f"repos/{hzlib.CORE}/actions/workflows/ci.yml/dispatches", "-f", "ref=main",
         "-f", "inputs[lane]=macos",
     )]
+
+
+@pytest.mark.parametrize("changes", [
+    {}, {"event": "workflow_dispatch"}, {"event": "push"}, {"conclusion": "failure"}, {"run_attempt": 2},
+    {"status": "in_progress", "conclusion": None}, {"workflow_id": 99}, {"created_at": "2026-11-25T12:00:00Z"},
+])
+def test_only_subsequent_successful_first_attempt_schedule_is_noncompeting(evidence, changes):
+    _, listing, *_ = evidence
+    original = assess(evidence)
+    scheduled = listing["workflow_runs"][0] | {
+        "id": 3, "event": "schedule", "conclusion": "success", "created_at": "2026-11-26T01:00:00Z",
+    }
+    listing["workflow_runs"].append(scheduled | changes)
+    listing["total_count"] += 1
+    if changes:
+        with pytest.raises(CandidateError, match="competing"):
+            assess(evidence)
+    else:
+        assert assess(evidence) == original

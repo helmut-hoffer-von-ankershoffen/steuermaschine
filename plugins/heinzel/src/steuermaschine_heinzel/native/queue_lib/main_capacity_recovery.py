@@ -62,10 +62,16 @@ def assess(head: str, push_run: int, macos_run: int, *, api: Callable[[str], Any
             "invalid original pair IDs")
     policy = core_policy.at_commit_api(api, head)
     runs = main_checkpoint.main_ci_inventory(api, head)
-    require(set(runs) == {push_run, macos_run}, "missing or competing exact-main runs")
+    require({push_run, macos_run} <= runs.keys(), "missing or competing exact-main runs")
     push, macos = runs[push_run], runs[macos_run]
     require(push[1:5] == ("push", *READY) and macos[1:5] == ("workflow_dispatch", 1, "completed", "failure")
             and push[0] == macos[0] and push[-1] <= macos[-1], "not the original split main pair")
+    # The inventory reader already binds every row to the canonical repo, workflow path, branch and SHA.
+    # A subsequent successful nightly is independent of the push and its macOS dispatch.
+    for rid, row in runs.items():
+        if rid not in (push_run, macos_run):
+            require(row[:5] == (push[0], "schedule", *READY) and row[-1] > macos[-1],
+                    "missing or competing exact-main runs")
     lane = api(f"actions/runs/{macos_run}")
     require(isinstance(lane, dict) and lane.get("id") == macos_run
             and lane.get("head_sha") == head and lane.get("head_branch") == "main"
