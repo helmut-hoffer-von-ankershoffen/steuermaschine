@@ -48,8 +48,15 @@ def test_release_pr_prepares_locally_then_uses_scoped_normal_push(tool, monkeypa
         "headRefName": "release/v0.9.17", "isCrossRepository": False, "autoMergeRequest": None, "body": "Notes",
     })
     monkeypatch.setattr(release, "verify_release_pr_scope", lambda *_: checked)
+    from steuermaschine.testing import fake_providers
+    from steuermaschine_heinzel.native.release_lib import exact_queue
+
+    monkeypatch.setenv("STEUERMASCHINE_AGENT", "builder")
+    store = fake_providers().store
+    monkeypatch.setattr(exact_queue, "store", lambda: store)
     release.remember(version="0.9.17", merge_route="reviewed-release-queue", freeze_token="c" * 32)
     release.open_release_pr("v0.9.17", "patch", "Preserve update hashes")
+    assert store.get_receipt(exact_queue.SOURCE_KIND, checked) == {"head": checked, "version": "0.9.17", "author": "builder"}
     assert release.state()["release_pr_opened"]["pr"] == 700
     assert release.state()["release_pr_opened"]["head"] == checked
 

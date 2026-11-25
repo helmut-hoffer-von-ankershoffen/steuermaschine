@@ -16,6 +16,7 @@ refusal that names it.
 from __future__ import annotations
 
 import importlib
+import re
 from pathlib import Path
 
 from . import hzlib
@@ -44,19 +45,39 @@ def _raw(path: str, ref: str) -> tuple[str | None, bool]:
     return None, '"status":"404"' in out.replace(" ", "") or "Not Found" in out
 
 
-def _changed(pr: str) -> dict[str, str] | None:
-    """The files the PR changes, each with the id of its content at the head (`removed` when deleted): GitHub's own list, every
-    page. None when it cannot be read."""
-    code, out = hzlib.gh("api", "--paginate", f"repos/{hzlib.CORE}/pulls/{pr}/files?per_page=100", "--jq",
-                         '.[] | [.filename, .sha, .status] | @tsv')
-    if code != 0:
-        return None
-    found = {}
-    for line in out.splitlines():
-        name, _, rest = line.partition("\t")
-        blob, _, status = rest.partition("\t")
-        if name:
-            found[name] = "removed" if status == "removed" else blob
+def _snapshot(pr: str, head: str, main: str) -> int:
+    data = hzlib.ghj("api", f"repos/{hzlib.CORE}/pulls/{pr}", default={})
+    count = data.get("changed_files")
+    if (data.get("state"), data.get("head", {}).get("sha"), data.get("base", {}).get("sha"), data.get("base", {}).get("ref")) != ("open", head, main, "main"):
+        raise ValueError("the PR head or base changed during file collection")
+    if type(count) is not int or count < 1:
+        raise ValueError("empty or unreadable PR file inventory")
+    return count
+
+
+def _changed(pr: str, count: int) -> dict[str, str]:
+    pages = hzlib.ghj("api", "--paginate", "--slurp", f"repos/{hzlib.CORE}/pulls/{pr}/files?per_page=100", default=None)
+    if not isinstance(pages, list) or not all(isinstance(page, list) for page in pages):
+        raise ValueError("unreadable PR file inventory")
+    rows = [row for page in pages for row in page]
+    if len(rows) != count:
+        raise ValueError("incomplete PR file inventory")
+    found: dict[str, str] = {}
+    renamed_from: set[str] = set()
+    for row in rows:
+        name, blob, status = row["filename"], row["sha"], row["status"]
+        if not isinstance(name, str) or not name or name in found or not re.fullmatch(r"[a-f0-9]{40}", blob):
+            raise ValueError("invalid or duplicate PR file")
+        if status not in {"added", "modified", "removed", "renamed", "changed", "copied"}:
+            raise ValueError("unrecognized PR file status")
+        if status == "renamed":
+            old = row.get("previous_filename")
+            if not isinstance(old, str) or not old or old == name or old in renamed_from:
+                raise ValueError("missing or duplicate rename source")
+            renamed_from.add(old)
+        found[name] = "removed" if status == "removed" else blob
+    for old in renamed_from:
+        found.setdefault(old, "removed")
     return found
 
 
@@ -73,7 +94,7 @@ def required_checks() -> set[str] | None:
     return found or None
 
 
-def _verdict(head: str, blobs: dict[str, str]) -> str:
+def _verdict(head: str, blobs: dict[str, str], scope: str) -> str:
     """'' when a different agent approved exactly the content of these protected files, else the refusal text."""
     from steuermaschine.engine import Refuse
 
@@ -85,12 +106,31 @@ def _verdict(head: str, blobs: dict[str, str]) -> str:
         verdicts = importlib.import_module("steuermaschine.verdicts")
         go = importlib.import_module("steuermaschine.go")
         store = native.runtime().providers.store
-        verdicts.require_independent(store, digest, go.run_states(store), f"sm review verdict {digest} --approve --reviewer NAME --model M --head {head}", head=head)
+        verdicts.require_independent(store, digest, go.run_states(store), f"sm review verdict {digest} --approve --reviewer NAME --model M --head {head}", head=head, scope=scope)
     except Refuse as refused:
         return f"{refused.message}: changed protected paths {', '.join(paths[:6])}"
     except Exception as error:  # noqa: BLE001 - fail closed: no readable store, no verdict
         return f"cannot read the protected-review verdicts ({error}): changed protected paths {', '.join(paths[:6])}"
     return ""
+
+
+def release_scope(pr: str, base: str) -> str:
+    return f"release-{pr}-{base}"
+
+
+def protected_blobs(pr: str, head: str, main: str) -> dict[str, str]:
+    count = _snapshot(pr, head, main)
+    changed = _changed(pr, count)
+    protected = importlib.import_module("steuermaschine_heinzel.native.protected")
+    plan, absent = _raw("scripts/focused_plan.py", main)
+    if plan is None and not absent:
+        raise ValueError(f"cannot read Core's scripts/focused_plan.py at main {main[:8]}: its protected files are unknown")
+    found = protected.matches(list(changed), protected.execution_inputs(plan))
+    if "pyproject.toml" in changed and protected.pyproject_weakens(_raw("pyproject.toml", main)[0], _raw("pyproject.toml", head)[0]):
+        found.add("pyproject.toml")
+    if _snapshot(pr, head, main) != count:
+        raise ValueError("PR file inventory changed during collection")
+    return {name: changed[name] for name in found}
 
 
 def gap(pr: str, head: str = "") -> str:
@@ -118,18 +158,9 @@ def gap(pr: str, head: str = "") -> str:
         if compare.get("status") not in ("ahead", "identical"):
             return (f"{PREFIX}: #{pr} ({head[:8]}) is {compare.get('status') or 'unreadable'} against main {main[:8]}: "
                     "update the branch and let CI test it again")
-        changed = _changed(pr)
-        if changed is None:
-            return f"{PREFIX}: cannot read the files #{pr} changes"
-        protected = importlib.import_module("steuermaschine_heinzel.native.protected")
-        plan, absent = _raw("scripts/focused_plan.py", main)
-        if plan is None and not absent:
-            return f"{PREFIX}: cannot read Core's scripts/focused_plan.py at main {main[:8]}: its protected files are unknown"
-        found = protected.matches(list(changed), protected.execution_inputs(plan))
-        if "pyproject.toml" in changed and protected.pyproject_weakens(_raw("pyproject.toml", main)[0], _raw("pyproject.toml", head)[0]):
-            found.add("pyproject.toml")
+        blobs = protected_blobs(pr, head, main)
     except Exception as error:  # noqa: BLE001 - fail closed: every error is a named refusal
         return f"{PREFIX}: cannot check #{pr}: {error}"
-    if found and (reason := _verdict(head, {name: changed[name] for name in found})):
+    if blobs and (reason := _verdict(head, blobs, release_scope(pr, main))):
         return f"{PREFIX}: #{pr} ({head[:8]}): {reason}"
     return ""

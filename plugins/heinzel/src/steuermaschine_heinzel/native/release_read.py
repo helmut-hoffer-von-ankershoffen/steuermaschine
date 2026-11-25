@@ -263,6 +263,50 @@ def release_candidate_proof(
                           run_attempt=evidence["run_attempt"], job_count=evidence["job_count"])
 
 
+class ProtectedRegistration(CandidateProof):
+    digest: str
+    scope: str
+    paths: list[str]
+
+    def render(self) -> list[str]:
+        return [*super().render(), f"Review {', '.join(self.paths)} and record the independent verdict:",
+                f"STEUERMASCHINE_AGENT=NAME sm review verdict {self.digest} --head {self.head} --scope {self.scope} --approve --reviewer NAME --model MODEL"]
+
+
+@native("release prepare-protected", writes=True, help=H(
+    "Register the protected source review of a verified full release candidate.",
+    "Use when the release PR has original full hosted evidence for the reviewed head, base and tree.",
+    "writes a scoped review registration on this machine; a separate independent verdict is required.",
+    "sm release prepare-protected 123 --head SHA --base SHA --tree SHA --digest SHA256",
+    "the independent reviewer reads the changed protected files and records the scoped verdict shown."))
+def prepare_protected(
+    pr: int = typer.Argument(..., help="The open release pull request number."),
+    head: str = typer.Option(..., "--head", help="The independently reviewed release head."),
+    base: str = typer.Option(..., "--base", help="The independently reviewed protected base."),
+    tree: str = typer.Option(..., "--tree", help="The independently reviewed release tree."),
+    digest: str = typer.Option(..., "--digest", help="The exact protected-source digest the reviewer will examine."),
+) -> ProtectedRegistration:
+    from steuermaschine import verdicts
+
+    from ..pipelines import full_ci
+    from . import protected
+    from .queue_lib import main_plan
+    from .release_lib import exact_queue
+
+    proof = release_candidate_proof(pr, head, base, tree)
+    try:
+        version, producers = exact_queue.source_producers(head, base, tree, pr, proof.run_id)
+        full_ci.validate_generated_release(str(release_dir()), base, head, version)
+        blobs = main_plan.protected_blobs(str(pr), head, base)
+    except Exception as error:
+        raise Refuse(f"cannot identify protected sources: {error}") from error
+    if not blobs or any(blob != "removed" and not re.fullmatch(r"[a-f0-9]{40}", blob) for blob in blobs.values()) or protected.record(blobs)[0] != digest:
+        raise Refuse("protected source digest differs or contains unreadable blobs")
+    scope = main_plan.release_scope(str(pr), base)
+    verdicts.register_scoped_proof(runtime().providers.store, digest, head, scope, proof.model_dump(), producers)
+    return ProtectedRegistration(**proof.model_dump(), digest=digest, scope=scope, paths=sorted(blobs))
+
+
 # ----------------------------------------------------------------------------- release verify
 class SurfaceCheck(Model):
     passed: bool

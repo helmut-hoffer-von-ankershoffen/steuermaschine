@@ -841,6 +841,9 @@ def prepare_release_pr(work: str, tag: str, bump: str, intro: str) -> str:
     if absent:
         raise Stop("release notes drop combine members " + ", ".join("#" + n for n in absent)
                    + ": fix the combine PR body lines (Combines #N type: title), then cut again; branch preserved, nothing pushed")
+    from . import exact_queue
+
+    exact_queue.record_source_producer(head, tag.removeprefix("v"))
     return head
 
 
