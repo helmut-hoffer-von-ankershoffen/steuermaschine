@@ -352,7 +352,7 @@ def test_each_distinct_capacity_loss_requires_a_fresh_audit_and_preserves_every_
                 recover_current(proof, run_id, audits[-2])
         requested = recover_current(proof, run_id, audits[-1])
         markers.append(requested["replacement_marker"])
-        assert markers[-1] == "release-" + audits[-1][:32]
+        assert markers[-1] != "release-" + audits[-1][:32]
     state = json.loads(proof.path.read_bytes())
     assert len(set(markers)) == len(set(audits)) == 3
     assert [base64.b64decode(row["receipt_base64"]) for row in state["acceptance_attempts"]] == raw_receipts
@@ -431,6 +431,38 @@ def test_recorded_request_is_idempotent_after_failure_without_network_or_receipt
     result = recover(proof, plan["audit_sha256"])
     assert result["request_recorded"] is True
     assert proof.path.read_bytes() == raw and len(proof.calls) == 2
+
+
+def test_only_verified_request_chooses_nonce_and_duplicate_retains_it(proof, monkeypatch):
+    generated = []
+    nonce = "e" * 32
+
+    def fresh_uuid():
+        generated.append(nonce)
+        return SimpleNamespace(hex=nonce)
+
+    monkeypatch.setattr(capacity.uuid, "uuid4", fresh_uuid)
+    plan = recover(proof)
+    assert plan["replacement_marker"] is None and generated == []
+    with pytest.raises(capacity.remote.InvalidCapacity, match="audit digest differs"):
+        recover(proof, "f" * 64)
+    assert generated == []
+    proof.path.write_bytes(proof.raw + b" ")
+    with pytest.raises(capacity.remote.InvalidCapacity, match="receipt changed"):
+        recover(proof, plan["audit_sha256"])
+    assert generated == []
+    proof.path.write_bytes(proof.raw)
+    requested = recover(proof, plan["audit_sha256"])
+    assert requested["replacement_marker"] == "release-" + nonce
+    assert requested["replacement_marker"] != "release-" + plan["audit_sha256"][:32]
+    assert generated == [nonce]
+    state = json.loads(proof.path.read_bytes())
+    assert state["acceptance_capacity"]["marker"] == requested["replacement_marker"]
+    monkeypatch.setattr(capacity.uuid, "uuid4", lambda: pytest.fail("duplicate must reuse the stored marker"))
+    duplicate = recover(proof, plan["audit_sha256"])
+    assert duplicate["request_recorded"] is True
+    assert duplicate["replacement_marker"] == requested["replacement_marker"]
+    assert len(proof.calls) == 2
 
 
 def test_corrected_harness_can_be_adopted_but_cannot_be_replaced_via_capacity(proof):

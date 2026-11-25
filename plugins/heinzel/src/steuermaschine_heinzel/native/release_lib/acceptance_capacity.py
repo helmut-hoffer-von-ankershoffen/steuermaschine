@@ -7,6 +7,7 @@ import hashlib
 import io
 import json
 import re
+import uuid
 import zipfile
 from typing import Any
 
@@ -311,7 +312,9 @@ def recover(rel: Any, version: str, run_id: int, attempt: int, receipt_sha: str,
         return report
     remote.require(digest == audit_sha, "reviewed acceptance capacity audit digest differs")
 
-    replacement = "release-" + digest[:32]
+    # Choose a fresh nonce only after the exact receipt and reviewed audit passed under the tail lock.
+    # A public prepare digest must not let an earlier dispatch predict this request's adoption marker.
+    replacement = "release-" + uuid.uuid4().hex
     remote.require(replacement != marker and all(entry.get("acceptance_marker") != replacement
                                                 for entry in data.get("acceptance_attempts", [])),
                    "replacement marker collides with history")
