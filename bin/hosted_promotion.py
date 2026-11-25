@@ -32,6 +32,7 @@ CHECK_STEPS = (
     "Run make install", "Run make check", "Run make audit", "Coverage summary",
     "Run actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
 )
+INTEGRATION_JOB = "Integration checks"
 SUMMARY_STEP = "Require integration and test results"
 
 
@@ -104,7 +105,7 @@ def verify_jobs(jobs: list, run_id: int, sha: str, branch: str) -> None:
         required["Test (macos-latest, Python 3.15)"] = ("Tests",)
         required["badge"] = ("Write badges/coverage.svg",)
     legacy = set(required)
-    split = legacy | {"Integration checks"}
+    split = legacy | {INTEGRATION_JOB}
     names = set(by_name)
     # The badge is a main-only job. Older non-main push evidence can include
     # the skipped badge row, which never contributes a successful gate.
@@ -113,7 +114,7 @@ def verify_jobs(jobs: list, run_id: int, sha: str, branch: str) -> None:
     require(names in (legacy, split), "hosted jobs do not match a complete CI layout")
     if names == split:
         required["check"] = (SUMMARY_STEP,)
-        required["Integration checks"] = CHECK_STEPS
+        required[INTEGRATION_JOB] = CHECK_STEPS
     for name, steps in required.items():
         job = by_name[name]
         require(type(job.get("run_id")) is int and job["run_id"] == run_id
@@ -124,7 +125,7 @@ def verify_jobs(jobs: list, run_id: int, sha: str, branch: str) -> None:
         allowed = {"Set up job", SUMMARY_STEP, "Complete job"}
         require(all(isinstance(step, dict) and step.get("name") in allowed for step in by_name["check"]["steps"]),
                 "hosted summary job contains unexpected steps")
-    integration = by_name["Integration checks" if names == split else "check"]
+    integration = by_name[INTEGRATION_JOB if names == split else "check"]
     require(not any(isinstance(step, dict) and step.get("name") == SUMMARY_STEP for step in integration["steps"]),
             "hosted integration job contains a summary step")
 
