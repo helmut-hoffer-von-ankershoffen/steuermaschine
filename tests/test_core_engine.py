@@ -11,7 +11,7 @@ from steuermaschine.testing.fakes import external_calls
 DIGEST = "d" * 64
 
 
-def make(p, review=True, gates=(), per_head=False):
+def make(p, review=True, gates=(), per_head=False, wait_next=""):
     """build -> review (STOP) -> publish* -> settle"""
     calls = []
 
@@ -31,7 +31,7 @@ def make(p, review=True, gates=(), per_head=False):
 
     def settle(ctx):
         if not ctx.providers.forge.variables.get("settled"):
-            raise Wait("not settled yet", "the world")
+            raise Wait("not settled yet", "the world", next_cmd=wait_next)
         return "settled"
 
     steps = [Step("build", build, binds=("head", "base"))]
@@ -203,6 +203,15 @@ def test_live_runs_the_external_step_then_waits_with_exit_75_then_finishes():
     r = e.advance(pl, "/wt", Options(live=True))
     assert (r.status, r.exit_code) == ("finished", OK) and calls == ["build", "publish"]
     assert e.advance(pl, "/wt", Options(live=True)).status == "finished" and calls == ["build", "publish"]
+
+
+def test_wait_next_can_offer_an_alternate_command_without_changing_wait_state():
+    p = fake_providers()
+    pl, calls = make(p, review=False, wait_next="sm check /wt --allow-full")
+    r = engine(p).advance(pl, "/wt", Options(live=True))
+    assert (r.status, r.exit_code) == ("waiting", WAITING)
+    assert "NEXT     sm check /wt --allow-full" in r.lines()
+    assert r.waiting_on == "the world" and calls == ["build", "publish"]
 
 
 def test_a_step_done_by_hand_is_adopted():

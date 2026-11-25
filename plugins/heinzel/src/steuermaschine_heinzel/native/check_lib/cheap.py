@@ -32,6 +32,7 @@ import functools
 import json
 import re
 import shlex
+import tempfile
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -107,6 +108,17 @@ class Ctx(head.Ctx):
     unrun: str = ""  # why a step that must run tests ran none of them: the run is never READY (exit 75)
     deferred: str = ""  # why the rest of the run is left to CI (the budget is spent); "": nothing was
     ci: list[str] = field(default_factory=list)  # what CI must run because it did not run here, one line each
+
+
+    def log(self, name: str, text: str) -> str:
+        """Save failed command output outside the checkout, privately even with a permissive umask."""
+        try:
+            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", prefix="sm-check-failure-",
+                                             suffix=".log", dir=self.outdir, delete=False) as handle:
+                handle.write(text)
+                return handle.name
+        except OSError as error:
+            return f"unavailable (OS error {error.errno})"  # preserve the original failure and its tail
 
 
 def steps_of(lines: list[str]) -> list[tuple[str, list[str]]]:
@@ -236,7 +248,7 @@ def step_ruff(c: Ctx) -> Step:
                       ("lint", ["uv", "run", "ruff", "check", "--no-fix", "--force-exclude", "--", *files])):
         rc, out = c.sh(cmd, cwd=c.wt)
         if rc != 0:
-            s.fail(f"ruff {name} failed on the changed files (exit {rc})\n{head.tail(out)}", "`make format` fixes the format and what ruff can fix; fix the rest in the source")
+            s.fail(f"ruff {name} failed on the changed files (exit {rc}); log {c.log(name, out)}\n{head.tail(out)}", "`make format` fixes the format and what ruff can fix; fix the rest in the source")
     s.detail = f"{len(files)} changed Python file(s): format and lint clean" if s.status != FAIL else ""
     return s
 
@@ -322,7 +334,7 @@ def step_tests(c: Ctx) -> Step:
         rc, out = c.gate(head.UNIT_SUITE, cwd=c.wt)
         if rc != 0:
             outcome = "got no slot (exit 75 = WAIT)" if rc == 75 else f"was refused or failed (exit {rc})"
-            s.fail(f"{c.plan.narrowed}; it {outcome}\n{head.tail(out)}",
+            s.fail(f"{c.plan.narrowed}; it {outcome}; log {c.log("unit-suite", out)}\n{head.tail(out)}",
                    "fix the failing tests; when the run lock refuses the whole suite on this machine, the coordinator runs `sm check WORKTREE --allow-full`")
     if c.plan.narrowed and not whole:
         s.warn(c.plan.narrowed + "; integration tests of the change run on CI")
