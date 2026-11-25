@@ -209,6 +209,8 @@ def release_resume(
     absorb: bool = typer.Option(False, "--absorb", help="Record that the next release absorbs this finished NOT ACCEPTED release; needs --reason."),
     reason: str | None = typer.Option(None, "--reason", help="With --absorb: the fix PR (\"fixed in N+1 by #PR\") or `review: ...`. With --reject-release: the written reason."),
     acceptance_ref: str | None = typer.Option(None, "--acceptance-ref", metavar="REF", help="An explicit corrected acceptance harness ref (main)."),
+    acceptance_runner: str | None = typer.Option(None, "--acceptance-runner", help="Explicit alternate runner from the reviewed corrected-main policy."),
+    acceptance_head: str | None = typer.Option(None, "--acceptance-head", help="Exact reviewed protected-main head for the alternate runner."),
     replace_acceptance_run: int | None = typer.Option(None, "--replace-acceptance-run", metavar="RUN", help="Preserve and replace this exact completed rejected acceptance attempt."),
     replace_reason: str | None = typer.Option(None, "--replace-reason", help="Written infra-only reason; needed when the rejected run was rerun after its bound attempt."),
     waive_job: str | None = typer.Option(None, "--waive-job", metavar="JOB=BEAD", help="Owner waiver for one in-date KNOWN flaky candidate job; needs --owner-quote."),
@@ -237,6 +239,7 @@ def release_resume(
     argv += [flag for flag, on in (("--snapshot-acceptance", snapshot_acceptance), ("--candidate-gate", candidate_gate), ("--refresh", refresh), ("--pause", pause),
                                    ("--prepare-only", prepare_only), ("--reject-release", reject_release)) if on]
     for flag, value in (("--intro", intro or None), ("--timeout", timeout), ("--wait-previous", wait_previous), ("--reason", reason), ("--acceptance-ref", acceptance_ref),
+                        ("--acceptance-runner", acceptance_runner), ("--acceptance-head", acceptance_head),
                         ("--replace-acceptance-run", replace_acceptance_run), ("--replace-reason", replace_reason), ("--waive-job", waive_job), ("--owner-quote", owner_quote),
                         ("--use-candidate-composite", use_candidate_composite), ("--candidate-capacity", candidate_capacity), ("--candidate-run", candidate_run),
                         ("--expected-audit-sha256", expected_audit_sha256), ("--expected-receipt-sha256", expected_receipt_sha256),
