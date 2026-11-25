@@ -278,8 +278,12 @@ class AcceptanceCapacity(Model):
     head: str
     mac_job: int
     linux_artifact: int
+    request_recorded: bool = False
 
     def render(self) -> list[str]:
+        if self.request_recorded:
+            return [f"Capacity request already recorded for {self.version}: {self.replacement_marker}",
+                    "No dispatch repeated. Reconcile this exact marker and resume normally; intent is not acceptance proof."]
         if self.replacement_marker is None:
             return [f"Prepared capacity audit {self.audit_sha256} for {self.version} run {self.failed_run}",
                     f"Tagged head {self.head}. Unacquired Mac job {self.mac_job}. Linux receipt {self.linux_artifact}."]
@@ -292,7 +296,7 @@ class AcceptanceCapacity(Model):
     "Use when the exact published release was rejected and its Mac job never received a runner.",
     "prepare reads evidence. request archives the rejection and dispatches one fresh run on the same tagged snapshot.",
     "sm release acceptance-capacity 0.9.40 --mode prepare --failed-run 123 --failed-attempt 1 --receipt-sha256 SHA",
-    "Review the audit digest, then use --mode request --audit-sha256 SHA with the same receipt. Resume normally for both OS verdicts.",
+    "Review each failed run's audit, then request with its digest and unchanged receipt. Repeated requests never redispatch. Resume for both OS verdicts.",
 ))
 def release_acceptance_capacity(
     version: str = typer.Argument(..., metavar="VERSION", help="Exact Core release version X.Y.Z."),

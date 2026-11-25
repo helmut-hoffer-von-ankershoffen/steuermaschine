@@ -114,7 +114,7 @@ def test_capacity_cli_refuses_invalid_options_before_tail_access(tmp_path, monke
     assert gh.calls == []
 
 
-@pytest.mark.parametrize("outcome", ["prepare", "request", "capacity-refusal", "unavailable"])
+@pytest.mark.parametrize("outcome", ["prepare", "request", "recorded", "capacity-refusal", "unavailable"])
 def test_capacity_cli_routes_exact_evidence_and_releases_tail(tmp_path, monkeypatch, outcome):
     from steuermaschine_heinzel.native.release_lib import acceptance_capacity
     from steuermaschine_heinzel.native.release_lib.candidate_capacity import InvalidCapacity
@@ -126,7 +126,7 @@ def test_capacity_cli_routes_exact_evidence_and_releases_tail(tmp_path, monkeypa
     tail.write_text('{"accepted": false}')
     before = tail.read_bytes()
     bound = []
-    mode = "request" if outcome == "request" else "prepare"
+    mode = "request" if outcome in {"request", "recorded"} else "prepare"
     audit = "b" * 64
     marker = "release-" + "c" * 32
 
@@ -141,7 +141,7 @@ def test_capacity_cli_routes_exact_evidence_and_releases_tail(tmp_path, monkeypa
         if outcome == "unavailable":
             raise OSError("private provider detail")
         return {"audit_sha256": audit, "replacement_marker": marker if mode == "request" else None,
-                "head": "d" * 40, "mac_job": 456, "linux_artifact": 789}
+                "head": "d" * 40, "mac_job": 456, "linux_artifact": 789, "request_recorded": outcome == "recorded"}
 
     monkeypatch.setattr(acceptance_capacity, "recover", recover)
     args = capacity_args("0.9.49", mode, *(["--audit-sha256", audit] if mode == "request" else []))
@@ -151,6 +151,8 @@ def test_capacity_cli_routes_exact_evidence_and_releases_tail(tmp_path, monkeypa
         assert "Mac job 456" in out.stdout and "Linux receipt 789" in out.stdout
     elif outcome == "request":
         assert out.exit_code == 0 and marker in out.stdout and "Original rejection 123 preserved" in out.stdout
+    elif outcome == "recorded":
+        assert out.exit_code == 0 and "already recorded" in out.stdout and "No dispatch repeated" in out.stdout
     elif outcome == "capacity-refusal":
         assert out.exit_code == 1 and "Mac job executed" in out.stderr
     else:
