@@ -231,7 +231,7 @@ def verify(repo: str, run_id: int, sha: str, installed: Path) -> dict:
     tracked = command("git", "ls-files", "-z", "src/steuermaschine", "plugins/heinzel/src/steuermaschine_heinzel").decode().split("\0")
     expected = {name for name in tracked if name.endswith(".py") and (name.startswith(CORE) or name.startswith(PLUGIN))}
     try:
-        baseline = json.loads((ROOT / "docs/debt.json").read_text())
+        baseline = debt.read_baseline(ROOT / "docs/debt.json")
     except (OSError, ValueError) as exc:
         raise Refused("debt baseline unavailable") from exc
     return {"repo": repo, "run": run_id, "head": sha, "artifact": artifact["id"], "digest": artifact["digest"],

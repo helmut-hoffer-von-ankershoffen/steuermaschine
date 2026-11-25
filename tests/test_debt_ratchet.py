@@ -115,3 +115,33 @@ def test_record_keeps_other_platforms_and_refuses_to_lower_a_number(tmp_path, mo
     debt.main()
     recorded = json.loads(ratchet.read_text())
     assert recorded[f"coverage core % [{debt.PLATFORM}]"] == 94.0 and recorded["coverage core % [other]"] == 80.0
+
+
+@pytest.mark.parametrize("flags", [["--gate"], ["--record", "--lower"]])
+@pytest.mark.parametrize("raw", ["NaN", "Infinity", "-Infinity", "1e999", "true", "false", "null", '"95"', "-1", "101"])
+def test_malformed_platform_threshold_refused_without_writing(tmp_path, monkeypatch, raw, flags):
+    path = tmp_path / "debt.json"
+    original = '{"coverage core % [linux]": ' + raw + '}'
+    path.write_text(original)
+    monkeypatch.setattr(debt, "RATCHET", path)
+    monkeypatch.setattr(debt, "coverage_metrics", lambda: {"coverage core % [linux]": 90})
+    monkeypatch.setattr(debt, "source_metrics", dict)
+    monkeypatch.setattr(sys, "argv", ["debt.py", *flags])
+    with pytest.raises(SystemExit) as exc:
+        debt.main()
+    assert exc.value.code == 1
+    assert path.read_text() == original
+
+
+@pytest.mark.parametrize("document", ['[]', '{"count": 1.5}', '{"count": 4, "count": 14}'])
+def test_invalid_baseline_structure(tmp_path, document):
+    path = tmp_path / "debt.json"
+    path.write_text(document)
+    with pytest.raises(ValueError):
+        debt.read_baseline(path)
+
+
+@pytest.mark.parametrize("raw", ["nan", "inf", "-1", "101"])
+def test_impossible_coverage_measurement_is_unreadable(monkeypatch, raw):
+    monkeypatch.setattr(debt, "run", lambda *args: raw)
+    assert debt.coverage("src/*") is None

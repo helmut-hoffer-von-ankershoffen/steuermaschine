@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import ast
 import json
+import math
 import re
 import subprocess
 import sys
@@ -32,9 +33,31 @@ def coverage(include: str, omit: str = "") -> float | None:
     args = ["uv", "run", "--quiet", "coverage", "report", f"--include={include}", "--format=total", "--fail-under=0"] + ([f"--omit={omit}"] if omit else [])
     out = run(*args).strip().splitlines()
     try:
-        return float(out[-1])
+        value = float(out[-1])
+        return value if 0 <= value <= 100 else None
     except (IndexError, ValueError):
         return None
+
+
+def read_baseline(path: Path) -> dict[str, int | float]:
+    """Read debt metrics without ambiguous keys, non-numbers or impossible measurements."""
+    def unique(pairs: list) -> dict:
+        values = dict(pairs)
+        if len(values) != len(pairs):
+            raise ValueError("duplicate debt baseline key")
+        return values
+
+    baseline = json.loads(path.read_text(), object_pairs_hook=unique)
+    if not isinstance(baseline, dict):
+        raise ValueError("debt baseline must be an object")
+    for key, value in baseline.items():
+        if type(value) not in (int, float) or (isinstance(value, float) and not math.isfinite(value)):
+            raise ValueError(f"{key}: expected a finite debt baseline number")
+        if value < 0 or (key.startswith("coverage") and value > 100):
+            raise ValueError(f"{key}: debt baseline outside measurement range")
+        if not key.startswith("coverage") and isinstance(value, float) and not value.is_integer():
+            raise ValueError(f"{key}: expected a whole finding count")
+    return baseline
 
 
 def count(pattern: str, text: str, clean: str) -> int | None:
@@ -148,7 +171,11 @@ def main() -> None:
         print("partial debt measurements cannot be recorded", file=sys.stderr)
         sys.exit(2)
     now = ({} if source_only else coverage_metrics()) | source_metrics()
-    before = json.loads(RATCHET.read_text()) if RATCHET.exists() else {}
+    try:
+        before = read_baseline(RATCHET) if RATCHET.exists() else {}
+    except ValueError as exc:
+        print(f"invalid debt baseline: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
     print("check: DEBT of the plugin (the ratchet docs/debt.json; the bar for 'clean' is 90% coverage, 0 findings)")
     for key, value in now.items():
         print(f"    {key}: {value}")
