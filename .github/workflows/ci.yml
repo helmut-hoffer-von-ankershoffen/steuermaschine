@@ -15,6 +15,8 @@ jobs:
       pull-requests: read
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    outputs:
+      sonar-quality-gate: ${{ steps.sonar-gate.outputs.verdict }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -86,14 +88,60 @@ jobs:
       - name: SonarQube Cloud token present?
         id: sonar
         run: echo "token=${{ secrets.SONAR_TOKEN != '' }}" >> "$GITHUB_OUTPUT"
+      - name: SonarQube Cloud skipped
+        if: github.event_name == 'push' && steps.sonar.outputs.token != 'true'
+        run: echo "::notice::SonarQube Cloud skipped - the SONAR_TOKEN secret is not set"
+      - name: Select the exact tested pull request source for Sonar
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && steps.sonar.outputs.token == 'true'
+        env:
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          test "$(git rev-parse HEAD^2)" = "$PR_HEAD"
+          if [ "$(git rev-parse 'HEAD^{tree}')" != "$(git rev-parse "$PR_HEAD^{tree}")" ]; then
+            echo "::error::Pull request source differs from the tested merge tree. Update the branch before requesting a Sonar verdict."
+            exit 1
+          fi
+          git switch --detach "$PR_HEAD"
       - name: SonarQube Cloud
-        if: steps.sonar.outputs.token == 'true'
+        id: sonar-analysis
+        # Main's project-wide analysis stays asynchronous because Release consumes push CI.
+        # Gate new code on the PR using the verdict for this scanner invocation.
+        if: steps.sonar.outputs.token == 'true' && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)
         uses: SonarSource/sonarqube-scan-action@59202af334b4ba7b5db01b701b8e79f8b3bef0f4 # v8.5.0
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-      - name: SonarQube Cloud skipped
-        if: steps.sonar.outputs.token != 'true'
-        run: echo "::notice::SonarQube Cloud skipped - the SONAR_TOKEN secret is not set"
+        with:
+          args: -Dsonar.qualitygate.wait=${{ github.event_name == 'pull_request' }}
+      - name: Require a verified pull request verdict
+        id: sonar-gate
+        if: github.event_name == 'pull_request' && !cancelled()
+        env:
+          SCAN_OUTCOME: ${{ steps.sonar-analysis.outcome }}
+        run: |
+          if [ "$SCAN_OUTCOME" != success ]; then
+            echo "::error::No passing Sonar quality gate for this pull request. See the analysis step for the reason."
+            exit 1
+          fi
+          echo 'verdict=passed' >> "$GITHUB_OUTPUT"
+
+  sonar-quality-gate:
+    # Expose the server verdict to sm's PR table as a normal Actions check.
+    # This job needs neither repository access nor credentials.
+    name: SonarQube Cloud Quality Gate
+    needs: check
+    if: github.event_name == 'pull_request' && !cancelled()
+    runs-on: ubuntu-latest
+    permissions: {}
+    timeout-minutes: 2
+    steps:
+      - name: Verify CI recorded a passing quality gate
+        env:
+          VERDICT: ${{ needs.check.outputs.sonar-quality-gate }}
+        run: |
+          if [ "$VERDICT" != passed ]; then
+            echo "::error::Sonar quality gate did not pass. See the check job for the analysis result."
+            exit 1
+          fi
 
   test:
     # The supported Python, 3.15: Linux on every run, plus macOS on main. The `check` job above is the full gate (lint,
