@@ -394,8 +394,8 @@ def test_reviewed_queue_cli_refuses_weaker_release_paths(monkeypatch, extra):
     assert exc.value.code == 2
 
 
-def test_registration_needs_the_source_generator_even_when_the_ci_collector_is_known(evidence, monkeypatch):
-    records, _, _ = evidence
+def test_registration_needs_the_source_generator_even_when_the_ci_collector_is_known(evidence, monkeypatch, tmp_path):
+    records, _, receipt = evidence
     candidate = exact.prepare(CANDIDATE.version, CANDIDATE.token, CANDIDATE.pr)
     approve(records)
     args = (candidate.head, candidate.base, candidate.tree, candidate.pr, candidate.run)
@@ -409,3 +409,11 @@ def test_registration_needs_the_source_generator_even_when_the_ci_collector_is_k
     assert exact.source_producers(*args) == (candidate.version, {"coordinator", "source-generator"})
     with pytest.raises(exact.ExactReleaseError, match="differs"):
         exact.source_producers(candidate.head, candidate.base, MERGE, candidate.pr, candidate.run)
+
+    with monkeypatch.context() as replacement:
+        replacement.setitem(receipt, "freeze_token", "9" * 32)
+        with pytest.raises(exact.ExactReleaseError, match="differs"):
+            exact.source_producers(*args)
+    (tmp_path / candidate.token).unlink()
+    with pytest.raises(exact.ExactReleaseError, match="sole release hold"):
+        exact.source_producers(*args)

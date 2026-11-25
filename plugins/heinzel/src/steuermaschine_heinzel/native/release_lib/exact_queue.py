@@ -86,9 +86,14 @@ def source_producers(head: str, base: str, tree: str, pr: int, run: int) -> tupl
     author, version = source.get("author"), source.get("version")
     if source.get("head") != head or not isinstance(author, str) or not author.strip() or not isinstance(version, str) or not VERSION.fullmatch(version):
         raise ExactReleaseError("no release generation record identifies the producer of this exact head")
-    candidate = read_candidate(version)
+    active = active_receipt()
+    token = active.get("freeze_token")
+    if (active.get("version"), active.get("merge_route")) != (version, MODE) or not isinstance(token, str):
+        raise ExactReleaseError("the generated source does not belong to the active reviewed release")
+    candidate = read_candidate(version, token)
     if not candidate or (candidate.head, candidate.base, candidate.tree, candidate.pr, candidate.run) != (head, base, tree, pr, run):
         raise ExactReleaseError("the prepared candidate differs from the verified release")
+    require_hold(candidate)
     approve_required(candidate)
     runs = go.run_states(records)
     return version, {author} | verdicts.authors_of(records, candidate.digest, runs) | verdicts.authors_of(records, head, runs)
