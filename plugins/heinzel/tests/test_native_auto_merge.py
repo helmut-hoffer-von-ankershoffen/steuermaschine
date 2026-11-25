@@ -98,7 +98,7 @@ def test_live_selection_can_act_only_on_the_named_repository_and_pr(world_of_prs
     assert all("pr view 10" not in call and "repo=heinzel " not in call for call in gh.lines())
 
 
-@pytest.mark.parametrize("hold_kind", ["owned", "incident", "missing receipt", "wrong token", "wrong version", "extra hold", "symlink", "duplicate keys"])
+@pytest.mark.parametrize("hold_kind", ["owned", "incident", "missing receipt", "wrong token", "wrong version", "extra hold", "symlink", "duplicate keys", "missing file", "missing directory"])
 def test_only_a_verified_core_owned_hold_allows_an_independent_tooling_merge(world_of_prs, tmp_path, monkeypatch, hold_kind):
     gh = FakeGh().on("pr merge", "")
     comment = said(auto_review.comment_body(HEAD, "opus", "sonnet", "ok", "APPROVE"))
@@ -125,6 +125,10 @@ def test_only_a_verified_core_owned_hold_allows_an_independent_tooling_merge(wor
     elif hold_kind == "symlink":
         held.unlink()
         held.symlink_to(receipt)
+    elif hold_kind in ("missing file", "missing directory"):
+        held.unlink()
+        if hold_kind == "missing directory":
+            directory.rmdir()
     elif hold_kind == "duplicate keys":
         receipt.write_text(f'{{"version":"0.9.56","version":"{version}","freeze_token":"{token}"}}')
     out = invoke(rt, ["queue", "auto", "--repo", f"{OWNER}/steuermaschine", "--pr", "9", "--live"])
@@ -151,21 +155,79 @@ def test_direct_merge_observes_an_incident_started_during_verification(world_of_
     assert not gh.writes()
 
 
-def test_shared_arm_policy_keeps_core_and_dependencies_held(monkeypatch):
-    monkeypatch.setattr(hzlib, "incident_frozen", lambda: False)
-    monkeypatch.setattr(hzlib, "release_holds_present", lambda: True)
-    monkeypatch.setattr(hzlib, "core_owned_release_hold", lambda: True)
+def test_shared_arm_policy_keeps_core_and_dependencies_held(tmp_path, monkeypatch):
+    monkeypatch.setattr(hzlib.statedir, "path", lambda name: tmp_path / name)
+    token, version = "a" * 32, "0.9.55"
+    receipt = {"version": version, "freeze_token": token, "merge_route": "reviewed-release-queue"}
+    (tmp_path / "release.json").write_text(json.dumps(receipt))
+    directory = tmp_path / "release-holds"
+    directory.mkdir()
+    (directory / token).write_text(version)
+    assert hzlib.freeze_scope(tmp_path) == "core"
     assert auto_arm.freeze_without_candidate(hzlib.CORE)
     assert auto_arm.freeze_without_candidate(hzlib.PLUGINS)
     assert auto_arm.freeze_without_candidate(f"{OWNER}/steuermaschine") == ""
 
+    (directory / token).unlink()
+    assert hzlib.freeze_scope(tmp_path) == "uncertain"
+    assert auto_arm.freeze_without_candidate(hzlib.CORE)
+    assert auto_arm.freeze_without_candidate(hzlib.PLUGINS)
+    assert auto_arm.freeze_without_candidate(f"{OWNER}/steuermaschine")
+
 
 def test_an_incident_starting_during_owned_hold_verification_wins(monkeypatch):
     incident = iter((False, True))
-    monkeypatch.setattr(hzlib, "incident_frozen", lambda: next(incident))
-    monkeypatch.setattr(hzlib, "release_holds_present", lambda: True)
-    monkeypatch.setattr(hzlib, "core_owned_release_hold", lambda: True)
+    monkeypatch.setattr(hzlib, "incident_frozen", lambda *_: next(incident))
+    monkeypatch.setattr(hzlib, "release_freeze_scope", lambda *_: "core")
     assert auto_arm.freeze_without_candidate(f"{OWNER}/steuermaschine") == "merge freeze is on"
+
+
+@pytest.mark.parametrize("remove_directory", [False, True])
+def test_hold_disappearing_while_read_is_uncertain(tmp_path, monkeypatch, remove_directory):
+    token, version = "a" * 32, "0.9.55"
+    (tmp_path / "release.json").write_text(json.dumps({"version": version, "freeze_token": token}))
+    directory = tmp_path / "release-holds"
+    directory.mkdir()
+    hold = directory / token
+    hold.write_text(version)
+    original = hzlib.os.listdir
+
+    def remove_after_listing(path):
+        names = original(path)
+        hold.unlink()
+        if remove_directory:
+            directory.rmdir()
+        return names
+
+    monkeypatch.setattr(hzlib.os, "listdir", remove_after_listing)
+    assert hzlib.freeze_scope(tmp_path) == "uncertain"
+
+
+@pytest.mark.parametrize("state, expected", [
+    ("request", "uncertain"), ("pause", "open"), ("bad pause", "uncertain"),
+    ("resume", "uncertain"), ("tag", "open"), ("drop pending archive", "uncertain"),
+])
+def test_missing_hold_needs_durable_transition(tmp_path, state, expected):
+    token, version, at = "a" * 32, "0.9.55", "2026-11-25T12:00:00Z"
+    base = {"version": version, "freeze_token": token, "merge_route": "reviewed-release-queue"}
+    stamp = {"version": version, "token": token, "at": at}
+    request = stamp | {"action": "pause-request", "pr": None, "head": None, "was_ready": False}
+    pause = stamp | {"action": "pause", "pr": None, "head": None, "draft": True}
+    events = {
+        "request": [request], "pause": [request, pause], "bad pause": [request, pause | {"head": "a" * 40}],
+        "resume": [request, pause, stamp | {"action": "resume"}],
+    }
+    if state in events:
+        base["hold_events"] = events[state]
+    elif state == "tag":
+        base["freeze_lifted_at"] = at
+    else:
+        base["drop"] = stamp
+    (tmp_path / "release.json").write_text(json.dumps(base))
+    assert hzlib.freeze_scope(tmp_path) == expected
+    if state == "drop pending archive":
+        (tmp_path / "release.json").unlink()
+        assert hzlib.freeze_scope(tmp_path) == "open"
 
 
 @pytest.mark.parametrize("args", [["--repo", f"{OWNER}/steuermaschine"], ["--pr", "9"], ["--repo", "other/steuermaschine", "--pr", "9"]])

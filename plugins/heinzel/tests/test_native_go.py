@@ -301,10 +301,10 @@ def test_queue_verdict_and_waits_from_what_the_last_tick_recorded():
     waits = probes.queue_waits(items, NOW)
     assert waits == ["item 790: waiting 277 min: BLOCKED with green checks"]
     data = {"items": items, "blocked": ""}
-    assert probes.queue_verdict(data, False, waits) == "no queue-level block recorded, but 790: waiting 277 min: BLOCKED with green checks"
-    assert probes.queue_verdict(data, True, waits) == "merge freeze holds all core PRs"
-    assert probes.queue_verdict({"items": [], "blocked": ""}, False, []) == "nothing queued"
-    assert probes.queue_verdict({"items": items, "blocked": "main's latest run is not green"}, False, []) == "last tick: main's latest run is not green"
+    assert probes.queue_verdict(data, "open", waits) == "no queue-level block recorded, but 790: waiting 277 min: BLOCKED with green checks"
+    assert probes.queue_verdict(data, "core", waits) == probes.FREEZE_STATUS["core"]
+    assert probes.queue_verdict({"items": [], "blocked": ""}, "open", []) == "nothing queued"
+    assert probes.queue_verdict({"items": items, "blocked": "main's latest run is not green"}, "open", []) == "last tick: main's latest run is not green"
 
 
 # ------------------------------------------------------------------ the command, through the whole tree

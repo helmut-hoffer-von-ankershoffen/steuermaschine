@@ -53,12 +53,10 @@ def release_pr_open() -> str:
 
 def freeze_without_candidate(repo: str) -> str:
     """One hold policy for queued arms and direct merges outside the queue."""
-    if hzlib.incident_frozen():
+    scope = hzlib.freeze_scope()
+    tooling = repo.lower() in {known.lower() for known in hzlib.UNQUEUED}
+    if scope in ("incident", "uncertain") or (scope == "core" and not tooling):
         return "merge freeze is on"
-    if hzlib.release_holds_present():
-        tooling = repo.lower() in {known.lower() for known in hzlib.UNQUEUED}
-        if not tooling or not hzlib.core_owned_release_hold() or hzlib.incident_frozen():
-            return "merge freeze is on"
     return release_pr_open() if repo.lower() == hzlib.CORE.lower() else ""
 
 
