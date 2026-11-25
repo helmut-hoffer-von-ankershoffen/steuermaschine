@@ -13,6 +13,8 @@ class Cap:
     checkpoints: str = "## 5."  # the section whose `### ` blocks are checkpoints, newest first
     log: str = "## 8."  # the log section: dated lines, oldest first
     keep_log: int = 20  # newest log lines that stay
+    state_begin: str = "<!-- sm status --write: begin"  # the generated state section: never moved out
+    state_end: str = "<!-- sm status --write: end"
 
 
 def _section(lines: list[str], start: str) -> tuple[int, int] | None:
@@ -35,8 +37,14 @@ def apply(text: str, cap: Cap) -> tuple[str, str]:
         starts = [i for i in range(begin, end) if lines[i].startswith("### ")]
         if len(starts) > cap.keep:
             cut = starts[cap.keep]
-            moved += lines[cut:end]
-            lines = lines[:cut] + lines[end:]
+            block = next((i for i in range(cut, end) if lines[i].startswith(cap.state_begin)), None)
+            if block is not None:  # the state section sits after the last checkpoint: it is not history and stays
+                finish = next((i for i in range(block, end) if lines[i].startswith(cap.state_end)), end - 1)
+                moved += lines[cut:block] + lines[finish + 1:end]
+                lines = lines[:cut] + lines[block:finish + 1] + lines[end:]
+            else:
+                moved += lines[cut:end]
+                lines = lines[:cut] + lines[end:]
     if len("\n".join(lines).encode()) > cap.limit and (found := _section(lines, cap.log)) is not None:
         begin, end = found
         entries = [i for i in range(begin, end) if lines[i].strip()]

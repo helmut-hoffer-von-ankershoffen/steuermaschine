@@ -3,6 +3,7 @@ comes from (the checkout's selector and hook, never a list in sm), and the recei
 No network, no real git, uv or node; the lock files live under tmp_path."""
 
 import json
+from shlex import split
 
 import pytest
 from test_native_preflight import HEAD, MAIN, Machine, core, rt  # noqa: F401  (core and rt are fixtures)
@@ -85,6 +86,8 @@ def test_a_document_change_runs_the_docs_style_test_the_selector_names_and_the_h
     assert found.ready and found.receipt and found.selector == "core" and found.changed == 1
     assert step(found, "docs").detail == "1 changed document(s): template, typos, tests green" and step(found, "web").detail == "no web file(s) changed"
     assert machine.ran("sync_template.py --check") and machine.ran("uv run typos") and machine.ran("tests/unit/documentation_test.py")
+    pytest_roots = {call[2]["PYTEST_DEBUG_TEMPROOT"] for call in machine.ran("uv run pytest")}
+    assert len(pytest_roots) == 1
     assert machine.ran("tests/integration/guides_test.py")  # the hook's early guard, as the hook prints it
     (selected,) = [call[0] for call in machine.ran("tests/unit/prose_rules_test.py")]  # the selector's test: no name of it exists in sm
     assert selected[:3] == ["uv", "run", "pytest"] and selected[-1] == "tests/unit/prose_rules_test.py"
@@ -337,7 +340,38 @@ def test_a_budget_spent_between_steps_exits_75_and_is_never_ready(core, rt):  # 
     done = invoke(runtime, ["check", str(core)])
     assert done.exit_code == 75, done
     assert "local budget of 90 s is spent" in done.stderr and "types, hook, parity, web, docs, standards, tests" in done.stderr
+    assert split(done.stderr.splitlines()[-1]) == ["sm", "check", str(core), "--allow-full"]
+    assert "for the coordinator on the unchanged head" in done.stderr
+    assert "heavy lane, may run the full unit suite" in done.stderr
+    assert "rerun your original sm head admit command to adopt that receipt" in done.stderr
+    assert "retry the original command on a quieter machine" in done.stderr
     assert not machine.ran("mypy") and runtime.providers.store.get_receipt(verdicts.CHECKS, HEAD) is None
+
+
+@pytest.mark.parametrize(("base", "skipped"), [(True, False), (False, True), (True, True)])
+def test_budget_next_is_a_runnable_command_that_preserves_non_receipting_options(core, rt, tmp_path, base, skipped):  # noqa: F811
+    wt = core.rename(core.with_name("work tree"))
+    selection = tmp_path / "selected tests.json"
+    selection.write_text('{"python": ["tests/unit/x_test.py"]}')
+    options = []
+    if base:
+        options += ["--base", "refs/heads/integration"]
+    options += ["--sel", str(selection)]
+    if skipped:
+        options += ["--skip", "web", "--skip", "docs"]
+    machine = src_change(wt)
+    runtime = rt(machine)
+    machine.on("ruff format", lambda argv: (setattr(runtime.providers.clock, "t", runtime.providers.clock.t + 91), Result(0, "", ""))[1])
+
+    done = invoke(runtime, ["--format", "json", "check", str(wt), *options])
+    assert done.exit_code == 75, done
+    message = json.loads(done.stdout)
+    retry = split(message["hint"])
+    assert retry == ["sm", "check", str(wt), "--allow-full", *options]
+    assert "An admission receipt requires the default base and every check." in message["error"]
+    assert "adopt" not in message["error"]
+    assert invoke(runtime, retry[1:]).exit_code == 0
+    assert runtime.providers.store.get_receipt(verdicts.CHECKS, HEAD) is None
 
 
 def test_a_failure_before_the_budget_ends_still_fails_the_run(core, rt):  # noqa: F811
@@ -412,6 +446,30 @@ def test_a_change_nothing_narrows_leaves_the_whole_unit_suite_to_pr_ci_unless_a_
     assert not found.ready and "| 1 failed" in found.failures[0].message and failing.providers.store.get_receipt(verdicts.CHECKS, HEAD) is None
 
 
+def test_full_failure_evidence_is_private_complete_and_unique(core, rt, tmp_path, monkeypatch):  # noqa: F811
+    import tempfile
+    from concurrent.futures import ThreadPoolExecutor
+    from pathlib import Path
+
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    details = "first failure traceback\n" + "worker stack\n" * 24
+    machine = checkout(core).on("git diff --name-only", "pyproject.toml").on("scripts/related_tests.py", "ALL\n")
+    runtime = rt(machine.on("unit and not perf", Result(1, details, "two failed\n")))
+    done = invoke(runtime, ["--format", "json", "check", str(core), "--allow-full"])
+    assert done.exit_code == 1 and "first failure traceback" not in done.stdout + done.stderr
+    message = report(done).failures[0].message
+    path = Path(message.split("; log ", 1)[1].splitlines()[0])
+    assert path.read_text() == details + "two failed\n" and path.stat().st_mode & 0o777 == 0o600
+    assert path.parent == tmp_path and "| two failed" in message
+    assert runtime.providers.store.get_receipt(verdicts.CHECKS, HEAD) is None
+
+    ctx = check.cheap.Ctx(wt=core, outdir=tmp_path)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        paths = list(pool.map(lambda value: Path(ctx.log("../../same", value)), ["first", "second"]))
+    assert all(p.parent == tmp_path for p in paths)
+    assert [p.read_text() for p in paths] == ["first", "second"] and len({path, *paths}) == 3
+
+
 def test_a_failing_import_graph_fails_the_run_instead_of_passing_for_everything(core, rt):  # noqa: F811
     """B1 (the reviewer's probe): scripts/related_tests.py fails or prints something odd. That is no "ALL": red, no receipt."""
     for answer, why in ((Result(3, "", "Traceback"), "scripts/related_tests.py failed (exit 3)"), ("something odd\n", "printed something that is no test path")):
@@ -480,3 +538,44 @@ def test_usage_errors_run_nothing(core, rt, tmp_path):  # noqa: F811
     assert done.exit_code == 2 and "the selector of" in done.stderr and "sm head select --repo" in done.stderr
     no_base = invoke(rt(Machine(**{"git merge-base": Result(1, "", "fatal: no merge base")})), ["check", str(core), "--base", "origin/nope"])
     assert no_base.exit_code == 2 and "has no merge-base with origin/nope" in no_base.stderr
+
+
+def test_concurrent_checks_keep_pytest_cleanup_private(tmp_path, monkeypatch):
+    import os
+    import subprocess
+    import sys
+    from concurrent.futures import ThreadPoolExecutor
+    from pathlib import Path
+    from threading import Barrier
+
+    monkeypatch.setenv("PYTEST_DEBUG_TEMPROOT", str(tmp_path))
+    case = tmp_path / "test_child.py"
+    case.write_text("import os\nfrom pathlib import Path\n"
+                    "def test_fixture(tmp_path):\n"
+                    "    assert Path(os.environ['PYTEST_DEBUG_TEMPROOT']) in tmp_path.parents\n"
+                    "    assert os.environ['CHECK_CASE'] == 'inherited'\n")
+    sentinel = tmp_path / "keep"
+    sentinel.touch()
+    overlap = Barrier(2)
+
+    def subprocess_gate(cmd, cwd, env):
+        result = subprocess.run(cmd, cwd=cwd, env=os.environ | env, text=True, capture_output=True, timeout=30)
+        return result.returncode, result.stdout + result.stderr
+
+    def check_worker():
+        with check.isolated_gate(subprocess_gate) as gate:
+            def call(*args):
+                return gate([sys.executable, *args], cwd=tmp_path, env={"CHECK_CASE": "inherited", "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1"})
+            root = Path(call("-c", "import os; print(os.environ['PYTEST_DEBUG_TEMPROOT'])")[1].strip())
+            overlap.wait(timeout=15)
+            rc, output = call("-m", "pytest", "-q", "-p", "no:cacheprovider", str(case))
+            assert rc == 0, output
+            assert list(root.glob("pytest-of-*/pytest-*/test_fixture*"))
+            assert call("-c", "import sys; print('failed child'); sys.exit(7)") == (7, "failed child\n")
+        return root
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        roots = list(executor.map(lambda _: check_worker(), range(2)))
+    assert roots[0] != roots[1]
+    assert all(root.parent == tmp_path and not root.exists() for root in roots)
+    assert sentinel.exists()

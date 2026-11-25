@@ -6,6 +6,7 @@ import tomllib
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from coord_kit import app_runtime
 
 from steuermaschine import PROG, helpdoc, surface
@@ -116,6 +117,14 @@ def test_the_document_cap_moves_old_checkpoints_then_log_lines():
     assert cap.apply("y" * 500, cap.Cap(limit=10)) == ("y" * 500, "")
 
 
+def test_the_cap_keeps_the_state_block_that_sits_inside_the_last_checkpoints_range():
+    block = "<!-- sm status --write: begin (generated; do not edit) -->\n## State now\n- x\n<!-- sm status --write: end -->\n"
+    text = "# Doc\n## 5. State\n" + "".join(f"### c{n}\n" + "x" * 50 + "\n" for n in range(6)) + block + "## 6. Work\nrules\n"
+    capped, moved = cap.apply(text, cap.Cap(limit=300, keep=3))
+    assert block in capped and "### c2" in capped and "### c3" not in capped and "## 6. Work" in capped
+    assert "### c5" in moved and "State now" not in moved and "- x" not in moved
+
+
 def test_status_write_renders_the_state_section_and_caps_the_document(tmp_path, monkeypatch):
     from steuermaschine.native import NativeRuntime, using
     from steuermaschine_heinzel.native import alarm
@@ -123,11 +132,11 @@ def test_status_write_renders_the_state_section_and_caps_the_document(tmp_path, 
     from steuermaschine_heinzel.native.handoff_lib import hour
 
     doc = tmp_path / "AGENTS.md"
-    doc.write_text("# Doc\n## 5. State\n" + "".join(f"### c{n}\n" + "x" * 40 + "\n" for n in range(5)) + "## 6. Work\nrules\n## 8. Log\n- 11-21 10:00 one\n")
+    doc.write_text("# Doc\n## 5. State\n" + "".join(f"### c{n}\n" + "x" * 200 + "\n" for n in range(5)) + "## 6. Work\nrules\n## 8. Log\n- 11-21 10:00 one\n")
     monkeypatch.setattr(alarm, "alarm_list", lambda check=False: alarm.Alarms(checked=False))
     monkeypatch.setattr(alarm, "owner_asks", lambda: ["one message"])
     monkeypatch.setattr(hour, "build", lambda *a, **k: SimpleNamespace(render=lambda: ["facts"]))
-    rt = app_runtime(tmp_path, coord_document=str(doc), status_doc_cap_bytes=300, coord_log_dir=str(tmp_path / "log"))
+    rt = app_runtime(tmp_path, coord_document=str(doc), status_doc_cap_bytes=1400, coord_log_dir=str(tmp_path / "log"))
     with using(NativeRuntime(rt.providers, rt.settings, rt.project, commands=lambda: [])):
         lines = status_mod.write_document(False, status_mod.Status())
         again = status_mod.write_document(False, status_mod.Status())
@@ -144,3 +153,64 @@ def test_place_replaces_or_appends_the_state_section():
     block = f"{status_mod.BEGIN}\nnew\n{status_mod.END}"
     assert status_mod.place(f"a\n{status_mod.BEGIN}\nold\n{status_mod.END}\nb", block) == f"a\n{block}\nb"
     assert status_mod.place("a\nb", block) == f"a\nb\n{block}\n"
+
+
+def test_status_write_is_one_short_checkpoint_and_never_grows_the_document_past_its_cap(tmp_path, monkeypatch):
+    from steuermaschine.native import NativeRuntime, using
+    from steuermaschine_heinzel.native import alarm
+    from steuermaschine_heinzel.native import status as status_mod
+    from steuermaschine_heinzel.native.handoff_lib import hour
+
+    doc = tmp_path / "AGENTS.md"
+    doc.write_text("# Doc\n## 5. State\n## 6. Work\nrules\n## 8. Log\n- 11-21 10:00 one\n")
+    monkeypatch.setattr(alarm, "alarm_list", lambda check=False: alarm.Alarms(checked=False))
+    monkeypatch.setattr(alarm, "owner_asks", lambda: [f"ask {n} " + "w" * 400 for n in range(3200)])  # the 3200 lines of the incident
+    monkeypatch.setattr(hour, "build", lambda *a, **k: SimpleNamespace(render=lambda: ["facts"]))
+    rt = app_runtime(tmp_path, coord_document=str(doc), coord_log_dir=str(tmp_path / "log"))
+    with using(NativeRuntime(rt.providers, rt.settings, rt.project, commands=lambda: [])):
+        status_mod.write_document(False, status_mod.Status())
+    text = doc.read_text()
+    block = text[text.index(status_mod.BEGIN):text.index(status_mod.END)].splitlines()
+    assert len(block) <= status_mod.CHECKPOINT_LINES and len(text.encode()) <= 16 * 1024 and "3197 more" in text
+    assert "ask 3199" in next((tmp_path / "log").glob("*.md")).read_text()  # the long facts are in the log
+
+
+def test_status_write_refuses_an_append_past_the_cap_and_writes_nothing(tmp_path, monkeypatch):
+    from steuermaschine.engine import Refuse
+    from steuermaschine.native import NativeRuntime, using
+    from steuermaschine_heinzel.native import alarm
+    from steuermaschine_heinzel.native import status as status_mod
+
+    doc = tmp_path / "AGENTS.md"
+    before = "# Doc\n## 5. State\n## 6. Work\n" + "rule line " * 20 + "\n"  # no checkpoints or log to move: nothing can shrink it
+    doc.write_text(before)
+    monkeypatch.setattr(alarm, "alarm_list", lambda check=False: alarm.Alarms(checked=False))
+    monkeypatch.setattr(alarm, "owner_asks", lambda: ["one"])
+    rt = app_runtime(tmp_path, coord_document=str(doc), status_doc_cap_bytes=len(before) + 20, coord_log_dir=str(tmp_path / "log"))
+    with using(NativeRuntime(rt.providers, rt.settings, rt.project, commands=lambda: [])), pytest.raises(Refuse, match="over the cap"):
+        status_mod.write_document(False, status_mod.Status())
+    assert doc.read_text() == before
+    assert not list((tmp_path / "log").glob("*.md"))
+
+
+def test_status_write_archives_changed_facts_when_the_checkpoint_is_identical(tmp_path, monkeypatch):
+    from steuermaschine.native import NativeRuntime, using
+    from steuermaschine_heinzel.native import alarm
+    from steuermaschine_heinzel.native import status as status_mod
+    from steuermaschine_heinzel.native.handoff_lib import hour
+
+    doc = tmp_path / "AGENTS.md"
+    doc.write_text("# Doc\n")
+    asks = ["--keep-this-", "second", "third", "old tail"]
+    monkeypatch.setattr(alarm, "alarm_list", lambda check=False: alarm.Alarms(checked=False))
+    monkeypatch.setattr(alarm, "owner_asks", lambda: asks)
+    monkeypatch.setattr(hour, "build", lambda *a, **k: SimpleNamespace(render=lambda: ["facts"]))
+    rt = app_runtime(tmp_path, coord_document=str(doc), coord_log_dir=str(tmp_path / "log"))
+    with using(NativeRuntime(rt.providers, rt.settings, rt.project, commands=lambda: [])):
+        status_mod.write_document(False, status_mod.Status())
+        first = doc.read_text()
+        asks[-1] = "new tail"
+        status_mod.write_document(False, status_mod.Status())
+    assert doc.read_text() == first and "--keep-this-" in first
+    archive = next((tmp_path / "log").glob("*.md")).read_text()
+    assert "old tail" in archive and "new tail" in archive
