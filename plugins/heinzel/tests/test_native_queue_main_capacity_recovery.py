@@ -8,7 +8,10 @@ from types import SimpleNamespace
 import pytest
 
 from steuermaschine.defaults import FileStore
-from steuermaschine.testing.fakes import MemoryStore
+from steuermaschine.engine import Refuse
+from steuermaschine.native import NativeRuntime, using
+from steuermaschine.testing.fakes import MemoryStore, fake_providers
+from steuermaschine_heinzel.native import queue_main
 from steuermaschine_heinzel.native.queue_lib import hzlib, main_lanes
 from steuermaschine_heinzel.native.queue_lib import main_capacity_recovery as recovery
 from steuermaschine_heinzel.native.queue_lib.release_candidate import CandidateError
@@ -256,3 +259,29 @@ def test_original_workload_must_have_run_before_dispatch(evidence, run, name, wi
         original["steps"].remove(step)
     with pytest.raises((CandidateError, recovery.candidate_capacity.InvalidCapacity)):
         dispatch(MemoryStore(), evidence, lambda _: pytest.fail("must not post"))
+
+@pytest.mark.parametrize("response", ["bound", "empty", "malformed"])
+def test_native_dispatch_uses_versioned_gh_arguments_and_binds_only_a_real_reply(evidence, monkeypatch, response):
+    responses, _, _, _, _, lines = evidence
+    reply = replacement(evidence)
+    stdout = {"bound": json.dumps(reply), "empty": "", "malformed": "not json"}[response]
+    sent = []
+    monkeypatch.setattr(queue_main.hzlib, "gh", lambda *args: (sent.append(args) or 0, stdout))
+    monkeypatch.setattr(queue_main.hzlib, "merge_frozen", lambda: False)
+    monkeypatch.setattr(queue_main.queue_hold, "current", lambda _rt: None)
+    monkeypatch.setattr(queue_main.main_checkpoint, "get", responses.__getitem__)
+    log = "\n".join(f"2026-11-25T12:45:00.0000000Z {line}" for line in lines).encode()
+    monkeypatch.setattr(queue_main.main_capacity, "read_aggregate_log", lambda _job: log)
+    with using(NativeRuntime(fake_providers(), {}, None)):
+        for _ in range(2):
+            if response == "bound":
+                got = queue_main.queue_main_capacity(HEAD, 1, 2, dispatch=True)
+                assert got.proof["run"] == 3 and got.proof["head"] == HEAD
+            else:
+                with pytest.raises(Refuse, match="dispatch outcome is unbound"):
+                    queue_main.queue_main_capacity(HEAD, 1, 2, dispatch=True)
+    assert sent == [(
+        "api", "--method", "POST", "-H", "X-GitHub-Api-Version: 2026-03-10",
+        f"repos/{hzlib.CORE}/actions/workflows/ci.yml/dispatches", "-f", "ref=main",
+        "-f", "inputs[lane]=macos",
+    )]

@@ -112,7 +112,7 @@ def queue_main_capacity(
         return hzlib.ghj(
             "api", "--method", "POST", "-H", "X-GitHub-Api-Version: 2026-03-10",
             f"repos/{hzlib.CORE}/actions/workflows/{workflow}/dispatches", "-f", "ref=main",
-            "-f", "inputs[lane]=macos", "-F", "return_run_details=true", default=None,
+            "-f", "inputs[lane]=macos", default=None,
         )
 
     try:
