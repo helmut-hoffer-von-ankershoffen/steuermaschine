@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import tempfile
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -84,11 +85,11 @@ def bound(rt: Any, wt: Path, base: str, allow_full: bool = False, full: bool = F
 
 
 @contextmanager
-def isolated_gate(gate: _preflight.Shell):
+def isolated_gate(gate: _preflight.Shell) -> Iterator[_preflight.Shell]:
     """Give this check and all its gated children a private pytest cleanup namespace."""
     parent = child_environment().get("PYTEST_DEBUG_TEMPROOT") or None
     with tempfile.TemporaryDirectory(prefix="sm-check-", dir=parent) as root:
-        def run(cmd, cwd=None, env=None):
+        def run(cmd: Sequence[object], cwd: object = None, env: dict[str, str] | None = None) -> tuple[int, str]:
             return gate(cmd, cwd=cwd, env={**(env or {}), "PYTEST_DEBUG_TEMPROOT": root})
 
         yield run
