@@ -1,4 +1,4 @@
-"""The queue and a red main: `sm queue main-rerun` and `sm queue checkpoint`.
+"""The queue and a red main: rerun, checkpoint and macOS capacity recovery.
 
 Both are the moved queue code (`queue_lib/queue_daemon.py`: `main_rerun`, and `main_checkpoint.establish`), reached
 through the queue's own argument parser; this module only gives them typed options and a result model. A separate
@@ -8,6 +8,7 @@ module so that a change here does not touch the reviewed queue commands; its rev
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 import typer
@@ -19,7 +20,8 @@ from steuermaschine.models import Model
 from steuermaschine.native import native, runtime
 
 from . import queue as area
-
+from . import queue_hold
+from .queue_lib import hzlib, main_capacity, main_capacity_recovery, main_checkpoint
 
 
 class QueueMain(Model):
@@ -86,3 +88,44 @@ def queue_checkpoint(
     apply: bool = typer.Option(False, "--apply", help="Record the evidence identities after verification."),
 ) -> QueueMain:
     return _call("checkpoint", ["checkpoint", "--pr", str(pr), "--run", str(run), "--core-repo", str(core_repo), *(["--apply"] if apply else [])])
+
+@native("queue main-capacity", writes=True, help=H(
+    "Verify a macOS runner capacity failure and optionally dispatch the full macOS main lane.",
+    "Use for the exact original split-main pair before a replacement exists.",
+    "Without --dispatch, reads evidence only. With --dispatch, records one intent and requests lane=macos on main.",
+    "sm queue main-capacity --head SHA --push-run RUN --macos-run RUN --dispatch", "sm queue why",
+    "A replay only reads back the recorded run. An ambiguous response never sends another request. Queue and release "
+    "admission still use their existing rules."))
+def queue_main_capacity(
+    head: str = typer.Option(..., "--head", help="Exact current main commit."),
+    push_run: int = typer.Option(..., "--push-run", min=1, help="Original Linux push run."),
+    macos_run: int = typer.Option(..., "--macos-run", min=1, help="Original coalesced macOS dispatch."),
+    dispatch: bool = typer.Option(False, "--dispatch", help="Send one official full macOS dispatch."),
+) -> QueueMain:
+    rt = runtime()
+
+    def authorize() -> None:
+        if hzlib.merge_frozen() or queue_hold.current(rt):
+            raise Refuse("a release, incident or operator hold blocks the dispatch", "sm queue why")
+
+    def post(workflow: str):
+        return hzlib.ghj(
+            "api", "--method", "POST", "-H", "X-GitHub-Api-Version: 2026-03-10",
+            f"repos/{hzlib.CORE}/actions/workflows/{workflow}/dispatches", "-f", "ref=main",
+            "-f", "inputs[lane]=macos", default=None,
+        )
+
+    try:
+        if not dispatch:
+            proof = main_capacity_recovery.assess(head, push_run, macos_run, api=main_checkpoint.get,
+                                                  read_log=main_capacity.read_aggregate_log)
+            return QueueMain(action="main-capacity", lines=[f"Capacity-only original macOS run {macos_run}."],
+                             proof={"head": head, "jobs": list(proof.jobs), "inventory_sha256": proof.inventory_sha256})
+        found = main_capacity_recovery.dispatch(
+            rt.providers.store, head, push_run, macos_run, api=main_checkpoint.get,
+            read_log=main_capacity.read_aggregate_log, now=lambda: datetime.fromtimestamp(rt.providers.clock.now(), UTC),
+            authorize=authorize, post=post,
+        )
+        return QueueMain(action="main-capacity", proof=found, lines=[f"Bound full macOS replacement run {found['run']} ({found['status']}): {found['url']}"])
+    except (ValueError, OSError, KeyError, TypeError) as error:
+        raise Refuse(f"main capacity recovery refused: {error}", "sm queue why") from None
