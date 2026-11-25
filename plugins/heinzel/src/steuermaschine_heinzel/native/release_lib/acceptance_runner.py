@@ -72,16 +72,16 @@ def policy(value: Any, label: str) -> dict[str, Any]:
     return value
 
 
-def bind(rel: Any, snapshot: dict[str, Any], commit: str, expected_head: str, label: str) -> dict[str, Any]:
+def bind(core: str, read_api: Any, snapshot: dict[str, Any], commit: str, expected_head: str, label: str) -> dict[str, Any]:
     """Read policy and both immutable source generations, never a working tree or mutable policy."""
     require(isinstance(expected_head, str) and SHA.fullmatch(expected_head) and commit == expected_head
             and commit != snapshot["commit"], "alternate acceptance requires the exact reviewed corrected-main head")
     reviewed = core_facts.at(commit)
-    require(reviewed.repository == rel.CORE, "acceptance policy repository differs")
+    require(reviewed.repository == core, "acceptance policy repository differs")
     selected = policy(reviewed.acceptance, label)
     require(selected["workflow"] == ".github/workflows/acceptance.yml", "acceptance policy does not describe the dispatched workflow")
     def get(path: str) -> Any:
-        result = rel.hzlib.ghj("api", f"repos/{rel.CORE}/{path}", default=None)
+        result = read_api("api", f"repos/{core}/{path}", default=None)
         require(result is not None, "acceptance source unavailable")
         return result
     for path, source_commit, expected in (

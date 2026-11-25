@@ -1505,7 +1505,7 @@ def acceptance_identity(version: str, snapshot: dict | None, ref: str | None = N
         if ref != "main" or snapshot is None:
             raise Stop("alternate acceptance requires an immutable snapshot and explicit corrected main")
         try:
-            binding = release_acceptance_runner.bind(sys.modules[__name__], captured, commit, reviewed_head, runner_label)
+            binding = release_acceptance_runner.bind(CORE, hzlib.ghj, captured, commit, reviewed_head, runner_label)
         except core_facts.CandidateError as exc:
             raise Stop(str(exc)) from None
     elif not release_snapshot.workflow_supports_snapshot(commit):
@@ -1569,6 +1569,7 @@ def acceptance_step(version: str, timeout: float, snapshot: dict | None = None,
     """Every path uses the same persisted marker and resolved harness identity."""
     data = state()
     identity = data.get("acceptance_identity")
+    replacement_updates = None
     if runner_label is not None:
         try:
             release_acceptance_runner.request_state(data, version, runner_label, reviewed_head, replace_run)
@@ -1642,7 +1643,10 @@ def acceptance_step(version: str, timeout: float, snapshot: dict | None = None,
                        acceptance_run_id=None, acceptance_run_attempt=None, acceptance_requested=False)
         if runner_label is not None and len(json.dumps(state() | updates).encode()) > release_rejection.LIMIT:
             raise Stop("alternate acceptance archive would exceed the receipt size limit")
-        remember(**updates)
+        if runner_label is not None:
+            replacement_updates = updates  # Keep the exact rejected receipt active until the last no-send check passes.
+        else:
+            remember(**updates)
         identity = replacement
     if identity is None:
         # Never silently adopt the legacy timestamp-only attempt or overwrite its rejection.
@@ -1650,26 +1654,34 @@ def acceptance_step(version: str, timeout: float, snapshot: dict | None = None,
             raise Stop("legacy acceptance has no bound identity; preserve it for explicit recovery")
         identity = acceptance_identity(version, snapshot, harness_ref)
         remember(acceptance_identity=identity, snapshot=identity["snapshot"], acceptance_snapshot_mode=snapshot is not None)
-    if state().get("acceptance_commit") not in (None, identity["commit"]):
+    if replacement_updates is None and state().get("acceptance_commit") not in (None, identity["commit"]):
         raise Stop("acceptance marker belongs to a different harness commit")
 
     def act() -> None:
-        if ours(CORE, "acceptance.yml", "acceptance") or state().get("acceptance_requested"):
+        nonlocal replacement_updates
+        if replacement_updates is None and (ours(CORE, "acceptance.yml", "acceptance") or state().get("acceptance_requested")):
             return
-        marker = "release-" + uuid.uuid4().hex
-        remember(acceptance_marker=marker, acceptance_commit=identity["commit"], acceptance_requested=True)
         pinned = identity["snapshot"]
         extra = {}
         if binding := identity.get("runner"):
             code, current = hzlib.gh("api", f"repos/{CORE}/commits/main", "--jq", ".sha")
             if code or current.strip() != identity["commit"]:
-                raise Stop("reviewed main moved before alternate acceptance dispatch; intent retained")
+                raise Stop("reviewed main cannot be confirmed before alternate acceptance; no request sent, original receipt retained")
             extra["macos_runner"] = binding["label"]
+        marker = "release-" + uuid.uuid4().hex
+        request = {**(replacement_updates or {}), "acceptance_marker": marker,
+                   "acceptance_commit": identity["commit"], "acceptance_requested": True}
+        if replacement_updates is not None and len(json.dumps(state() | request).encode()) > release_rejection.LIMIT:
+            raise Stop("alternate acceptance archive would exceed the receipt size limit")
+        remember(**request)
+        replacement_updates = None  # Any failure from here may have crossed the network: reconcile, never re-POST.
         dispatch(CORE, "acceptance.yml", identity["ref"], "acceptance", expected_version=version,
                  expected_app_version=identity["app_version"], expected_wheel_sha256=pinned["wheel_sha256"],
                  expected_profile_sha256=pinned["profile_sha256"], release_attempt=marker, **extra)
 
     def done() -> bool:
+        if replacement_updates is not None:
+            return False
         run = ours(CORE, "acceptance.yml", "acceptance")
         if run and snapshot is not None:
             release_snapshot_freeze()
@@ -3314,7 +3326,8 @@ def main(argv: list[str]) -> int:
                 or args.acceptance_ref != "main" or not args.replace_acceptance_run or not args.snapshot_acceptance
                 or not args.version or not EXACT_VERSION.fullmatch(args.version) or args.plugin or args.pause or args.prepare_only
                 or args.absorb or args.reject_release or args.drop_candidate or args.candidate_capacity
-                or args.reviewed_queue or args.use_candidate_composite or args.open_pr or args.refresh or args.candidate_gate):
+                or args.reviewed_queue or args.use_candidate_composite or args.open_pr or args.refresh or args.candidate_gate
+                or args.waive_job is not None or args.owner_quote is not None):
         parser.error("alternate acceptance requires exact version, --snapshot-acceptance, --acceptance-ref main, --replace-acceptance-run, --acceptance-head and --acceptance-runner")
     if args.replace_reason is not None and not args.replace_acceptance_run:
         parser.error("--replace-reason requires --replace-acceptance-run")

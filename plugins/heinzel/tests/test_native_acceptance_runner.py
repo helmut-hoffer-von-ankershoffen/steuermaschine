@@ -3,6 +3,7 @@
 import base64
 import hashlib
 import json
+import sys
 from types import SimpleNamespace
 
 import policy_kit as kit
@@ -55,7 +56,7 @@ def source(contract, monkeypatch):
 
 
 def test_reads_reviewed_main_and_original_tagged_source(source, contract):
-    binding = alt.bind(source, SNAPSHOT, HEAD, HEAD, LABEL)
+    binding = alt.bind(source.CORE, source.hzlib.ghj, SNAPSHOT, HEAD, HEAD, LABEL)
     assert binding == {"label": LABEL, "head": HEAD, "policy": contract}
     assert set(source.calls) == {(HEAD, contract["workflow"]), (HEAD, contract["harness"]), (TAG, contract["workflow"])}
     assert alt.supports_snapshot(source, HEAD)
@@ -89,7 +90,7 @@ def test_unreviewed_or_mismatched_source_refuses_before_dispatch(source, contrac
     elif wrong == "shards":
         contract["shards"].pop()
     with pytest.raises(CandidateError):
-        alt.bind(source, SNAPSHOT, HEAD, expected, LABEL)
+        alt.bind(source.CORE, source.hzlib.ghj, SNAPSHOT, HEAD, expected, LABEL)
 
 
 def test_existing_manifest_without_optional_acceptance_still_reads(contract):
@@ -246,10 +247,10 @@ def test_alternate_replacement_archives_receipt_and_dispatches_once(tmp_path, mo
         assert path.read_bytes() == original and not calls
         return
     if main_moved:
-        with pytest.raises(runner.Stop, match="main moved"):
+        with pytest.raises(runner.Stop, match="no request sent, original receipt retained"):
             runner.acceptance_step("0.9.55", 0, SNAPSHOT, "main", 111, runner_label=LABEL, reviewed_head=HEAD)
-        assert not calls and state["acceptance_requested"] is True and state["acceptance_identity"] == bound
-        assert base64.b64decode(state["acceptance_attempts"][0]["receipt_base64"]) == original
+        assert not calls and path.read_bytes() == original
+        assert state["acceptance_identity"]["commit"] == TAG and state["finished"] is True
         return
     assert runner.acceptance_step("0.9.55", 0, SNAPSHOT, "main", 111, runner_label=LABEL, reviewed_head=HEAD) == 112
     assert len(calls) == 1 and calls[0][1]["macos_runner"] == LABEL
@@ -288,3 +289,122 @@ def test_alternate_option_cannot_start_a_new_release(monkeypatch):
     with pytest.raises(runner.Stop, match="existing exact published snapshot"):
         runner.release_core("0.9.56", "", 0, snapshot_acceptance=True, harness_ref="main", replace_run=111,
                             runner_label=LABEL, reviewed_head=HEAD)
+
+
+@pytest.fixture
+def native_route(tmp_path, monkeypatch, source):
+    from test_native_release_writes import make
+
+    from steuermaschine.github.testing import FakeGh
+    from steuermaschine_heinzel.native import release as area
+
+    rt = make(tmp_path, monkeypatch, FakeGh())
+    receipt = tmp_path / "tail.json"
+    original = {"version": "0.9.55", "finished": True, "accepted": False, "acceptance_snapshot_mode": True,
+                "acceptance_identity": {"version": "0.9.55", "app_version": "0.9.55", "snapshot": SNAPSHOT,
+                                        "ref": "v0.9.55", "commit": TAG},
+                "acceptance_run_id": 111, "acceptance_run_attempt": 1, "acceptance_marker": "release-old", "snapshot": SNAPSHOT}
+    receipt.write_text(json.dumps(original))
+    receipt.chmod(0o600)
+    phase = {"head": HEAD, "no_send": True, "reads": 0}
+    posts, modules = [], []
+    factory = area.runner
+
+    def prepare():
+        module = factory()  # Actual native loader: fresh, intentionally absent from sys.modules.
+        modules.append(module)
+        module.state = lambda: json.loads(receipt.read_bytes())
+        def remember(**fields):
+            receipt.write_text(json.dumps(module.state() | fields))
+        module.remember = remember
+        module.paths = lambda: (None, receipt)
+        module.tail_receipt = lambda version: receipt
+        for name in ("route_to_tail", "free_tail_lock", "free_global_lock", "acquire_global_lock", "rejection_guard", "release_snapshot_freeze"):
+            setattr(module, name, lambda *args: None)
+        module.record_waiver = lambda *args: pytest.fail("waiver side effect on alternate acceptance path")
+        module.rerun_rejection = lambda *args: None
+        module.verdict = lambda *args: (False, ["original rejection"])
+        def ours(*args):
+            found = module.state().get("acceptance_run_id")
+            return {"databaseId": found, "status": "completed"} if found else None
+        module.ours = ours
+        module.hzlib.ghj = source.hzlib.ghj
+        def gh(*args):
+            if args[0] == "api":
+                phase["reads"] += 1
+                moved = phase["no_send"] and phase["reads"] % 2 == 0
+                return (1, "") if moved and phase.get("read_failure") else (0, TAG if moved else phase["head"])
+            assert args[:3] == ("workflow", "run", "acceptance.yml")
+            posts.append(args)
+            assert module.state()["acceptance_requested"] is True
+            if phase.get("ambiguous"):
+                return 1, ""
+            remember(acceptance_run_id=112, acceptance_run_attempt=1)
+            return 0, ""
+        module.hzlib.gh = gh
+        def release_core(version, intro, timeout, snapshot, ref, replaced, **options):
+            module.acceptance_step(version, 0, SNAPSHOT, ref, replaced,
+                                   runner_label=options["runner_label"], reviewed_head=options["reviewed_head"])
+            return 0
+        module.release_core = release_core  # Only omit the already-published release prelude, not binding/dispatch.
+        return module
+    monkeypatch.setattr(area, "runner", prepare)
+    monkeypatch.setattr(area.release_stages, "open_window", lambda *args: False)
+    monkeypatch.setattr(area.release_stages, "close_window", lambda *args: None)
+    return SimpleNamespace(rt=rt, receipt=receipt, phase=phase, posts=posts, modules=modules)
+
+
+def native_args(head=HEAD):
+    return ["release", "resume", "0.9.55", "--snapshot-acceptance", "--acceptance-ref", "main",
+            "--replace-acceptance-run", "111", "--acceptance-head", head, "--acceptance-runner", LABEL]
+
+
+@pytest.mark.parametrize("read_failure", [False, True])
+def test_real_native_fresh_runner_no_send_can_resume_with_new_reviewed_head(native_route, source, read_failure):
+    from steuermaschine.testing import invoke
+
+    before = native_route.receipt.read_bytes()
+    native_route.phase["read_failure"] = read_failure
+    first = invoke(native_route.rt, native_args())
+    assert first.exit_code == 1 and "no request sent, original receipt retained" in first.stdout + first.stderr
+    assert native_route.receipt.read_bytes() == before and native_route.posts == []
+    newer = "e" * 40
+    source.blobs.update({(newer, path): raw for (head, path), raw in list(source.blobs.items()) if head == HEAD})
+    native_route.phase.update(head=newer, no_send=False)
+    second = invoke(native_route.rt, native_args(newer))
+    assert second.exit_code == 0, second.stdout + second.stderr
+    state = json.loads(native_route.receipt.read_bytes())
+    assert state["acceptance_identity"]["commit"] == newer and len(native_route.posts) == 1
+    assert base64.b64decode(state["acceptance_attempts"][0]["receipt_base64"]) == before
+    assert invoke(native_route.rt, native_args(newer)).exit_code == 0
+    assert len(native_route.posts) == 1
+    assert len({module.__name__ for module in native_route.modules}) == 3
+    assert all(module.__name__ not in sys.modules for module in native_route.modules)
+    assert all(module.hzlib.sleep == native_route.rt.providers.clock.sleep for module in native_route.modules)
+
+
+def test_native_ambiguous_dispatch_is_never_repeated_by_a_fresh_invocation(native_route):
+    from steuermaschine.testing import invoke
+
+    native_route.phase.update(no_send=False, ambiguous=True)
+    first = invoke(native_route.rt, native_args())
+    assert first.exit_code == 1 and "dispatching acceptance.yml failed" in first.stdout + first.stderr
+    pending = native_route.receipt.read_bytes()
+    assert json.loads(pending)["acceptance_requested"] is True and len(native_route.posts) == 1
+    native_route.phase["ambiguous"] = False
+    second = invoke(native_route.rt, native_args())
+    assert second.exit_code == 1 and "timed out" in second.stdout + second.stderr
+    assert native_route.receipt.read_bytes() == pending and len(native_route.posts) == 1
+
+
+@pytest.mark.parametrize("waiver", [["--waive-job", "Tests=bead"], ["--owner-quote", "quote"],
+                                   ["--waive-job", "Tests=bead", "--owner-quote", "quote"],
+                                   ["--waive-job", ""], ["--owner-quote", ""]])
+def test_native_alternate_rejects_waivers_before_side_effects(native_route, waiver):
+    from steuermaschine.testing import invoke
+
+    before = native_route.receipt.read_bytes()
+    response = invoke(native_route.rt, [*native_args(), *waiver])
+    assert response.exit_code == 2
+    assert native_route.receipt.read_bytes() == before and not native_route.posts
+    assert native_route.phase["reads"] == 0
