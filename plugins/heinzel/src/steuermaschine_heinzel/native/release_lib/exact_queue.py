@@ -205,15 +205,6 @@ def prepare(version: str, token: str, pr: int) -> Candidate:
         return candidate
 
 
-def reviewed_freeze_active() -> bool:
-    if not hzlib.release_holds_present():
-        return False
-    try:
-        return active_receipt().get("merge_route") == MODE
-    except ExactReleaseError:
-        return True
-
-
 def queue_candidate(item: dict) -> Candidate | None:
     """Only the queued, independently reviewed head of the active exact release can cross its own hold."""
     if item.get("repo") != hzlib.CORE or not item.get("reviewed_head") or not hzlib.release_holds_present():

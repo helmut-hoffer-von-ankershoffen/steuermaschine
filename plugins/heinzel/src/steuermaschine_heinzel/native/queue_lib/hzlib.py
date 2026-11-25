@@ -3,6 +3,7 @@
 import importlib.machinery
 import importlib.util
 import json
+import os
 import re
 import stat
 import subprocess
@@ -92,6 +93,41 @@ def incident_frozen(legacy: Path | None = None) -> bool:
 def merge_frozen(legacy: Path | None = None) -> bool:
     """Honor the shared incident hold and every release-owned hold."""
     return incident_frozen(legacy) or release_holds_present()
+
+
+def core_owned_release_hold() -> bool:
+    """The sole hold belongs to the active Core receipt. Anything uncertain stays global."""
+    from .release_candidate import unique_object
+
+    root, receipt = release_holds(), statedir.path("release.json")
+    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+    try:
+        with os.fdopen(os.open(receipt, flags), "rb") as stream:
+            recorded = os.fstat(stream.fileno())
+            if not stat.S_ISREG(recorded.st_mode) or recorded.st_size > 64 * 1024:
+                return False
+            data = json.loads(stream.read(64 * 1024 + 1), object_pairs_hook=unique_object)
+        token, version = data["freeze_token"], data["version"]
+        if (not isinstance(token, str) or not re.fullmatch(r"[0-9a-f]{32}", token)
+                or not isinstance(version, str) or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version)
+                or data.get("finished", False) is not False):
+            return False
+        directory = os.open(root, os.O_RDONLY | os.O_NOFOLLOW | os.O_DIRECTORY)
+        try:
+            if os.listdir(directory) != [token]:
+                return False
+            with os.fdopen(os.open(token, flags, dir_fd=directory), "rb") as stream:
+                hold = os.fstat(stream.fileno())
+                if not stat.S_ISREG(hold.st_mode) or stream.read(len(version) + 1) != version.encode("ascii"):
+                    return False
+            return (os.listdir(directory) == [token]
+                    and os.path.samestat(hold, os.stat(token, dir_fd=directory, follow_symlinks=False))
+                    and os.path.samestat(os.fstat(directory), root.lstat())
+                    and os.path.samestat(recorded, receipt.lstat()))
+        finally:
+            os.close(directory)
+    except (AttributeError, KeyError, OSError, TypeError, ValueError):
+        return False
 
 
 RULES_TTL = 120.0  # seconds: one queue tick reads each repository's rules once

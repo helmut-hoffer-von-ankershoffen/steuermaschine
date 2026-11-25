@@ -8,7 +8,7 @@ One tick, for each queued entry whose `after` PRs merged:
 
     MERGED on GitHub          -> the row is merged (merge commit recorded, bead stamped)
     CLOSED, or the head moved -> needs work (the diff guard read another head: ship it again)
-    merge freeze (Core only)  -> auto-merge switched off on the PR; armed again once the freeze lifts
+    applicable merge freeze  -> auto-merge switched off on the PR; armed again once the freeze lifts
     main red or unknown       -> not armed (a PR that fixes main goes alone); an armed one is switched off
     checks not settled/failed -> `queue_daemon.assess` (the train's checks, every repository): wait, or needs work
     tool-required checks      -> `hzlib.tool_required_checks` (a private repository has no ruleset) not passed: wait
@@ -21,10 +21,9 @@ pinned head, main an ancestor of it, and a recorded independent verdict for prot
 ruleset requires). The rule is read again every tick on an armed PR: one that no longer meets it is switched off. The red-main hold is the old `gate()`: main's latest run not green or unknown holds all
 Core arming except a PR that fixes main (fixes_main, fix-forward, or a reviewed safety fix, mitigation, diagnostic).
 
-The freeze is the release freeze (8i4oi): a release hold, the incident sentinel, or an open release/* PR of Core.
-Unreadable evidence holds (fails closed). The opt-in reviewed release freeze holds the whole sm queue except
-its one approved candidate. That candidate uses an immediate protected squash after rechecking its evidence.
-An ordinary Core release freeze continues to cover Core only.
+The shared incident sentinel or uncertain hold freezes every repository. A verified Core-owned hold leaves
+independent tooling free to merge. An open release/* PR also holds Core. The reviewed release's exact candidate
+uses an immediate protected squash after rechecking its evidence.
 """
 
 from __future__ import annotations
@@ -52,19 +51,17 @@ def release_pr_open() -> str:
     return f"release PR #{hit.get('number')} is open" if hit else ""
 
 
-def frozen(repo: str) -> str:
-    """Why REPO may not merge now, or ''. Only Core is held by the release freeze."""
-    if repo != hzlib.CORE:
-        return ""
-    if hzlib.merge_frozen():
-        return "merge freeze is on"
-    return release_pr_open()
-
-
 def freeze_without_candidate(repo: str) -> str:
-    if exact_queue.reviewed_freeze_active():
-        return "only the reviewed release candidate can merge during its owned freeze"
-    return frozen(repo)
+    """One hold policy for queued arms and direct merges outside the queue."""
+    from ..ship_lib.repos import UNQUEUED
+
+    if hzlib.incident_frozen():
+        return "merge freeze is on"
+    if hzlib.release_holds_present():
+        tooling = repo.lower() in {known.lower() for known in UNQUEUED}
+        if not tooling or not hzlib.core_owned_release_hold() or hzlib.incident_frozen():
+            return "merge freeze is on"
+    return release_pr_open() if repo.lower() == hzlib.CORE.lower() else ""
 
 
 def arm(repo: str, number: str, head: str) -> tuple[bool, str]:
