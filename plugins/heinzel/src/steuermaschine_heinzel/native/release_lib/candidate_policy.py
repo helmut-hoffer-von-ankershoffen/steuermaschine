@@ -1,7 +1,6 @@
 """Require the independently reviewed full Core candidate before the existing exact-head merge."""
 
 import re
-import subprocess
 
 from ..queue_lib import core_policy, hzlib, job_proof, release_candidate
 from . import edge  # moved: records, processes and what used to be separate scripts

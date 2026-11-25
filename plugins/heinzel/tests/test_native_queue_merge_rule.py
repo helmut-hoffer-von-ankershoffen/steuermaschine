@@ -50,7 +50,7 @@ NOT_FOUND = (1, '{"message":"Not Found","status":"404"}')
 
 
 def blob(path: str, version: str = "1") -> str:
-    return hashlib.sha1(f"{path}:{version}".encode()).hexdigest()  # noqa: S324 - a stand-in for a git blob id
+    return hashlib.sha1(f"{path}:{version}".encode()).hexdigest()
 
 
 class World:
@@ -70,8 +70,10 @@ class World:
             return (1, "") if self.ruleset == "unreadable" else (0, json.dumps(self.ruleset))
         if "/compare/" in text:
             return 0, json.dumps({"status": self.status})
+        if text.endswith("/pulls/803"):
+            return 0, json.dumps({"state": "open", "head": {"sha": self.head}, "base": {"sha": MAIN, "ref": "main"}, "changed_files": len(self.files)})
         if "/pulls/" in text and "/files" in text:
-            return 0, "".join(f"{name}\t{blob(name, self.version)}\tmodified\n" for name in self.files)
+            return 0, json.dumps([[{"filename": name, "sha": blob(name, self.version), "status": "modified"} for name in self.files]])
         if "contents/" in text:
             path, _, ref = text.split("contents/")[1].partition("?ref=")
             found = self.texts.get((path, ref))
@@ -240,7 +242,7 @@ def test_unreadable_facts_fail_closed_with_the_rule_named(gap):
             return 1, ""
 
     assert gap(Broken()).startswith("merge rule: cannot check #803")
-    assert gap(World(files=[])) == ""  # no changed file: nothing protected
+    assert "empty or unreadable" in gap(World(files=[]))
 
 
 def test_the_protected_matcher_and_digest_are_one_definition():
@@ -268,3 +270,80 @@ def test_a_ruleset_that_requires_gate_review_does_not_replace_the_recorded_verdi
     approve(rt, [".github/workflows/ci.yml"])
     with native(rt):
         assert main_plan.gap("803", HEAD) == ""
+
+
+def test_hosted_registration_needs_independent_scoped_verdict_and_matching_base(gap, monkeypatch):
+    from steuermaschine_heinzel.native import release_read
+    from steuermaschine_heinzel.native.release_lib import candidate_policy
+
+    world = World(files=["uv.lock"])
+    tree = "c" * 40
+    digest = protected.record({"uv.lock": blob("uv.lock")})[0]
+    from steuermaschine_heinzel.native.release_lib import exact_queue
+    from steuermaschine_heinzel.pipelines import full_ci
+
+    monkeypatch.setattr(exact_queue, "source_producers", lambda *args: ("1.2.3", {"source-builder"}))
+    monkeypatch.setattr(full_ci, "validate_generated_release", lambda *args: {})
+    evidence = dict(head=HEAD, base=MAIN, tree=tree, run_id=1234, run_attempt=1, job_count=40)
+    monkeypatch.setattr(candidate_policy, "verify_pr", lambda number: evidence)
+    monkeypatch.setattr(hzlib, "gh", world)
+    store = gap.rt.providers.store
+    with native(gap.rt):
+        for args in [(HEAD, MAIN, tree, "d" * 64), (MAIN, MAIN, tree, digest),
+                     (HEAD, HEAD, tree, digest), (HEAD, MAIN, HEAD, digest)]:
+            with pytest.raises(release_read.Refuse):
+                release_read.prepare_protected(803, *args)
+        registration = release_read.prepare_protected(803, HEAD, MAIN, tree, digest)
+    assert gap(world) and verdicts.check_receipt(store, HEAD)[0] is None
+    verdicts.record_head_verdict(store, digest, HEAD, {"reviewer": "source-builder", "verdict": "approve", "scope": registration.scope})
+    assert "missing independent" in gap(world)
+    data = {"reviewer": "independent", "verdict": "approve", "scope": registration.scope}
+    verdicts.record_head_verdict(store, digest, HEAD, data)
+    assert gap(world) == ""
+
+    def truncated(*args):
+        return (0, "[[]]") if "/files?" in " ".join(args) else world(*args)
+
+    assert "incomplete" in gap(truncated)
+    assert verdicts.head_verdict(store, digest, HEAD) is None
+    assert verdicts.head_verdict(store, digest, HEAD, main_plan.release_scope("803", tree)) is None
+    verdicts.record_head_verdict(store, digest, HEAD, {"reviewer": "another", "verdict": "reject"})
+    assert "reject" in gap(world)
+
+@pytest.mark.parametrize("old,new", [("Makefile", "other.txt"), ("other.txt", "Makefile")])
+def test_rename_review_includes_protected_source_and_destination(gap, monkeypatch, old, new):
+    world = World(files=[new, "uv.lock"])
+    rows = [{"filename": new, "previous_filename": old, "sha": blob(new), "status": "renamed"},
+            {"filename": "uv.lock", "sha": blob("uv.lock"), "status": "modified"}]
+
+    def renamed(*args):
+        return (0, json.dumps([rows])) if "/files?" in " ".join(args) else world(*args)
+
+    assert "Makefile" in gap(renamed)
+    with native(gap.rt):
+        blobs = main_plan.protected_blobs("803", HEAD, MAIN)
+    assert blobs == {"Makefile": "removed" if old == "Makefile" else blob(new), "uv.lock": blob("uv.lock")}
+    approve(gap.rt, ["uv.lock"])
+    assert "no verdict is recorded" in gap(renamed)
+    digest, _ = protected.record(blobs)
+    verdicts.record_head_verdict(gap.rt.providers.store, digest, HEAD, {"verdict": "approve", "reviewer": "reader"})
+    assert gap(renamed) == ""
+
+
+@pytest.mark.parametrize("field", ["head", "base", "changed_files"])
+def test_inventory_movement_during_file_collection_refuses(gap, field):
+    world = World()
+    snapshots = 0
+
+    def moving(*args):
+        nonlocal snapshots
+        rc, data = world(*args)
+        if " ".join(args).endswith("/pulls/803"):
+            snapshots += 1
+            if snapshots == 2:
+                updated = json.loads(data)
+                updated[field] = 2 if field == "changed_files" else {"sha": "c" * 40}
+                data = json.dumps(updated)
+        return rc, data
+
+    assert "changed during" in gap(moving)

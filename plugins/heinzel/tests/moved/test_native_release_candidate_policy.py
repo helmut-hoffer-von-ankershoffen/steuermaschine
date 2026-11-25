@@ -88,7 +88,7 @@ def test_bad_head_stops_before_any_run_discovery(monkeypatch):
 def test_candidate_artifact_download_failure_is_not_accepted(monkeypatch):
     monkeypatch.setattr(policy.hzlib, "ghj", lambda *args, **kwargs: {"head": {"sha": HEAD}, "commit": {"tree": {"sha": TREE}}})
     monkeypatch.setattr(release_candidate, "discover", lambda *args: 99)
-    monkeypatch.setattr(policy.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(returncode=1, stdout=b""))
+    monkeypatch.setattr(policy.edge, "run", lambda *args, **kwargs: SimpleNamespace(returncode=1, stdout=b""))
     monkeypatch.setattr(release_candidate, "verify", lambda get, download, *args: download(1))
     with pytest.raises(release_candidate.CandidateError, match="artifact unavailable"):
         policy.verify_pr(17)

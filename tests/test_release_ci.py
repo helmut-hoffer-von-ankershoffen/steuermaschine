@@ -87,6 +87,31 @@ def no_cz(*cmd, **kw):  # commitizen unavailable: the patch-bump fallback
     return rc.sh(*cmd, **kw)
 
 
+@pytest.mark.parametrize(("proposed", "expected"), [
+    ("0.2.0", "0.2.0"), ("0.1.0", "0.1.1"), ("0.0.9", "0.1.1"), ("unknown", "0.1.1"),
+])
+def test_next_version_uses_release_tags_instead_of_the_package_version(repo, proposed, expected):
+    git(repo, "tag", "v0.1.0", "HEAD~1")
+    pyproject = repo / "pyproject.toml"
+    source = ('[project]\nversion = "0.0.2"\n[tool.commitizen]\nversion_provider = "uv"\n'
+              'major_version_zero = true\ntag_format = "v$version"\n')
+    pyproject.write_text(source)
+
+    def run(*cmd, **kw):
+        if cmd[0] == "uv":
+            config = Path(cmd[cmd.index("--config") + 1])
+            assert json.loads(config.read_bytes()) == {"commitizen": {
+                "version_provider": "scm", "major_version_zero": True, "tag_format": "v$version",
+            }}
+            assert cmd[-3:] == ("bump", "--get-next", "--yes")
+            return proposed
+        return rc.sh(*cmd, **kw)
+
+    assert rc.next_version(repo, run) == expected
+    assert rc.next_version(repo, run) == expected  # the same commit and tags resume at the same version
+    assert pyproject.read_text() == source
+
+
 def test_a_green_merge_with_a_verdict_is_released(repo):
     sha = git(repo, "rev-parse", "HEAD")
     out = rc.gate(repo, sha, fake_api(sha, repo=repo), no_cz)
@@ -513,7 +538,7 @@ def test_the_follower_downloads_only_pypi_files(tmp_path):
         rc.download("https://example.org/x.whl", tmp_path / "x.whl")
 
 
-UVX = 'uvx --refresh --python 3.15 --from "steuermaschine==$VERSION" --with "steuermaschine-heinzel==$VERSION" sm -h'
+UVX = 'uvx --python 3.15 --from "steuermaschine==$VERSION" --with "steuermaschine-heinzel==$VERSION"'
 
 
 def test_the_workflow_releases_both_packages_in_lockstep_and_marks_latest_only_after_acceptance():
@@ -524,6 +549,10 @@ def test_the_workflow_releases_both_packages_in_lockstep_and_marks_latest_only_a
     assert flow.count("skip-existing: true") == 2 and "workflow_dispatch" not in flow
     assert "uv version --package steuermaschine-heinzel" in flow and "Requires-Dist: steuermaschine==${VERSION}" in flow
     assert "timings.json" in flow
+    assert flow.index("cd \"$(mktemp -d)\"") < flow.index("> steuermaschine.toml") < flow.index("sm_from_pypi --refresh sm -h")
+    assert "--no-build-package steuermaschine --no-build-package steuermaschine-heinzel" in flow
+    assert 'grep -Fxq "project: release-smoke   plugin: heinzel (loaded)" config.txt' in flow
+    assert 'grep -q "^R sm alarm list" tree.txt' in flow
 
 
 # ----------------------------------------------------------------------------- the gate: a squash of a branch behind main

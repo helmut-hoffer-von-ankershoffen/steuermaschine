@@ -9,7 +9,8 @@ concurrency:
 permissions:
   contents: read
 jobs:
-  check:
+  integration:
+    name: Integration checks
     permissions:
       contents: read
       pull-requests: read
@@ -86,19 +87,20 @@ jobs:
       - name: SonarQube Cloud token present?
         id: sonar
         run: echo "token=${{ secrets.SONAR_TOKEN != '' }}" >> "$GITHUB_OUTPUT"
-      - name: SonarQube Cloud
-        if: steps.sonar.outputs.token == 'true'
+      - name: SonarQube Cloud skipped
+        if: github.event_name == 'push' && steps.sonar.outputs.token != 'true'
+        run: echo "::notice::SonarQube Cloud skipped - the SONAR_TOKEN secret is not set"
+      - name: Submit main analysis to SonarQube Cloud
+        # Release consumes the push CI conclusion. Main analysis stays asynchronous.
+        if: github.event_name == 'push' && steps.sonar.outputs.token == 'true'
         uses: SonarSource/sonarqube-scan-action@59202af334b4ba7b5db01b701b8e79f8b3bef0f4 # v8.5.0
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-      - name: SonarQube Cloud skipped
-        if: steps.sonar.outputs.token != 'true'
-        run: echo "::notice::SonarQube Cloud skipped - the SONAR_TOKEN secret is not set"
 
   test:
-    # The supported Python, 3.15: Linux on every run, plus macOS on main. The `check` job above is the full gate (lint,
-    # types, coverage, secrets) on Linux; these cells run the suite only.
-    name: Test (${{ matrix.os }}, Python ${{ matrix.python }})
+    # On PRs this is the existing second Linux test lane, now measuring coverage
+    # on the exact head for Sonar. Integration checks still test the merge tree.
+    name: ${{ github.event_name == 'pull_request' && 'SonarQube Cloud Quality Gate' || format('Test ({0}, Python {1})', matrix.os, matrix.python) }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
@@ -106,13 +108,15 @@ jobs:
       matrix:
         os: [ubuntu-24.04]
         python: ["3.15"]
-        include: ${{ fromJSON(github.event_name == 'push' && github.ref == 'refs/heads/main' && '[{"os":"macos-latest","python":"3.15"}]' || '[]') }}
+        include: ${{ fromJSON(github.event_name == 'push' && github.ref == 'refs/heads/main' && '[{"os":"macos-15","python":"3.15"}]' || '[]') }}
     env:
       # uv's own Python builds, as the stable install uses, never a runner's system Python.
       UV_PYTHON_PREFERENCE: only-managed
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: ${{ github.event_name == 'pull_request' && '0' || '1' }}
           persist-credentials: false
       - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
         with:
@@ -121,13 +125,65 @@ jobs:
           enable-cache: true
       # PyYAML (a commitizen dependency, unused by the tests) has no wheel for 3.15 yet: skip it instead of building.
       - run: uv sync --all-packages --locked --no-build --no-install-package pyyaml
+      - name: Require native Apple Silicon Python 3.15
+        if: matrix.os == 'macos-15'
+        run: |
+          uv run --no-sync python -c 'import platform,sys; sys.exit(0 if platform.mac_ver()[0].split(".")[0] == "15" and platform.machine() == "arm64" and sys.version_info[:2] == (3, 15) else "Expected macOS 15 arm64 and Python 3.15")'
       - name: Tests
+        if: github.event_name == 'push'
         run: env -u GITHUB_ACTIONS -u FORCE_COLOR -u PY_COLORS uv run --no-sync pytest -q -p no:cacheprovider
+      - name: Measure coverage on the exact pull request head
+        if: github.event_name == 'pull_request'
+        env:
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$PR_HEAD"
+          # Integration's make check enforces its coverage floor. This report gives Sonar exact-head coverage.
+          env -u GITHUB_ACTIONS -u FORCE_COLOR -u PY_COLORS uv run --no-sync pytest -q -p no:cacheprovider \
+            --cov=src --cov=plugins/heinzel/src --cov=bin --cov-report= --cov-fail-under=0
+          # Report with the repository config so XML filenames retain the source directories.
+          uv run --no-sync coverage xml --fail-under=0
+          test -s coverage.xml
+          test "$(git rev-parse HEAD)" = "$PR_HEAD"
+          git diff --quiet HEAD --
+      - name: Verify this pull request's Sonar quality gate
+        id: sonar-analysis
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        uses: SonarSource/sonarqube-scan-action@59202af334b4ba7b5db01b701b8e79f8b3bef0f4 # v8.5.0
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        with:
+          args: >-
+            -Dsonar.qualitygate.wait=true
+            -Dsonar.scm.revision=${{ github.event.pull_request.head.sha }}
+      - name: Require a verified pull request verdict
+        if: github.event_name == 'pull_request' && !cancelled()
+        env:
+          SCAN_OUTCOME: ${{ steps.sonar-analysis.outcome }}
+        run: |
+          if [ "$SCAN_OUTCOME" != success ]; then
+            echo "::error::No passing Sonar quality gate for this pull request. See the analysis step for the reason."
+            exit 1
+          fi
+
+  check:
+    # Preserve the required check name and require both lanes on every PR.
+    needs: [integration, test]
+    if: '!cancelled()'
+    runs-on: ubuntu-latest
+    permissions: {}
+    timeout-minutes: 2
+    steps:
+      - name: Require integration and test results
+        env:
+          INTEGRATION: ${{ needs.integration.result }}
+          TEST: ${{ needs.test.result }}
+        run: test "$INTEGRATION" = success && test "$TEST" = success
 
   badge:
     # The coverage badge: an SVG on the orphan branch `badges`, shown by the README as a repository file (works for a
     # private repository, no external account).
-    needs: check
+    needs: integration
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:

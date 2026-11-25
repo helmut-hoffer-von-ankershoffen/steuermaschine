@@ -111,11 +111,12 @@ def get(path: str):
     return value
 
 
-def download(path: str, limit: int) -> bytes:
+def download(path: str, limit: int, *, allow_escape_sequences: bool = False) -> bytes:
     """Bound binary output while gh follows the authenticated artifact redirect."""
     with tempfile.TemporaryFile() as output:
+        flags = ["--allow-escape-sequences"] if allow_escape_sequences else []
         process = edge.run(
-            ["gh", "api", f"repos/{hzlib.CORE}/{path}"],
+            ["gh", "api", *flags, f"repos/{hzlib.CORE}/{path}"],
             stdout=output,
             stderr=subprocess.PIPE,
             timeout=60,
@@ -330,8 +331,8 @@ def main_run(api: Callable, head: str) -> int:
     return run["id"]
 
 
-def actual_main_ci(api: Callable, head: str, push_id: int) -> dict:
-    """Bind the actual-main CI runs across events to the canonical push proof."""
+def main_ci_inventory(api: Callable, head: str) -> dict:
+    """Read the complete canonical CI run inventory for an exact main SHA."""
     policy = core_policy.at_commit_api(api, head)
     data = api(f"{policy.workflow_runs}?branch=main&head_sha={head}&per_page=100")
     require(isinstance(data, dict), "invalid actual-main CI response")
@@ -372,6 +373,12 @@ def actual_main_ci(api: Callable, head: str, push_id: int) -> dict:
         created_at = datetime.fromisoformat(created)
         require(created_at.utcoffset() is not None, "actual-main CI run timestamp has no timezone")
         runs[identifier] = (workflow, event, attempt, status, conclusion, created_at)
+    return runs
+
+
+def actual_main_ci(api: Callable, head: str, push_id: int) -> dict:
+    """Bind the actual-main CI runs across events to the canonical push proof."""
+    runs = main_ci_inventory(api, head)
     require(push_id in runs, "canonical push absent from actual-main CI")
     workflow, event, attempt, status, conclusion, push_created = runs[push_id]
     require(

@@ -99,7 +99,9 @@ def incident_frozen(root: Path) -> bool:
 
 
 def merge_frozen(root: Path) -> bool:
-    return incident_frozen(root) or release_holds_present(root)
+    from ..queue_lib import hzlib
+
+    return hzlib.freeze_scope(root) != "open"
 
 
 def incident_since(root: Path) -> float | None:

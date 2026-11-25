@@ -1,10 +1,8 @@
-"""The merge gate per repository, read-only: Sonar's verdict and ratings (through the core Sonar provider), the coverage
-badge (the same injected HTTP GET), and which of the two
-gate checks main requires. `NOT A`, `RED`, `BYPASS` or `NO RULESET` is what the reader must act on;
-`RULESET UNREAD` means GitHub did not answer (never read as `NO RULESET`).
+"""The merge gate per repository: Sonar ratings, the coverage badge, and required status checks.
 
-Heinzelmännchen knowledge: the checks `merge-gate` and `coverage-floor` come from their own workflow, attached to a
-pull request beside the CI suite; a repository requires each of them only from the day it passes.
+For a policy with a legacy merge-gate workflow, show which of its checks main requires.
+For newer policies, show the checks from GitHub's ruleset directly.
+`RULESET UNREAD` means GitHub did not answer (never read as `NO RULESET`).
 """
 
 from __future__ import annotations
@@ -77,16 +75,18 @@ def required_in(data: dict[str, Any]) -> list[dict[str, Any]]:
 
 def gate_row(sonar: Sonar, fetch: Fetch, gh: Gh, owner: str, repo: str) -> dict[str, Any]:
     """One repository: the words, what is required, and the marks. `sonar` is the core provider for its project."""
-    sonar_check, coverage_check = core_facts.gate_check("sonar"), core_facts.gate_check("coverage")
-    states = {sonar_check: sonar_state(sonar), coverage_check: coverage_state(fetch, f"{owner}/{repo}")}
+    sonar_ok, sonar_words = sonar_state(sonar)
+    coverage_ok, coverage_words = coverage_state(fetch, f"{owner}/{repo}")
+    legacy_checks = core_facts.api_checks()
     data, unread = ruleset(gh, f"{owner}/{repo}")
-    names = {c["context"] for c in required_in(data)} if data else set()
-    marks = [] if states[sonar_check][0] else ["NOT A"]
-    marks += [] if states[coverage_check][0] else ["RED"]
+    names = [c["context"] for c in required_in(data)] if data else []
+    marks = [] if sonar_ok else ["NOT A"]
+    marks += [] if coverage_ok else ["RED"]
     marks += ["BYPASS"] if data and data.get("bypass_actors") else []
     marks += [] if data else ["RULESET UNREAD"] if unread else ["NO RULESET"]
-    return {"repo": repo, "sonar": states[sonar_check][1], "coverage": states[coverage_check][1],
-            "required": [c for c in states if c in names], "not_yet": [c for c in states if c not in names], "marks": marks, "note": "",
+    required = [c for c in legacy_checks if c in names] if legacy_checks else names
+    return {"repo": repo, "sonar": sonar_words, "coverage": coverage_words,
+            "required": required, "not_yet": [c for c in legacy_checks if c not in names], "marks": marks, "note": "",
             "unknown": f"ruleset of {repo}: {unread}" if unread else ""}
 
 
