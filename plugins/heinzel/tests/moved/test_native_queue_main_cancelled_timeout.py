@@ -2,12 +2,14 @@
 
 import base64
 import copy
+import json
+import subprocess
 from dataclasses import replace
 from pathlib import Path
 
 import pytest
 from steuermaschine_heinzel import state as statedir
-from steuermaschine_heinzel.native.queue_lib import main_checkpoint
+from steuermaschine_heinzel.native.queue_lib import main_capacity, main_checkpoint
 
 RUN = 42906326430
 SHA = "e3dc6ee2325505e542b1f707a371ef8896e17903"
@@ -192,10 +194,16 @@ def full_dispatch(world, monkeypatch):
     run.update(event="workflow_dispatch", display_title=f"CI {SHA}")
     world["rows"][0].update(event="workflow_dispatch", displayTitle=run["display_title"])
     guard = "Fail if any required job failed, naming each with its verdict"
+    direct = "Require the complete direct CI workload"
     job, aggregate = responses["jobs"]["jobs"]
     job.update(name="Plugin template", labels=["ubuntu-24.04"], completed_at="2026-11-10T21:44:43Z")
     job["steps"][0].update(name="Run make template-test AUDIT=1", completed_at="2026-11-10T21:44:40Z")
-    aggregate["steps"][0]["name"] = guard
+    aggregate["steps"] = [
+        {"number": number, "name": name, "status": "completed", "conclusion": outcome}
+        for number, (name, outcome) in enumerate(
+            (("Set up job", "success"), (guard, "failure"), (direct, "skipped"), ("Complete job", "success")), 1
+        )
+    ]
     check["name"] = job["name"]
     responses["annotations"][0]["message"] = "The job has exceeded the maximum execution time of 10m0s"
     policy = q.core_facts.at(SHA)
@@ -216,9 +224,11 @@ jobs:
     timeout-minutes: 10
     steps:
       - run: make template-test AUDIT=1
+  other:
+    name: Other workload
   ci-ok:
     name: CI OK
-    needs: [template]
+    needs: [template, other]
     steps:
       - name: {guard}
         env:
@@ -228,6 +238,8 @@ jobs:
             | "::error::Required job \(.key) ended with \(.value.result)"' <<< "$NEEDS"
           for result in $RESULTS; do
             *) echo "A required job ended with: $result"; exit 1 ;;
+      - name: {direct}
+        run: echo checked
 '''
 
     def source(path):
@@ -235,6 +247,20 @@ jobs:
         return {"type": "file", "encoding": "base64", "content": base64.b64encode(world["workflow"].encode()).decode()}
 
     monkeypatch.setattr(main_checkpoint, "get", source)
+    command = next(line.strip() for line in world["workflow"].splitlines() if "jq -r" in line)
+    world["aggregate_verdict"] = "template"
+
+    def aggregate_log(job_id):
+        assert job_id == aggregate["id"]
+        failed_dependency = world["aggregate_verdict"]
+        needs = {key: {"result": "cancelled" if key == failed_dependency else "success"} for key in ("template", "other")}
+        return "\n".join(f"2026-11-10T21:45:00.0000000Z {line}" for line in (
+            f"##[group]Run {command}", f"  NEEDS: {json.dumps(needs)}", "##[endgroup]",
+            f"##[error]Required job {failed_dependency} ended with cancelled", "A required job ended with: cancelled",
+            main_capacity.EXIT,
+        )).encode()
+
+    monkeypatch.setattr(main_capacity, "read_aggregate_log", aggregate_log)
     return world
 
 
@@ -268,9 +294,39 @@ def test_dispatch_timeout_requires_exact_full_inventory_and_hosted_workload(full
     elif damage == "different timeout":
         responses["annotations"][0]["message"] = "The job has exceeded the maximum execution time of 5m0s"
     else:
-        full_dispatch["workflow"] = full_dispatch["workflow"].replace("needs: [template]", "needs: []")
+        full_dispatch["workflow"] = full_dispatch["workflow"].replace("needs: [template, other]", "needs: [other]")
     assert q.latest_required_timeout(full_dispatch["rows"]) == {}
     assert q.main_state() == "unknown"
+    assert full_dispatch["state"].read_bytes() == full_dispatch["before"]
+
+
+@pytest.mark.parametrize("damage", [
+    "incomplete", "in progress", "incorrect ordinal", "failed predecessor", "extra cancelled step",
+    "unrelated dependency", "unavailable log",
+])
+def test_dispatch_timeout_needs_completed_aggregate_steps_and_a_causal_log(full_dispatch, monkeypatch, damage):
+    q = full_dispatch["queue"]
+    steps = full_dispatch["responses"]["jobs"]["jobs"][1]["steps"]
+    if damage == "incomplete":
+        steps.pop(0)
+    elif damage == "in progress":
+        steps[1]["status"] = "in_progress"
+    elif damage == "incorrect ordinal":
+        steps[1]["number"] = 3
+    elif damage == "failed predecessor":
+        steps[0]["conclusion"] = "failure"
+    elif damage == "extra cancelled step":
+        steps.insert(2, {"number": 3, "name": "Unexpected step", "status": "completed", "conclusion": "cancelled"})
+    elif damage == "unrelated dependency":
+        full_dispatch["aggregate_verdict"] = "other"
+    else:
+        def timed_out(_):
+            raise subprocess.TimeoutExpired("gh", 60)
+
+        monkeypatch.setattr(main_capacity, "read_aggregate_log", timed_out)
+    assert q.latest_required_timeout(full_dispatch["rows"]) == {}
+    assert q.main_state() == "unknown"
+    assert q.main_red_jobs() == {"run": 41, "sha": "a" * 40, "jobs": ["Historical failure"]}
     assert full_dispatch["state"].read_bytes() == full_dispatch["before"]
 
 

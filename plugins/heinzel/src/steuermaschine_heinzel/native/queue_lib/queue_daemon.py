@@ -349,8 +349,8 @@ def superseded_by_pending(runs, found, done) -> bool:
     return any(r.get("status") != "completed" for r in newer) and len(done) > 1
 
 
-def full_dispatch_template_timeout(policy, jobs: list[dict], run: int, sha: str) -> str:
-    """Prove the full dispatch inventory and return its reviewed aggregate failure step."""
+def full_dispatch_template_timeout(policy, jobs: list[dict], aggregate_job: dict, run: int, sha: str) -> bool:
+    """Prove the full dispatch inventory and its aggregate's exact template cancellation verdict."""
     from . import main_capacity, main_checkpoint
 
     template = "Plugin template"
@@ -358,29 +358,32 @@ def full_dispatch_template_timeout(policy, jobs: list[dict], run: int, sha: str)
     try:
         expected = policy.expected_jobs("workflow_dispatch")
         if any(expected.get(name) != "success" for name in (template, policy.aggregate, source)):
-            return ""
+            return False
         ordinary = rc.quarantine_lane(jobs, run, sha, policy)
         if len(ordinary) == len(jobs):
-            return ""
+            return False
         # The inventory is shared with release dispatches, where the source artifact job is required.
         expected.update({template: "cancelled", policy.aggregate: "failure", source: "skipped"})
         if {job["name"]: job["conclusion"] for job in ordinary} != expected:
-            return ""
+            return False
         workflow = rc.source_bytes(main_checkpoint.get, policy.workflow, sha, (policy.workflow,)).decode()
         body = main_capacity.workflow_jobs(workflow).get("template", "")
         lines = body.splitlines()
         for line in ("    name: Plugin template", "    runs-on: ubuntu-24.04", "    timeout-minutes: 10"):
             if line not in lines:
-                return ""
+                return False
         _, separator, steps_text = body.partition("\n    steps:\n")
         steps = re.split(r"^      - ", steps_text, flags=re.MULTILINE)[1:]
         if not separator or sum(step.strip() == "run: make template-test AUDIT=1" for step in steps) != 1:
-            return ""
+            return False
         dependency = main_capacity.dependency_check(main_checkpoint.get, policy, sha, workflow=workflow)
         label = dependency.names.get("template")
-        return dependency.step if label and label.fullmatch(template) else ""
+        if label is None or not label.fullmatch(template):
+            return False
+        main_capacity.check_aggregate(aggregate_job, dependency, {template}, main_capacity.read_aggregate_log)
     except (ValueError, OSError, subprocess.TimeoutExpired):
-        return ""
+        return False
+    return True
 
 
 def latest_required_timeout(runs: list[dict]) -> dict:
@@ -428,14 +431,13 @@ def latest_required_timeout(runs: list[dict]) -> dict:
     bad = {j["name"]: j for j in jobs if j.get("conclusion") not in {"success", "skipped", "neutral"}}
     if set(bad) != {name, policy.aggregate} or bad[policy.aggregate].get("conclusion") != "failure":
         return {}
-    guard = full_dispatch_template_timeout(policy, jobs, run_id, sha) if dispatch else "Fail if any required job failed"
     job = bad[name]
-    aggregate_steps = bad[policy.aggregate].get("steps")
+    aggregate_job = bad[policy.aggregate]
     if (job.get("conclusion") != "cancelled" or type(job.get("runner_id")) is not int or job["runner_id"] <= 0
             or not isinstance(job.get("runner_name"), str) or not job["runner_name"].startswith("GitHub Actions ")
             or job.get("runner_group_name") != "GitHub Actions"
             or job.get("check_run_url") != f"https://api.github.com/{prefix}/check-runs/{job['id']}"
-            or not guard or (dispatch and job.get("labels") != ["ubuntu-24.04"])):
+            or (dispatch and job.get("labels") != ["ubuntu-24.04"])):
         return {}
     try:
         started = datetime.fromisoformat(job["started_at"])
@@ -448,12 +450,9 @@ def latest_required_timeout(runs: list[dict]) -> dict:
                 or not any(s.get("conclusion") == "cancelled"
                            and (not dispatch or s.get("name") == "Run make template-test AUDIT=1")
                            and started <= datetime.fromisoformat(s["started_at"])
-                           < datetime.fromisoformat(s["completed_at"]) <= completed for s in steps)
-                or not isinstance(aggregate_steps, list) or not all(isinstance(s, dict) for s in aggregate_steps)):
+                           < datetime.fromisoformat(s["completed_at"]) <= completed for s in steps)):
             return {}
-        failed_steps = [s.get("name") for s in aggregate_steps if s.get("conclusion") == "failure"]
-        if guard not in failed_steps or (dispatch and (failed_steps != [guard]
-                or [step.get("name") for step in steps if step.get("conclusion") == "cancelled"] != ["Run make template-test AUDIT=1"])):
+        if dispatch and [step.get("name") for step in steps if step.get("conclusion") == "cancelled"] != ["Run make template-test AUDIT=1"]:
             return {}
     except (KeyError, TypeError, ValueError):
         return {}
@@ -474,8 +473,15 @@ def latest_required_timeout(runs: list[dict]) -> dict:
             or {a.get("message") for a in annotations}
             != {f"The job has exceeded the maximum execution time of {minutes}m0s", "The operation was canceled."}):
         return {}
-    if dispatch and hzlib.ghj("api", f"{prefix}/git/ref/heads/main", default=None) != tip:
-        return {}
+    if dispatch:
+        if (not full_dispatch_template_timeout(policy, jobs, aggregate_job, run_id, sha)
+                or hzlib.ghj("api", f"{prefix}/git/ref/heads/main", default=None) != tip):
+            return {}
+    else:
+        steps = aggregate_job.get("steps")
+        if (not isinstance(steps, list) or not all(isinstance(s, dict) for s in steps)
+                or not any(s.get("name") == "Fail if any required job failed" and s.get("conclusion") == "failure" for s in steps)):
+            return {}
     return {"run": run_id, "sha": sha, "jobs": [name]}
 
 
