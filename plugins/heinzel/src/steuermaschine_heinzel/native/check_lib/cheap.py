@@ -96,6 +96,8 @@ class Plan:
     hook: str = ""  # why the hook's steps could not be read; "": they were
     note: str = ""
     extra: list[str] = field(default_factory=list)  # tests the caller added (--sel)
+    named_web_tests: list[str] = field(default_factory=list)
+    web_deferred: bool = False
     lanes: list[str] = field(default_factory=list)  # the e2e lanes the selector names: never run here
 
 
@@ -149,7 +151,7 @@ def hook_facts(c: head.Ctx, changed: list[str], vitest: list[str] | None) -> tup
     return found, ""
 
 
-def plan(c: Ctx, selection: dict[str, Any], extra: list[str]) -> Plan:
+def plan(c: Ctx, selection: dict[str, Any], extra: list[str], *, web_tests: list[str] | None = None) -> Plan:
     """Bind the selector's answer and the hook's answer for the head's changed paths."""
     changed = c.changed()
     full = bool(selection.get("full")) or selection.get("pytest") == ["ALL"]
@@ -159,10 +161,21 @@ def plan(c: Ctx, selection: dict[str, Any], extra: list[str]) -> Plan:
     else:
         narrow(c, p)
     vitest = selection.get("vitest") or []
-    facts, p.hook = hook_facts(c, changed, None if vitest == ["ALL"] else list(vitest))
+    whole_web = vitest == ["ALL"]
+    picked = None if whole_web else list(vitest)
+    if web_tests:
+        picked = list(dict.fromkeys([*(picked or []), *web_tests]))
+    facts, p.hook = hook_facts(c, changed, picked)
     p.web, p.docs = steps_of(facts.get("web") or []), steps_of(facts.get("docs") or [])
     p.guards = [[str(word) for word in command] for command in facts.get("guards") or []]
     p.web_files, p.docs_files, p.note = list(facts.get("web_files") or []), list(facts.get("doc_files") or []), str(facts.get("note") or "")
+    if web_tests and not p.hook:
+        expected = {f"./{file.removeprefix('web/')}" for file in web_tests}
+        if p.note or not any(name == "web-tests" and expected.issubset(argv) for name, argv in p.web):
+            p.hook = p.note or "the hook did not select a Vitest step for the named files"
+        else:
+            p.named_web_tests = web_tests
+            p.web_deferred = whole_web
     return p
 
 
@@ -310,7 +323,12 @@ def hook_step(name: str, files: str, fix: str) -> Any:
         run_steps(c, s, steps, fix)
         if name == "web" and c.plan.note:
             s.warn(c.plan.note)
+        if name == "web" and c.plan.web_deferred:
+            c.ci.append("the whole Vitest suite")
+            s.warn("PR CI must run the whole Vitest suite.")
         s.detail = f"{len(touched)} changed {files}: {', '.join(n for n, _ in steps)} green" if s.status != FAIL else ""
+        if s.detail and name == "web" and c.plan.named_web_tests:
+            s.detail += " (named Vitest files: " + ", ".join(c.plan.named_web_tests) + ")"
         return s
 
     return step
@@ -358,7 +376,10 @@ def step_tests(c: Ctx) -> Step:
     s.data.update(tests=files, guards=len(c.plan.guards), selector=c.plan.selector, unit_suite=whole and c.full)
     if len(files_run) != len(files):  # the receipt and the approval say how many ran here
         s.data.update(tests_ran=len(files_run), tests_selected=len(files))
-    where = f"{len(files)} selected test file(s)" if len(files_run) == len(files) else f"{len(files_run)} of {len(files)} selected test file(s) ran, {len(files) - len(files_run)} deferred to PR CI (over {MAX_TEST_FILES})"
+    where = f"{len(files)} selected test file(s)"
+    if len(files_run) != len(files):
+        where = (f"{len(files_run)} of {len(files)} selected test file(s) ran, "
+                 f"{len(files) - len(files_run)} deferred to PR CI (over {MAX_TEST_FILES})")
     suite = "the whole unit suite, " if whole and c.full else "the whole unit suite left to PR CI, " if whole else ""
     s.detail = f"{len(c.plan.guards)} early guard command(s), {suite}{where}" if s.status != FAIL else ""
     return s
