@@ -120,7 +120,7 @@ def workflow_reviewer(run: dict[str, Any], check_id: int, head: str, get: Callab
     if legacy == success and not judged and not spend_limit:
         return WORKFLOW_REVIEWER
     if judged == success and not legacy:
-        if spend_limit == success:
+        if spend_limit == success and outcomes("Check same-head Gate review history") == success:
             return None
         if spend_limit == [("completed", "skipped")]:
             return WORKFLOW_REVIEWER

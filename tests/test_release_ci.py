@@ -451,7 +451,7 @@ def gate_job(sha, **changes):
 def spend_limit_api(sha, repo, *, override=None, marker="success", tree=None, releases=None):
     check = {"id": 5, "name": "Gate review", "conclusion": "success", "app": {"slug": "github-actions"}, "check_suite": {"id": 77}}
     run = {"id": 12, "run_attempt": 1, "path": rc.GATE_WORKFLOW, "event": "pull_request_target", "head_sha": sha, "conclusion": "success"}
-    steps = [gate_step("Judge the review outcome and comment"), gate_step(rc.SPEND_LIMIT_STEP, marker)]
+    steps = [gate_step("Judge the review outcome and comment"), gate_step("Check same-head Gate review history"), gate_step(rc.SPEND_LIMIT_STEP, marker)]
     job = gate_job(sha, **{"steps": steps, **(override or {})})
     return fake_api(sha, repo=repo, runs=[check], suites={"77": [run]}, jobs={"5": job}, state="failure", tree=tree, releases=releases)
 
@@ -466,7 +466,8 @@ def test_gate_reports_a_spend_limit_without_a_reviewer_and_still_matches_the_tre
 
 
 @pytest.mark.parametrize("override", [{"run_attempt": 2}, {"run_id": 13}, {"head_sha": "c" * 40}, {"steps": []},
-                                      {"steps": [gate_step(rc.SPEND_LIMIT_STEP)]}])
+                                      {"steps": [gate_step(rc.SPEND_LIMIT_STEP)]},
+                                      {"steps": [gate_step(rc.SPEND_LIMIT_STEP), gate_step("Judge the review outcome and comment")]}])
 def test_spend_limit_proof_requires_the_exact_attempt_job_and_judge(repo, override):
     sha = git(repo, "rev-parse", "HEAD")
     with pytest.raises(rc.Refused, match="Gate review job"):

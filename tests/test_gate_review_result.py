@@ -28,7 +28,6 @@ def test_specific_provider_limit_has_a_distinct_outcome():
     ({"api_error_origin": "third_party"}, "failure"),
     ({"api_error_status": None}, "failure"),
     ({"result": "Authentication failed\nYou've hit your monthly spend limit"}, "failure"),
-    ({"result": "You've hit your monthly spend limit\nVERDICT: REJECT"}, "failure"),
     ({}, "success"),
     ({}, "cancelled"),
 ])
@@ -39,12 +38,13 @@ def test_weak_or_mixed_error_evidence_never_passes(override, outcome):
 
 def test_rejection_already_emitted_before_limit_blocks():
     reject = {"type": "assistant", "message": {"content": [{"type": "text", "text": "A finding\nVERDICT: REJECT"}]}}
-    with pytest.raises(ValueError):
-        gate.classify([reject, LIMIT], "failure")
+    assert gate.classify([reject, LIMIT], "failure")[0] == "rejected"
+    assert gate.classify([reject, {"type": "result", "is_error": True}], "failure")[0] == "rejected"
+    assert gate.classify([{**LIMIT, "result": "You've hit your monthly spend limit\nVERDICT: REJECT"}], "failure")[0] == "rejected"
 
 
 @pytest.mark.parametrize("answer,kind", [("Looks fine\nVERDICT: APPROVE\n\n", "approved"), ("VERDICT: REJECT", "rejected"),
-                                          ("VERDICT: APPROVE\ntext after", "rejected"), ("VERDICT: REJECT\nVERDICT: APPROVE", "rejected")])
+                                          ("VERDICT: APPROVE\ntext after", "invalid"), ("VERDICT: REJECT\nVERDICT: APPROVE", "rejected")])
 def test_normal_opus_verdict_path_is_still_exact(answer, kind):
     assert gate.classify([{"type": "result", "subtype": "success", "is_error": False, "result": answer}], "success") == (kind, answer)
 
@@ -68,7 +68,9 @@ def test_gate_judge_rollout_switch_cannot_pass_a_rejection(tmp_path, kind, ready
     import yaml
 
     flow = yaml.safe_load((ROOT / ".github/workflows/gate-review.yml").read_text())
-    judge, marker = flow["jobs"]["gate-review"]["steps"]
+    rejection, _checkout, history, judge, marker = flow["jobs"]["gate-review"]["steps"]
+    assert rejection["if"] == "needs.model.outputs.kind == 'rejected'"
+    assert history["if"] == "needs.model.outputs.kind == 'skipped-provider-spend-limit' && vars.GATE_SPEND_LIMIT_READY == 'true'"
     assert marker["if"] == "needs.model.outputs.kind == 'skipped-provider-spend-limit'"
     gh = tmp_path / "gh"
     gh.write_text("#!/bin/sh\nexit 0\n")

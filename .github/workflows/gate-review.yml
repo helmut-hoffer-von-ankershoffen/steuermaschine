@@ -117,7 +117,23 @@ jobs:
     timeout-minutes: 5
     permissions:
       pull-requests: write # the review comment
+      contents: read
+      actions: read # read protected workflow attempt history for a spending-limit exception
     steps:
+      - name: Record explicit Gate review rejection
+        if: needs.model.outputs.kind == 'rejected'
+        run: echo 'Gate review rejected this exact head.' >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: needs.model.outputs.kind == 'skipped-provider-spend-limit' && vars.GATE_SPEND_LIMIT_READY == 'true'
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+      - name: Check same-head Gate review history
+        if: needs.model.outputs.kind == 'skipped-provider-spend-limit' && vars.GATE_SPEND_LIMIT_READY == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: python3 bin/gate_review_history.py
       - name: Judge the review outcome and comment
         env:
           GH_TOKEN: ${{ github.token }}

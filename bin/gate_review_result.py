@@ -10,6 +10,15 @@ from pathlib import Path
 SPEND_LIMIT = re.compile(r"\AYou've hit your (?:monthly|weekly) spend limit(?:\s|[.!]|$)")
 
 
+def explicitly_rejected(text: str) -> bool:
+    return any(line.strip() == "VERDICT: REJECT" for line in text.splitlines())
+
+
+def earlier_rejection(messages: list[dict]) -> bool:
+    return any(explicitly_rejected(part.get("text", "")) for item in messages if item.get("type") == "assistant"
+               for part in item["message"]["content"] if part.get("type") == "text")
+
+
 def classify(messages: object, outcome: str) -> tuple[str, str]:
     if not isinstance(messages, list) or not all(isinstance(item, dict) for item in messages):
         raise ValueError("invalid Claude execution file")
@@ -18,22 +27,19 @@ def classify(messages: object, outcome: str) -> tuple[str, str]:
         raise ValueError("expected one terminal Claude result")
     record = results[0]
     answer = record.get("result")
+    if outcome == "failure" and record.get("is_error") is True and earlier_rejection(messages):
+        return "rejected", "Claude rejected this change before the review stopped."
     if not isinstance(answer, str) or not answer.strip():
         raise ValueError("Claude returned no review result")
     lines = [line for line in answer.splitlines() if line.strip()]
+    if explicitly_rejected(answer):
+        return "rejected", answer if outcome == "success" and record.get("is_error") is False else "Claude rejected this change before the review stopped."
     if outcome == "success" and record.get("is_error") is False and record.get("subtype") == "success":
-        return ("approved" if lines[-1] == "VERDICT: APPROVE" and not any(line.strip() == "VERDICT: REJECT" for line in lines)
-                else "rejected"), answer
+        return ("approved" if lines[-1] == "VERDICT: APPROVE" else "invalid"), answer
     provider = tuple(record.get(key) for key in ("terminal_reason", "api_error_type", "api_error_status", "api_error_origin"))
     if (outcome == "failure" and record.get("is_error") is True
             and provider == ("api_error", "rate_limit_error", 429, "first_party") and SPEND_LIMIT.match(answer)):
-        # The Action includes assistant messages as well as the terminal result. A real rejection still blocks.
-        texts = [answer]
-        for item in messages:
-            if item.get("type") == "assistant":
-                texts.extend(part.get("text", "") for part in item["message"]["content"] if part.get("type") == "text")
-        if not any(line.strip() == "VERDICT: REJECT" for text in texts for line in text.splitlines()):
-            return "skipped-provider-spend-limit", "Claude reached its provider spending limit. Independent review was skipped."
+        return "skipped-provider-spend-limit", "Claude reached its provider spending limit. Independent review was skipped."
     raise ValueError("Claude review failed without a confirmed provider spending limit")
 
 
