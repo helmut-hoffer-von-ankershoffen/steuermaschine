@@ -80,3 +80,30 @@ def test_gate_judge_rollout_switch_cannot_pass_a_rejection(tmp_path, kind, ready
     env = {**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}", "RUNNER_TEMP": str(tmp_path), "MODE": "review",
            "MODEL": "success", "KIND": kind, "RESULT": "test outcome", "PR": "42", "GITHUB_REPOSITORY": "owner/repo", "SPEND_LIMIT_READY": ready}
     assert subprocess.run(["bash", "-e", "-c", dedent(shell)], env=env, check=False).returncode == exit_code
+
+
+@pytest.mark.parametrize("api_outcome", ["source", "empty", "failure"])
+def test_final_gate_loads_only_the_base_history_reader(tmp_path, api_outcome):
+    flow = (ROOT / ".github/workflows/gate-review.yml").read_text(encoding="utf-8")
+    final_job = flow.split("\n  gate-review:\n", 1)[1]
+    assert "uses:" not in final_job
+    step = final_job.split("      - name: Check same-head Gate review history\n", 1)[1].split("\n      - name: ", 1)[0]
+    shell = dedent(step.split("        run: |\n", 1)[1])
+    gh = tmp_path / "gh"
+    gh.write_text('''#!/bin/sh
+printf '%s\n' "$@" > "$TRACE"
+case "$API_OUTCOME" in
+  source) printf '%s\n' 'import os; from pathlib import Path; Path(os.environ["RAN"]).touch()' ;;
+  failure) exit 1 ;;
+esac
+''')
+    gh.chmod(0o755)
+    trace, ran = tmp_path / "trace", tmp_path / "ran"
+    base, head = "a" * 40, "b" * 40
+    env = {**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}", "RUNNER_TEMP": str(tmp_path),
+           "GITHUB_REPOSITORY": "owner/repo", "GITHUB_SHA": base, "PR_HEAD": head,
+           "API_OUTCOME": api_outcome, "TRACE": str(trace), "RAN": str(ran)}
+    result = subprocess.run(["bash", "-e", "-o", "pipefail", "-c", shell], env=env, check=False)
+    assert (result.returncode == 0) is (api_outcome == "source")
+    assert ran.exists() is (api_outcome == "source")
+    assert trace.read_text().splitlines()[-1] == f"repos/owner/repo/contents/bin/gate_review_history.py?ref={base}"

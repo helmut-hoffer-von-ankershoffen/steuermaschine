@@ -123,17 +123,19 @@ jobs:
       - name: Record explicit Gate review rejection
         if: needs.model.outputs.kind == 'rejected'
         run: echo 'Gate review rejected this exact head.' >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        if: needs.model.outputs.kind == 'skipped-provider-spend-limit' && vars.GATE_SPEND_LIMIT_READY == 'true'
-        with:
-          ref: ${{ github.event.pull_request.base.sha }}
-          persist-credentials: false
       - name: Check same-head Gate review history
         if: needs.model.outputs.kind == 'skipped-provider-spend-limit' && vars.GATE_SPEND_LIMIT_READY == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           PR_HEAD: ${{ github.event.pull_request.head.sha }}
-        run: python3 bin/gate_review_history.py
+        run: |
+          # On pull_request_target, GITHUB_SHA is the trusted base commit. PR_HEAD only selects evidence.
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
+          history="$RUNNER_TEMP/gate_review_history.py"
+          gh api -H 'Accept: application/vnd.github.raw+json' \
+            "repos/$GITHUB_REPOSITORY/contents/bin/gate_review_history.py?ref=$GITHUB_SHA" > "$history"
+          test -s "$history"
+          python3 -I "$history"
       - name: Judge the review outcome and comment
         env:
           GH_TOKEN: ${{ github.token }}
