@@ -28,6 +28,66 @@ def test_invalid_receipt_never_authorizes_unchecked_merge(native_receipts):
         full_pr.required(HEAD)
 
 
+@pytest.mark.parametrize("data", [
+    {"head": "b" * 40, "green": True},
+    {"head": HEAD, "green": 1},
+    {"head": HEAD, "green": True, "ci_must_run": "the whole Vitest suite"},
+    {"head": HEAD, "green": True, "ci_must_run": [None]},
+    {"head": HEAD, "green": True, "requires_full_pr": 1},
+])
+def test_malformed_or_wrong_head_obligation_fails_closed(native_receipts, data):
+    native_receipts.put_receipt("checks", HEAD, data)
+    with pytest.raises(ValueError):
+        full_pr.required(HEAD)
+
+
+@pytest.mark.parametrize("proof", [None, {}, {"base": 1}, {"base": "too short"}])
+def test_post_proof_base_check_refuses_malformed_evidence(monkeypatch, proof):
+    monkeypatch.setattr(full_pr.hzlib, "ghj", lambda *_args, **_kwargs: pytest.fail("invalid proof must not read API"))
+    assert not full_pr.base_unchanged(proof)
+
+
+@pytest.mark.parametrize("bad", [None, {}, {"workflow_runs": []}, {"total_count": 2, "workflow_runs": [{}]}])
+def test_full_pr_refuses_missing_or_incomplete_run_inventory(monkeypatch, tmp_path, bad):
+    def api(_kind, path, **_kwargs):
+        if "git/ref/" in path:
+            return {"object": {"sha": BASE}}
+        if "/pulls/" in path:
+            return {"head": {"sha": HEAD}, "base": {"sha": BASE}, "merge_commit_sha": MERGE}
+        if "/commits/" in path:
+            return {"commit": {"tree": {"sha": TREE}}}
+        return bad
+
+    monkeypatch.setattr(full_pr.hzlib, "ghj", api)
+    monkeypatch.setattr(full_pr.main_checkpoint, "isolated_reader", lambda _: pytest.fail("incomplete inventory"))
+    with pytest.raises(ValueError, match="complete PR CI run inventory"):
+        full_pr.verify("42", HEAD, {"worktree": str(tmp_path)})
+
+
+@pytest.mark.parametrize("failure", ["invalid-pr", "invalid-head", "missing-main", "missing-pr", "moved-head",
+                                     "moved-base", "bad-merge", "missing-tree", "missing-worktree"])
+def test_full_pr_refuses_unbound_identity_before_reader(monkeypatch, tmp_path, failure):
+    def api(_kind, path, **_kwargs):
+        if "git/ref/" in path:
+            return None if failure == "missing-main" else {"object": {"sha": BASE}}
+        if "/pulls/" in path:
+            if failure == "missing-pr":
+                return None
+            return {"head": {"sha": "e" * 40 if failure == "moved-head" else HEAD},
+                    "base": {"sha": "e" * 40 if failure == "moved-base" else BASE},
+                    "merge_commit_sha": "bad" if failure == "bad-merge" else MERGE}
+        if "/commits/" in path:
+            return None if failure == "missing-tree" else {"commit": {"tree": {"sha": TREE}}}
+        return {"total_count": 1, "workflow_runs": [{"id": 123, "head_sha": HEAD, "event": "pull_request",
+                "status": "completed", "conclusion": "success", "run_attempt": 1}]}
+
+    monkeypatch.setattr(full_pr.hzlib, "ghj", api)
+    monkeypatch.setattr(full_pr.main_checkpoint, "isolated_reader", lambda _: pytest.fail("unbound identity"))
+    with pytest.raises(ValueError):
+        full_pr.verify("bad" if failure == "invalid-pr" else "42", "bad" if failure == "invalid-head" else HEAD,
+                       {"worktree": "relative" if failure == "missing-worktree" else str(tmp_path)})
+
+
 def test_full_proof_binds_run_head_current_base_and_tree(monkeypatch, tmp_path):
     import policy_kit
 
