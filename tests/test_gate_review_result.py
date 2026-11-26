@@ -1,8 +1,10 @@
 import importlib.util
 import json
 import os
+import re
 import subprocess
 from pathlib import Path
+from textwrap import dedent
 
 import pytest
 
@@ -65,16 +67,16 @@ def test_collects_the_pinned_actions_failing_file_without_leaking_provider_detai
 @pytest.mark.parametrize("kind,ready,exit_code", [("approved", "", 0), ("rejected", "true", 1),
                                                     ("skipped-provider-spend-limit", "true", 0), ("skipped-provider-spend-limit", "", 1)])
 def test_gate_judge_rollout_switch_cannot_pass_a_rejection(tmp_path, kind, ready, exit_code):
-    import yaml
-
-    flow = yaml.safe_load((ROOT / ".github/workflows/gate-review.yml").read_text())
-    rejection, _checkout, history, judge, marker = flow["jobs"]["gate-review"]["steps"]
-    assert rejection["if"] == "needs.model.outputs.kind == 'rejected'"
-    assert history["if"] == "needs.model.outputs.kind == 'skipped-provider-spend-limit' && vars.GATE_SPEND_LIMIT_READY == 'true'"
-    assert marker["if"] == "needs.model.outputs.kind == 'skipped-provider-spend-limit'"
+    flow = (ROOT / ".github/workflows/gate-review.yml").read_text(encoding="utf-8")
+    named_steps = dict(step.split("\n", 1) for step in re.split(r"(?m)^      - name: ", flow)[1:])
+    assert "\n".join(("        if: needs.model.outputs.kind == 'rejected'", "        run:")) in named_steps["Record explicit Gate review rejection"]
+    assert "        if: needs.model.outputs.kind == 'skipped-provider-spend-limit' && vars.GATE_SPEND_LIMIT_READY == 'true'\n" in named_steps["Check same-head Gate review history"]
+    assert "        if: needs.model.outputs.kind == 'skipped-provider-spend-limit'\n" in named_steps["Record confirmed provider spend limit"]
+    _config, header, shell = named_steps["Judge the review outcome and comment"].partition("        run: |\n")
+    assert header and shell.strip()
     gh = tmp_path / "gh"
     gh.write_text("#!/bin/sh\nexit 0\n")
     gh.chmod(0o755)
     env = {**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}", "RUNNER_TEMP": str(tmp_path), "MODE": "review",
            "MODEL": "success", "KIND": kind, "RESULT": "test outcome", "PR": "42", "GITHUB_REPOSITORY": "owner/repo", "SPEND_LIMIT_READY": ready}
-    assert subprocess.run(["bash", "-e", "-c", judge["run"]], env=env, check=False).returncode == exit_code
+    assert subprocess.run(["bash", "-e", "-c", dedent(shell)], env=env, check=False).returncode == exit_code
