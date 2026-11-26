@@ -349,8 +349,42 @@ def superseded_by_pending(runs, found, done) -> bool:
     return any(r.get("status") != "completed" for r in newer) and len(done) > 1
 
 
+def full_dispatch_template_timeout(policy, jobs: list[dict], run: int, sha: str) -> str:
+    """Prove the full dispatch inventory and return its reviewed aggregate failure step."""
+    from . import main_capacity, main_checkpoint
+
+    template = "Plugin template"
+    source = "Release candidate source"
+    try:
+        expected = policy.expected_jobs("workflow_dispatch")
+        if any(expected.get(name) != "success" for name in (template, policy.aggregate, source)):
+            return ""
+        ordinary = rc.quarantine_lane(jobs, run, sha, policy)
+        if len(ordinary) == len(jobs):
+            return ""
+        # The inventory is shared with release dispatches, where the source artifact job is required.
+        expected.update({template: "cancelled", policy.aggregate: "failure", source: "skipped"})
+        if {job["name"]: job["conclusion"] for job in ordinary} != expected:
+            return ""
+        workflow = rc.source_bytes(main_checkpoint.get, policy.workflow, sha, (policy.workflow,)).decode()
+        body = main_capacity.workflow_jobs(workflow).get("template", "")
+        lines = body.splitlines()
+        for line in ("    name: Plugin template", "    runs-on: ubuntu-24.04", "    timeout-minutes: 10"):
+            if line not in lines:
+                return ""
+        _, separator, steps_text = body.partition("\n    steps:\n")
+        steps = re.split(r"^      - ", steps_text, flags=re.MULTILINE)[1:]
+        if not separator or sum(step.strip() == "run: make template-test AUDIT=1" for step in steps) != 1:
+            return ""
+        dependency = main_capacity.dependency_check(main_checkpoint.get, policy, sha, workflow=workflow)
+        label = dependency.names.get("template")
+        return dependency.step if label and label.fullmatch(template) else ""
+    except (ValueError, OSError, subprocess.TimeoutExpired):
+        return ""
+
+
 def latest_required_timeout(runs: list[dict]) -> dict:
-    """Read exact first-attempt evidence for a started Secret scan's provider timeout.
+    """Read exact first-attempt evidence for a started required job's provider timeout.
 
     Cancellation alone is inconclusive. This narrow required-job shape is red evidence,
     never a green result, a rerun authorization or a replacement for the historical pin.
@@ -368,12 +402,19 @@ def latest_required_timeout(runs: list[dict]) -> dict:
             or tip.get("object") != {"sha": sha, "type": "commit", "url": f"https://api.github.com/{prefix}/git/commits/{sha}"}
             or not isinstance(run, dict)
             or type(run.get("id")) is not int or type(run.get("run_attempt")) is not int
-            or (run.get("id"), run.get("head_sha"), run.get("head_branch"), run.get("event"), run.get("path"),
+            or (run.get("id"), run.get("head_sha"), run.get("head_branch"),
                 run.get("run_attempt"), run.get("status"), run.get("conclusion"))
-            != (run_id, sha, "main", "push", core_facts.at_main().workflow, 1, "completed", "cancelled")
+            != (run_id, sha, "main", 1, "completed", "cancelled")
             or not isinstance(run.get("repository"), dict) or run["repository"].get("full_name") != hzlib.CORE
             or not isinstance(run.get("head_repository"), dict) or run["head_repository"].get("full_name") != hzlib.CORE
             or type(run.get("check_suite_id")) is not int or run["check_suite_id"] <= 0):
+        return {}
+    event = run.get("event")
+    dispatch = event == "workflow_dispatch"
+    if event != "push" and not (dispatch and run.get("display_title") == f"CI {sha}"):
+        return {}
+    policy = core_facts.safe(sha)
+    if policy is None or run.get("path") != policy.workflow:
         return {}
     jobs = attempt_jobs(run_id, 1)
     if (not jobs or any(type(j.get("id")) is not int or j["id"] <= 0
@@ -383,37 +424,43 @@ def latest_required_timeout(runs: list[dict]) -> dict:
                    != (run_id, 1, sha, "completed") for j in jobs)
             or len({j["id"] for j in jobs}) != len(jobs) or len({j["name"] for j in jobs}) != len(jobs)):
         return {}
+    name, minutes = ("Plugin template", 10) if dispatch else ("Secret scan", 3)
     bad = {j["name"]: j for j in jobs if j.get("conclusion") not in {"success", "skipped", "neutral"}}
-    if set(bad) != {"Secret scan", aggregate()} or bad[aggregate()].get("conclusion") != "failure":
+    if set(bad) != {name, policy.aggregate} or bad[policy.aggregate].get("conclusion") != "failure":
         return {}
-    job = bad["Secret scan"]
+    guard = full_dispatch_template_timeout(policy, jobs, run_id, sha) if dispatch else "Fail if any required job failed"
+    job = bad[name]
+    aggregate_steps = bad[policy.aggregate].get("steps")
     if (job.get("conclusion") != "cancelled" or type(job.get("runner_id")) is not int or job["runner_id"] <= 0
             or not isinstance(job.get("runner_name"), str) or not job["runner_name"].startswith("GitHub Actions ")
             or job.get("runner_group_name") != "GitHub Actions"
-            or job.get("check_run_url") != f"https://api.github.com/{prefix}/check-runs/{job['id']}"):
+            or job.get("check_run_url") != f"https://api.github.com/{prefix}/check-runs/{job['id']}"
+            or not guard or (dispatch and job.get("labels") != ["ubuntu-24.04"])):
         return {}
     try:
         started = datetime.fromisoformat(job["started_at"])
         completed = datetime.fromisoformat(job["completed_at"])
         steps = job["steps"]
         if (not isinstance(steps, list) or not steps or not started.tzinfo or not completed.tzinfo
-                or (completed - started).total_seconds() < 180
+                or (completed - started).total_seconds() < minutes * 60
                 or not all(isinstance(s, dict) and s.get("status") == "completed"
                            and s.get("conclusion") in ("success", "skipped", "cancelled") for s in steps)
                 or not any(s.get("conclusion") == "cancelled"
+                           and (not dispatch or s.get("name") == "Run make template-test AUDIT=1")
                            and started <= datetime.fromisoformat(s["started_at"])
                            < datetime.fromisoformat(s["completed_at"]) <= completed for s in steps)
-                or not isinstance(bad[aggregate()].get("steps"), list)
-                or not all(isinstance(s, dict) for s in bad[aggregate()]["steps"])
-                or not any(s.get("name") == "Fail if any required job failed" and s.get("conclusion") == "failure"
-                           for s in bad[aggregate()]["steps"])):
+                or not isinstance(aggregate_steps, list) or not all(isinstance(s, dict) for s in aggregate_steps)):
+            return {}
+        failed_steps = [s.get("name") for s in aggregate_steps if s.get("conclusion") == "failure"]
+        if guard not in failed_steps or (dispatch and (failed_steps != [guard]
+                or [step.get("name") for step in steps if step.get("conclusion") == "cancelled"] != ["Run make template-test AUDIT=1"])):
             return {}
     except (KeyError, TypeError, ValueError):
         return {}
     check = hzlib.ghj("api", f"{prefix}/check-runs/{job['id']}", default=None)
     if (not isinstance(check, dict)
             or (check.get("id"), check.get("name"), check.get("head_sha"), check.get("status"), check.get("conclusion"))
-            != (job["id"], "Secret scan", sha, "completed", "cancelled")
+            != (job["id"], name, sha, "completed", "cancelled")
             or not isinstance(check.get("app"), dict) or check["app"].get("id") != 15368
             or check["app"].get("slug") != "github-actions"
             or not isinstance(check.get("check_suite"), dict) or check["check_suite"].get("id") != run["check_suite_id"]
@@ -425,9 +472,11 @@ def latest_required_timeout(runs: list[dict]) -> dict:
                        and a.get("blob_href") == f"https://github.com/{hzlib.CORE}/blob/{sha}/.github"
                        and a.get("title") == "" and isinstance(a.get("message"), str) for a in annotations)
             or {a.get("message") for a in annotations}
-            != {"The job has exceeded the maximum execution time of 3m0s", "The operation was canceled."}):
+            != {f"The job has exceeded the maximum execution time of {minutes}m0s", "The operation was canceled."}):
         return {}
-    return {"run": run_id, "sha": sha, "jobs": ["Secret scan"]}
+    if dispatch and hzlib.ghj("api", f"{prefix}/git/ref/heads/main", default=None) != tip:
+        return {}
+    return {"run": run_id, "sha": sha, "jobs": [name]}
 
 
 class MergeTier:
