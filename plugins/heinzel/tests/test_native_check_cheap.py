@@ -169,6 +169,15 @@ def test_named_vitest_files_are_refused_if_the_hook_drops_the_arguments(tmp_path
     assert not p.web_deferred
 
 
+def test_named_vitest_files_cannot_hide_a_dropped_selector_file(tmp_path, monkeypatch):
+    c, _ = context(tmp_path, {}, ["web/src/a.ts"])
+    monkeypatch.setattr(cheap, "hook_facts", lambda *_: (
+        {"web": ["web-tests=web exec vitest run ./src/named.test.ts"]}, ""
+    ))
+    p = cheap.plan(c, {"vitest": ["web/src/a.test.ts"]}, [], web_tests=["web/src/named.test.ts"])
+    assert p.hook == "the hook did not select a Vitest step for the named files"
+
+
 def test_the_tests_check_fails_on_a_selection_error_and_runs_the_unit_suite_for_everything(tmp_path):
     c, calls = context(tmp_path, {}, [])
     c.plan = cheap.Plan(pytest=[], error="scripts/related_tests.py failed (exit 3)")

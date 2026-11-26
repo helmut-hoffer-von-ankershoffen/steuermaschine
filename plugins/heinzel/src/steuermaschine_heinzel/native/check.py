@@ -106,11 +106,13 @@ def extra_tests(sel: Path | None) -> tuple[list[str], list[str]]:
         if not all(isinstance(paths, list) and all(isinstance(path, str) and path for path in paths)
                    for paths in (python, vitest)):
             raise ValueError("python and vitest must be lists of test paths")
+        if any("::" in path for path in python):
+            raise ValueError("the Python selection takes test files, not individual pytest node IDs")
         if any(any(character.isspace() for character in path) for path in vitest):
             raise ValueError("Vitest paths cannot contain whitespace")
     except (OSError, ValueError, AttributeError) as why:
         raise Refuse(f"unreadable selection {sel}: {why}", "sm check --help", code=USAGE) from None
-    return [test.split("::")[0] for test in python], list(dict.fromkeys(vitest))
+    return list(dict.fromkeys(python)), list(dict.fromkeys(vitest))
 
 
 def plugins_check(rt: Any, wt: Path) -> HeadCheck:

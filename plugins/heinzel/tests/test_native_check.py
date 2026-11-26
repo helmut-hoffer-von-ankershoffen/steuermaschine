@@ -554,7 +554,7 @@ def test_a_failing_import_graph_fails_the_run_instead_of_passing_for_everything(
 
 def test_a_full_selection_the_import_graph_narrows_runs_those_tests_and_the_ones_of_sel(core, rt, tmp_path):  # noqa: F811
     sel = tmp_path / "sel.json"
-    sel.write_text(json.dumps({"python": ["tests/unit/x_test.py::test_one"]}))
+    sel.write_text(json.dumps({"python": ["tests/unit/x_test.py"]}))
     machine = checkout(core).on("git diff --name-only", "pyproject.toml").on("scripts/related_tests.py", "tests/unit/x_test.py\n")
     found = report(invoke(rt(machine), ["--format", "json", "check", str(core), "--sel", str(sel)]))
     assert found.ready and step(found, "tests").data["tests"] == ["tests/unit/x_test.py"] and not machine.ran("unit and not perf")
@@ -562,6 +562,19 @@ def test_a_full_selection_the_import_graph_narrows_runs_those_tests_and_the_ones
     machine = checkout(core).on("git diff --name-only", "pyproject.toml\nsrc/heinzel/x.py").on("scripts/related_tests.py", "ALL\n")
     found = report(invoke(rt(machine), ["--format", "json", "check", str(core)]))  # src/ changed and no test named: fails, as before
     assert not found.ready and [f.step for f in found.failures] == ["tests"] and "no test is selected" in found.failures[0].message and "--sel FILE" in found.failures[0].fix
+
+
+def test_named_python_files_cannot_disappear_from_a_receipt(core, rt, tmp_path):  # noqa: F811
+    sel = tmp_path / "sel.json"
+    sel.write_text(json.dumps({"python": ["tests/unit/x_test.py", "tests/unit/missing_test.py"]}))
+    machine = checkout(core).on("git diff --name-only", "src/heinzel/x.py")
+    runtime = rt(machine)
+    found = report(invoke(runtime, ["--format", "json", "check", str(core), "--sel", str(sel)]))
+    assert not found.ready and "missing_test.py" in next(f.message for f in found.failures if f.step == "tests")
+    assert runtime.providers.store.get_receipt(verdicts.CHECKS, HEAD) is None
+    sel.write_text(json.dumps({"python": ["tests/unit/x_test.py::missing_case"]}))
+    done = invoke(runtime, ["check", str(core), "--sel", str(sel)])
+    assert done.exit_code == 2 and "individual pytest node IDs" in done.stderr
 
 
 def test_a_hook_that_does_not_answer_fails_the_run_whatever_changed(core, rt, tmp_path):  # noqa: F811

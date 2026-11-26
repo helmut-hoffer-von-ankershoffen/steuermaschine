@@ -170,7 +170,7 @@ def plan(c: Ctx, selection: dict[str, Any], extra: list[str], *, web_tests: list
     p.guards = [[str(word) for word in command] for command in facts.get("guards") or []]
     p.web_files, p.docs_files, p.note = list(facts.get("web_files") or []), list(facts.get("doc_files") or []), str(facts.get("note") or "")
     if web_tests and not p.hook:
-        expected = {f"./{file.removeprefix('web/')}" for file in web_tests}
+        expected = {f"./{file.removeprefix('web/')}" for file in picked or []}
         if p.note or not any(name == "web-tests" and expected.issubset(argv) for name, argv in p.web):
             p.hook = p.note or "the hook did not select a Vitest step for the named files"
         else:
@@ -336,6 +336,15 @@ def hook_step(name: str, files: str, fix: str) -> Any:
 
 def step_tests(c: Ctx) -> Step:
     s = Step("tests")
+    missing = [
+        name for name in c.plan.extra
+        if Path(name).is_absolute() or name.startswith("-")
+        or re.fullmatch(r"(?:test_.+|.+_test)\.py", Path(name).name) is None
+        or not (c.wt / name).is_file() or not (c.wt / name).resolve().is_relative_to(c.wt.resolve())
+    ]
+    if missing:
+        return s.fail(f"named Python test files are missing or outside the worktree: {', '.join(missing)}",
+                      "correct the Python test paths in the --sel file")
     for argv in c.plan.guards:
         run_steps(c, s, [("the hook's early guard", argv)], "fix the code, never the test: the push hook runs these guards before anything else")
     if c.plan.error:
@@ -360,17 +369,27 @@ def step_tests(c: Ctx) -> Step:
         s.warn(c.plan.narrowed)
     files_run = files
     if why := too_many(files):  # a wide selection: the tests that own the changed modules run here, the rest is PR CI's (a required check)
-        files_run = owning_tests(c, files)
-        if not files_run:  # nothing owns the change, or nothing fits: zero tests ran, so there is no receipt (exit 75)
+        owned = set(owning_tests(c, files))
+        if not owned:  # nothing owns the change, or nothing fits: zero tests ran, so there is no receipt (exit 75)
+            files_run = []
             c.unrun = f"{why}, and no test owns a changed module, so none could run here"
             c.ci.append(f"{len(files)} selected test files")
             s.warn(f"no receipt: {c.unrun}")
         else:
+            files_run = [file for file in files if file in owned or file in c.plan.extra]
             rest = [f for f in files if f not in files_run]
             c.ci.append(f"{len(rest)} of {len(files)} selected test files")
-            s.warn(f"{why}: the {len(files_run)} that own the changed modules run here, {len(rest)} are left to PR CI")
-    for start in range(0, len(files_run), MAX_TEST_FILES):  # batches: the budget stops the run between them (exit 75)
-        head.run_tests(c, s, "selected", files_run[start:start + MAX_TEST_FILES])
+            s.warn(f"{why}: {len(files_run)} owning or explicitly named tests run here, {len(rest)} are left to PR CI")
+    explicit = set(c.plan.extra)
+    remaining = []
+    for file in files_run:
+        if file in explicit:
+            # Pytest must collect this file; another file's collected tests cannot mask an empty selection.
+            head.run_tests(c, s, "named", [file])
+        else:
+            remaining.append(file)
+    for start in range(0, len(remaining), MAX_TEST_FILES):  # a spent budget stops the run between batches (exit 75)
+        head.run_tests(c, s, "selected", remaining[start:start + MAX_TEST_FILES])
     if c.plan.lanes:
         s.warn(f"e2e lanes the selector names are not run here: {', '.join(c.plan.lanes)}")
     s.data.update(tests=files, guards=len(c.plan.guards), selector=c.plan.selector, unit_suite=whole and c.full)
