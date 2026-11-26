@@ -43,7 +43,7 @@ def repo(tmp_path):
 
 
 def fake_api(sha: str, *, head=None, state="success", description="APPROVE reviewer=rita", merged=True, context="Gate review",
-             login="owner", runs=None, suites=None, tree=None, repo=None, fail=None, releases=None):
+             login="owner", runs=None, suites=None, jobs=None, tree=None, repo=None, fail=None, releases=None):
     """GitHub, faked. `tree` is the head's tree (default: the merged commit's own tree, i.e. exactly what was merged)."""
     def get(path: str):
         if fail and fail in path:
@@ -53,6 +53,8 @@ def fake_api(sha: str, *, head=None, state="success", description="APPROVE revie
             return [{"number": 7, "merge_commit_sha": commit, "merged_at": "2026-11-21T10:00:00Z" if merged else None, "head": {"sha": head or commit}}]
         if "/actions/runs" in path:
             return {"workflow_runs": [w for w in (suites or {}).get(path.rsplit("=", 1)[-1], [])]}
+        if "/actions/jobs/" in path:
+            return (jobs or {}).get(path.rsplit("/", 1)[-1], {})
         if "/check-runs" in path:
             return {"check_runs": runs or []}
         if "/statuses" in path:
@@ -416,8 +418,9 @@ def test_a_hand_receipt_without_the_ci_marks_is_not_a_ci_receipt(follower, monke
 def test_the_workflow_check_run_is_a_verdict_only_from_the_gate_review_run(repo):
     sha = git(repo, "rev-parse", "HEAD")
     good = [{"id": 5, "name": "Gate review", "conclusion": "success", "app": {"slug": "github-actions"}, "check_suite": {"id": 77}}]
-    run = {"path": ".github/workflows/gate-review.yml", "event": "pull_request_target", "head_sha": sha, "conclusion": "success"}
-    assert rc.verdict_for(sha, fake_api(sha, repo=repo, runs=good, suites={"77": [run]}, state="failure"))[2] == "gate-review-workflow"
+    run = {"id": 12, "run_attempt": 1, "path": ".github/workflows/gate-review.yml", "event": "pull_request_target", "head_sha": sha, "conclusion": "success"}
+    job = gate_job(sha, steps=[gate_step("Judge the review and comment")])
+    assert rc.verdict_for(sha, fake_api(sha, repo=repo, runs=good, suites={"77": [run]}, jobs={"5": job}, state="failure"))[2] == "gate-review-workflow"
     bad = [
         (good, {"77": [{**run, "path": ".github/workflows/ci.yml"}]}),  # a forged job named `Gate review` in the PR's own ci.yml
         (good, {"77": [{**run, "event": "pull_request"}]}),
@@ -434,6 +437,61 @@ def test_the_workflow_check_run_is_a_verdict_only_from_the_gate_review_run(repo)
             rc.verdict_for(sha, fake_api(sha, repo=repo, runs=runs, suites=suites, state="failure"))
     with pytest.raises(rc.Refused, match=r"does not come from \.github/workflows/gate-review\.yml"):
         rc.verdict_for(sha, fake_api(sha, repo=repo, runs=good, suites={"77": [{**run, "path": ".github/workflows/ci.yml"}]}, state="failure"))
+
+
+def gate_step(name, conclusion="success"):
+    return {"name": name, "status": "completed", "conclusion": conclusion}
+
+
+def gate_job(sha, **changes):
+    return {"id": 5, "run_id": 12, "run_attempt": 1, "head_sha": sha, "name": "Gate review", "status": "completed",
+            "conclusion": "success", **changes}
+
+
+def spend_limit_api(sha, repo, *, override=None, marker="success", tree=None, releases=None):
+    check = {"id": 5, "name": "Gate review", "conclusion": "success", "app": {"slug": "github-actions"}, "check_suite": {"id": 77}}
+    run = {"id": 12, "run_attempt": 1, "path": rc.GATE_WORKFLOW, "event": "pull_request_target", "head_sha": sha, "conclusion": "success"}
+    steps = [gate_step("Judge the review outcome and comment"), gate_step(rc.SPEND_LIMIT_STEP, marker)]
+    job = gate_job(sha, **{"steps": steps, **(override or {})})
+    return fake_api(sha, repo=repo, runs=[check], suites={"77": [run]}, jobs={"5": job}, state="failure", tree=tree, releases=releases)
+
+
+def test_gate_reports_a_spend_limit_without_a_reviewer_and_still_matches_the_tree(repo):
+    sha = git(repo, "rev-parse", "HEAD")
+    out = rc.gate(repo, sha, spend_limit_api(sha, repo), no_cz)
+    assert out == {"version": "0.0.3", "review": rc.SPEND_LIMIT, "pr": "7", "head": sha}
+    assert rc.verify(repo, sha, spend_limit_api(sha, repo, marker="skipped"))[2] == rc.WORKFLOW_REVIEWER
+    with pytest.raises(rc.Refused, match="does not match the head covered by the spending-limit evidence"):
+        rc.verify(repo, sha, spend_limit_api(sha, repo, tree="c" * 40))
+
+
+@pytest.mark.parametrize("override", [{"run_attempt": 2}, {"run_id": 13}, {"head_sha": "c" * 40}, {"steps": []},
+                                      {"steps": [gate_step(rc.SPEND_LIMIT_STEP)]}])
+def test_spend_limit_proof_requires_the_exact_attempt_job_and_judge(repo, override):
+    sha = git(repo, "rev-parse", "HEAD")
+    with pytest.raises(rc.Refused, match="Gate review job"):
+        rc.verdict_for(sha, spend_limit_api(sha, repo, override=override))
+
+
+def test_skipped_gate_does_not_create_an_approval_receipt(follower, monkeypatch):
+    import promote_verdict as pv
+    stable, clone, _home, cand = follower
+    live(monkeypatch, spend_limit_api(cand, clone))
+    with pytest.raises(pv.Refused, match="cannot supply an approval receipt"):
+        pv.record_ci(stable, clone, cand, "rita", "ci v0.0.3 url", "now")
+    assert not (stable / "verdicts" / cand).exists()
+
+
+def test_follower_records_spending_limit_as_skipped_review(follower):
+    stable, clone, home, cand = follower
+    get = spend_limit_api(cand, clone, releases=release_assets())
+    rc.follow(stable, clone, home, fake_run([]), get, fake_pypi(), fetcher(), now=T0)
+    meta = json.loads((stable / "releases" / "v0.0.3" / "release.json").read_text())
+    assert meta["review"] == rc.SPEND_LIMIT and "reviewer" not in meta
+    changed = spend_limit_api(cand, clone, override={"run_attempt": 2}, releases=release_assets())
+    assert "the swap waits" in rc.follow(stable, clone, home, fake_run([]), changed, fake_pypi(), fetcher(), now=T0 + 300)
+    assert os.readlink(stable / "current") != "releases/v0.0.3"
+    assert "is live for all" in rc.follow(stable, clone, home, fake_run([]), get, fake_pypi(), fetcher(), now=T0 + 301)
 
 
 def test_the_allowlist_comes_from_the_repo_variable_and_fails_closed(repo, monkeypatch):
