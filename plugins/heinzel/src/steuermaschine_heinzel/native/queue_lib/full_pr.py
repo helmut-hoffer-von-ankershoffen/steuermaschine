@@ -9,7 +9,7 @@ import importlib
 import re
 from pathlib import Path
 
-from . import hzlib, main_checkpoint
+from . import core_facts, hzlib, main_checkpoint
 
 SHA = re.compile(r"[0-9a-f]{40}")
 LEGACY = "the whole Vitest suite"
@@ -58,7 +58,10 @@ def verify(pr, head, receipt):
     tree = (((commit or {}).get("commit") or {}).get("tree") or {}).get("sha", "")
     if not isinstance(tree, str) or not SHA.fullmatch(tree):
         raise ValueError("the tested merge tree is unavailable")
-    runs = hzlib.ghj("api", f"repos/{repo}/actions/workflows/ci.yml/runs?event=pull_request&head_sha={head}&per_page=100", default=None)
+    policy = core_facts.at(base)
+    if policy.repository != repo:
+        raise ValueError("protected main's release policy names a different repository")
+    runs = hzlib.ghj("api", f"repos/{repo}/{policy.workflow_runs}?event=pull_request&head_sha={head}&per_page=100", default=None)
     rows = runs.get("workflow_runs") if isinstance(runs, dict) else None
     if not isinstance(rows, list) or runs.get("total_count") != len(rows) or not rows:
         raise ValueError("the complete PR CI run inventory is unavailable")

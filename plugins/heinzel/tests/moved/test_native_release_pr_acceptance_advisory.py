@@ -5,6 +5,7 @@ import pytest
 
 CORE = "helmut-hoffer-von-ankershoffen/heinzel"
 HEAD = "e10b2190a0304822a8076c1c57b103eb0e09eca5"
+pytestmark = pytest.mark.usefixtures("native_receipts")
 
 
 @pytest.fixture(autouse=True)

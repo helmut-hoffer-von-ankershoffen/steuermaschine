@@ -9,21 +9,38 @@ from steuermaschine_heinzel.native.queue_lib import auto_arm, full_pr
 HEAD, BASE, MERGE, TREE = (c * 40 for c in "abcd")
 
 
-def test_receipt_flag_and_legacy_obligation(monkeypatch):
-    data = {"head": HEAD, "green": True, "ci_must_run": [full_pr.LEGACY]}
-    store = SimpleNamespace(get_receipt=lambda _kind, _head: data)
-    monkeypatch.setattr(full_pr.importlib, "import_module", lambda _: SimpleNamespace(runtime=lambda: SimpleNamespace(providers=SimpleNamespace(store=store))))
-    assert full_pr.required(HEAD) is data
-    data["ci_must_run"] = []
+@pytest.mark.parametrize(("fields", "expected"), [
+    ({}, False),
+    ({"ci_must_run": ["some other hosted check"]}, False),
+    ({"ci_must_run": [full_pr.LEGACY]}, True),
+    ({"requires_full_pr": True}, True),
+])
+def test_receipt_flag_and_legacy_obligation(native_receipts, fields, expected):
     assert full_pr.required(HEAD) is None
-    data["requires_full_pr"] = True
-    assert full_pr.required(HEAD) is data
-    data["green"] = False
+    data = {"head": HEAD, "green": True, **fields}
+    native_receipts.put_receipt("checks", HEAD, data)
+    assert full_pr.required(HEAD) == (data if expected else None)
+
+
+def test_invalid_receipt_never_authorizes_unchecked_merge(native_receipts):
+    native_receipts.put_receipt("checks", HEAD, {"head": HEAD, "green": False})
     with pytest.raises(ValueError, match="invalid"):
         full_pr.required(HEAD)
 
 
 def test_full_proof_binds_run_head_current_base_and_tree(monkeypatch, tmp_path):
+    import policy_kit
+
+    policy_reads = []
+
+    def policy_at(sha):
+        policy_reads.append(sha)
+        return policy_kit.policy(commit=sha, workflow=".github/workflows/protected-checks.yml")
+
+    monkeypatch.setattr(full_pr.core_facts, "at", policy_at)
+    runs_path = (f"repos/{full_pr.hzlib.CORE}/actions/workflows/protected-checks.yml/runs"
+                 f"?event=pull_request&head_sha={HEAD}&per_page=100")
+
     def api(*args, **_kwargs):
         path = args[1]
         if "git/ref/" in path:
@@ -32,6 +49,7 @@ def test_full_proof_binds_run_head_current_base_and_tree(monkeypatch, tmp_path):
             return {"head": {"sha": HEAD}, "base": {"sha": BASE}, "merge_commit_sha": MERGE}
         if "/commits/" in path:
             return {"commit": {"tree": {"sha": TREE}}}
+        assert path == runs_path
         return {"total_count": 1, "workflow_runs": [{"id": 123, "head_sha": HEAD, "event": "pull_request",
                  "status": "completed", "conclusion": "success", "run_attempt": 1}]}
 
@@ -43,10 +61,15 @@ def test_full_proof_binds_run_head_current_base_and_tree(monkeypatch, tmp_path):
     monkeypatch.setattr(full_pr.main_checkpoint, "isolated_reader", reader)
     proof = full_pr.verify("42", HEAD, {"worktree": str(tmp_path)})
     assert proof["run"] == 123
+    assert policy_reads == [BASE]
     assert calls == [{"mode": "full-pr", "core_repo": str(tmp_path), "reader_head": BASE,
                       "head": HEAD, "tree": TREE, "pr": 42, "run": 123}]
     monkeypatch.setattr(full_pr.main_checkpoint, "isolated_reader", lambda _: {**proof, "base": "e" * 40})
     with pytest.raises(ValueError, match="differs"):
+        full_pr.verify("42", HEAD, {"worktree": str(tmp_path)})
+
+    monkeypatch.setattr(full_pr.core_facts, "at", lambda sha: policy_kit.policy(commit=sha, repository="other/repository"))
+    with pytest.raises(ValueError, match="different repository"):
         full_pr.verify("42", HEAD, {"worktree": str(tmp_path)})
 
 
