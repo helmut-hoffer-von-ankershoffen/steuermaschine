@@ -261,7 +261,8 @@ def check(worktree: Path | None = typer.Argument(None, metavar="WORKTREE", help=
         report.receipt_note = f"none: measured from --base {ref}, not from {default} (the setting preflight_base); run sm check without --base for the receipt"
     else:
         state = verdicts.record_check(providers.store, c.sha, {"worktree": str(wt), "branch": c.branch, "base": c.base_sha, "at": providers.clock.now(), "command": report.command,
-                                                               "deferred": bool(c.ci), "ci_must_run": list(c.ci), **tests_counts(steps),
+                                                               "deferred": bool(c.ci), "ci_must_run": list(c.ci),
+                                                               "requires_full_pr": c.plan.web_deferred, **tests_counts(steps),
                                                                "checks": [{"name": s.name, "status": s.status, "detail": s.detail} for s in report.steps]})
         report.receipt = state in ("written", "kept")
         report.receipt_note = (f"{verdicts.CHECKS} {c.sha} ({'written' if state == 'written' else 'this commit already had one'}), measured from {c.base_sha[:12]}: "

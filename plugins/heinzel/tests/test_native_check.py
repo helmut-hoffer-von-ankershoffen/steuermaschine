@@ -75,9 +75,23 @@ def test_a_web_change_runs_the_hooks_web_steps_and_the_selected_vitest_file_and_
     assert not machine.ran("git push") and not [call for call in machine.calls if call[0][0] == "gh"]
     receipt = runtime.providers.store.get_receipt(verdicts.CHECKS, HEAD)
     assert receipt["green"] is True and receipt["head"] == HEAD and receipt["base"] == MAIN and receipt["branch"] == "feat/thing"
+    assert receipt["requires_full_pr"] is False
     assert [row["name"] for row in receipt["checks"]] == list(check.cheap.STEPS)
     again = invoke(runtime, ["check", str(core)])  # the same commit again: the receipt is written once
     assert again.exit_code == 0 and again.stdout.splitlines()[-1].startswith(f"receipt: checks {HEAD} (this commit already had one)")
+
+
+def test_deferred_whole_vitest_is_bound_to_check_receipt(core, rt, tmp_path):  # noqa: F811
+    sel = tmp_path / "sel.json"
+    sel.write_text(json.dumps({"vitest": ["web/src/a.test.ts"]}))
+    hook = {**WEB, "web": ["web-tests=web exec vitest run ./src/a.test.ts"]}
+    machine = checkout(core, hook).on("git diff --name-only", "pyproject.toml")
+    runtime = rt(machine)
+    result = invoke(runtime, ["--format", "json", "check", str(core), "--sel", str(sel)])
+    found = report(result)
+    assert found.ready and "the whole Vitest suite" in found.ci_must_run
+    receipt = runtime.providers.store.get_receipt(verdicts.CHECKS, HEAD)
+    assert receipt["head"] == HEAD and receipt["base"] == MAIN and receipt["requires_full_pr"] is True
 
 
 def test_a_document_change_runs_the_docs_style_test_the_selector_names_and_the_hooks_document_steps(core, rt):  # noqa: F811

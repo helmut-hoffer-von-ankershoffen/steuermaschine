@@ -239,6 +239,42 @@ def one(q: Any, item: dict[str, Any], items: list[dict[str, Any]]) -> None:
         else:
             q.stuck_or_merged(item, "needs work", reason)
         return
+    if item["repo"] == hzlib.CORE:
+        from . import full_pr
+
+        try:
+            obligation = full_pr.required(pinned)
+        except Exception as error:  # noqa: BLE001 - unreadable evidence never authorizes an arm
+            if armed:
+                disarm(item["repo"], item["pr"])
+            q.update(item["key"], detail=f"not armed: local full PR obligation unavailable: {error}")
+            return
+        if obligation:
+            if armed:
+                if not disarm(item["repo"], item["pr"]):
+                    q.update(item["key"], detail="full PR proof requires auto-merge to be disabled")
+                else:
+                    q.update(item["key"], detail="auto-merge disabled; full PR proof required before immediate merge")
+                return
+            if candidate:
+                q.update(item["key"], detail="release candidate with deferred Vitest needs its dedicated release proof")
+                return
+            if verdict != "ready":
+                q.update(item["key"], detail="not merged: checks not settled")
+                return
+            if armed_on_github(hzlib.CORE) != []:
+                q.update(item["key"], detail="not merged: another Core PR is armed or the inventory is unreadable")
+                return
+
+            def guard():
+                # Recheck the live rule after waiting; the train verifies protected CI before merging.
+                return not (freeze_without_candidate(item["repo"]) or main_hold(q, item)
+                            or merge_rule(item, pinned)[0] or armed_on_github(hzlib.CORE) != [])
+
+            done, detail = hzlib.load("merge_train").train(item["repo"], item["pr"], queue_core=True,
+                                                             expected_head=pinned, pre_merge_guard=guard)
+            q.update(item["key"], detail=f"{'merged' if done else 'not merged'}: {detail}")
+            return
     if candidate:
         merge_release(q, item, candidate)
         return

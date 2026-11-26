@@ -1,0 +1,124 @@
+"""The deferred full Vitest obligation is bound to protected full-PR evidence."""
+
+from types import SimpleNamespace
+
+import pytest
+
+from steuermaschine_heinzel.native.queue_lib import auto_arm, full_pr
+
+HEAD, BASE, MERGE, TREE = (c * 40 for c in "abcd")
+
+
+def test_receipt_flag_and_legacy_obligation(monkeypatch):
+    data = {"head": HEAD, "green": True, "ci_must_run": [full_pr.LEGACY]}
+    store = SimpleNamespace(get_receipt=lambda _kind, _head: data)
+    monkeypatch.setattr(full_pr.importlib, "import_module", lambda _: SimpleNamespace(runtime=lambda: SimpleNamespace(providers=SimpleNamespace(store=store))))
+    assert full_pr.required(HEAD) is data
+    data["ci_must_run"] = []
+    assert full_pr.required(HEAD) is None
+    data["requires_full_pr"] = True
+    assert full_pr.required(HEAD) is data
+    data["green"] = False
+    with pytest.raises(ValueError, match="invalid"):
+        full_pr.required(HEAD)
+
+
+def test_full_proof_binds_run_head_current_base_and_tree(monkeypatch, tmp_path):
+    def api(*args, **_kwargs):
+        path = args[1]
+        if "git/ref/" in path:
+            return {"object": {"sha": BASE}}
+        if "/pulls/" in path:
+            return {"head": {"sha": HEAD}, "base": {"sha": BASE}, "merge_commit_sha": MERGE}
+        if "/commits/" in path:
+            return {"commit": {"tree": {"sha": TREE}}}
+        return {"total_count": 1, "workflow_runs": [{"id": 123, "head_sha": HEAD, "event": "pull_request",
+                 "status": "completed", "conclusion": "success", "run_attempt": 1}]}
+
+    monkeypatch.setattr(full_pr.hzlib, "ghj", api)
+    calls = []
+    def reader(request):
+        calls.append(request)
+        return {"type": "full-pr/v1", "head": HEAD, "base": BASE, "tree": TREE, "run": 123, "attempt": 1}
+    monkeypatch.setattr(full_pr.main_checkpoint, "isolated_reader", reader)
+    proof = full_pr.verify("42", HEAD, {"worktree": str(tmp_path)})
+    assert proof["run"] == 123
+    assert calls == [{"mode": "full-pr", "core_repo": str(tmp_path), "reader_head": BASE,
+                      "head": HEAD, "tree": TREE, "pr": 42, "run": 123}]
+    monkeypatch.setattr(full_pr.main_checkpoint, "isolated_reader", lambda _: {**proof, "base": "e" * 40})
+    with pytest.raises(ValueError, match="differs"):
+        full_pr.verify("42", HEAD, {"worktree": str(tmp_path)})
+
+
+def test_missing_or_stale_ci_never_supplies_full_proof(monkeypatch, tmp_path):
+    def api(*args, **_kwargs):
+        path = args[1]
+        if "git/ref/" in path:
+            return {"object": {"sha": BASE}}
+        if "/pulls/" in path:
+            return {"head": {"sha": HEAD}, "base": {"sha": BASE}, "merge_commit_sha": MERGE}
+        if "/commits/" in path:
+            return {"commit": {"tree": {"sha": TREE}}}
+        return {"total_count": 1, "workflow_runs": [{"id": 123, "head_sha": HEAD, "event": "pull_request",
+                 "status": "completed", "conclusion": "failure", "run_attempt": 1}]}
+
+    monkeypatch.setattr(full_pr.hzlib, "ghj", api)
+    monkeypatch.setattr(full_pr.main_checkpoint, "isolated_reader", lambda _: pytest.fail("failed CI cannot be proof"))
+    with pytest.raises(ValueError, match="no successful"):
+        full_pr.verify("42", HEAD, {"worktree": str(tmp_path)})
+
+
+@pytest.mark.parametrize("already_armed", [False, True])
+def test_deferred_queue_entry_is_never_armed(monkeypatch, already_armed):
+    item = {"repo": auto_arm.hzlib.CORE, "pr": "42", "key": "core:42", "guarded_head": HEAD}
+    info = {"state": "OPEN", "headRefOid": HEAD, "author": {"login": "owner"},
+            "statusCheckRollup": [], "autoMergeRequest": {} if not already_armed else {"enabled": True}}
+    monkeypatch.setattr(auto_arm.hzlib, "ghj", lambda *_args, **_kwargs: info)
+    monkeypatch.setattr(auto_arm, "authors", lambda: {"owner"})
+    monkeypatch.setattr(auto_arm.exact_queue, "queue_candidate", lambda _: None)
+    monkeypatch.setattr(auto_arm, "freeze_without_candidate", lambda _: "")
+    monkeypatch.setattr(auto_arm, "main_hold", lambda *_: "")
+    monkeypatch.setattr(auto_arm.hzlib, "tool_required_checks", lambda _: set())
+    monkeypatch.setattr(auto_arm, "merge_rule", lambda *_: ("", False))
+    monkeypatch.setattr(auto_arm, "armed_on_github", lambda _: [])
+    monkeypatch.setattr(full_pr, "required", lambda _: {"requires_full_pr": True})
+    actions = []
+    monkeypatch.setattr(auto_arm, "arm", lambda *_: pytest.fail("deferred PR must not arm"))
+    monkeypatch.setattr(auto_arm, "disarm", lambda *_: actions.append("disarm") or True)
+    monkeypatch.setattr(auto_arm.hzlib, "load", lambda _: SimpleNamespace(train=lambda *a, **kw: actions.append("immediate") or (False, "proof unavailable")))
+    q = SimpleNamespace(deps_met=lambda *_: True, assess=lambda *_: "ready", log=lambda *_: None,
+                        update=lambda *_args, **_kwargs: None)
+    auto_arm.one(q, item, [item])
+    assert actions == (["disarm"] if already_armed else ["immediate"])
+
+
+def test_post_proof_base_check_refuses_moved_or_unreadable_main(monkeypatch):
+    monkeypatch.setattr(full_pr.hzlib, "ghj", lambda *_args, **_kwargs: {"object": {"sha": BASE}})
+    assert full_pr.base_unchanged({"base": BASE})
+    assert not full_pr.base_unchanged({"base": HEAD})
+    monkeypatch.setattr(full_pr.hzlib, "ghj", lambda *_args, **_kwargs: None)
+    assert not full_pr.base_unchanged({"base": BASE})
+
+
+def test_auto_guard_refuses_competing_arm_after_initial_inventory(monkeypatch):
+    item = {"repo": auto_arm.hzlib.CORE, "pr": "42", "key": "core:42", "guarded_head": HEAD}
+    info = {"state": "OPEN", "headRefOid": HEAD, "author": {"login": "owner"}, "statusCheckRollup": []}
+    monkeypatch.setattr(auto_arm.hzlib, "ghj", lambda *_args, **_kwargs: info)
+    monkeypatch.setattr(auto_arm, "authors", lambda: {"owner"})
+    monkeypatch.setattr(auto_arm.exact_queue, "queue_candidate", lambda _: None)
+    monkeypatch.setattr(auto_arm, "freeze_without_candidate", lambda _: "")
+    monkeypatch.setattr(auto_arm, "main_hold", lambda *_: "")
+    monkeypatch.setattr(auto_arm.hzlib, "tool_required_checks", lambda _: set())
+    monkeypatch.setattr(auto_arm, "merge_rule", lambda *_: ("", False))
+    inventory = iter([[], ["43"]])
+    monkeypatch.setattr(auto_arm, "armed_on_github", lambda _: next(inventory))
+    monkeypatch.setattr(full_pr, "required", lambda _: {"requires_full_pr": True})
+    guards = []
+    def train(*_args, **kwargs):
+        guards.append(kwargs["pre_merge_guard"]())
+        return False, "held"
+    monkeypatch.setattr(auto_arm.hzlib, "load", lambda _: SimpleNamespace(train=train))
+    q = SimpleNamespace(deps_met=lambda *_: True, assess=lambda *_: "ready", log=lambda *_: None,
+                        update=lambda *_args, **_kwargs: None)
+    auto_arm.one(q, item, [item])
+    assert guards == [False]
