@@ -151,6 +151,16 @@ def test_a_core_head_behind_main_is_updated_by_the_train_and_never_merged(merge)
     assert any(c[:2] == ("pr", "update-branch") for c in github.calls)
 
 
+def test_deferred_head_behind_main_is_not_updated_or_merged(merge, monkeypatch):
+    from steuermaschine_heinzel.native.queue_lib import full_pr
+
+    monkeypatch.setattr(full_pr, "required", lambda _head: {"requires_full_pr": True})
+    github = Github(merge_state="BEHIND")
+    merged, detail, _ = merge(github)
+    assert not merged and "pinned head is unchanged" in detail
+    assert not any(c[:2] in (("pr", "merge"), ("pr", "update-branch")) for c in github.calls)
+
+
 def test_the_checks_the_rule_needs_are_the_rulesets_not_the_legacy_ones(merge):
     refused = Github(rollup=[GREEN[0]], merge_state="CLEAN")  # Sonar absent
     merged, detail, refusal = merge(refused)

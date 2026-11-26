@@ -268,6 +268,11 @@ def one(q: Any, item: dict[str, Any], items: list[dict[str, Any]]) -> None:
 
             def guard():
                 # Recheck the live rule after waiting; the train verifies protected CI before merging.
+                from .. import queue_hold
+
+                hold = queue_hold.current()
+                if hold and not hold.lets([queue_hold.queued_key(row) for row in q.load()["items"] if row["status"] == "queued"]):
+                    return False
                 return not (freeze_without_candidate(item["repo"]) or main_hold(q, item)
                             or merge_rule(item, pinned)[0] or armed_on_github(hzlib.CORE) != [])
 

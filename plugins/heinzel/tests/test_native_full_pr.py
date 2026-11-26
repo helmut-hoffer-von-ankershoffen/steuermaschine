@@ -101,6 +101,9 @@ def test_post_proof_base_check_refuses_moved_or_unreadable_main(monkeypatch):
 
 
 def test_auto_guard_refuses_competing_arm_after_initial_inventory(monkeypatch):
+    from steuermaschine_heinzel.native import queue_hold
+
+    monkeypatch.setattr(queue_hold, "current", lambda: None)
     item = {"repo": auto_arm.hzlib.CORE, "pr": "42", "key": "core:42", "guarded_head": HEAD}
     info = {"state": "OPEN", "headRefOid": HEAD, "author": {"login": "owner"}, "statusCheckRollup": []}
     monkeypatch.setattr(auto_arm.hzlib, "ghj", lambda *_args, **_kwargs: info)
@@ -122,3 +125,34 @@ def test_auto_guard_refuses_competing_arm_after_initial_inventory(monkeypatch):
                         update=lambda *_args, **_kwargs: None)
     auto_arm.one(q, item, [item])
     assert guards == [False]
+
+
+@pytest.mark.parametrize("excepted,expected", [(False, False), (True, True)])
+def test_auto_guard_rechecks_new_queue_hold_and_entire_exception_inventory(monkeypatch, excepted, expected):
+    from steuermaschine_heinzel.native import queue_hold
+
+    item = {"repo": auto_arm.hzlib.CORE, "pr": "42", "key": "core:42", "guarded_head": HEAD, "status": "queued"}
+    info = {"state": "OPEN", "headRefOid": HEAD, "author": {"login": "owner"}, "statusCheckRollup": []}
+    monkeypatch.setattr(auto_arm.hzlib, "ghj", lambda *_args, **_kwargs: info)
+    monkeypatch.setattr(auto_arm, "authors", lambda: {"owner"})
+    monkeypatch.setattr(auto_arm.exact_queue, "queue_candidate", lambda _: None)
+    monkeypatch.setattr(auto_arm, "freeze_without_candidate", lambda _: "")
+    monkeypatch.setattr(auto_arm, "main_hold", lambda *_: "")
+    monkeypatch.setattr(auto_arm.hzlib, "tool_required_checks", lambda _: set())
+    monkeypatch.setattr(auto_arm, "merge_rule", lambda *_: ("", False))
+    monkeypatch.setattr(auto_arm, "armed_on_github", lambda _: [])
+    monkeypatch.setattr(full_pr, "required", lambda _: {"requires_full_pr": True})
+    now = {"hold": None}
+    monkeypatch.setattr(queue_hold, "current", lambda: now["hold"])
+    guards = []
+    def train(*_args, **kwargs):
+        guard = kwargs["pre_merge_guard"]
+        guards.append(guard())
+        now["hold"] = queue_hold.QueueHold(reason="operator", since=1, excepted=[queue_hold.queued_key(item)] if excepted else [])
+        guards.append(guard())
+        return False, "held"
+    monkeypatch.setattr(auto_arm.hzlib, "load", lambda _: SimpleNamespace(train=train))
+    q = SimpleNamespace(deps_met=lambda *_: True, assess=lambda *_: "ready", log=lambda *_: None,
+                        update=lambda *_args, **_kwargs: None, load=lambda: {"items": [item]})
+    auto_arm.one(q, item, [item])
+    assert guards == [True, expected]

@@ -214,6 +214,14 @@ def train(repo: str, pr: str, ignore_freeze: bool = False, queue_core: bool = Fa
             update(repo, pr)
             continue
         if status == "BEHIND" and not bad:  # a Core head behind main was not tested as the tree that merges: update it, CI runs again, requeue
+            if queue_core and expected_head:
+                from . import full_pr
+
+                try:
+                    if full_pr.required(head):
+                        return False, "behind main: the pinned head is unchanged; update and obtain fresh checks and review"
+                except Exception as error:  # noqa: BLE001 - unreadable obligation never authorizes an update
+                    return False, f"full PR obligation unavailable: {error}"
             update(repo, pr)
             detail = "behind main: the branch was updated; its CI runs again, requeue once it is green"
             print(f"#{pr} NOT merged, {detail}", flush=True)
