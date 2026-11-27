@@ -46,6 +46,8 @@ class Mini:
         c = self.commands = FakeCommands()
         c.on(["git", "-C", str(tmp_path / "core"), "rev-parse"], lambda argv: self.fail.get("tag") or Result(0, SHA + "\n"))
         c.on(["git", "-C", str(tmp_path / "core"), "worktree"], self.worktree)
+        c.on(["uv", "run", "--script"], lambda argv: Result(0, json.dumps({"app": "test-app", "builds": {
+            r["id"]: dict(r, short=None if r["short"] == "None" else r["short"]) for r in ios.parse_status("\n".join(self.asc))}})))
         c.on(["uv", "run", "--quiet", "--script"], self.testflight)
         c.on(["uv", "run", "--quiet", "--no-project"], self.verify)
         c.on(["xcodebuild", "archive"], self.archive)
@@ -96,7 +98,12 @@ class Mini:
         self.archived.append([config, build])
         app = archive / "Products/Applications/Heinzel.app"
         app.mkdir(parents=True)
-        (app / "Info.plist").write_bytes(plistlib.dumps({"CFBundleShortVersionString": self.archive_version or self.version, "CFBundleVersion": build}))
+        ext = app / "PlugIns/HeinzelWidgets.appex"
+        ext.mkdir(parents=True)
+        for bundle in (app, ext):
+            (bundle / "fixture").write_bytes(b"signed executable fixture")
+            (bundle / "Info.plist").write_bytes(plistlib.dumps({"CFBundleShortVersionString": self.archive_version or self.version,
+                                                                "CFBundleExecutable": "fixture", "CFBundleVersion": build}))
         return Result(0)
 
     def verify(self, argv):
@@ -112,7 +119,7 @@ class Mini:
 
 def test_builds_the_next_number_verifies_uploads_and_confirms_the_group(tmp_path):
     m = Mini(tmp_path)
-    m.processing = 2  # the first read (before the build) and one after the upload still say PROCESSING
+    m.processing = 1  # the first confirmation read still says PROCESSING
     out = m.run()
     assert out.exit_code == 0, out
     assert out.stdout.splitlines()[-1] == "IOS-OK 0.9.53 build 32 IN_BETA_TESTING in the internal TestFlight group"
@@ -142,12 +149,37 @@ def test_the_upload_keeps_the_archive_numbers(tmp_path):
     assert seen["manageAppVersionAndBuildNumber"] is False and seen["teamID"] == "ABCDE12345"
 
 
-def test_a_version_already_in_app_store_connect_is_only_verified(tmp_path):
+def test_existing_unbound_rehearsal_requires_explicit_exact_replacement(tmp_path):
+    m = Mini(tmp_path, version="0.9.57")
+    m.asc = [row("0.9.56", 35), row(m.version, 1)]
+    for flags in ([], ["--supersede-build-id", "x2", "--expected-revision", SHA],
+                  ["--supersede-build-id", "x1"], ["--supersede-build-id", "x1", "--expected-revision", "b" * 40]):
+        out = invoke(m.rt, ["release", "ios", m.version, *flags])
+        assert out.exit_code == 1 and not m.receipt()["clean"]
+        assert not m.notes and not m.uploads and not m.archived
+    out = invoke(m.rt, ["release", "ios", m.version, "--supersede-build-id", "x1", "--expected-revision", SHA])
+    assert out.exit_code == 0, out.stdout
+    assert m.receipt()["build"] == "36"
+    assert m.run().exit_code == 0
+    assert len(m.uploads) == 1 and len(m.archived) == 1 and not m.receipt()["uploaded"]
+
+
+def test_ambiguous_upload_never_submits_again_or_adopts_a_visible_build(tmp_path):
     m = Mini(tmp_path)
-    m.asc.insert(0, row("0.9.53", 32))
-    out = m.run()
-    assert out.exit_code == 0 and "ios: App Store Connect holds 0.9.53 (32) already: verify only" in out.stdout
-    assert not m.archived and not m.uploads and m.receipt()["uploaded"] is False
+    m.fail["upload"] = Result(1, "", "timeout")
+    assert m.run().exit_code == 1
+    m.fail.clear()
+    m.asc.insert(0, row(m.version, 32))
+    assert m.run().exit_code == 1 and "uncertain upload" in m.receipt()["reason"]
+    assert not m.notes and len(m.archived) == 1
+
+
+def test_successful_upload_with_temporary_processing_delay_resumes_same_build(tmp_path):
+    m = Mini(tmp_path, ios_wait_minutes=1)
+    m.beta = ["READY_FOR_BETA_SUBMISSION"]
+    assert m.run().exit_code == 1 and len(m.uploads) == 1
+    m.beta = ["IN_BETA_TESTING"]
+    assert m.run().exit_code == 0 and m.receipt()["build"] == "32" and len(m.uploads) == 1
 
 
 def test_assigns_a_valid_build_outside_the_group(tmp_path):
@@ -346,7 +378,7 @@ def test_summary_and_latest_receipt(tmp_path):
     assert rules.ios_alarm(running, start + 3599) is None
     assert rules.ios_alarm(running, start + 3600)["key"] == "ios:0.9.9:stuck"
     assert ios.summary(running) == "ios: v0.9.9 TestFlight step running since 2026-11-21T10:00:00+00:00"
-    assert ios.parse_status("garbage\n" + row("None", 3)) == [{"short": "None", "build": "3", "state": "VALID", "expired": False, "in_group": True}]
+    assert ios.parse_status("garbage\n" + row("None", 3)) == [{"short": "None", "build": "3", "state": "VALID", "expired": False, "in_group": True, "id": "x3"}]
     assert ios.next_build([]) == "1"
 
 
@@ -362,7 +394,7 @@ def test_the_tool_can_come_from_a_ref(tmp_path):
     tools = []
 
     def record(argv):
-        tools.append(argv[4])
+        tools.append(argv[-1] if argv[5] in {"beta", "notes", "assign"} else argv[4])
         return Mini.testflight(m, argv)
     m.commands.on(["uv", "run", "--quiet", "--script"], record)
     assert m.run().exit_code == 0
@@ -416,3 +448,121 @@ def test_an_older_not_clean_is_superseded_once_a_newer_build_is_assigned(tmp_pat
     ios.write_receipt(state, ios.IosResult(version="0.9.55", build="33", clean=True, beta="IN_BETA_TESTING"), 2.0)
     assert ios.superseded_line(state) == "ios: v0.9.54 NOT-CLEAN superseded by v0.9.55 build 33"
     assert ios.superseded_by(state, ios.read_receipt(state, "0.9.55")) is None
+
+
+def test_after_accepted_ignores_old_verify_only_success_and_leaves_rehearsal_untouched(tmp_path):
+    from steuermaschine.native import NativeRuntime, using
+    from steuermaschine_heinzel.native.go import world
+
+    m = Mini(tmp_path, version="0.9.57")
+    ios.write_receipt(m.state, ios.IosResult(version=m.version, build="1", clean=True, revision=SHA), 0)
+    m.asc.insert(0, row(m.version, 1))
+    with using(NativeRuntime(m.rt.providers, m.rt.settings, m.rt.project)):
+        output = release_ios.after_accepted(world(), m.version)
+    assert output[-1].startswith("IOS NOT-CLEAN") and not m.receipt()["clean"]
+    assert not m.uploads and not m.notes and not m.archived
+
+
+def test_submitted_asc_id_drift_refuses_a_successful_old_number(tmp_path):
+    m = Mini(tmp_path)
+    assert m.run().exit_code == 0
+    m.asc[0] = m.asc[0].replace("id=x32", "id=unrelated")
+    assert m.run().exit_code == 1 and "build ID" in m.receipt()["reason"]
+    assert len(m.notes) == len(m.uploads) == 1
+
+
+def test_unknown_marketing_version_blocks_allocation(tmp_path):
+    m = Mini(tmp_path)
+    m.asc.append(row("None", 500))
+    assert m.run().exit_code == 1 and "without a marketing version" in m.receipt()["reason"]
+    assert not m.uploads and not m.notes
+
+
+def asc_page(identifier, number, *, total=2, link=None):
+    return {"meta": {"paging": {"total": total}}, "links": {"next": link},
+            "included": [{"type": "preReleaseVersions", "id": "v", "attributes": {"version": "0.9.56"}}],
+            "data": [{"type": "builds", "id": identifier, "attributes": {"version": number, "expired": False, "processingState": "VALID"},
+                      "relationships": {"preReleaseVersion": {"data": {"type": "preReleaseVersions", "id": "v"}}}}]}
+
+
+@pytest.mark.parametrize("fault", ["", "truncated", "repeat-id", "changed-total", "different-app", "external-host"])
+def test_inventory_follows_only_complete_app_scoped_pages(fault):
+    from steuermaschine_heinzel.native.release_lib.ios_inventory import inventory
+
+    api = "https://asc.invalid"
+    next_page = api + "/v1/builds?filter%5Bapp%5D=fixture&include=preReleaseVersion&cursor=123"
+    if fault == "different-app":
+        next_page = next_page.replace("fixture", "elsewhere")
+    if fault == "external-host":
+        next_page = next_page.replace("asc.invalid", "remote.invalid")
+    pages = [asc_page("record-1", "2", link=None if fault == "truncated" else next_page),
+             asc_page("record-1" if fault == "repeat-id" else "record-2", "400", total=3 if fault == "changed-total" else 2)]
+    if fault:
+        with pytest.raises(ValueError):
+            inventory(lambda path: pages.pop(0), "fixture", api)
+    else:
+        result = inventory(lambda path: pages.pop(0), "fixture", api)
+        assert result["builds"]["record-2"]["build"] == "400" and result["builds"]["record-1"]["short"] == "0.9.56"
+        assert not pages
+
+
+@pytest.mark.parametrize("verb", ["assign", "beta", "notes"])
+def test_each_tagged_lookup_requires_the_pinned_build_at_operation_time(verb):
+    from types import SimpleNamespace
+
+    from steuermaschine_heinzel.native.release_lib.ios_inventory import scoped_command
+
+    row = {"id": "submitted", "build": "36", "short": "0.9.57", "expired": False, "state": "VALID"}
+    rows = [row]
+    seen = []
+    tool = SimpleNamespace(builds=lambda env: rows)
+
+    def command(env, args):
+        seen.extend(tool.builds(env))
+    tool.cmd_assign = tool.cmd_beta = tool.cmd_notes = command
+    for changed in ([row, dict(row, id="duplicate")], [dict(row, short="other")], [dict(row, id="unbound")], [dict(row, expired=True)], [dict(row, state="FAILED")]):
+        rows = changed
+        with pytest.raises(ValueError, match="submitted build identity"):
+            scoped_command(tool, {}, verb, ["36", "fixture"], "0.9.57", "submitted")
+    assert not seen
+    rows = [row]
+    scoped_command(tool, {}, verb, ["36", "fixture"], "0.9.57", "submitted")
+    assert seen == [row]
+
+
+def test_tag_helper_adapter_runs_the_extensionless_fixture_without_external_calls(tmp_path, monkeypatch, capsys):
+    import runpy
+    import sys
+
+    from steuermaschine_heinzel.native.release_lib import ios_inventory
+
+    script = tmp_path / "testflight"
+    script.write_text("""
+APP_ID = 'a'
+API = 'https://fixture.invalid'
+def load_env():
+    return {}
+def call(env, method, path):
+    assert method == 'GET'
+    return {'meta': {'paging': {'total': 0}}, 'data': [], 'links': {}}
+def builds(env):
+    return [{'id': 'owned', 'build': '42', 'short': '0.9.57', 'expired': False, 'state': 'VALID'}]
+def cmd_notes(env, args):
+    print(args.file, builds(env)[0]['id'])
+cmd_assign = cmd_beta = cmd_notes
+""")
+    bridge = str(ios_inventory.__file__)
+    monkeypatch.setattr(sys, "argv", [bridge, str(script)])
+    runpy.run_path(bridge, run_name="__main__")
+    assert json.loads(capsys.readouterr().out) == {"app": "a", "builds": {}}
+    monkeypatch.setattr(sys, "argv", [bridge, "notes", "42", "fixture.txt", "0.9.57", "owned", str(script)])
+    runpy.run_path(bridge, run_name="__main__")
+    assert capsys.readouterr().out.strip() == "fixture.txt owned"
+
+
+def test_failed_verification_can_retry_without_overwriting_the_old_archive(tmp_path):
+    m = Mini(tmp_path)
+    m.fail["verify"] = Result(1, "", "signed extension has wrong revision")
+    assert m.run().exit_code == 1 and not m.uploads and not m.notes
+    m.fail.clear()
+    assert m.run().exit_code == 0 and len(m.archived) == 2 and len(m.uploads) == 1
