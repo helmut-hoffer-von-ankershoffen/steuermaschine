@@ -54,9 +54,13 @@ def require_replacement_authority(w: Any, version: str, revision: str, cwd: Path
     manifest = asset("artifact-manifest.json")
     if manifest.get("project") != "heinzel" or manifest.get("version") != version or manifest.get("commit") != revision:
         raise ValueError("published release artifact source differs from the requested tag revision")
+    wheel_name = f"heinzel-{version}-py3-none-any.whl"
+    wheel = snapshot.asset_digest(release, wheel_name)
+    files = manifest.get("files")
+    if not isinstance(files, dict) or files.get(wheel_name) != wheel:
+        raise ValueError("producer manifest does not bind the published release wheel")
     # Hosted verdicts additionally pin wheel and composed profile. The local release driver's schema-1 verdict omits both.
     if "wheel_sha256" in marker or "profile_sha256" in marker:
-        wheel = snapshot.asset_digest(release, f"heinzel-{version}-py3-none-any.whl")
         app = api(f"releases/tags/app-{tag}", hzlib.PLUGINS)
         if (app.get("tag_name") != f"app-{tag}" or not isinstance(app.get("assets"), list) or not all(isinstance(a, dict) for a in app["assets"])
                 or marker.get("wheel_sha256") != wheel or marker.get("profile_sha256") != snapshot.asset_digest(app, "standard.json")):

@@ -157,9 +157,17 @@ def official_release(m, fault=""):
     root = f"repos/{hzlib.CORE}/"
     get = ["gh", "api", "--hostname", "github.com"]
     marker = {"schema": 1, "project": "heinzel", "version": m.version, "accepted": True, "acceptance_run": 17}
-    manifest = {"schema": 1, "project": "heinzel", "version": m.version, "commit": SHA}
+    wheel_name = f"heinzel-{m.version}-py3-none-any.whl"
+    wheel = "1" * 64
+    manifest = {"schema": 1, "project": "heinzel", "version": m.version, "commit": SHA, "files": {wheel_name: wheel}}
     ref = {"ref": f"refs/tags/{tag}", "object": {"type": "commit", "sha": SHA}}
-    release = {"tag_name": tag, "draft": False, "prerelease": False, "assets": []}
+    release = {"tag_name": tag, "draft": False, "prerelease": False, "assets": [{"name": wheel_name, "digest": "sha256:" + wheel}]}
+    if fault.endswith("-missing-files"):
+        del manifest["files"]
+    if fault.endswith("-other-file"):
+        manifest["files"] = {"other.whl": wheel}
+    if fault.endswith("-producer-mismatch"):
+        manifest["files"] = {wheel_name: "a" * 64}
     if fault == "rejected":
         marker["accepted"] = False
     if fault == "wrong-version":
@@ -179,9 +187,8 @@ def official_release(m, fault=""):
         annotated = {"sha": "f" * 40 if fault == "annotated" else "d" * 40, "object": {"type": "commit", "sha": SHA}}
         m.commands.on([*get, root + "git/tags/" + "f" * 40], Result(0, json.dumps(annotated)))
     if fault.startswith("hosted"):
-        wheel, profile = "1" * 64, "2" * 64
+        profile = "2" * 64
         marker.update(wheel_sha256=wheel, profile_sha256=profile)
-        release["assets"].append({"name": f"heinzel-{m.version}-py3-none-any.whl", "digest": "sha256:" + wheel})
         app = {"tag_name": f"app-{tag}", "draft": False, "prerelease": False, "assets": [
             {"name": "standard.json", "digest": "sha256:" + (profile if fault != "hosted-profile" else "3" * 64)}]}
         m.commands.on([*get, f"repos/{hzlib.PLUGINS}/releases/tags/app-{tag}"], Result(0, json.dumps(app)))
@@ -200,13 +207,17 @@ def official_release(m, fault=""):
 
 
 @pytest.mark.parametrize("fault", ["missing", "rejected", "wrong-version", "wrong-project", "wrong-digest", "duplicate",
-                                   "wrong-commit", "wrong-ref", "wrong-remote-sha", "wrong-peel", "unpublished", "hosted-profile"])
+                                   "wrong-commit", "wrong-ref", "wrong-remote-sha", "wrong-peel", "unpublished", "hosted-profile",
+                                   "local-missing-files", "local-other-file", "local-producer-mismatch",
+                                   "hosted-missing-files", "hosted-other-file", "hosted-producer-mismatch"])
 def test_replacement_refuses_before_asc_when_official_acceptance_is_unbound(tmp_path, fault):
     m = Mini(tmp_path, version="0.9.57")
     m.asc = [row(m.version, 1)]
     official_release(m, fault)
     out = invoke(m.rt, ["release", "ios", m.version, "--supersede-build-id", "x1", "--expected-revision", SHA])
     assert out.exit_code == 1 and not m.receipt()["clean"]
+    if fault.endswith(("-missing-files", "-other-file", "-producer-mismatch")):
+        assert "producer manifest does not bind the published release wheel" in m.receipt()["reason"]
     assert not any(cmd[0] in {"uv", "xcodebuild"} or "add" in cmd for cmd in m.commands.calls)
     assert not (m.state / "ios/submissions").exists() and not m.notes
 
