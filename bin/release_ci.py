@@ -93,6 +93,26 @@ def creators(get: Callable[[str], object]) -> set[str]:
     return {c.strip() for c in raw.split(",") if c.strip()} - {BOT}
 
 
+def model_review_ran(run: dict, get: Callable[[str], object]) -> bool:
+    """A successful paused workflow is a CI result, never a model verdict."""
+    run_id, attempt = run.get("id"), run.get("run_attempt")
+    if type(run_id) is not int or run_id <= 0 or type(attempt) is not int or attempt <= 0:
+        return False
+    try:
+        document = get(f"repos/{REPO}/actions/runs/{run_id}/attempts/{attempt}/jobs?per_page=100")
+    except Refused:
+        return False
+    if not isinstance(document, dict) or not isinstance(jobs := document.get("jobs"), list):
+        return False
+    if type(document.get("total_count")) is not int or not 0 < len(jobs) == document["total_count"] <= 100:
+        return False
+    model = [job for job in jobs if isinstance(job, dict) and job.get("name") == "Gate model review"]
+    return len(model) == 1 and (
+        model[0].get("run_id"), model[0].get("run_attempt"), model[0].get("head_sha"),
+        model[0].get("status"), model[0].get("conclusion"),
+    ) == (run_id, attempt, run.get("head_sha"), "completed", "success")
+
+
 def verdict_for(sha: str, api_get: Callable[[str], object] | None = None) -> tuple[int, str, str]:
     """(PR number, PR head, reviewer) of the merged pull request of commit SHA; Refused when there is no valid verdict.
     Two sources, the first that holds wins: the check run `Gate review` of the Gate review workflow (an app check run: only
@@ -118,10 +138,10 @@ def verdict_for(sha: str, api_get: Callable[[str], object] | None = None) -> tup
             suite = (latest_run.get("check_suite") or {}).get("id")
             found = get(f"repos/{REPO}/actions/runs?check_suite_id={suite}") if suite else {}
             runs_of = found.get("workflow_runs", []) if isinstance(found, dict) else []
-            if any(w.get("path") == GATE_WORKFLOW and w.get("event") == "pull_request_target" and w.get("head_sha") == head
-                   and w.get("conclusion") == "success" for w in runs_of):
+            if any(isinstance(w, dict) and w.get("path") == GATE_WORKFLOW and w.get("event") == "pull_request_target" and w.get("head_sha") == head
+                   and w.get("conclusion") == "success" and model_review_ran(w, get) for w in runs_of):
                 return number, head, WORKFLOW_REVIEWER
-            forged = f" (a check run `{CONTEXT}` exists but does not come from {GATE_WORKFLOW} on pull_request_target for this head)"
+            forged = f" (a check run `{CONTEXT}` exists but does not come from {GATE_WORKFLOW} on pull_request_target for this head with a completed model review)"
     statuses = get(f"repos/{REPO}/commits/{head}/statuses?per_page=100")
     latest = next((s for s in statuses if s.get("context") == CONTEXT), None) if isinstance(statuses, list) else None  # newest first
     if latest is None or latest.get("state") != "success":

@@ -6,10 +6,11 @@ name: Gate review
 #   - a Claude review on Opus (the builders run on Sonnet) asks whether the change is correct and whether it weakens a gate
 #     or the release path; the check passes only when the last non-empty line of the model output is exactly
 #     "VERDICT: APPROVE"; the review is posted as a pull request comment;
-#   - the review cannot run (bot sender such as Dependabot, fork, draft, CLAUDE_REVIEW not "true"): the check fails with
+#   - an explicit CLAUDE_REVIEW=false pauses Claude and reports the skip. A skipped model is not a release verdict.
+#   - otherwise, if the review cannot run (bot sender such as Dependabot, fork, draft, or invalid setting), it fails with
 #     "needs a human or agent review"; such a pull request is released only with the status `Gate review` set by hand
 #     (bin/release_ci.py record) by a login of the repository variable GATE_REVIEW_CREATORS. A review that did not run
-#     never passes.
+#     never becomes a model approval.
 # The release gate (bin/release_ci.py) reads this check run on the merged pull request's final head.
 # It runs on pull_request_target, so the workflow is the base branch's: a pull request cannot edit it to pass its own
 # review (so it first runs on the pull requests after this file is on main). The pull request head is data only: the
@@ -44,7 +45,9 @@ jobs:
           FORK: ${{ github.event.pull_request.head.repo.full_name != github.repository }}
           ENABLED: ${{ vars.CLAUDE_REVIEW }}
         run: |
-          if [[ "$SENDER_TYPE" == Bot || "$FORK" == true || "$DRAFT" == true || "$ENABLED" != true ]]; then
+          if [[ "$ENABLED" == false ]]; then
+            mode=paused
+          elif [[ "$SENDER_TYPE" == Bot || "$FORK" == true || "$DRAFT" == true || "$ENABLED" != true ]]; then
             mode=refuse
           else
             mode=review
@@ -140,6 +143,12 @@ jobs:
           VERDICT_LINE: ${{ needs.model.outputs.verdict_line }}
           RESULT: ${{ needs.model.outputs.result }}
         run: |
+          if [[ "$MODE" == paused ]]; then
+            message="Claude review skipped: an operator paused it with CLAUDE_REVIEW=false. No model verdict was recorded."
+            echo "::notice::$message"
+            printf '%s\n' "$message" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           if [[ "$MODE" == refuse ]]; then
             echo "::error::Gate review needs a human or agent review: every pull request is gate-relevant and the model review cannot run for a bot sender, fork, draft or with CLAUDE_REVIEW off"
             exit 1
