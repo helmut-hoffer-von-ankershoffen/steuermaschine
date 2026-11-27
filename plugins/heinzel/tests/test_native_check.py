@@ -3,6 +3,7 @@ comes from (the checkout's selector and hook, never a list in sm), and the recei
 No network, no real git, uv or node; the lock files live under tmp_path."""
 
 import json
+from pathlib import Path
 from shlex import split
 
 import pytest
@@ -86,12 +87,89 @@ def test_deferred_whole_vitest_is_bound_to_check_receipt(core, rt, tmp_path):  #
     sel.write_text(json.dumps({"vitest": ["web/src/a.test.ts"]}))
     hook = {**WEB, "web": ["web-tests=web exec vitest run ./src/a.test.ts"]}
     machine = checkout(core, hook).on("git diff --name-only", "pyproject.toml")
+    machine.on("web exec vitest run", vitest_report(core, ["web/src/a.test.ts"]))
     runtime = rt(machine)
     result = invoke(runtime, ["--format", "json", "check", str(core), "--sel", str(sel)])
     found = report(result)
     assert found.ready and "the whole Vitest suite" in found.ci_must_run
     receipt = runtime.providers.store.get_receipt(verdicts.CHECKS, HEAD)
     assert receipt["head"] == HEAD and receipt["base"] == MAIN and receipt["requires_full_pr"] is True
+
+
+def vitest_report(worktree, names):
+    def write(argv):
+        assert "--reporter=default" in argv and "--reporter=json" in argv
+        report = Path(next(arg.split("=", 1)[1] for arg in argv if arg.startswith("--outputFile.json=")))
+        assert not report.exists() and not report.is_relative_to(worktree)
+        results = [{"name": str(worktree / name), "status": "passed", "assertionResults": [{"status": "passed"}]} for name in names]
+        report.write_text(json.dumps({"success": True, "testResults": results}), encoding="utf-8")
+        return "Vitest passed"
+
+    return write
+
+
+@pytest.mark.parametrize("changed", ["pyproject.toml", "web/src/a.ts"])
+def test_named_vitest_green_exit_cannot_hide_a_dropped_suite(core, rt, tmp_path, changed):  # noqa: F811
+    wanted = ["web/src/a.test.ts", "web/src/b.test.ts"]
+    sel = tmp_path / "sel.json"
+    sel.write_text(json.dumps({"vitest": wanted}))
+    command = "web exec vitest run ./src/a.test.ts ./src/b.test.ts"
+    machine = checkout(core, {**WEB, "web": [f"web-tests={command}"]}).on("git diff --name-only", changed)
+    machine.on(command, vitest_report(core, wanted[:1]))
+    runtime = rt(machine)
+    found = report(invoke(runtime, ["--format", "json", "check", str(core), "--sel", str(sel)]))
+    assert not found.ready and not found.receipt
+    assert [failure.step for failure in found.failures] == ["web"]
+    assert "omits a selection" in found.failures[0].message
+    assert not runtime.providers.store.get_receipt(verdicts.CHECKS, HEAD)
+
+
+@pytest.mark.parametrize("automatic, deferred", [("web/src/a.ts\nweb/src/b.ts", True), ("web/src/a.ts", False)])
+def test_exact_vitest_runs_only_named_files_and_records_full_pr_when_it_omits_tests(core, rt, tmp_path, automatic, deferred):  # noqa: F811
+    wanted = "web/src/a.test.ts"
+    sel = tmp_path / "sel.json"
+    sel.write_text(json.dumps({"vitest": [wanted]}))
+    command = "web exec vitest run ./src/a.test.ts"
+    hook = {**WEB, "web": [*WEB["web"][:-1], f"web-tests={command}"]}
+    machine = checkout(core, hook).on("git diff --name-only", automatic).on(command, vitest_report(core, [wanted]))
+    runtime = rt(machine)
+    found = report(invoke(runtime, ["--format", "json", "check", str(core), "--sel", str(sel), "--vitest-exact"]))
+    assert found.ready and found.receipt
+    (probe, _, _), = machine.ran("core_scoped_checks")
+    assert json.loads(probe[-1])["vitest"] == [wanted]
+    assert machine.ran(command) and machine.ran("biome ci") and machine.ran("tsc --noEmit")
+    receipt = runtime.providers.store.get_receipt(verdicts.CHECKS, HEAD)
+    assert receipt["head"] == HEAD and receipt["base"] == MAIN and receipt["requires_full_pr"] is deferred
+    assert found.ci_must_run == receipt["ci_must_run"] == (["the whole Vitest suite"] if deferred else [])
+
+
+@pytest.mark.parametrize("reported", [["web/src/a.test.ts", "web/src/nested/src/a.test.ts"], ["web/src/nested/src/a.test.ts"], []])
+def test_exact_vitest_green_exit_cannot_hide_extra_or_missing_results(core, rt, tmp_path, reported):  # noqa: F811
+    wanted = "web/src/a.test.ts"
+    sel = tmp_path / "sel.json"
+    sel.write_text(json.dumps({"vitest": [wanted]}))
+    command = "web exec vitest run ./src/a.test.ts"
+    machine = checkout(core, {**WEB, "web": [f"web-tests={command}"]}).on(command, vitest_report(core, reported))
+    runtime = rt(machine)
+    found = report(invoke(runtime, ["--format", "json", "check", str(core), "--sel", str(sel), "--vitest-exact"]))
+    assert not found.ready and not found.receipt
+    assert [failure.step for failure in found.failures] == ["web"]
+    assert "reported Vitest" in found.failures[0].message
+    assert not runtime.providers.store.get_receipt(verdicts.CHECKS, HEAD)
+
+
+@pytest.mark.parametrize("selection", [None, {}, {"vitest": []}, {"vitest": ["web/src/a b.test.ts"]}])
+def test_exact_vitest_refuses_missing_empty_or_invalid_selection(core, rt, tmp_path, selection):  # noqa: F811
+    machine = checkout(core)
+    runtime = rt(machine)
+    args = ["check", str(core), "--vitest-exact"]
+    if selection is not None:
+        sel = tmp_path / "sel.json"
+        sel.write_text(json.dumps(selection))
+        args.extend(["--sel", str(sel)])
+    result = invoke(runtime, args)
+    assert result.exit_code == 2, result
+    assert not machine.ran("core_scoped_checks") and not runtime.providers.store.get_receipt(verdicts.CHECKS, HEAD)
 
 
 def test_a_document_change_runs_the_docs_style_test_the_selector_names_and_the_hooks_document_steps(core, rt):  # noqa: F811

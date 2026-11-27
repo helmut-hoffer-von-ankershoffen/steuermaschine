@@ -97,6 +97,7 @@ class Plan:
     note: str = ""
     extra: list[str] = field(default_factory=list)  # tests the caller added (--sel)
     named_web_tests: list[str] = field(default_factory=list)
+    vitest_exact: bool = False
     web_deferred: bool = False
     lanes: list[str] = field(default_factory=list)  # the e2e lanes the selector names: never run here
 
@@ -151,7 +152,7 @@ def hook_facts(c: head.Ctx, changed: list[str], vitest: list[str] | None) -> tup
     return found, ""
 
 
-def plan(c: Ctx, selection: dict[str, Any], extra: list[str], *, web_tests: list[str] | None = None) -> Plan:
+def plan(c: Ctx, selection: dict[str, Any], extra: list[str], *, web_tests: list[str] | None = None, vitest_exact: bool = False) -> Plan:
     """Bind the selector's answer and the hook's answer for the head's changed paths."""
     changed = c.changed()
     full = bool(selection.get("full")) or selection.get("pytest") == ["ALL"]
@@ -163,7 +164,9 @@ def plan(c: Ctx, selection: dict[str, Any], extra: list[str], *, web_tests: list
     vitest = selection.get("vitest") or []
     whole_web = vitest == ["ALL"]
     picked = None if whole_web else list(vitest)
-    if web_tests:
+    if vitest_exact:
+        picked = web_tests
+    elif web_tests:
         picked = list(dict.fromkeys([*(picked or []), *web_tests]))
     facts, p.hook = hook_facts(c, changed, picked)
     p.web, p.docs = steps_of(facts.get("web") or []), steps_of(facts.get("docs") or [])
@@ -171,11 +174,14 @@ def plan(c: Ctx, selection: dict[str, Any], extra: list[str], *, web_tests: list
     p.web_files, p.docs_files, p.note = list(facts.get("web_files") or []), list(facts.get("doc_files") or []), str(facts.get("note") or "")
     if web_tests and not p.hook:
         expected = {f"./{file.removeprefix('web/')}" for file in picked or []}
-        if p.note or not any(name == "web-tests" and expected.issubset(argv) for name, argv in p.web):
+        targets = [{arg for arg in argv if arg.startswith("./")} for name, argv in p.web if name == "web-tests"]
+        matched = targets == [expected] if vitest_exact else any(expected <= step_targets for step_targets in targets)
+        if p.note or not matched:
             p.hook = p.note or "the hook did not select a Vitest step for the named files"
         else:
-            p.named_web_tests = web_tests
-            p.web_deferred = whole_web
+            p.named_web_tests = list(picked or [])
+            p.vitest_exact = vitest_exact
+            p.web_deferred = whole_web or (vitest_exact and not set(vitest).issubset(web_tests))
     return p
 
 
@@ -184,7 +190,7 @@ def narrow(c: Ctx, p: Plan) -> None:
     tests of the change; when it says ALL too, the whole unit suite runs; when it fails, the run fails."""
     mappable = [f for f in p.changed if not f.startswith(head.WEB_INPUTS)]
     if not mappable:
-        p.pytest, p.narrowed = [], "the selector selects the full set; only web inputs changed, so the web check runs every Vitest file and no unit test"
+        p.pytest, p.narrowed = [], "the selector selects the full set; only web inputs changed, so no Python unit tests are selected"
         return
     if not (c.wt / head.RELATED_SCRIPT).is_file():
         p.narrowed = f"the selector selects the full set and Core has no {head.RELATED_SCRIPT} to narrow it: the whole unit suite runs"
@@ -266,9 +272,46 @@ def step_ruff(c: Ctx) -> Step:
     return s
 
 
+def verify_named_vitest(report: Path, expected: list[str], root: Path, *, exact: bool) -> None:
+    """Require passing bodies in all selected files, and no extra files for exact selection."""
+    data = json.loads(report.read_text(encoding="utf-8"))
+    if not isinstance(data, dict) or data.get("success") is not True or not isinstance(results := data.get("testResults"), list):
+        raise ValueError("the Vitest JSON report is invalid or unsuccessful")
+    actual = []
+    for result in results:
+        if not isinstance(result, dict) or not isinstance(name := result.get("name"), str):
+            raise ValueError("the Vitest JSON report contains an invalid file entry")
+        assertions = result.get("assertionResults")
+        if result.get("status") != "passed" or not isinstance(assertions, list):
+            raise ValueError("a reported Vitest file did not pass")
+        statuses = [assertion.get("status") if isinstance(assertion, dict) else None for assertion in assertions]
+        if "passed" not in statuses or any(status not in ("passed", "pending", "todo", "skipped") for status in statuses):
+            raise ValueError("a reported Vitest file has no passing test or contains a failed test")
+        actual.append(Path(name))
+    observed = set(actual)
+    requested = {root / name for name in expected}
+    if len(observed) != len(actual) or not requested.issubset(observed):
+        raise ValueError("the reported Vitest inventory contains duplicate files or omits a selection")
+    if exact and requested != observed:
+        raise ValueError("the reported Vitest file inventory differs from the exact selection")
+
+
+def run_named_vitest(c: Ctx, argv: list[str]) -> tuple[int, str]:
+    with tempfile.TemporaryDirectory(prefix="sm-vitest-") as directory:
+        report = Path(directory) / "results.json"
+        command = [*argv, "--reporter=default", "--reporter=json", f"--outputFile.json={report}"]
+        rc, out = c.gate(command, cwd=c.wt)
+        if rc == 0:
+            try:
+                verify_named_vitest(report, c.plan.named_web_tests, c.wt, exact=c.plan.vitest_exact)
+            except (OSError, ValueError) as error:
+                return 1, f"{out}\nnamed Vitest evidence: {error}"
+        return rc, out
+
+
 def run_steps(c: Ctx, s: Step, steps: list[tuple[str, list[str]]], fix: str) -> None:
     for name, argv in steps:
-        rc, out = c.gate(argv, cwd=c.wt)
+        rc, out = run_named_vitest(c, argv) if name == "web-tests" and c.plan.named_web_tests else c.gate(argv, cwd=c.wt)
         if rc == 75:
             s.fail(f"the run lock gave no slot for {name} (exit 75 = WAIT)", NO_SLOT)
             return

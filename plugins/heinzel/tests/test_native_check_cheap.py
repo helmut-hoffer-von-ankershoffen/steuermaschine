@@ -7,6 +7,7 @@ import json
 import sys
 
 import pytest
+from test_native_check import vitest_report
 
 from steuermaschine_heinzel.native.check_lib import cheap
 from steuermaschine_heinzel.native.preflight_lib import head
@@ -153,6 +154,15 @@ def test_named_vitest_files_leave_the_whole_suite_to_ci_only_when_selected(tmp_p
 
     monkeypatch.setattr(cheap, "hook_facts", scoped_hook)
     c.plan = cheap.plan(c, {"vitest": picked, "pytest": []}, [], web_tests=[wanted])
+    recorded_gate = c.gate
+
+    def gate_with_report(argv, **kwargs):
+        result = recorded_gate(argv, **kwargs)
+        if "--reporter=json" in argv:
+            vitest_report(c.wt, expected)(argv)
+        return result
+
+    c.gate = gate_with_report
     step = cheap.hook_step("web", "web files", "fix the web check")(c)
     assert not step.failures
     assert tuple(c.ci) == (("the whole Vitest suite",) if picked == ["ALL"] else ())
@@ -166,6 +176,15 @@ def test_named_vitest_files_are_refused_if_the_hook_drops_the_arguments(tmp_path
     monkeypatch.setattr(cheap, "hook_facts", lambda *_: ({"web": ["web-tests=web exec vitest run"]}, ""))
     p = cheap.plan(c, {"vitest": ["ALL"]}, [], web_tests=["web/src/a.test.ts"])
     assert p.hook == "the hook did not select a Vitest step for the named files"
+    assert not p.web_deferred
+
+
+@pytest.mark.parametrize("arguments,note", [("./src/a.test.ts ./src/extra.test.ts", ""), ("", "invalid test path")])
+def test_exact_vitest_refuses_a_hook_that_widens_or_rejects_the_selection(tmp_path, monkeypatch, arguments, note):
+    c, _ = context(tmp_path, {}, ["web/src/a.ts"])
+    monkeypatch.setattr(cheap, "hook_facts", lambda *_: ({"web": [f"web-tests=web exec vitest run {arguments}"], "note": note}, ""))
+    p = cheap.plan(c, {"vitest": ["web/src/a.test.ts", "web/src/b.test.ts"]}, [], web_tests=["web/src/a.test.ts"], vitest_exact=True)
+    assert p.hook == (note or "the hook did not select a Vitest step for the named files")
     assert not p.web_deferred
 
 
