@@ -123,8 +123,7 @@ jobs:
           version: "0.13.5"
           python-version: ${{ matrix.python }}
           enable-cache: true
-      # PyYAML (a commitizen dependency, unused by the tests) has no wheel for 3.15 yet: skip it instead of building.
-      - run: uv sync --all-packages --locked --no-build --no-install-package pyyaml
+      - run: uv sync --all-packages --locked --no-build
       - name: Require native Apple Silicon Python 3.15
         if: matrix.os == 'macos-15'
         run: |
