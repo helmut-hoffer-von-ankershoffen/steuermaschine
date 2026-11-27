@@ -656,8 +656,15 @@ def test_a_full_selection_the_import_graph_narrows_runs_those_tests_and_the_ones
     assert not found.ready and [f.step for f in found.failures] == ["tests"] and "no test is selected" in found.failures[0].message and "--sel FILE" in found.failures[0].fix
 
 
-@pytest.mark.parametrize("collected", [True, False])
-def test_named_python_in_grouped_hook_needs_its_own_collected_case(core, rt, tmp_path, collected):  # noqa: F811
+@pytest.mark.parametrize("outcome", [
+    pytest.param("", id="passed"),
+    pytest.param(None, id="absent"),
+    pytest.param('<skipped type="pytest.skip"/>', id="skipped"),
+    pytest.param('<skipped type="pytest.xfail"/>', id="xfailed"),
+    pytest.param("<failure/>", id="failed"),
+    pytest.param("<error/>", id="error"),
+])
+def test_named_python_in_grouped_hook_needs_its_own_passing_case(core, rt, tmp_path, outcome):  # noqa: F811
     wanted, other = "tests/unit/wanted_test.py", "tests/unit/other_test.py"
     for name in (wanted, other):
         (core / name).write_text("def test_ok(): pass\n")
@@ -668,19 +675,21 @@ def test_named_python_in_grouped_hook_needs_its_own_collected_case(core, rt, tmp
     def emit(argv):
         output = Path(next(arg.split("=", 1)[1] for arg in argv if arg.startswith("--junitxml=")))
         assert not output.exists() and not output.is_relative_to(core)
-        files = [other, wanted] if collected else [other]
-        output.write_text("<testsuite>" + "".join(f'<testcase file="{f}" name="test_ok"/>' for f in files) + "</testsuite>")
+        sibling = f'<testcase file="{other}" name="test_sibling"/>'
+        requested = "" if outcome is None else f'<testcase file="{wanted}" name="test_requested">{outcome}</testcase>'
+        output.write_text(f"<testsuite>{sibling}{requested}</testsuite>")
         return "pytest returned success"
 
     machine = checkout(core, {**NONE, "guards": [cmd]}).on(" ".join(cmd), emit)
     runtime = rt(machine)
     found = report(invoke(runtime, ["--format", "json", "check", str(core), "--sel", str(sel)]))
-    assert found.ready is collected and bool(found.receipt) is collected
-    assert bool(runtime.providers.store.get_receipt(verdicts.CHECKS, HEAD)) is collected
+    passed = outcome == ""
+    assert found.ready is passed and bool(found.receipt) is passed
+    assert bool(runtime.providers.store.get_receipt(verdicts.CHECKS, HEAD)) is passed
     calls = [argv for argv, *_ in machine.calls if "pytest" in argv and wanted in argv]
     assert len(calls) == 1
-    if not collected:
-        assert "hook collected no case from" in found.failures[0].message
+    if not passed:
+        assert "hook reported no passing case from" in found.failures[0].message
 
 
 def test_named_python_files_cannot_disappear_from_a_receipt(core, rt, tmp_path):  # noqa: F811
