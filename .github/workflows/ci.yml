@@ -140,9 +140,14 @@ jobs:
           # Integration's make check enforces its coverage floor. This report gives Sonar exact-head coverage.
           env -u GITHUB_ACTIONS -u FORCE_COLOR -u PY_COLORS uv run --no-sync pytest -q -p no:cacheprovider \
             --cov=src --cov=plugins/heinzel/src --cov=bin --cov-report= --cov-fail-under=0
+          # Append genuine execution of the history checker without collecting unrelated scripts.
+          env -u GITHUB_ACTIONS -u FORCE_COLOR -u PY_COLORS uv run --no-sync pytest -q -p no:cacheprovider \
+            tests/test_review_history.py tests/test_release_ci.py \
+            --cov --cov-config=.coveragerc-sonar --cov-append --cov-report= --cov-fail-under=0
           # Report with the repository config so XML filenames retain the source directories.
           uv run --no-sync coverage xml --fail-under=0
           test -s coverage.xml
+          uv run --no-sync python -c 'import xml.etree.ElementTree as E; rows = E.parse("coverage.xml").findall(".//class"); history = [c for c in rows if c.get("filename") == "scripts/review_history.py"]; assert len(history) == 1 and any(int(line.get("hits", "0")) > 0 for line in history[0].findall("./lines/line")), "Missing canonical executed history coverage"'
           test "$(git rev-parse HEAD)" = "$PR_HEAD"
           git diff --quiet HEAD --
       - name: Verify this pull request's Sonar quality gate

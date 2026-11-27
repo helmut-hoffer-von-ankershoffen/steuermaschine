@@ -298,19 +298,20 @@ def test_exact_head_inventory_and_attempt_membership(case):
             history.check(get, "owner/repo", head, 100, 1)
 
 
-@pytest.mark.parametrize("matches", [True, False])
-def test_protected_base_bootstrap_executes_only_after_checkout_verification(tmp_path, matches):
+@pytest.mark.parametrize("checkout_matches, workflow_matches", [(True, True), (False, True), (True, False)])
+def test_protected_base_bootstrap_executes_only_after_checkout_verification(tmp_path, checkout_matches, workflow_matches):
     steps = _gate_review()["jobs"]["gate-review"]["steps"]
     checkout = next(step for step in steps if "actions/checkout@" in step.get("uses", ""))
-    assert checkout["with"]["ref"] == "${{ github.workflow_sha }}"
+    assert "ref" not in checkout["with"]
+    assert checkout["with"]["persist-credentials"] is False
     step = next(step for step in steps if step.get("id") == "history")
     script = 'git() { echo "$CHECKOUT"; }; python3() { echo checked > "$PROBE"; };\n' + step["run"]
     probe = tmp_path / "probe"
-    env = {"PATH": os.environ["PATH"], "CHECKOUT": "a" * 40 if matches else "b" * 40,
-           "TRUSTED_BASE": "a" * 40, "GITHUB_SHA": "a" * 40, "PROBE": str(probe)}
+    env = {"PATH": os.environ["PATH"], "CHECKOUT": "a" * 40 if checkout_matches else "b" * 40,
+           "TRUSTED_BASE": "a" * 40, "GITHUB_SHA": "a" * 40 if workflow_matches else "b" * 40, "PROBE": str(probe)}
     result = subprocess.run(["bash", "-e", "-c", script], env=env, check=False, timeout=5)
-    assert (result.returncode == 0) == matches
-    assert probe.exists() == matches
+    assert (result.returncode == 0) == (checkout_matches and workflow_matches)
+    assert probe.exists() == (checkout_matches and workflow_matches)
 
 
 def test_positive_approval_marker_excludes_skips_and_rejections():
@@ -337,17 +338,24 @@ def test_positive_approval_marker_excludes_skips_and_rejections():
     assert [step.get("id") for step in jobs["model"]["steps"] if "run" in step] == [None, "result"]
 
 
-@pytest.mark.parametrize("matches", [True, False])
-def test_fetched_pr_input_is_verified_before_review(tmp_path, matches):
+@pytest.mark.parametrize("broken", ["none", "checkout", "workflow", "head"])
+def test_fetched_pr_input_is_verified_before_review(tmp_path, broken):
     steps = _gate_review()["jobs"]["model"]["steps"]
     checkout = next(step for step in steps if "actions/checkout@" in step.get("uses", ""))
-    assert checkout["with"]["ref"] == "${{ github.workflow_sha }}"
+    assert "ref" not in checkout["with"]
+    assert checkout["with"]["persist-credentials"] is False
     fetch = next(step["run"] for step in steps if step.get("name") == "Fetch the head as git objects only")
-    script = 'git() { if [[ "$1" == rev-parse ]]; then echo "$FETCHED"; fi; };\n' + fetch
-    env = {"PATH": os.environ["PATH"], "GH_TOKEN": "fixture", "PR": "12", "PR_HEAD": "a" * 40,
-           "FETCHED": "a" * 40 if matches else "b" * 40}
+    probe = tmp_path / "fetched"
+    script = ('git() { if [[ "$1" == rev-parse ]]; then '
+              'if [[ "$2" == HEAD ]]; then echo "$CHECKOUT"; else echo "$FETCHED"; fi; '
+              'else echo fetched > "$PROBE"; fi; };\n' + fetch)
+    env = {"PATH": os.environ["PATH"], "GH_TOKEN": "fixture", "PR": "12", "PR_HEAD": "c" * 40,
+           "TRUSTED_BASE": "a" * 40, "GITHUB_SHA": "b" * 40 if broken == "workflow" else "a" * 40,
+           "CHECKOUT": "b" * 40 if broken == "checkout" else "a" * 40,
+           "FETCHED": "b" * 40 if broken == "head" else "c" * 40, "PROBE": str(probe)}
     result = subprocess.run(["bash", "-e", "-c", script], env=env, check=False, timeout=5, capture_output=True)
-    assert (result.returncode == 0) == matches
+    assert (result.returncode == 0) == (broken == "none")
+    assert probe.exists() == (broken in {"none", "head"})
 
 
 @pytest.fixture(autouse=True)

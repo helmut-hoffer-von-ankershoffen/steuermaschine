@@ -68,18 +68,22 @@ jobs:
       verdict_line: ${{ steps.result.outputs.verdict_line }}
       result: ${{ steps.result.outputs.result }}
     steps:
+      # Default checkout on pull_request_target is the protected source, never the PR head.
       # The base branch, never the head: the reviewer's CLAUDE.md, settings and hooks are the trusted ones.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-          ref: ${{ github.workflow_sha }}
           persist-credentials: false
       - name: Fetch the head as git objects only
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
           PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          TRUSTED_BASE: ${{ github.workflow_sha }}
         run: |
+          # Verify the default protected checkout before fetching any PR objects or invoking the model.
+          test "$(git rev-parse HEAD)" = "$TRUSTED_BASE"
+          test "$TRUSTED_BASE" = "$GITHUB_SHA"
           # git over HTTPS takes basic auth with the token as password, not a bearer header
           auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
           echo "::add-mask::${auth}"
@@ -176,7 +180,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: needs.model.outputs.spend_limit == 'true' || needs.scope.outputs.mode == 'paused'
         with:
-          ref: ${{ github.workflow_sha }}
           persist-credentials: false
       - name: Check same-head Gate review history
         id: history
