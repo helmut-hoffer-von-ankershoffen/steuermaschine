@@ -1,15 +1,12 @@
 """The budget of a local check: local is a signal, CI is the gate.
 
 A local `sm check` looks at the changed files only and has `BUDGET_SECONDS` (90) of wall time in total, however many
-commands that takes. What does not fit is DEFERRED TO CI, never failed and never dropped without a word:
+commands that takes. Extended focused mode allows up to 600 s for those same commands.
 
-  over budget      the time ran out before a step started (or a command was stopped at the budget's end): that step
-                   and the ones after it are deferred; failures found before stay failures
-  too many tests   a selection of more than `MAX_TEST_FILES` (40) test files is not run here: PR CI runs them
-
-The check still ends with exit 0 when nothing it ran failed, and its receipt line names what CI must run. A type check
-that a command's own limit stops (exit 124) or that gets no slot (75) still FAILS: that is a check that did not run
-for its own reasons, not a decision of the budget (sm #57, #59). Only the budget's end defers.
+If the wall budget expires before a step starts or stops a command, the remaining steps do not run. The check
+exits 75 and writes no receipt unless a previous step failed, in which case it reports failure. A command that hits
+its own limit (124) or cannot get a slot (75) fails (sm #57, #59). A complete check can reach READY while leaving a
+large test selection (more than `MAX_TEST_FILES`) to PR CI.
 """
 
 from __future__ import annotations
@@ -19,6 +16,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 BUDGET_SECONDS = 90.0
+EXTENDED_SECONDS = 600.0
 MAX_TEST_FILES = 40
 TIMED_OUT = 124
 

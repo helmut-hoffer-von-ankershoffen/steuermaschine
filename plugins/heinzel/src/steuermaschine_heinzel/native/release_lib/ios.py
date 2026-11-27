@@ -39,6 +39,8 @@ EXPORT_OPTIONS = "apple/distribution/ExportOptions-testflight.plist"
 PROJECT = "apple/Heinzel.xcodeproj"
 DONE_STATES = ("VALID",)
 BAD_STATES = ("FAILED", "INVALID")
+CONFIRM_POLL_SECONDS = 30
+GROUP_PROPAGATION_SECONDS = 120  # observed window between VALID and automatic group membership
 BETA_OK = "IN_BETA_TESTING"
 BETA_BAD = ("MISSING_EXPORT_COMPLIANCE", "PROCESSING_EXCEPTION", "EXPIRED", "INVALID")
 STUCK_SECONDS = 3600  # a receipt still `running` this long after its start: the step died or hangs
@@ -46,6 +48,10 @@ STUCK_SECONDS = 3600  # a receipt still `running` this long after its start: the
 
 class IosFailed(Exception):
     """The step could not finish; the message is the reason in the receipt."""
+
+
+class GroupAssignmentRefused(IosFailed):
+    """The exact ASC internal-group refusal that requires a fresh membership read."""
 
 
 @dataclass
@@ -166,6 +172,26 @@ def next_build(rows: list[dict[str, Any]]) -> str:
     return str(max((int(r["build"]) for r in rows), default=0) + 1)
 
 
+def internal_group_refusal(text: str) -> bool:
+    """Match the exact relationship POST and single Apple error observed during automatic assignment."""
+    match = re.match(r"^POST /v1/betaGroups/[^/\s]+/relationships/builds: HTTP 422\s+", text)
+    if match is None:
+        return False
+    try:
+        body = json.loads(text[match.end():])
+    except json.JSONDecodeError:
+        return False
+    errors = body.get("errors") if isinstance(body, dict) else None
+    if not isinstance(errors, list) or len(errors) != 1 or not isinstance(errors[0], dict):
+        return False
+    error = errors[0]
+    return (
+        error.get("code") == "ENTITY_UNPROCESSABLE"
+        and error.get("title") == "Builds cannot be assigned to this internal group."
+        and error.get("detail") == "Cannot add internal group to a build."
+    )
+
+
 @dataclass
 class Context:
     w: Any
@@ -184,7 +210,8 @@ class Context:
             lines = [line for line in text.splitlines() if line.strip()]
             # The last line, unless the tool ended with a multi-line JSON error: then the whole error on one line.
             shown = " ".join(text.split())[-240:] if lines and lines[-1].strip() in ("}", "]") else (lines[-1][:200] if lines else "")
-            raise IosFailed(f"{what} exited {res.rc}: {shown}")
+            error = GroupAssignmentRefused if what == "testflight assign" and internal_group_refusal(text) else IosFailed
+            raise error(f"{what} exited {res.rc}: {shown}")
         return res.out or ""
 
     def testflight(self, *args: str, timeout: float = 120) -> str:
@@ -246,12 +273,13 @@ def build_and_upload(ctx: Context, marketing: str, options: dict[str, Any], buil
 
 
 def confirm(ctx: Context, build: str, wait_seconds: int) -> None:
-    """Wait until App Store Connect lists the build VALID, add it to the group when automatic distribution did not, then
-    read it once more."""
+    """Confirm TestFlight readiness, giving automatic group membership a bounded grace period after VALID."""
     r = ctx.result
     clock: Any = ctx.w.clock
     deadline = ctx.w.now() + wait_seconds
-    assigned = False
+    assignment_attempted = False
+    assignment_refusal: GroupAssignmentRefused | None = None
+    assign_after: float | None = None
     while True:
         row = next((x for x in ctx.rows() if x["build"] == build and x["short"] == ctx.version), None)
         r.state = row["state"] if row else "NOT-LISTED"
@@ -260,18 +288,30 @@ def confirm(ctx: Context, build: str, wait_seconds: int) -> None:
             raise IosFailed(f"App Store Connect processing of build {build} ended {row['state']}")
         if row and row["expired"]:
             raise IosFailed(f"build {build} is expired")
+        now = ctx.w.now()
         if row and row["state"] in DONE_STATES:
             if row["in_group"] and beta_ready(ctx, build):
                 return
-            if not row["in_group"] and not assigned:
-                ctx.testflight("assign", build)
-                assigned = True
-                r.steps.append(f"assigned build {build} to the internal group")
-                continue
-        if ctx.w.now() >= deadline:
+            if not row["in_group"] and not assignment_attempted:
+                if assign_after is None:
+                    assign_after = now + GROUP_PROPAGATION_SECONDS
+                elif assign_after <= now < deadline:
+                    assignment_attempted = True
+                    try:
+                        ctx.testflight("assign", build)
+                    except GroupAssignmentRefused as exc:
+                        assignment_refusal = exc
+                    else:
+                        r.steps.append(f"assigned build {build} to the internal group")
+                    if ctx.w.now() < deadline:
+                        continue  # re-read ASC after either the assignment or the known refusal
+        remaining = deadline - ctx.w.now()
+        if remaining <= 0:
             where = f"{r.state}, beta {r.beta or '?'}" if r.in_group else f"{r.state}{', not in the internal group' if r.state == 'VALID' else ''}"
+            if assignment_refusal and not r.in_group:
+                raise IosFailed(f"{assignment_refusal}; build {build} did not appear in the group before the deadline")
             raise IosFailed(f"build {build} is {where} after {wait_seconds // 60} min; run the same command again")
-        clock.sleep(30)
+        clock.sleep(min(CONFIRM_POLL_SECONDS, remaining))
 
 
 def beta_ready(ctx: Context, build: str) -> bool:
