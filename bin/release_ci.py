@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """The automatic sm release: the CI gate, the release steps and the Mini follower, one module.
 
-    release_ci.py record PR --reviewer NAME     the reviewer's verdict: status `Gate review` = success on the PR's head
+    release_ci.py record PR --reviewer NAME --head SHA
+                                              the reviewer's verdict: status `Gate review` = success on the reviewed head
     release_ci.py gate --sha SHA                CI (release.yml): is the merge commit SHA releasable, and as which version?
     release_ci.py draft --version X --sha SHA   CI: keep the built files in a draft release vX (the resume point), or resume it
     release_ci.py match --version X             CI acceptance: PyPI's files of both packages equal the release's, by sha256
     release_ci.py follow                        the Mini (launchd, every 5 min): install the Latest release's wheels, switch
 
 The verdict. The independent reviewer reads the pull request; the Gate review workflow then sets its check run `Gate
-review`, or a login of GATE_REVIEW_CREATORS runs `release_ci.py record PR --reviewer NAME` (commit status `Gate review`,
+review`, or a login of GATE_REVIEW_CREATORS runs `release_ci.py record PR --reviewer NAME --head SHA` (commit status `Gate review`,
 description `APPROVE reviewer=NAME`, on the PR's head). A merge to main is released when its CI is green (release.yml
 starts on the finished CI run of main), the merged pull request's final head carries a verdict, the merged tree equals
 the reviewed head's tree, and the reviewer is none of the commit's authors (bin/promote_verdict.py's identity rule).
@@ -319,9 +320,11 @@ def matching_wheels(version: str, get: Callable[[str], object], run: Run = sh,
     return wheels
 
 
-def record(pr: int, reviewer: str, run: Run = sh) -> str:
+def record(pr: int, reviewer: str, reviewed_head: str, run: Run = sh) -> str:
     pull = api(f"repos/{REPO}/pulls/{pr}", run)
     head = str(pull["head"]["sha"])  # type: ignore[index,call-overload]
+    if head != reviewed_head:
+        raise Refused(f"PR #{pr} is at {head}; the reviewed head was {reviewed_head}")
     run("gh", "api", f"repos/{REPO}/statuses/{head}", "-f", "state=success", "-f", f"context={CONTEXT}",
         "-f", f"description=APPROVE reviewer={reviewer}", "-f", "target_url=https://github.com/" + REPO + f"/pull/{pr}")
     return head
@@ -664,6 +667,7 @@ def main(argv: list[str]) -> int:
     rec = sub.add_parser("record")
     rec.add_argument("pr", type=int)
     rec.add_argument("--reviewer", required=True)
+    rec.add_argument("--head", required=True, help="Full SHA of the commit independently reviewed.")
     gt = sub.add_parser("gate")
     gt.add_argument("--sha", required=True)
     dr = sub.add_parser("draft")
@@ -676,7 +680,8 @@ def main(argv: list[str]) -> int:
     args = parser.parse_args(argv)
     try:
         if args.verb == "record":
-            print(f"release_ci: `{CONTEXT}` success on {record(args.pr, args.reviewer)[:12]} (PR #{args.pr}, reviewer {args.reviewer})")
+            head = record(args.pr, args.reviewer, args.head)
+            print(f"release_ci: `{CONTEXT}` success on {head[:12]} (PR #{args.pr}, reviewer {args.reviewer})")
         elif args.verb == "gate":
             out = gate(Path.cwd(), args.sha)
             lines = ["release=true", *(f"{k}={v}" for k, v in out.items())]

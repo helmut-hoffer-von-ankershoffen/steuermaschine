@@ -122,7 +122,7 @@ class ClaudeReview(Model):
 
 @native("ci claude-review", writes=True, help=H(
     "Read, pause or resume Claude PR review for Core and steuermaschine.",
-    "With no flag, read both repository switches. Use --repo core or --repo sm for one repository.",
+    "Use when checking or changing the review setting. With no flag, read both repositories. Use --repo core or --repo sm for one.",
     "A pause or resume sets only the repository Actions variable CLAUDE_REVIEW and reads it back. Existing runs keep their input.",
     "sm ci claude-review --pause", "sm ci claude-review --resume"))
 def claude_review(

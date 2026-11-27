@@ -175,7 +175,10 @@ def test_record_sets_the_status_on_the_pr_head():
         calls.append(cmd)
         return '{"head": {"sha": "%s"}}' % ("c" * 40) if "statuses" not in cmd[2] else ""
 
-    assert rc.record(7, "rita", run) == "c" * 40
+    with pytest.raises(rc.Refused, match="the reviewed head was"):
+        rc.record(7, "rita", "b" * 40, run)
+    assert len(calls) == 1 and calls[0][-1] == f"repos/{rc.REPO}/pulls/7"
+    assert rc.record(7, "rita", "c" * 40, run) == "c" * 40
     assert calls[-1][2] == f"repos/{rc.REPO}/statuses/{'c' * 40}" and "description=APPROVE reviewer=rita" in calls[-1]
 
 

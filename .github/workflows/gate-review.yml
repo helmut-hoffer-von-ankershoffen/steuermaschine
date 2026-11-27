@@ -139,11 +139,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
           MODE: ${{ needs.scope.outputs.mode }}
+          SCOPE_RESULT: ${{ needs.scope.result }}
           MODEL: ${{ needs.model.result }}
           VERDICT_LINE: ${{ needs.model.outputs.verdict_line }}
           RESULT: ${{ needs.model.outputs.result }}
         run: |
-          if [[ "$MODE" == paused ]]; then
+          if [[ "$MODE" == paused && "$SCOPE_RESULT" == success && "$MODEL" == skipped ]]; then
             message="Claude review skipped: an operator paused it with CLAUDE_REVIEW=false. No model verdict was recorded."
             echo "::notice::$message"
             printf '%s\n' "$message" >> "$GITHUB_STEP_SUMMARY"
