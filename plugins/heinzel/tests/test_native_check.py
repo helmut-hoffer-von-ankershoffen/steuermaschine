@@ -656,6 +656,33 @@ def test_a_full_selection_the_import_graph_narrows_runs_those_tests_and_the_ones
     assert not found.ready and [f.step for f in found.failures] == ["tests"] and "no test is selected" in found.failures[0].message and "--sel FILE" in found.failures[0].fix
 
 
+@pytest.mark.parametrize("collected", [True, False])
+def test_named_python_in_grouped_hook_needs_its_own_collected_case(core, rt, tmp_path, collected):  # noqa: F811
+    wanted, other = "tests/unit/wanted_test.py", "tests/unit/other_test.py"
+    for name in (wanted, other):
+        (core / name).write_text("def test_ok(): pass\n")
+    sel = tmp_path / "sel.json"
+    sel.write_text(json.dumps({"python": [wanted]}))
+    cmd = ["uv", "run", "pytest", other, wanted, "-m", "unit"]
+
+    def emit(argv):
+        output = Path(next(arg.split("=", 1)[1] for arg in argv if arg.startswith("--junitxml=")))
+        assert not output.exists() and not output.is_relative_to(core)
+        files = [other, wanted] if collected else [other]
+        output.write_text("<testsuite>" + "".join(f'<testcase file="{f}" name="test_ok"/>' for f in files) + "</testsuite>")
+        return "pytest returned success"
+
+    machine = checkout(core, {**NONE, "guards": [cmd]}).on(" ".join(cmd), emit)
+    runtime = rt(machine)
+    found = report(invoke(runtime, ["--format", "json", "check", str(core), "--sel", str(sel)]))
+    assert found.ready is collected and bool(found.receipt) is collected
+    assert bool(runtime.providers.store.get_receipt(verdicts.CHECKS, HEAD)) is collected
+    calls = [argv for argv, *_ in machine.calls if "pytest" in argv and wanted in argv]
+    assert len(calls) == 1
+    if not collected:
+        assert "hook collected no case from" in found.failures[0].message
+
+
 def test_named_python_files_cannot_disappear_from_a_receipt(core, rt, tmp_path):  # noqa: F811
     sel = tmp_path / "sel.json"
     sel.write_text(json.dumps({"python": ["tests/unit/x_test.py", "tests/unit/missing_test.py"]}))

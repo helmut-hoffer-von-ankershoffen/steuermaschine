@@ -34,6 +34,7 @@ import re
 import shlex
 import tempfile
 import tomllib
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -238,8 +239,12 @@ def production(c: Ctx) -> list[str]:
 
 def selected_tests(c: Ctx) -> list[str]:
     """The selector's tests plus the caller's, without the ones a hook step already runs by name."""
-    named = {word for _, argv in [*c.plan.web, *c.plan.docs] for word in argv} | {word for argv in c.plan.guards for word in argv}
-    return [t for t in dict.fromkeys([*(c.plan.pytest or []), *c.plan.extra]) if t not in named and (c.wt / t).exists()]
+    hooks = [argv for _, argv in [*c.plan.web, *c.plan.docs]] + c.plan.guards
+    hook_words = {word for argv in hooks for word in argv}
+    # A non-pytest command may mention a test as data. It does not own an explicitly requested pytest run.
+    verified_hook_files = {file for argv in hooks for file in hook_pytest_files(c, argv)}
+    files = dict.fromkeys([*(c.plan.pytest or []), *c.plan.extra])
+    return [t for t in files if (t not in hook_words or (t in c.plan.extra and t not in verified_hook_files)) and (c.wt / t).exists()]
 
 
 # ---- steps ---------------------------------------------------------------------------------------------------------
@@ -309,9 +314,42 @@ def run_named_vitest(c: Ctx, argv: list[str]) -> tuple[int, str]:
         return rc, out
 
 
+def hook_pytest_files(c: Ctx, argv: list[str]) -> set[str]:
+    """The named files in a direct Core pytest hook whose original invocation can provide file evidence."""
+    if argv[:3] != ["uv", "run", "pytest"]:
+        return set()
+    return set(c.plan.extra).intersection(argv)
+
+
+def run_hook_pytest(c: Ctx, argv: list[str], expected: set[str]) -> tuple[int, str]:
+    """Use the hook's own pytest session to prove which named files contributed test cases."""
+    with tempfile.TemporaryDirectory(prefix="sm-pytest-") as directory:
+        report = Path(directory) / "results.xml"
+        # Core's guards and documentation steps do not request JUnit. Preserve a future hook's own artifact.
+        if any(arg.split("=", 1)[0] in ("--junitxml", "--junit-xml") for arg in argv):
+            return 1, "cannot collect named-file evidence without overriding the hook's own JUnit report"
+        rc, out = c.gate([*argv, "-o", "junit_family=xunit1", f"--junitxml={report}"], cwd=c.wt)
+        if rc:
+            return rc, out
+        try:
+            cases = ET.parse(report).iterfind(".//testcase")
+            observed = {(c.wt / path).resolve() for case in cases if (path := case.get("file"))}
+        except (ET.ParseError, OSError, ValueError) as error:
+            return 1, f"{out}\nnamed pytest evidence: {error}"
+        missing = sorted(file for file in expected if (c.wt / file).resolve() not in observed)
+        if missing:
+            return 1, f"{out}\nnamed pytest evidence: hook collected no case from {', '.join(missing)}"
+        return rc, out
+
+
 def run_steps(c: Ctx, s: Step, steps: list[tuple[str, list[str]]], fix: str) -> None:
     for name, argv in steps:
-        rc, out = run_named_vitest(c, argv) if name == "web-tests" and c.plan.named_web_tests else c.gate(argv, cwd=c.wt)
+        if name == "web-tests" and c.plan.named_web_tests:
+            rc, out = run_named_vitest(c, argv)
+        elif expected := hook_pytest_files(c, argv):
+            rc, out = run_hook_pytest(c, argv, expected)
+        else:
+            rc, out = c.gate(argv, cwd=c.wt)
         if rc == 75:
             s.fail(f"the run lock gave no slot for {name} (exit 75 = WAIT)", NO_SLOT)
             return
