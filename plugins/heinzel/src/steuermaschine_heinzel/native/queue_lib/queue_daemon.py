@@ -636,7 +636,7 @@ def later_main_passes() -> bool:
     pinned = load().get("main_failure", {})
     if not pinned:
         return False
-    runs = hzlib.ghj("run", "list", "-R", hzlib.CORE, "--workflow", ci_workflow(), "--branch", "main", "-L", "10", "--json", "status,conclusion,databaseId,headSha,displayTitle,attempt")
+    runs = hzlib.ghj("run", "list", "-R", hzlib.CORE, "--workflow", ci_workflow(), "--branch", "main", "-L", "10", "--json", "status,conclusion,databaseId,headSha,displayTitle,attempt,event")
     runs = hzlib.resolve_main_runs(runs, restoration_read=True)
     if not isinstance(runs, list) or not runs:
         return False
@@ -648,15 +648,73 @@ def later_main_passes() -> bool:
     done = [r for r in runs if r["status"] == "completed"]
     if not done or not runs or done[0]["conclusion"] != "success" or done[0]["headSha"] == pinned.get("headSha"):
         return False
-    run = hzlib.ghj("api", f"repos/{hzlib.CORE}/actions/runs/{done[0]['databaseId']}", default={}) or {}
-    if not isinstance(run, dict) or type(run.get("run_attempt")) is not int or run.get("run_attempt") != 1 or run.get("status") != "completed" or run.get("head_sha") != done[0]["headSha"] or run.get("conclusion") != "success":
+    if first_full_recovery(pinned, done[0], lane_runs):
+        return True
+    # CI intentionally skips the product matrix on documentation-only main pushes. The immediately
+    # preceding commit still has to prove recovery; a different or unreadable history cannot cover it.
+    for child, parent in zip(done, done[1:]):
+        if not docs_recovery_edge(child, parent):
+            return False
+        if first_full_recovery(pinned, parent, lane_runs):
+            tip = done[0]["headSha"]
+            ref = hzlib.ghj("api", f"repos/{hzlib.CORE}/git/ref/heads/main", default=None)
+            if not isinstance(ref, dict) or ref.get("ref") != "refs/heads/main" or not isinstance(ref.get("object"), dict):
+                return False
+            if ref["object"].get("type") != "commit" or ref["object"].get("sha") != tip:
+                return False
+            return docs_lane_proof(parent, done[0], lane_runs)
+    return False
+
+
+def first_full_recovery(pinned: dict, row: dict, lane_runs: list[dict]) -> bool:
+    if row["conclusion"] != "success" or row["headSha"] == pinned.get("headSha"):
         return False
-    jobs = attempt_jobs(done[0]["databaseId"], 1)
-    if not full_pass(jobs, done[0]["headSha"]):
+    run = hzlib.ghj("api", f"repos/{hzlib.CORE}/actions/runs/{row['databaseId']}", default={}) or {}
+    if not isinstance(run, dict) or type(run.get("run_attempt")) is not int or run.get("run_attempt") != 1 or run.get("status") != "completed" or run.get("head_sha") != row["headSha"] or run.get("conclusion") != "success":
         return False
-    if main_lanes.is_split_push(jobs) and not main_lanes.macos_proof(done[0]["headSha"], lane_runs, compare_status):
-        return False  # Linux green at X needs a green macOS lane at X or a descendant of X
-    return compare_status(pinned.get("headSha"), done[0]["headSha"]) == "ahead"
+    jobs = attempt_jobs(row["databaseId"], 1)
+    if not full_pass(jobs, row["headSha"]):
+        return False
+    if main_lanes.is_split_push(jobs) and not main_lanes.macos_proof(row["headSha"], lane_runs, compare_status):
+        return False
+    return compare_status(pinned.get("headSha"), row["headSha"]) == "ahead"
+
+
+def docs_recovery_edge(child: dict, parent: dict) -> bool:
+    from . import docs_recovery
+
+    if not docs_recovery.first_push(child) or not docs_recovery.first_push(parent) or child["databaseId"] <= parent["databaseId"]:
+        return False
+    sha = child["headSha"]
+    policy = reviewed_policy(sha)
+    if not policy:
+        return False
+    jobs = direct_main_attempt(child, policy.workflow)
+    if not docs_recovery.green_docs_jobs(jobs, policy):
+        return False
+    commit = hzlib.ghj("api", f"repos/{hzlib.CORE}/commits/{sha}?per_page=100", default=None)
+    return docs_recovery.docs_child(commit, parent["headSha"], sha)
+
+
+def docs_lane_proof(parent: dict, tip: dict, lane_runs: list[dict]) -> bool:
+    """Verify the full repair's original macOS run, and refuse a later unresolved or failed lane."""
+    needed = {parent["headSha"], tip["headSha"]}
+    for row in lane_runs:
+        if row["databaseId"] <= parent["databaseId"]:
+            continue
+        if row["status"] != "completed" or row["conclusion"] != "success" or row.get("attempt") != 1 or row.get("event") != "workflow_dispatch":
+            return False
+        policy = reviewed_policy(row["headSha"])
+        if not policy:
+            return False
+        jobs = direct_main_attempt(row, policy.workflow)
+        required = {name for name in policy.test_jobs if main_lanes.is_macos_cell(name)}
+        if not jobs or not required or not main_lanes.lane_pass(jobs, policy.aggregate):
+            return False
+        if not required.issubset({j["name"] for j in jobs if j["conclusion"] == "success"}):
+            return False
+        needed.discard(row["headSha"])
+    return not needed
 
 
 def compare_status(base: str, head: str) -> str:
