@@ -33,6 +33,8 @@ from typing import Any
 
 from steuermaschine.config import child_environment
 
+from .ios_acceptance import require_replacement_authority
+
 VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
 ROW = re.compile(r"^(?P<short>\S+) \((?P<build>[0-9]+)\) (?P<state>[A-Z_]+) expired=(?P<expired>True|False) (?P<group>in-group|NOT-in-group) id=(?P<id>\S+)$")
 TESTFLIGHT = "apple/scripts/testflight"
@@ -88,6 +90,10 @@ class IosResult:
 # ----------------------------------------------------------------------------- receipts
 def receipt_dir(state_dir: Path) -> Path:
     return state_dir / "ios"
+
+
+def submission_path(state_dir: Path, version: str) -> Path:
+    return receipt_dir(state_dir) / "submissions" / f"v{version}.json"
 
 
 def read_receipt(state_dir: Path, version: str) -> dict[str, Any] | None:
@@ -412,10 +418,9 @@ def source_build(ctx: Context, marketing: str, options: dict[str, Any], supersed
     app, builds = inventory["app"], inventory["builds"]
     if not isinstance(app, str) or not app or not isinstance(builds, dict):
         raise IosFailed("malformed ASC inventory")
-    folder = receipt_dir(ctx.w.state_dir) / "submissions"
-    path = folder / f"v{marketing}.json"
+    path = submission_path(ctx.w.state_dir, marketing)
     highest = max((int(row["build"]) for row in builds.values()), default=0)
-    submissions = {item: json.loads(item.read_text()) for item in folder.glob("v*.json")}
+    submissions = {item: json.loads(item.read_text()) for item in path.parent.glob("v*.json")}
     for known in submissions.values():
         if known["app"] != app:
             raise IosFailed("submission ledger belongs to a different app")
@@ -473,6 +478,12 @@ def publish(w: Any, version: str, core_repo: Path, work_root: Path, wait_seconds
         result.revision = commit_of(w, core_repo, version)
         if bool(supersede) != bool(expected_revision) or (expected_revision and expected_revision != result.revision):
             raise IosFailed("superseding requires the exact ASC build ID and matching official release revision")
+        path = submission_path(w.state_dir, version)
+        prior = json.loads(path.read_text()) if path.exists() else {}
+        if not isinstance(prior, dict):
+            raise IosFailed("malformed iOS submission ledger")
+        if supersede or prior.get("superseded_id"):
+            require_replacement_authority(w, version, result.revision, core_repo)
         fresh_checkout(w, core_repo, checkout, result.revision)
         work.mkdir(parents=True, exist_ok=True)
         developer = w.settings.get("ios_developer_dir")

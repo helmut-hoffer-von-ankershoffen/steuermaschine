@@ -1,6 +1,7 @@
 """release ios, native: the scripted Mini (git, xcodebuild, the tag's testflight and verifier) in a temporary state
 directory. No test starts a process, reads the network or sleeps."""
 
+import hashlib
 import json
 import plistlib
 from pathlib import Path
@@ -149,9 +150,84 @@ def test_the_upload_keeps_the_archive_numbers(tmp_path):
     assert seen["manageAppVersionAndBuildNumber"] is False and seen["teamID"] == "ABCDE12345"
 
 
+def official_release(m, fault=""):
+    from steuermaschine_heinzel.native.queue_lib import hzlib
+
+    tag = f"v{m.version}"
+    root = f"repos/{hzlib.CORE}/"
+    get = ["gh", "api", "--hostname", "github.com"]
+    marker = {"schema": 1, "project": "heinzel", "version": m.version, "accepted": True, "acceptance_run": 17}
+    manifest = {"schema": 1, "project": "heinzel", "version": m.version, "commit": SHA}
+    ref = {"ref": f"refs/tags/{tag}", "object": {"type": "commit", "sha": SHA}}
+    release = {"tag_name": tag, "draft": False, "prerelease": False, "assets": []}
+    if fault == "rejected":
+        marker["accepted"] = False
+    if fault == "wrong-version":
+        marker["version"] = "0.9.56"
+    if fault == "wrong-project":
+        marker["project"] = "unrelated"
+    if fault == "wrong-commit":
+        manifest["commit"] = "b" * 40
+    if fault == "wrong-ref":
+        ref["ref"] = "refs/heads/" + tag
+    if fault == "wrong-remote-sha":
+        ref["object"]["sha"] = "c" * 40
+    if fault == "unpublished":
+        release["draft"] = True
+    if fault in ("annotated", "wrong-peel"):
+        ref["object"] = {"type": "tag", "sha": "f" * 40}
+        annotated = {"sha": "f" * 40 if fault == "annotated" else "d" * 40, "object": {"type": "commit", "sha": SHA}}
+        m.commands.on([*get, root + "git/tags/" + "f" * 40], Result(0, json.dumps(annotated)))
+    if fault.startswith("hosted"):
+        wheel, profile = "1" * 64, "2" * 64
+        marker.update(wheel_sha256=wheel, profile_sha256=profile)
+        release["assets"].append({"name": f"heinzel-{m.version}-py3-none-any.whl", "digest": "sha256:" + wheel})
+        app = {"tag_name": f"app-{tag}", "draft": False, "prerelease": False, "assets": [
+            {"name": "standard.json", "digest": "sha256:" + (profile if fault != "hosted-profile" else "3" * 64)}]}
+        m.commands.on([*get, f"repos/{hzlib.PLUGINS}/releases/tags/app-{tag}"], Result(0, json.dumps(app)))
+    for i, (name, doc) in enumerate([("acceptance.json", marker), ("artifact-manifest.json", manifest)], start=1):
+        raw = json.dumps(doc) + "\n"
+        digest = hashlib.sha256(raw.encode()).hexdigest()
+        if name == "acceptance.json" and fault == "missing":
+            continue
+        asset = {"name": name, "id": i, "digest": "sha256:" + ("0" * 64 if name == "acceptance.json" and fault == "wrong-digest" else digest)}
+        release["assets"].append(asset)
+        if name == "acceptance.json" and fault == "duplicate":
+            release["assets"].append(asset)
+        m.commands.on([*get, root + f"releases/assets/{i}", "-H", "Accept: application/octet-stream"], Result(0, raw))
+    m.commands.on([*get, root + f"releases/tags/{tag}"], Result(0, json.dumps(release)))
+    m.commands.on([*get, root + f"git/ref/tags/{tag}"], Result(0, json.dumps(ref)))
+
+
+@pytest.mark.parametrize("fault", ["missing", "rejected", "wrong-version", "wrong-project", "wrong-digest", "duplicate",
+                                   "wrong-commit", "wrong-ref", "wrong-remote-sha", "wrong-peel", "unpublished", "hosted-profile"])
+def test_replacement_refuses_before_asc_when_official_acceptance_is_unbound(tmp_path, fault):
+    m = Mini(tmp_path, version="0.9.57")
+    m.asc = [row(m.version, 1)]
+    official_release(m, fault)
+    out = invoke(m.rt, ["release", "ios", m.version, "--supersede-build-id", "x1", "--expected-revision", SHA])
+    assert out.exit_code == 1 and not m.receipt()["clean"]
+    assert not any(cmd[0] in {"uv", "xcodebuild"} or "add" in cmd for cmd in m.commands.calls)
+    assert not (m.state / "ios/submissions").exists() and not m.notes
+
+
+@pytest.mark.parametrize("evidence", ["annotated", "hosted-valid"])
+def test_accepted_canonical_replacement_reads_proof_before_first_apple_command(tmp_path, evidence):
+    m = Mini(tmp_path, version="0.9.57")
+    official_release(m, evidence)
+    m.asc = [row(m.version, 1)]
+    out = invoke(m.rt, ["release", "ios", m.version, "--supersede-build-id", "x1", "--expected-revision", SHA])
+    assert out.exit_code == 0, out.stdout
+    calls = m.commands.calls
+    first_apple = next(i for i, cmd in enumerate(calls) if cmd[0] in {"uv", "xcodebuild"})
+    assert all(i < first_apple for i, cmd in enumerate(calls) if cmd[:2] == ["gh", "api"])
+    assert len(m.uploads) == len(m.notes) == 1
+
+
 def test_existing_unbound_rehearsal_requires_explicit_exact_replacement(tmp_path):
     m = Mini(tmp_path, version="0.9.57")
     m.asc = [row("0.9.56", 35), row(m.version, 1)]
+    official_release(m)
     for flags in ([], ["--supersede-build-id", "x2", "--expected-revision", SHA],
                   ["--supersede-build-id", "x1"], ["--supersede-build-id", "x1", "--expected-revision", "b" * 40]):
         out = invoke(m.rt, ["release", "ios", m.version, *flags])
@@ -162,6 +238,22 @@ def test_existing_unbound_rehearsal_requires_explicit_exact_replacement(tmp_path
     assert m.receipt()["build"] == "36"
     assert m.run().exit_code == 0
     assert len(m.uploads) == 1 and len(m.archived) == 1 and not m.receipt()["uploaded"]
+
+
+def test_default_resume_of_replacement_rechecks_authority_before_apple(tmp_path):
+    m = Mini(tmp_path, version="0.9.57", ios_wait_minutes=1)
+    m.asc = [row(m.version, 1)]
+    m.beta = ["READY_FOR_BETA_SUBMISSION"]
+    official_release(m)
+    flags = ["--supersede-build-id", "x1", "--expected-revision", SHA]
+    assert invoke(m.rt, ["release", "ios", m.version, *flags]).exit_code == 1
+    assert len(m.uploads) == 1 and not m.notes
+    official_release(m, "rejected")
+    m.commands.calls.clear()
+    m.beta = ["IN_BETA_TESTING"]
+    assert m.run().exit_code == 1 and not m.receipt()["clean"]
+    assert not any(cmd[0] in {"uv", "xcodebuild"} for cmd in m.commands.calls)
+    assert len(m.uploads) == 1 and not m.notes
 
 
 def test_ambiguous_upload_never_submits_again_or_adopts_a_visible_build(tmp_path):
