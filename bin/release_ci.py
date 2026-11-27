@@ -55,6 +55,10 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import promote_verdict as pv
 
+# Resolve the helper beside this checkout, including direct CLI/follower execution.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+import review_history as history
+
 CONTEXT = "Gate review"
 BOT = "github-actions[bot]"
 WORKFLOW_REVIEWER = "gate-review-workflow"
@@ -94,8 +98,13 @@ def creators(get: Callable[[str], object]) -> set[str]:
     return {c.strip() for c in raw.split(",") if c.strip()} - {BOT}
 
 
-def model_review_ran(run: dict, get: Callable[[str], object]) -> bool:
-    """A successful paused workflow is a CI result, never a model verdict."""
+def model_review_ran(run: dict, get: Callable[[str], object], check: dict) -> bool:
+    """Read an approval from authenticated job evidence, not a green skip.
+
+    Pre-budget runs have the original three-step Gate job. That exact trusted
+    structure plus a successful model retains historical approvals without a
+    source lookup (the PR's own workflow bytes are never evidence).
+    """
     run_id, attempt = run.get("id"), run.get("run_attempt")
     if type(run_id) is not int or run_id <= 0 or type(attempt) is not int or attempt <= 0:
         return False
@@ -108,10 +117,26 @@ def model_review_ran(run: dict, get: Callable[[str], object]) -> bool:
     if type(document.get("total_count")) is not int or not 0 < len(jobs) == document["total_count"] <= 100:
         return False
     model = [job for job in jobs if isinstance(job, dict) and job.get("name") == "Gate model review"]
-    return len(model) == 1 and (
+    if len(model) != 1 or (
         model[0].get("run_id"), model[0].get("run_attempt"), model[0].get("head_sha"),
         model[0].get("status"), model[0].get("conclusion"),
-    ) == (run_id, attempt, run.get("head_sha"), "completed", "success")
+    ) != (run_id, attempt, run.get("head_sha"), "completed", "success"):
+        return False
+    gate = [job for job in jobs if isinstance(job, dict) and job.get("name") == CONTEXT]
+    if len(gate) != 1 or (
+        gate[0].get("id"), gate[0].get("run_id"), gate[0].get("run_attempt"), gate[0].get("head_sha"),
+        gate[0].get("status"), gate[0].get("conclusion"),
+    ) != (check.get("id"), run_id, attempt, run.get("head_sha"), "completed", "success"):
+        return False
+    steps = gate[0].get("steps")
+    if not isinstance(steps, list) or not all(isinstance(step, dict) for step in steps):
+        return False
+    markers = [step for step in steps if step.get("name") == "Record explicit Gate review approval"]
+    if markers:
+        return len(markers) == 1 and (markers[0].get("status"), markers[0].get("conclusion")) == ("completed", "success")
+    return [step.get("name") for step in steps] == ["Set up job", "Judge the review and comment", "Complete job"] and all(
+        (step.get("status"), step.get("conclusion")) == ("completed", "success") for step in steps
+    )
 
 
 def verdict_for(sha: str, api_get: Callable[[str], object] | None = None) -> tuple[int, str, str]:
@@ -120,7 +145,13 @@ def verdict_for(sha: str, api_get: Callable[[str], object] | None = None) -> tup
     the workflow can make one, the model reviewer is `gate-review-workflow`), or the commit status `Gate review` set by hand
     (`record`) by a login of the allowlist. Limit: every agent shares the owner's token, so the allowlist cannot tell
     agents apart; independence rests on the reviewer name against the commit's authors (promote_verdict.independent)."""
-    get = api_get or api
+    source = api_get or api
+    documents: dict[str, object] = {}
+
+    def get(path: str) -> object:
+        if path not in documents:
+            documents[path] = source(path)
+        return documents[path]
     pulls = get(f"repos/{REPO}/commits/{sha}/pulls")
     merged = [p for p in pulls if isinstance(p, dict) and p.get("merge_commit_sha") == sha and p.get("merged_at")] if isinstance(pulls, list) else []
     if not merged:
@@ -128,25 +159,24 @@ def verdict_for(sha: str, api_get: Callable[[str], object] | None = None) -> tup
     pull = merged[0]
     head = pull["head"]["sha"]
     number = int(pull["number"])
-    runs = get(f"repos/{REPO}/commits/{head}/check-runs?per_page=100")
-    mine = [r for r in (runs.get("check_runs", []) if isinstance(runs, dict) else [])
-            if r.get("name") == CONTEXT and (r.get("app") or {}).get("slug") == "github-actions"]
+    # History is a prerequisite for BOTH model and human approval. No repository-wide
+    # check inventory or lossy check-suite mapping is needed: attempt jobs carry IDs.
+    try:
+        evidence = history.verify_history(get, REPO, head)
+    except ValueError as exc:
+        raise Refused(str(exc)) from None
     forged = ""
-    if mine:
-        latest_run = max(mine, key=lambda r: int(r.get("id", 0)))
-        if latest_run.get("conclusion") == "success":
-            # Any workflow of the PR's own files can name a job `Gate review`: only the base branch's gate-review.yml counts.
-            suite = (latest_run.get("check_suite") or {}).get("id")
-            found = get(f"repos/{REPO}/actions/runs?check_suite_id={suite}") if suite else {}
-            runs_of = found.get("workflow_runs", []) if isinstance(found, dict) else []
-            if any(isinstance(w, dict) and w.get("path") == GATE_WORKFLOW and w.get("event") == "pull_request_target" and w.get("head_sha") == head
-                   and w.get("conclusion") == "success" and model_review_ran(w, get) for w in runs_of):
-                return number, head, WORKFLOW_REVIEWER
-            forged = f" (a check run `{CONTEXT}` exists but does not come from {GATE_WORKFLOW} on pull_request_target for this head with a completed model review)"
+    if evidence:
+        workflow, gate_job = max(evidence, key=lambda pair: pair[0]["id"])
+        if workflow.get("conclusion") == "success" and model_review_ran(workflow, get, gate_job):
+            return number, head, WORKFLOW_REVIEWER
+        forged = " (Gate workflow evidence has no completed model approval)"
     statuses = get(f"repos/{REPO}/commits/{head}/statuses?per_page=100")
     latest = next((s for s in statuses if s.get("context") == CONTEXT), None) if isinstance(statuses, list) else None  # newest first
     if latest is None or latest.get("state") != "success":
         raise Refused(f"PR #{number} head {head[:12]} has no `{CONTEXT}` success: the independent review is missing{forged}")
+    if latest.get("sha") != head:
+        raise Refused("the human Gate review status is not bound to the reviewed head")
     login = (latest.get("creator") or {}).get("login", "")
     if login == BOT or login not in creators(get):
         raise Refused(f"the `{CONTEXT}` status of PR #{number} was set by {login or 'nobody'}, who is not in GATE_REVIEW_CREATORS")

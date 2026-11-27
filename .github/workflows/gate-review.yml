@@ -63,6 +63,8 @@ jobs:
     permissions:
       contents: read # no write of any kind: the comment is posted by the next job
     outputs:
+      explicit_rejection: ${{ steps.result.outputs.explicit_rejection }}
+      spend_limit: ${{ steps.result.outputs.spend_limit }}
       verdict_line: ${{ steps.result.outputs.verdict_line }}
       result: ${{ steps.result.outputs.result }}
     steps:
@@ -70,17 +72,19 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          ref: ${{ github.workflow_sha }}
           persist-credentials: false
       - name: Fetch the head as git objects only
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
           # git over HTTPS takes basic auth with the token as password, not a bearer header
           auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
           echo "::add-mask::${auth}"
           git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${auth}" fetch --no-tags origin "+refs/pull/${PR}/head:refs/review/head"
-          git rev-parse --verify "refs/review/head^{commit}"
+          test "$(git rev-parse --verify "refs/review/head^{commit}")" = "$PR_HEAD"
       - id: review
         continue-on-error: true # judged by the next step
         uses: anthropics/claude-code-action@f3b070c88125d33dbae5653df5f143101d4ea9dc # v1.0.276
@@ -109,13 +113,42 @@ jobs:
         name: Collect the result
         env:
           OUTCOME: ${{ steps.review.outcome }}
+          CLAUDE_CONCLUSION: ${{ steps.review.outputs.conclusion }}
           EXECUTION_FILE: ${{ steps.review.outputs.execution_file }}
         run: |
-          if [[ "$OUTCOME" != success || ! -f "$EXECUTION_FILE" ]]; then
+          if [[ ! -f "$EXECUTION_FILE" ]]; then
             echo "::error::Gate review failed, nothing was reviewed (review step: $OUTCOME)"
             exit 1
           fi
-          result="$(jq -r 'map(select(.type == "result")) | last | .result // ""' "$EXECUTION_FILE")"
+          explicit_rejection=false
+          if jq -e 'any(.[]; (.type == "result" and (.result | strings | test("(^|\\n)[[:blank:]]*VERDICT: REJECT([[:space:]]|$)"))) or
+            (.type == "assistant" and any(.message.content[]?;
+            .type == "text" and (.text | strings | test("(^|\\n)[[:blank:]]*VERDICT: REJECT([[:space:]]|$)")))))' "$EXECUTION_FILE" >/dev/null; then
+            explicit_rejection=true
+            echo "explicit_rejection=true" >> "$GITHUB_OUTPUT"
+          fi
+          # Use the provider's structured terminal error. Assistant text and ordinary 429s cannot authorize a skip.
+          if [[ "$explicit_rejection" == false ]] && jq -e '
+            map(select(.type == "result")) as $results
+            | $results[0] as $terminal
+            | ($results | length) == 1 and last == $terminal
+            and $terminal.is_error == true
+            and $terminal.terminal_reason == "api_error"
+            and $terminal.api_error_type == "rate_limit_error"
+            and $terminal.api_error_status == 429
+            and $terminal.api_error_origin == "first_party"
+            and ($terminal.result | strings | test("^You\u0027ve hit your (monthly|weekly) spend limit([[:space:].!]|$)"))
+            and (any(.[]; .type == "assistant" and any(.message.content[]?;
+              .type == "text" and (.text | strings | test("(^|\\n)[[:blank:]]*VERDICT: REJECT([[:space:]]|$)")))) | not)
+          ' "$EXECUTION_FILE" >/dev/null; then
+            echo "spend_limit=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ "$OUTCOME" != success || "$CLAUDE_CONCLUSION" != success ]]; then
+            echo "::error::Gate review failed, nothing was reviewed (review step: $OUTCOME)"
+            exit 1
+          fi
+          result="$(jq -r 'last | select(.type == "result" and .is_error == false) | .result | strings' "$EXECUTION_FILE")"
           if [[ -z "$result" ]]; then echo "::error::Gate review produced no result"; exit 1; fi
           last="$(grep -v '^[[:space:]]*$' <<<"$result" | tail -n 1 | tr -d '\r')"
           delimiter="EOF_$(openssl rand -hex 16)"
@@ -133,7 +166,31 @@ jobs:
     timeout-minutes: 5
     permissions:
       pull-requests: write # the review comment
+      actions: read # check prior attempts of the trusted workflow
+      contents: read # fetch only the protected base for the history checker
     steps:
+      - name: Record explicit Gate review rejection
+        if: >-
+          needs.model.outputs.explicit_rejection == 'true' || needs.model.outputs.verdict_line == 'VERDICT: REJECT'
+        run: echo 'Gate review rejected this exact head.' >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: needs.model.outputs.spend_limit == 'true' || needs.scope.outputs.mode == 'paused'
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - name: Check same-head Gate review history
+        id: history
+        if: needs.model.outputs.spend_limit == 'true' || needs.scope.outputs.mode == 'paused'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          TRUSTED_BASE: ${{ github.workflow_sha }}
+        run: |
+          # Pin the executing protected workflow source; stale base/event disagreement refuses a skip.
+          test "$(git rev-parse HEAD)" = "$TRUSTED_BASE"
+          test "$TRUSTED_BASE" = "$GITHUB_SHA"
+          python3 -I scripts/review_history.py
       - name: Judge the review and comment
         env:
           GH_TOKEN: ${{ github.token }}
@@ -141,10 +198,13 @@ jobs:
           MODE: ${{ needs.scope.outputs.mode }}
           SCOPE_RESULT: ${{ needs.scope.result }}
           MODEL: ${{ needs.model.result }}
+          SPEND_LIMIT: ${{ needs.model.outputs.spend_limit }}
+          HISTORY_OUTCOME: ${{ steps.history.outcome }}
+          EXPLICIT_REJECTION: ${{ needs.model.outputs.explicit_rejection }}
           VERDICT_LINE: ${{ needs.model.outputs.verdict_line }}
           RESULT: ${{ needs.model.outputs.result }}
         run: |
-          if [[ "$MODE" == paused && "$SCOPE_RESULT" == success && "$MODEL" == skipped ]]; then
+          if [[ "$MODE" == paused && "$SCOPE_RESULT" == success && "$MODEL" == skipped && "$HISTORY_OUTCOME" == success ]]; then
             message="Claude review skipped: an operator paused it with CLAUDE_REVIEW=false. No model verdict was recorded."
             echo "::notice::$message"
             printf '%s\n' "$message" >> "$GITHUB_STEP_SUMMARY"
@@ -154,12 +214,25 @@ jobs:
             echo "::error::Gate review needs a human or agent review: every pull request is gate-relevant and the model review cannot run for a bot sender, fork, draft or with CLAUDE_REVIEW off"
             exit 1
           fi
+          if [[ "$MODE" == review && "$SCOPE_RESULT" == success && "$MODEL" == success && "$SPEND_LIMIT" == true && "$HISTORY_OUTCOME" == success && "$EXPLICIT_REJECTION" != true && -z "$VERDICT_LINE" && -z "$RESULT" ]]; then
+            message="Claude review skipped: Anthropic confirmed a spending limit. No model verdict was recorded."
+            echo "::notice::$message"
+            printf '%s\n' "$message" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           if [[ "$MODE" != review || "$MODEL" != success ]]; then
             echo "::error::Gate review failed, nothing was reviewed (scope: ${MODE:-none}, review job: $MODEL)"
             exit 1
           fi
           { echo "### Gate review (Opus)"; echo; echo "$RESULT"; } > "$RUNNER_TEMP/gate-review.md"
           gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/gate-review.md"
+          if [[ "$EXPLICIT_REJECTION" == true ]]; then echo "::error::Gate review explicitly rejected this head"; exit 1; fi
           if [[ "$VERDICT_LINE" == "VERDICT: APPROVE" ]]; then echo "Gate review approved."; exit 0; fi
           echo "::error::Gate review did not approve (last line: ${VERDICT_LINE:0:80})"
           exit 1
+      - name: Record explicit Gate review approval
+        if: >-
+          success() && needs.scope.result == 'success' && needs.scope.outputs.mode == 'review' &&
+          needs.model.result == 'success' && needs.model.outputs.spend_limit != 'true' &&
+          needs.model.outputs.explicit_rejection != 'true' && needs.model.outputs.verdict_line == 'VERDICT: APPROVE'
+        run: echo 'Gate review approved this exact head.' >> "$GITHUB_STEP_SUMMARY"

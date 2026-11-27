@@ -53,12 +53,17 @@ def fake_api(sha: str, *, head=None, state="success", description="APPROVE revie
             return [{"number": 7, "merge_commit_sha": commit, "merged_at": "2026-11-21T10:00:00Z" if merged else None, "head": {"sha": head or commit}}]
         if "/attempts/" in path and "/jobs?" in path:
             return {"total_count": len(model_jobs or []), "jobs": model_jobs or []}
+        if "/actions/workflows/" in path:
+            rows = [dict(w, status="completed") for group in (suites or {}).values() for w in group
+                    if (w.get("path"), w.get("event"), w.get("head_sha")) ==
+                    (rc.GATE_WORKFLOW, "pull_request_target", head or sha)]
+            return {"total_count": len(rows), "workflow_runs": rows}
         if "/actions/runs" in path:
             return {"workflow_runs": [w for w in (suites or {}).get(path.rsplit("=", 1)[-1], [])]}
         if "/check-runs" in path:
             return {"check_runs": runs or []}
         if "/statuses" in path:
-            return [{"context": context, "state": state, "description": description, "creator": {"login": login}}]
+            return [{"sha": head or sha, "context": context, "state": state, "description": description, "creator": {"login": login}}]
         if "/git/commits/" in path:
             return {"tree": {"sha": tree if tree is not None else git(repo, "rev-parse", f"{path.rsplit('/', 1)[-1]}^{{tree}}")}}
         if path.endswith("GATE_REVIEW_CREATORS"):
@@ -421,32 +426,123 @@ def test_a_hand_receipt_without_the_ci_marks_is_not_a_ci_receipt(follower, monke
 def test_the_workflow_check_run_is_a_verdict_only_from_the_gate_review_run(repo):
     sha = git(repo, "rev-parse", "HEAD")
     good = [{"id": 5, "name": "Gate review", "conclusion": "success", "app": {"slug": "github-actions"}, "check_suite": {"id": 77}}]
-    run = {"id": 61, "run_attempt": 2, "path": ".github/workflows/gate-review.yml", "event": "pull_request_target", "head_sha": sha, "conclusion": "success"}
-    model = {"name": "Gate model review", "run_id": 61, "run_attempt": 2, "head_sha": sha,
+    run = {"id": 61, "run_attempt": 1, "path": rc.GATE_WORKFLOW, "event": "pull_request_target", "head_sha": sha, "conclusion": "success"}
+    model = {"id": 8, "name": "Gate model review", "run_id": 61, "run_attempt": 1, "head_sha": sha,
              "status": "completed", "conclusion": "success"}
+    gate = {**model, "id": 5, "name": "Gate review", "steps": [
+        {"name": "Record explicit Gate review rejection", "status": "completed", "conclusion": "skipped"},
+        {"name": "Record explicit Gate review approval", "status": "completed", "conclusion": "success"}]}
     call = {"repo": repo, "runs": good, "suites": {"77": [run]}}
-    assert rc.verdict_for(sha, fake_api(sha, **call, model_jobs=[model], state="failure"))[2] == "gate-review-workflow"
-    for jobs in ([], [{**model, "conclusion": "skipped"}], [{**model, "run_attempt": 1}], [model, model]):
-        with pytest.raises(rc.Refused, match="the independent review is missing"):
-            rc.verdict_for(sha, fake_api(sha, **call, model_jobs=jobs, state="failure"))
-    assert rc.verdict_for(sha, fake_api(sha, **call, model_jobs=[{**model, "conclusion": "skipped"}]))[2] == "rita"
-    assert rc.verdict_for(sha, fake_api(sha, **call, fail="/attempts/"))[2] == "rita"
-    bad = [
-        (good, {"77": [{**run, "path": ".github/workflows/ci.yml"}]}),  # a forged job named `Gate review` in the PR's own ci.yml
-        (good, {"77": [{**run, "event": "pull_request"}]}),
-        (good, {"77": [{**run, "head_sha": "f" * 40}]}),
-        (good, {"77": [{**run, "conclusion": "failure"}]}),
-        (good, {}),  # no Actions run behind the check suite
-        ([{**good[0], "check_suite": None}], {"77": [run]}),
-        ([{**good[0], "app": {"slug": "evil-app"}}], {"77": [run]}),
-        ([{**good[0], "conclusion": "failure"}], {"77": [run]}),
-        ([good[0], {**good[0], "id": 9, "conclusion": "failure"}], {"77": [run]}),
-    ]
-    for runs, suites in bad:
+    assert rc.verdict_for(sha, fake_api(sha, **call, model_jobs=[model, gate], state="failure"))[2] == "gate-review-workflow"
+    for jobs in ([], [{**model, "conclusion": "failure"}], [{**model, "conclusion": "skipped"}], [{**model, "run_attempt": 2}], [model, model]):
+        with pytest.raises(rc.Refused):
+            rc.verdict_for(sha, fake_api(sha, **call, model_jobs=[*jobs, gate], state="failure"))
+    assert rc.verdict_for(sha, fake_api(sha, **call, model_jobs=[{**model, "conclusion": "skipped"}, gate]))[2] == "rita"
+    with pytest.raises(rc.Refused):
+        rc.verdict_for(sha, fake_api(sha, **call, fail="/attempts/"))
+    # The exact workflow/head filter excludes unrelated jobs with the same name.
+    for changed in ({"path": ".github/workflows/ci.yml"}, {"event": "pull_request"}, {"head_sha": "f" * 40}):
         with pytest.raises(rc.Refused, match="no `Gate review` success"):
-            rc.verdict_for(sha, fake_api(sha, repo=repo, runs=runs, suites=suites, state="failure"))
-    with pytest.raises(rc.Refused, match=r"does not come from \.github/workflows/gate-review\.yml"):
-        rc.verdict_for(sha, fake_api(sha, repo=repo, runs=good, suites={"77": [{**run, "path": ".github/workflows/ci.yml"}]}, state="failure"))
+            rc.verdict_for(sha, fake_api(sha, suites={"77": [{**run, **changed}]}, state="failure"))
+
+
+@pytest.mark.parametrize("model_conclusion", ["success", "failure", "skipped"])
+def test_spending_skip_and_operator_pause_need_a_separate_human_receipt(repo, model_conclusion):
+    head = git(repo, "rev-parse", "HEAD")
+    check = {"id": 9, "name": "Gate review", "conclusion": "success", "app": {"slug": "github-actions"}, "check_suite": {"id": 77}}
+    workflow = {"id": 61, "run_attempt": 1, "path": rc.GATE_WORKFLOW, "event": "pull_request_target", "head_sha": head, "conclusion": "success"}
+    model = {"id": 8, "name": "Gate model review", "run_id": 61, "run_attempt": 1, "head_sha": head,
+             "status": "completed", "conclusion": model_conclusion}
+    gate = {**model, "id": 9, "name": "Gate review", "conclusion": "success", "steps": [
+        {"name": "Record explicit Gate review rejection", "status": "completed", "conclusion": "skipped"},
+        {"name": "Record explicit Gate review approval", "status": "completed", "conclusion": "skipped"}]}
+    options = {"runs": [check], "suites": {"77": [workflow]}, "model_jobs": [model, gate]}
+    with pytest.raises(rc.Refused):
+        rc.verdict_for(head, fake_api(head, **options, state="failure"))
+    assert rc.verdict_for(head, fake_api(head, **options))[2] == "rita"
+    original = fake_api(head, **options)
+
+    def wrong_head(path):
+        result = original(path)
+        if "/statuses" in path:
+            result[0]["sha"] = "f" * 40
+        return result
+
+    with pytest.raises(rc.Refused, match="not bound to the reviewed head"):
+        rc.verdict_for(head, wrong_head)
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+def test_positive_and_historical_approval_require_matching_job_evidence(repo, legacy):
+    head = git(repo, "rev-parse", "HEAD")
+    check = {"id": 9, "name": "Gate review", "conclusion": "success", "app": {"slug": "github-actions"}, "check_suite": {"id": 77}}
+    workflow = {"id": 61, "run_attempt": 1, "path": rc.GATE_WORKFLOW, "event": "pull_request_target", "head_sha": head, "conclusion": "success"}
+    model = {"id": 8, "name": "Gate model review", "run_id": 61, "run_attempt": 1, "head_sha": head,
+             "status": "completed", "conclusion": "success"}
+    names = ["Set up job", "Judge the review and comment", "Complete job"] if legacy else [
+        "Record explicit Gate review rejection", "Check same-head Gate review history",
+        "Judge the review and comment", "Record explicit Gate review approval"]
+    steps = [{"name": name, "status": "completed", "conclusion": "success" if name not in (
+        "Record explicit Gate review rejection", "Check same-head Gate review history") else "skipped"} for name in names]
+    gate = {**model, "id": 9, "name": "Gate review", "steps": steps}
+
+    def receipt(jobs):
+        original = fake_api(head, runs=[check], suites={"77": [workflow]}, model_jobs=jobs, state="failure")
+        calls = []
+
+        def get(path):
+            # No workflow source or additional identity lookup is needed.
+            assert path not in calls
+            calls.append(path)
+            return original(path)
+
+        return rc.verdict_for(head, get)
+
+    assert receipt([model, gate])[2] == rc.WORKFLOW_REVIEWER
+    for key, value in [("run_id", 62), ("run_attempt", 2), ("head_sha", "f" * 40),
+                       ("status", "in_progress"), ("conclusion", "skipped")]:
+        for jobs in ([{**model, key: value}, gate], [model, {**gate, key: value}]):
+            with pytest.raises(rc.Refused):
+                receipt(jobs)
+    for jobs in ([model], [model, gate, gate], [model, {**gate, "id": None}]):
+        with pytest.raises(rc.Refused):
+            receipt(jobs)
+    bad_steps = [None, [None], [*steps, steps[-1]], steps[:-1]]
+    if not legacy:
+        marker = steps[-1]
+        bad_steps += [[*steps[:-1], {**marker, "conclusion": "skipped"}],
+                      [*steps[:-1], {"name": marker["name"]}],
+                      [*steps[:-1], {**marker, "status": "in_progress"}],
+                      [*steps[:-1], {**marker, "conclusion": "failure"}]]
+    for malformed in bad_steps:
+        with pytest.raises(rc.Refused):
+            receipt([model, {**gate, "steps": malformed}])
+
+
+@pytest.mark.parametrize("changed", [{}, {"head_sha": "f" * 40}, {"event": "pull_request"}, {"path": ".github/workflows/ci.yml"}])
+def test_skip_cannot_wash_out_a_verified_rejection_in_an_older_run_attempt(repo, changed):
+    head = git(repo, "rev-parse", "HEAD")
+    checks = [{"id": i, "name": "Gate review", "conclusion": conclusion,
+               "app": {"slug": "github-actions"}, "check_suite": {"id": i}} for i, conclusion in [(7, "failure"), (9, "success")]]
+    older = {"id": 60, "run_attempt": 2, "path": rc.GATE_WORKFLOW, "event": "pull_request_target", "head_sha": head, "conclusion": "failure", **changed}
+    current = {"id": 61, "run_attempt": 1, "path": rc.GATE_WORKFLOW, "event": "pull_request_target", "head_sha": head, "conclusion": "success"}
+    clear = {"id": 9, "name": "Gate review", "run_id": 61, "run_attempt": 1, "head_sha": head,
+             "status": "completed", "conclusion": "success", "steps": [
+                 {"name": "Record explicit Gate review rejection", "status": "completed", "conclusion": "skipped"}]}
+    original = fake_api(head, runs=checks, suites={"7": [older], "9": [current]}, model_jobs=[clear])
+
+    def get(path):
+        if "/runs/60/attempts/1/jobs?" in path:
+            return {"total_count": 1, "jobs": [{"id": 7, "name": "Gate review", "run_id": 60, "run_attempt": 1,
+                    "head_sha": head, "status": "completed", "conclusion": "failure", "steps": [
+                        {"name": "Record explicit Gate review rejection", "status": "completed", "conclusion": "success"}]}]}
+        return original(path)
+
+    if not changed:
+        with pytest.raises(rc.Refused, match="explicitly rejected this exact head"):
+            rc.verdict_for(head, get)
+    else:
+        assert rc.verdict_for(head, get)[2] == "rita"
 
 
 def test_the_allowlist_comes_from_the_repo_variable_and_fails_closed(repo, monkeypatch):
@@ -686,3 +782,65 @@ def test_a_tool_stall_after_the_swap_rolls_back_by_symlink(follower):
 def test_the_stall_rule_counts_two_tool_errors_within_ten_minutes():
     assert not rc.stalled([]) and not rc.stalled([0.0]) and not rc.stalled([0.0, 601.0])
     assert rc.stalled([0.0, 600.0]) and rc.stalled([0.0, 1000.0, 1300.0])
+
+
+@pytest.mark.parametrize("route", ["model", "human"])
+@pytest.mark.parametrize("broken", ["unavailable", "empty_jobs", "missing_count", "steps", "legacy_failure",
+                                     "duplicate_jobs", "unknown_status", "identity", "inventory",
+                                     "duplicate_runs", "incomplete_runs", "running"])
+def test_unresolved_history_blocks_both_verdict_routes(route, broken):
+    head = "a" * 40
+    workflow = {"id": 61, "run_attempt": 1, "path": rc.GATE_WORKFLOW, "event": "pull_request_target",
+                "head_sha": head, "status": "completed", "conclusion": "success"}
+    marker = {"name": "Record explicit Gate review rejection", "status": "completed", "conclusion": "skipped"}
+    gate = {"id": 9, "name": "Gate review", "run_id": 60, "run_attempt": 1, "head_sha": head,
+            "status": "completed", "conclusion": "success", "steps": [marker]}
+    base = fake_api(head, state="success")
+    calls = []
+
+    def get(path):
+        calls.append(path)
+        if "/workflows/" in path:
+            rows = [dict(workflow, id=60), workflow]
+            if broken == "inventory":
+                return {}
+            if broken == "duplicate_runs":
+                rows[0] = workflow
+            if broken == "running":
+                rows[0] = dict(rows[0], status="in_progress", conclusion=None)
+            return {"total_count": 3 if broken == "incomplete_runs" else 2, "workflow_runs": rows}
+        if "/runs/60/" in path:
+            job = dict(gate)
+            if broken == "unavailable":
+                raise rc.Refused("unavailable history")
+            if broken == "empty_jobs":
+                return {"total_count": 1, "jobs": []}
+            if broken == "missing_count":
+                return {"jobs": [job]}
+            if broken == "steps":
+                job["steps"] = None
+            if broken == "legacy_failure":
+                job.update(conclusion="failure", steps=[{"name": "Judge the review and comment",
+                                                        "status": "completed", "conclusion": "failure"}])
+            if broken == "unknown_status":
+                job["status"] = "unknown"
+            if broken == "identity":
+                job["head_sha"] = "b" * 40
+            jobs = [job, job] if broken == "duplicate_jobs" else [job]
+            return {"total_count": len(jobs), "jobs": jobs}
+        if "/runs/61/" in path:
+            job = dict(gate, id=10, run_id=61, steps=[marker, {
+                "name": "Record explicit Gate review approval", "status": "completed",
+                "conclusion": "success" if route == "model" else "skipped"}])
+            model = dict(job, id=11, name="Gate model review")
+            return {"total_count": 2, "jobs": [job, model]}
+        return base(path)
+
+    with pytest.raises(rc.Refused):
+        rc.verdict_for(head, get)
+    assert not any("/statuses" in path for path in calls)
+
+
+def test_complete_empty_history_still_allows_validated_human_status():
+    head = "a" * 40
+    assert rc.verdict_for(head, fake_api(head))[2] == "rita"
