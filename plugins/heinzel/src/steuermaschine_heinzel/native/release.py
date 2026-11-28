@@ -16,6 +16,7 @@ import json
 import re
 import sys
 import types
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -94,7 +95,7 @@ def runner() -> Any:
     return module
 
 
-def run(module, argv: list[str]) -> tuple[int, list[str], list[str]]:
+def run(module, argv: list[str], *, before_actions: Callable[[], None] | None = None) -> tuple[int, list[str], list[str]]:
     """Run the moved command line in process: (exit code, stdout lines as shown, stderr lines). A refused argument
     combination (the moved parser's own check) is a refusal with exit 2."""
     say, shown_on = runtime().say, sys.stderr
@@ -106,7 +107,7 @@ def run(module, argv: list[str]) -> tuple[int, list[str], list[str]]:
     out, err = Progress(show), io.StringIO()
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
         try:
-            code = int(module.main(argv) or 0)
+            code = int(module.main(argv, before_actions=before_actions) or 0)
         except SystemExit as stop:
             code = stop.code if isinstance(stop.code, int) else 1
     lines, errors = out.finish(), [translate(line) for line in err.getvalue().splitlines()]
@@ -248,9 +249,15 @@ def release_resume(
         raise Refuse("--live goes with resuming an exact X.Y.Z only", "sm release resume 0.9.53 --live", code=2)
     module = runner()
     exact = action == "resume" and bool(EXACT.fullmatch(version))
-    opened = exact and not receipt_of(module, version)[1].get("finished") and release_stages.open_window(version, world().now())  # the sm follower swaps no `sm` until LIVE-OK
+    opened = False
+
+    def protect_release_window() -> None:
+        nonlocal opened
+        if exact and not receipt_of(module, version)[1].get("finished"):
+            opened = release_stages.open_window(version, world().now())
+
     try:
-        code, lines, errors = run(module, argv)
+        code, lines, errors = run(module, argv, before_actions=protect_release_window)
     except BaseException:  # a refused combination ran nothing: it leaves no window behind
         if opened:
             release_stages.close_window(version)

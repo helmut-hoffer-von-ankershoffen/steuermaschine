@@ -7,7 +7,7 @@ import io
 import sys
 from dataclasses import dataclass
 
-from ..queue_lib import edge
+from ..queue_lib import edge, hzlib
 
 
 @dataclass
@@ -64,6 +64,9 @@ def ship(number: str, reason: str = "", reviewed_head: str | None = None) -> Don
     """The ship step of the PR route: guard, then queue (with a reason: queue as reviewed, pinned to `reviewed_head`)."""
     from . import ship as shipping
 
+    repo, _, _ = hzlib.split_key(str(number))
+    if not reason and reviewed_head and not hzlib.requires_independent_review(repo):
+        return shipping.ship(str(number), expected_head=reviewed_head)
     return shipping.ship(str(number), reason or None, reviewed_head if reason else None)
 
 

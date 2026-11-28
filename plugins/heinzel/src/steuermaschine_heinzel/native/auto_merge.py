@@ -291,9 +291,12 @@ def handle(rt: Any, w: Any, module: Any, owner: str, pr: prtable.PrRow, mode: tu
         return row("skipped", f"head unreadable: {why or 'no exact commits'}")
     if head != pr.head:  # CI, Sonar and threads were read for another commit: the next pass reads them again
         return row("idle", f"the head moved from {pr.head[:12]} to {head[:12]} since the checks were read")
-    reasons = auto_review.needs_review(full, pr.number, base, head, list(data.get("files") or []))
+    needs_reviewer = hzlib.requires_independent_review(full)
+    reasons = auto_review.needs_review(full, pr.number, base, head, list(data.get("files") or []), errors_only=not needs_reviewer)
+    if not needs_reviewer and reasons:
+        return row("waiting", "; ".join(reasons))
     verdict = ""
-    if reasons:
+    if needs_reviewer and reasons:
         messages = [f"{c.get('messageHeadline', '')}\n{c.get('messageBody', '')}" for c in data.get("commits") or []]
         verdict = auto_review.recorded_verdict(list(data.get("comments") or []), head, settings.review_comment_authors, auto_review.author_families(messages))
         if not verdict and dispatch:
@@ -309,7 +312,7 @@ def handle(rt: Any, w: Any, module: Any, owner: str, pr: prtable.PrRow, mode: tu
                 budget[0] = 0  # no login: the rest of the pass starts no review
             if not verdict:
                 return row("waiting", res.note or "review started, no verdict yet")
-    if stop := review_gate(verdict, reasons):
+    if needs_reviewer and (stop := review_gate(verdict, reasons)):
         return row("waiting" if verdict != "REJECT" else "skipped", stop)
     if gap := required_gap(w.gh, owner, pr.repo, pr.number, head, base, data.get("baseRefName", "")):
         return row("waiting", gap)
@@ -317,7 +320,8 @@ def handle(rt: Any, w: Any, module: Any, owner: str, pr: prtable.PrRow, mode: tu
         reason = f"review: sm-review comment on head {head[:12]}" if reasons else f"sm queue auto: no gate touched, ready at head {head[:12]}"
         if not live:
             return row("would-queue")
-        done = queue._changed("add", ["add", "--reviewed", reason, "--reviewed-head", head, *words], words)  # every entry is bound to the head the checks were read for
+        pin = ["--reviewed", reason, "--reviewed-head", head] if needs_reviewer else ["--expected-head", head]
+        done = queue._changed("add", ["add", *pin, *words], words)  # every entry is bound to the head the checks were read for
         return row("queued" if not done.exit else "skipped", "" if not done.exit else "; ".join(done.errors or done.lines)[:120])
     if held := queue_hold.current(rt):
         return row("waiting", held.describe())

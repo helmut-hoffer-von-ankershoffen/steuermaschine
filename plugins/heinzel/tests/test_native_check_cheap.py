@@ -237,6 +237,23 @@ def test_the_steps_stop_at_no_slot_and_name_each_failed_command(tmp_path):
     assert s.failures[0][0].startswith("web-types failed (exit 1): `tsc -p 'a b'`") and s.failures[0][1] == "fix it" and calls[-1] == "true"
 
 
+@pytest.mark.parametrize("docs_result", [0, 1, 75, None])
+def test_early_guard_reuses_only_a_successful_identical_docs_test(tmp_path, docs_result):
+    guard = ["uv", "run", "pytest", "tests/unit/ci_test.py", "-q"]
+    c, calls = context(tmp_path, {"ci_test.py": (docs_result or 0, "")}, [])
+    c.plan = cheap.Plan(pytest=[], docs=[("tooling-ci", guard)], guards=[guard, [*guard, "-x"]])
+    if docs_result is not None:
+        docs = cheap.hook_step("docs", "document(s)", "fix")(c)
+        assert bool(docs.failures) == (docs_result != 0)
+
+    tests = cheap.step_tests(c)
+
+    assert bool(tests.failures) == (docs_result in {1, 75})
+    assert tests.data.get("guards_reused_from_docs", []) == ([guard] if docs_result == 0 else [])
+    assert calls.count(" ".join(guard)) == (2 if docs_result in {1, 75} else 1)
+    assert calls.count(" ".join([*guard, "-x"])) == 1
+
+
 def test_ruff_and_tree_and_bound_steps(tmp_path):
     (tmp_path / "x.py").write_text("")
     c, calls = context(tmp_path, {"ruff format": (1, "would reformat x.py"), "rev-list": (0, "0"), "status --porcelain": (0, "")}, ["x.py", "gone.py", "a.md"])

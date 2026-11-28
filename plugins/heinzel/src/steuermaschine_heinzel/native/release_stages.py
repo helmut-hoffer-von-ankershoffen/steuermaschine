@@ -8,7 +8,9 @@ rows in the state directory (stages/vX.Y.Z.json) so the table survives the expir
 from __future__ import annotations
 
 import contextlib
+import fcntl
 import json
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -160,20 +162,36 @@ def read_record(state_dir: Path, version: str) -> dict[str, Any]:
 
 def record(state_dir: Path, version: str, rows: list[Stage], live_at: str) -> None:
     target = record_path(state_dir, version)
-    with contextlib.suppress(OSError):
-        target.parent.mkdir(parents=True, exist_ok=True)
-        partial = target.with_suffix(".json.partial")
-        partial.write_text(json.dumps({"version": version, "live_at": live_at, "stages": [r.model_dump() for r in rows]}, indent=2) + "\n")
-        partial.replace(target)
+    with contextlib.suppress(OSError), state_lock(target):
+        stamp = read_record(state_dir, version).get("live_at") or live_at
+        write_state(target, {"version": version, "live_at": stamp, "stages": [r.model_dump() for r in rows]})
 
 
-def mark_live(state_dir: Path, version: str, now: float) -> None:
-    """The driver calls this at LIVE-OK: the end of the Mini follow stage."""
-    saved = read_record(state_dir, version)
-    stamp = datetime.fromtimestamp(now, UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+def mark_live(state_dir: Path, version: str, now: float) -> bool:
+    """Record the first LIVE-OK observation, retaining any recorded stage timings."""
+    target = record_path(state_dir, version)
     with contextlib.suppress(OSError):
-        record_path(state_dir, version).parent.mkdir(parents=True, exist_ok=True)
-        record_path(state_dir, version).write_text(json.dumps({**saved, "version": version, "live_at": stamp}, indent=2) + "\n")
+        with state_lock(target):
+            saved = read_record(state_dir, version)
+            if saved.get("version") != version or not saved.get("live_at"):
+                stamp = datetime.fromtimestamp(now, UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+                write_state(target, {**saved, "version": version, "live_at": stamp})
+        return True
+    return False
+
+
+@contextlib.contextmanager
+def state_lock(path: Path) -> Iterator[None]:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.with_name(f"{path.name}.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        yield
+
+
+def write_state(path: Path, data: dict[str, Any]) -> None:
+    partial = path.with_name(f"{path.name}.partial")
+    partial.write_text(json.dumps(data, indent=2) + "\n")
+    partial.replace(path)
 
 
 # ----------------------------------------------------------------------------- the Core release window
@@ -184,27 +202,38 @@ def window_path(home: Path | None = None) -> Path:
     return (home or Path.home()) / ".cache" / "sm-core-release-window"
 
 
+def window_version(path: Path) -> str | None:
+    with contextlib.suppress(OSError, ValueError):
+        if not path.is_symlink():
+            saved = json.loads(path.read_text())
+            if isinstance(saved, dict) and isinstance(version := saved.get("version"), str):
+                return version
+    return None
+
+
 def open_window(version: str, now: float, home: Path | None = None) -> bool:
     """Open the window of VERSION; True when this call wrote it (a resume of the same release keeps the earlier one)."""
     path = window_path(home)
-    wrote = False
-    with contextlib.suppress(OSError, ValueError):  # a corrupt window file never stops a release resume: it is rewritten
-        path.parent.mkdir(parents=True, exist_ok=True)
-        stamp = datetime.fromtimestamp(now, UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-        try:
-            saved = json.loads(path.read_text()) if path.is_file() else {}
-        except ValueError:
-            saved = {}  # unreadable: start the window of this release afresh
-        if not isinstance(saved, dict) or saved.get("version") != version:  # a resume of the same release keeps the time of its cut
-            partial = path.with_suffix(".partial")
-            partial.write_text(json.dumps({"version": version, "opened": stamp}) + "\n")
-            partial.replace(path)
-            wrote = True
-    return wrote
+    with contextlib.suppress(OSError), state_lock(path):
+        if window_version(path) != version:
+            stamp = datetime.fromtimestamp(now, UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+            write_state(path, {"version": version, "opened": stamp})
+            return True
+    return False
 
 
 def close_window(version: str, home: Path | None = None) -> None:
     path = window_path(home)
-    with contextlib.suppress(OSError, ValueError):
-        if json.loads(path.read_text()).get("version") == version:
+    with contextlib.suppress(OSError), state_lock(path):
+        if window_version(path) == version:
             path.unlink()
+
+
+def reconcile_live_window(state_dir: Path, version: str, now: float) -> bool:
+    """Record LIVE-OK and remove only its window, even if another cut has started during verification."""
+    path = window_path()
+    with contextlib.suppress(OSError), state_lock(path):
+        if window_version(path) == version and mark_live(state_dir, version, now):
+            path.unlink()
+            return True
+    return False

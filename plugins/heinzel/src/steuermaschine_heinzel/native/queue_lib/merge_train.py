@@ -176,7 +176,8 @@ def update(repo: str, pr: str) -> None:
     time.sleep(30)
 
 
-def train(repo: str, pr: str, ignore_freeze: bool = False, queue_core: bool = False, expected_head: str = "", pre_merge_guard: Callable[[], bool] | None = None) -> tuple[bool, str]:
+def train(repo: str, pr: str, ignore_freeze: bool = False, queue_core: bool = False, expected_head: str = "", pre_merge_guard: Callable[[], bool] | None = None,
+          immediate_merge: bool = False) -> tuple[bool, str]:
     """Returns (merged, detail): what happened, in the words printed."""
     info = view(repo, pr, "state,isDraft,headRefOid,headRefName")
     branch = info.get("headRefName", "")
@@ -271,7 +272,7 @@ def train(repo: str, pr: str, ignore_freeze: bool = False, queue_core: bool = Fa
                             return False, "main changed during full PR verification; reassessment required"
                 except Exception as error:  # noqa: BLE001 - missing proof must not merge
                     return False, f"full PR evidence unavailable: {error}"
-            if obligation:
+            if obligation or immediate_merge:
                 # REST merges now or refuses; gh pr merge may silently enqueue for later.
                 code, output = gh("api", "--method", "PUT", f"repos/{repo}/pulls/{pr}/merge",
                                   "-f", "merge_method=squash", "-f", f"sha={head}")

@@ -106,6 +106,7 @@ class Plan:
 @dataclass
 class Ctx(head.Ctx):
     plan: Plan = field(default_factory=Plan)
+    passed_docs_guards: set[tuple[str, ...]] = field(default_factory=set)
     dirty: str = ""  # `git status --porcelain` as the tree check saw it
     full: bool = False  # the hidden --full: the whole unit suite may run here, through the heavy lane
     budget: Any = None  # check_lib.budget.Budget: the wall time of the local run (None: no budget, as with --full)
@@ -359,6 +360,8 @@ def run_steps(c: Ctx, s: Step, steps: list[tuple[str, list[str]]], fix: str) -> 
         if rc != 0:
             log = c.log(name, out)
             s.fail(f"{name} failed (exit {rc}): `{shlex.join(argv)}`{'; log ' + log if log else ''}\n{head.tail(out)}", fix)
+        elif s.name == "docs" and argv[:3] == ["uv", "run", "pytest"] and argv in c.plan.guards:
+            c.passed_docs_guards.add(tuple(argv))
 
 
 def step_hook(c: Ctx) -> Step:
@@ -430,6 +433,9 @@ def step_tests(c: Ctx) -> Step:
         return s.fail(f"named Python test files are missing or outside the worktree: {', '.join(missing)}",
                       "correct the Python test paths in the --sel file")
     for argv in c.plan.guards:
+        if tuple(argv) in c.passed_docs_guards:
+            s.data.setdefault("guards_reused_from_docs", []).append(argv)
+            continue
         run_steps(c, s, [("the hook's early guard", argv)], "fix the code, never the test: the push hook runs these guards before anything else")
     if c.plan.error:
         s.fail(c.plan.error, "run it by hand in the worktree and fix the cause; the tests of a change are never guessed")
@@ -465,13 +471,11 @@ def step_tests(c: Ctx) -> Step:
             c.ci.append(f"{len(rest)} of {len(files)} selected test files")
             s.warn(f"{why}: {len(files_run)} owning or explicitly named tests run here, {len(rest)} are left to PR CI")
     explicit = set(c.plan.extra)
-    remaining = []
-    for file in files_run:
-        if file in explicit:
-            # Pytest must collect this file; another file's collected tests cannot mask an empty selection.
-            run_steps(c, s, [("named tests", [*head.PYTEST_FILES_CMD, file])], "fix the named test or its selection")
-        else:
-            remaining.append(file)
+    named = [file for file in files_run if file in explicit]
+    remaining = [file for file in files_run if file not in explicit]
+    for start in range(0, len(named), MAX_TEST_FILES):
+        batch = named[start:start + MAX_TEST_FILES]
+        run_steps(c, s, [("named tests", [*head.PYTEST_FILES_CMD, *batch])], "fix the named test or its selection")
     for start in range(0, len(remaining), MAX_TEST_FILES):  # a spent budget stops the run between batches (exit 75)
         head.run_tests(c, s, "selected", remaining[start:start + MAX_TEST_FILES])
     if c.plan.lanes:

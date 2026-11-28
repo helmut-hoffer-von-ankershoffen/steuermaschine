@@ -129,6 +129,7 @@ def moved(tool: str) -> ModuleType:
 
 # ----------------------------------------------------------------------------- processes
 _RAW = {"input", "stdin", "stdout", "stderr", "shell"}
+ProcessTimeout = subprocess.TimeoutExpired
 
 
 def run(argv, *args, **kwargs) -> subprocess.CompletedProcess:
