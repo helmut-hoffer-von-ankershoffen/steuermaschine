@@ -116,6 +116,7 @@ def test_ship_in_flight_count_is_bounded(monkeypatch):
     seen = {}
 
     def run(argv, **kwargs):
+        assert argv[:3] == ["gh", "run", "list"]
         seen.update(kwargs)
         raise subprocess.TimeoutExpired(argv, kwargs["timeout"])
 
@@ -126,11 +127,12 @@ def test_ship_in_flight_count_is_bounded(monkeypatch):
         def load():
             return {"items": []}
 
-    monkeypatch.setattr(ship_mod, "_queue", lambda: (SimpleNamespace(_queue=lambda: Module), None))
+    area = SimpleNamespace(_queue=lambda: Module, _run=lambda *args: pytest.fail("unreadable diff must not enter the queue"))
+    monkeypatch.setattr(ship_mod, "_queue", lambda: (area, None))
     monkeypatch.setattr(hzlib, "_gh_process", lambda *args, timeout=None: run(["gh", *args], timeout=timeout))
     guard = SimpleNamespace(main=None)
     monkeypatch.setattr(hzlib, "load", lambda name: guard)
-    monkeypatch.setattr(ship_mod.deps, "captured", lambda main, argv: SimpleNamespace(stdout="FLAG x\n", stderr=""))
+    monkeypatch.setattr(ship_mod.deps, "captured", lambda main, argv: SimpleNamespace(stdout="UNREADABLE 7\n", stderr=""))
     done = ship_mod.ship("7")
     assert seen["timeout"] == hzlib.GH_READ_TIMEOUT
-    assert done.returncode == 2 and "in flight" not in done.stdout
+    assert done.returncode == 2 and "UNREADABLE 7" in done.stdout and "in flight" not in done.stdout
