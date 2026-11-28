@@ -55,6 +55,7 @@ failure stays, and hz-release/hz-train still require a first-attempt full green 
 import argparse
 import contextlib
 import fcntl
+import hashlib
 import json
 import os
 import re
@@ -1416,9 +1417,12 @@ def train_tick(now: float | None = None) -> None:
         if not pinned:  # queued before the guard's verdict was bound to a head: nothing proves which diff it read
             stuck_or_merged(item, "needs work", "no guarded head recorded; ship it again so the diff guard reads the head that merges")
             continue
-        if item["repo"] == hzlib.CORE and not item.get("reviewed_head"):
+        if item["repo"] == hzlib.CORE and not item.get("reviewed_head") and not item.get("expected_head"):
             pinned = repin_after_update(item, pinned)
         head_guard = {"expected_head": pinned}
+        if item.get("guard_authorization"):
+            head_guard["immediate_merge"] = True
+            head_guard["pre_merge_guard"] = lambda item=item: authorization_current(item)
         if item.get("reviewed_progress_main"):
             head_guard["pre_merge_guard"] = lambda item=item: progress_anchor_unchanged(item.get("progress_anchor"))
         plan_refusal: list[str] = []
@@ -1674,6 +1678,26 @@ def guard_findings(repo: str, number: str):
     return found, guard.render(f"{repo}#{number}", found)
 
 
+def guard_base(repo: str, number: str) -> str:
+    info = hzlib.ghj("pr", "view", number, "-R", repo, "--json", "baseRefOid", default={})
+    base = info.get("baseRefOid") if isinstance(info, dict) else None
+    return base if isinstance(base, str) and re.fullmatch(r"[0-9a-f]{40}", base) else ""
+
+
+def findings_digest(found: list) -> str:
+    return hashlib.sha256(json.dumps(sorted(found), separators=(",", ":")).encode()).hexdigest()
+
+
+def authorization_current(item: dict) -> bool:
+    repo, pr = item["repo"], item["pr"]
+    auth = item["guard_authorization"]
+    if not auth.get("base") or guard_base(repo, pr) != auth["base"] or pr_head(repo, pr) != auth["head"]:
+        return False
+    found, _ = guard_findings(repo, pr)
+    return bool(found and findings_digest(found) == auth["digest"]
+                and guard_base(repo, pr) == auth["base"] and pr_head(repo, pr) == auth["head"])
+
+
 def pr_head(repo: str, number: str) -> str:
     """The PR's current head SHA, or empty when it cannot be read."""
     info = hzlib.ghj("pr", "view", number, "-R", repo, "--json", "headRefOid", default={}) or {}
@@ -1711,6 +1735,16 @@ def add(args) -> int:
             return 1
     normal_head = getattr(args, "reviewed_head", None)
     fix_forward = getattr(args, "fix_forward", False) or getattr(args, "fix_for", None) or getattr(args, "dry_run", False)
+    checked_head = getattr(args, "expected_head", None)
+    authorization = getattr(args, "authorize_guard", None)
+    if authorization is not None and (not authorization.strip() or not checked_head):
+        print("refused: --authorize-guard requires an operator reason and --expected-head", file=sys.stderr)
+        return 1
+    if checked_head is not None and (not re.fullmatch(r"[0-9a-f]{40}", checked_head) or len(args.pr) != 1
+                                     or reviewed or normal_head or fix_forward or any(p for _, _, p in purposes)
+                                     or getattr(args, "fixes_main", False) or hzlib.requires_independent_review(hzlib.split_key(args.pr[0])[0])):
+        print("refused: --expected-head requires a full SHA and one normal PR under the repository review policy", file=sys.stderr)
+        return 1
     if normal_head is not None and (
         not reviewed or not re.fullmatch(r"[0-9a-f]{40}", normal_head)
         or len(args.pr) != 1
@@ -1737,14 +1771,24 @@ def add(args) -> int:
     for words in args.pr:
         repo, number, key = hzlib.split_key(words)
         guarded_head = pr_head(repo, number)  # the guard's verdict is bound to this head: the merge refuses any other
+        operator_base = guard_base(repo, number) if authorization else ""
         found, shown = guard_findings(repo, number)
-        if not guarded_head or pr_head(repo, number) != guarded_head:
+        if authorization and (not operator_base or guard_base(repo, number) != operator_base or not found):
+            print(f"refused {key}: operator authorization requires readable findings and an unchanged base", file=sys.stderr)
+            refused += 1
+            continue
+        if not guarded_head or pr_head(repo, number) != guarded_head or (checked_head and checked_head != guarded_head):
             print(f"refused {key}: the PR head is unreadable or moved while the diff guard read it; ship it again", file=sys.stderr)
             refused += 1
             continue
         if found is None or found:
             print(shown, file=sys.stderr)
-            if not reviewed:
+            reviewed_recovery = reviewed and expected_head and (purpose or getattr(args, "fixes_main", False))
+            if not hzlib.requires_independent_review(repo) and (found is None or not (authorization or reviewed_recovery)):
+                print(f"refused {key}: read and resolve the findings or use --authorize-guard REASON with --expected-head SHA for a readable diff", file=sys.stderr)
+                refused += 1
+                continue
+            if not reviewed and not authorization:
                 print(f"refused {key}: fix the change, or review it and add --reviewed \"reason\"", file=sys.stderr)
                 refused += 1
                 continue
@@ -1768,11 +1812,17 @@ def add(args) -> int:
                 hzlib.note(f"sm queue: {kind} #{key} at {reviewed_head}, not a main fix; purpose: {purpose}; independent review: {reviewed}")
             if mitigation:
                 hzlib.note(f"sm queue: mitigation #{key} measured evidence: {evidence}; underlying main failure remains unresolved")
-        if found is None or found:
+        if (found is None or found) and reviewed:
             what = "unreadable diff" if found is None else ", ".join(sorted({f[2] for f in found}))
             hzlib.note(f"sm queue: {key if repo != hzlib.CORE else '#' + key} queued past the diff guard ({what}), reviewed: {reviewed}")
         queued = [i for i in queued if i["key"] != key]
         queued.append({"key": key, "repo": repo, "pr": number, "after": after, "status": "queued", "detail": "", "reruns": 0, "noted": "", "added": int(time.time()), "fixes_main": bool(getattr(args, "fixes_main", False)), "diagnostics_main": diagnostics, "safety_fix_main": safety_fix, "mitigation_main": mitigation, "mitigation_evidence": evidence, "reviewed_progress_main": progress, "progress_anchor": progress_anchor, "reviewed_head": reviewed_head, "guarded_head": guarded_head, "bead": (getattr(args, "bead", "") or "").strip()})
+        if checked_head:
+            queued[-1]["expected_head"] = checked_head
+        if authorization and found:
+            findings = sorted({f[2] for f in found})
+            queued[-1]["guard_authorization"] = {"head": checked_head, "base": operator_base, "digest": findings_digest(found), "reason": authorization.strip(), "findings": findings}
+            hzlib.note(f"sm queue: {key} at {checked_head}; operator authorized diff guard findings {', '.join(findings)}: {authorization.strip()}")
         print(f"queued {key}" + (f" after {', '.join(after)}" if after else ""))
     if queued:
         with state_lock():
@@ -1956,6 +2006,8 @@ def _main(argv: list[str]) -> int:
     p.add_argument("--after", action="append", default=[])
     p.add_argument("--bead", default="", help="the bead this PR closes; on merge the queue records pr + merge_sha and runs sm beads stamp")
     p.add_argument("--reviewed", metavar="REASON", help="queue a PR the diff guard flagged; the reason goes to sm note")
+    p.add_argument("--authorize-guard", metavar="REASON", help="operator disposition for findings on the expected head; does not waive CI")
+    p.add_argument("--expected-head", metavar="SHA", help="pin one normal PR at its checked head")
     p.add_argument("--reviewed-head", metavar="SHA", help="pin one normal PR (any repository) to its reviewed full SHA; requires --reviewed")
     kind = p.add_mutually_exclusive_group()
     kind.add_argument("--fixes-main", action="store_true", help="the PR that makes a red main green: it may merge while main is red, alone")

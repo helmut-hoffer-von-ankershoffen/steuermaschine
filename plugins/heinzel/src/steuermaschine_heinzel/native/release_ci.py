@@ -28,6 +28,7 @@ from steuermaschine.native import call, native, runtime
 from . import mini
 from .go import world
 from .release_lib.binding import core_repo
+from .release_lib.ios_acceptance import accepted_marker
 
 WORKFLOW = "release-chain.yml"
 EXACT = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
@@ -240,7 +241,7 @@ def accepted_latest(gh: Gh) -> tuple[str | None, str]:
         marker = json.loads(done.out) if not done.rc else {}
     except ValueError:
         marker = {}
-    if marker.get("project") != "heinzel" or marker.get("version") != name[1:] or marker.get("accepted") is not True:
+    if not accepted_marker(marker, name[1:]):
         return None, f"{name} has no accepted acceptance.json"
     return name[1:], ""
 

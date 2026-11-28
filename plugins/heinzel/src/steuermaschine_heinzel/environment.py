@@ -61,6 +61,17 @@ class Tokens(BaseSettings):
                 if secret is not None and secret.get_secret_value()]
 
 
+class AppStoreConnect(BaseSettings):
+    """The credential file selected by the Apple release process."""
+
+    model_config = SettingsConfigDict(extra="ignore", populate_by_name=False)
+    credentials_file: str = Field(
+        "~/.appstoreconnect/heinzel-mini.env",
+        validation_alias=AliasChoices("ASC_ENV_FILE"),
+        description="Path to the App Store Connect credential file.",
+    )
+
+
 class StateOverrides(BaseSettings):
     """The old variables that pointed a tool at other state or another checkout (tests did): live admission refuses
     while one of the state overrides is set, and a command whose setting wins over one says so."""

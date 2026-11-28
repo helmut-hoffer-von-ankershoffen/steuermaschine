@@ -1,6 +1,7 @@
 """release ios, native: the scripted Mini (git, xcodebuild, the tag's testflight and verifier) in a temporary state
 directory. No test starts a process, reads the network or sleeps."""
 
+import hashlib
 import json
 import plistlib
 from pathlib import Path
@@ -18,6 +19,8 @@ from steuermaschine_heinzel.native.release_lib import ios
 from steuermaschine_heinzel.plugin import plugin
 
 SHA = "a" * 40
+ASC_CALL = ["asc-fixture"]
+TAGGED_PROCESS = ["uv", "run", "--quiet", "--script"]
 OPTIONS = {"method": "app-store-connect", "destination": "upload", "teamID": "ABCDE12345", "signingStyle": "manual",
            "provisioningProfiles": {"team.example.app": "App Profile", "team.example.app.widgets": "Widget Profile"},
            "manageAppVersionAndBuildNumber": True}
@@ -27,9 +30,35 @@ def row(short, build, state="VALID", group="in-group", expired=False):
     return f"{short} ({build}) {state} expired={expired} {group} id=x{build}"
 
 
+def flight_verb(argv):
+    return argv[1] if argv[:1] == ASC_CALL else argv[5]
+
+
+def apple_command(argv):
+    return argv[:1] == ASC_CALL or argv[0] in {"uv", "xcodebuild"}
+
+
+@pytest.fixture(autouse=True)
+def fake_native_asc(monkeypatch):
+    minis = []
+    monkeypatch.setattr(Mini, "active", minis, raising=False)
+    monkeypatch.setattr(ios.ios_inventory, "tag_identity", lambda _: ("fixture-app", "fixture-group", "en-US"))
+
+    def invoke(tool, action, *args, timeout):
+        mini, = (m for m in minis if tool.is_relative_to(m.state))
+        assert timeout == (180 if action == "inventory" else 120)
+        result = mini.commands.run([*ASC_CALL, action, str(tool), *args])
+        if result.rc:
+            raise ios.ios_inventory.AscRequestError(result.err or result.out)
+        return result.out
+
+    monkeypatch.setattr(ios.ios_inventory, "invoke", invoke)
+
+
 class Mini:
     def __init__(self, tmp_path, version="0.9.53", **table):
         self.state = tmp_path / "state"
+        self.active.append(self)
         self.version = version
         self.pyproject = version
         self.asc: list[str] = [row("0.1.0", 31), row("0.1.0", 30)]
@@ -46,7 +75,9 @@ class Mini:
         c = self.commands = FakeCommands()
         c.on(["git", "-C", str(tmp_path / "core"), "rev-parse"], lambda argv: self.fail.get("tag") or Result(0, SHA + "\n"))
         c.on(["git", "-C", str(tmp_path / "core"), "worktree"], self.worktree)
-        c.on(["uv", "run", "--quiet", "--script"], self.testflight)
+        self.on_testflight(self.testflight)
+        c.on([*ASC_CALL, "inventory"], lambda argv: Result(0, json.dumps({"app": "test-app", "builds": {
+            r["id"]: dict(r, short=None if r["short"] == "None" else r["short"]) for r in ios.parse_status("\n".join(self.asc))}})))
         c.on(["uv", "run", "--quiet", "--no-project"], self.verify)
         c.on(["xcodebuild", "archive"], self.archive)
         c.on(["gh", "release", "view"], lambda argv: self.release_notes)
@@ -63,8 +94,17 @@ class Mini:
             (src / ios.EXPORT_OPTIONS).write_bytes(plistlib.dumps(OPTIONS))
         return Result(0)
 
+    def on_testflight(self, callback):
+        self.commands.on(TAGGED_PROCESS, callback)
+        for action in ("status", "beta", "notes", "assign"):
+            self.commands.on([*ASC_CALL, action], callback)
+
     def testflight(self, argv):
-        verb = argv[5]
+        verb = flight_verb(argv)
+        if verb in {"beta", "notes", "assign"}:
+            assert argv[:1] == ASC_CALL
+            number, version, identifier = argv[3:6]
+            assert version == self.version and identifier == f"x{number}"
         if verb in self.fail:
             return self.fail[verb]
         if verb == "upload":
@@ -74,18 +114,19 @@ class Mini:
             return Result(0)
         if verb == "beta":
             state = self.beta.pop(0) if len(self.beta) > 1 else self.beta[0]
-            return Result(0, f"build {argv[6]} internalBuildState={state}\n")
+            return Result(0, f"build {number} internalBuildState={state}\n")
         if verb == "notes":
-            self.notes.append(Path(argv[7]).read_text())
+            self.notes.append(Path(argv[6]).read_text())
             return Result(0, "notes set\n")
         if verb == "assign":
-            self.asc = [line.replace("NOT-in-group", "in-group") if f"({argv[6]})" in line else line for line in self.asc]
-            return Result(0, f"assigned build {argv[6]}\n")
+            self.asc = [line.replace("NOT-in-group", "in-group") if f"({number})" in line else line for line in self.asc]
+            return Result(0, f"assigned build {number}\n")
         if self.processing:
             self.processing -= 1
         else:
             self.asc = [line.replace("PROCESSING", "VALID").replace("NOT-in-group", "in-group" if self.auto_group else "NOT-in-group") for line in self.asc]
-        return Result(0, "\n".join(self.asc) + "\n")
+        assert verb == "status" and argv[:1] == ASC_CALL
+        return Result(0, "\n".join(line for line in self.asc if f"({argv[3]})" in line) + "\n")
 
     def archive(self, argv):
         if "archive" in self.fail:
@@ -96,7 +137,12 @@ class Mini:
         self.archived.append([config, build])
         app = archive / "Products/Applications/Heinzel.app"
         app.mkdir(parents=True)
-        (app / "Info.plist").write_bytes(plistlib.dumps({"CFBundleShortVersionString": self.archive_version or self.version, "CFBundleVersion": build}))
+        ext = app / "PlugIns/HeinzelWidgets.appex"
+        ext.mkdir(parents=True)
+        for bundle in (app, ext):
+            (bundle / "fixture").write_bytes(b"signed executable fixture")
+            (bundle / "Info.plist").write_bytes(plistlib.dumps({"CFBundleShortVersionString": self.archive_version or self.version,
+                                                                "CFBundleExecutable": "fixture", "CFBundleVersion": build}))
         return Result(0)
 
     def verify(self, argv):
@@ -112,7 +158,7 @@ class Mini:
 
 def test_builds_the_next_number_verifies_uploads_and_confirms_the_group(tmp_path):
     m = Mini(tmp_path)
-    m.processing = 2  # the first read (before the build) and one after the upload still say PROCESSING
+    m.processing = 1  # the first confirmation read still says PROCESSING
     out = m.run()
     assert out.exit_code == 0, out
     assert out.stdout.splitlines()[-1] == "IOS-OK 0.9.53 build 32 IN_BETA_TESTING in the internal TestFlight group"
@@ -142,12 +188,178 @@ def test_the_upload_keeps_the_archive_numbers(tmp_path):
     assert seen["manageAppVersionAndBuildNumber"] is False and seen["teamID"] == "ABCDE12345"
 
 
-def test_a_version_already_in_app_store_connect_is_only_verified(tmp_path):
+def official_release(m, fault=""):
+    from steuermaschine_heinzel.native.queue_lib import hzlib
+
+    tag = f"v{m.version}"
+    root = f"repos/{hzlib.CORE}/"
+    get = ["gh", "api", "--hostname", "github.com"]
+    marker = {"schema": 1, "project": "heinzel", "version": m.version, "accepted": True, "acceptance_run": 17}
+    run = {
+        "id": 17, "run_attempt": 1, "path": ".github/workflows/acceptance.yml", "event": "workflow_dispatch",
+        "head_branch": tag, "head_sha": SHA, "status": "completed", "conclusion": "success",
+        "repository": {"full_name": hzlib.CORE}, "head_repository": {"full_name": hzlib.CORE},
+    }
+    acceptance_faults = {
+        "run-id": {"id": 18},
+        "run-retried": {"run_attempt": 2},
+        "run-workflow": {"path": ".github/workflows/ci.yml"},
+        "run-event": {"event": "push"},
+        "run-tag": {"head_branch": "main"},
+        "run-source": {"head_sha": "b" * 40},
+        "run-pending": {"status": "in_progress"},
+        "run-failed": {"conclusion": "failure"},
+        "run-repository": {"repository": {"full_name": "other/heinzel"}},
+        "run-fork": {"head_repository": {"full_name": "other/heinzel"}},
+    }
+    if fault != "run-unavailable":
+        run.update(acceptance_faults.get(fault, {}))
+        m.commands.on([*get, root + "actions/runs/17"], Result(0, json.dumps(run)))
+    wheel_name = f"heinzel-{m.version}-py3-none-any.whl"
+    wheel = "1" * 64
+    manifest = {"schema": 1, "project": "heinzel", "version": m.version, "commit": SHA, "files": {wheel_name: wheel}}
+    ref = {"ref": f"refs/tags/{tag}", "object": {"type": "commit", "sha": SHA}}
+    release = {"tag_name": tag, "draft": False, "prerelease": False, "assets": [{"name": wheel_name, "digest": "sha256:" + wheel}]}
+    if fault.endswith("-missing-files"):
+        del manifest["files"]
+    if fault.endswith("-other-file"):
+        manifest["files"] = {"other.whl": wheel}
+    if fault.endswith("-producer-mismatch"):
+        manifest["files"] = {wheel_name: "a" * 64}
+    if fault == "rejected":
+        marker["accepted"] = False
+    if fault == "wrong-version":
+        marker["version"] = "0.9.56"
+    if fault == "wrong-project":
+        marker["project"] = "unrelated"
+    if fault == "wrong-commit":
+        manifest["commit"] = "b" * 40
+    if fault == "wrong-ref":
+        ref["ref"] = "refs/heads/" + tag
+    if fault == "wrong-remote-sha":
+        ref["object"]["sha"] = "c" * 40
+    if fault == "unpublished":
+        release["draft"] = True
+    if fault in ("annotated", "wrong-peel"):
+        ref["object"] = {"type": "tag", "sha": "f" * 40}
+        annotated = {"sha": "f" * 40 if fault == "annotated" else "d" * 40, "object": {"type": "commit", "sha": SHA}}
+        m.commands.on([*get, root + "git/tags/" + "f" * 40], Result(0, json.dumps(annotated)))
+    if fault.startswith("hosted"):
+        profile = "2" * 64
+        marker.update(wheel_sha256=wheel, profile_sha256=profile)
+        app = {"tag_name": f"app-{tag}", "draft": False, "prerelease": False, "assets": [
+            {"name": "standard.json", "digest": "sha256:" + (profile if fault != "hosted-profile" else "3" * 64)}]}
+        m.commands.on([*get, f"repos/{hzlib.PLUGINS}/releases/tags/app-{tag}"], Result(0, json.dumps(app)))
+    for i, (name, doc) in enumerate([("acceptance.json", marker), ("artifact-manifest.json", manifest)], start=1):
+        raw = json.dumps(doc) + "\n"
+        digest = hashlib.sha256(raw.encode()).hexdigest()
+        if name == "acceptance.json" and fault == "missing":
+            continue
+        asset = {"name": name, "id": i, "digest": "sha256:" + ("0" * 64 if name == "acceptance.json" and fault == "wrong-digest" else digest)}
+        release["assets"].append(asset)
+        if name == "acceptance.json" and fault == "duplicate":
+            release["assets"].append(asset)
+        m.commands.on([*get, root + f"releases/assets/{i}", "-H", "Accept: application/octet-stream"], Result(0, raw))
+    m.commands.on([*get, root + f"releases/tags/{tag}"], Result(0, json.dumps(release)))
+    m.commands.on([*get, root + f"git/ref/tags/{tag}"], Result(0, json.dumps(ref)))
+
+
+@pytest.mark.parametrize("fault", ["missing", "rejected", "wrong-version", "wrong-project", "wrong-digest", "duplicate",
+                                   "wrong-commit", "wrong-ref", "wrong-remote-sha", "wrong-peel", "unpublished", "hosted-profile",
+                                   "local-missing-files", "local-other-file", "local-producer-mismatch",
+                                   "hosted-missing-files", "hosted-other-file", "hosted-producer-mismatch",
+                                   "run-id", "run-retried", "run-workflow", "run-event", "run-tag", "run-source",
+                                   "run-pending", "run-failed", "run-repository", "run-fork", "run-unavailable"])
+def test_replacement_refuses_before_asc_when_official_acceptance_is_unbound(tmp_path, fault):
+    m = Mini(tmp_path, version="0.9.57")
+    m.asc = [row(m.version, 1)]
+    official_release(m, fault)
+    out = invoke(m.rt, ["release", "ios", m.version, "--supersede-build-id", "x1", "--expected-revision", SHA])
+    assert out.exit_code == 1 and not m.receipt()["clean"]
+    if fault.endswith(("-missing-files", "-other-file", "-producer-mismatch")):
+        assert "producer manifest does not bind the published release wheel" in m.receipt()["reason"]
+    if fault.startswith("run-"):
+        expected = "cannot authenticate" if fault == "run-unavailable" else "acceptance run is not a successful first attempt"
+        assert expected in m.receipt()["reason"]
+    assert not any(apple_command(cmd) or "add" in cmd for cmd in m.commands.calls)
+    assert not (m.state / "ios/submissions").exists() and not m.notes
+
+
+@pytest.mark.parametrize("evidence", ["annotated", "hosted-valid"])
+def test_accepted_canonical_replacement_reads_proof_before_first_apple_command(tmp_path, evidence):
+    m = Mini(tmp_path, version="0.9.57")
+    official_release(m, evidence)
+    m.asc = [row(m.version, 1)]
+    out = invoke(m.rt, ["release", "ios", m.version, "--supersede-build-id", "x1", "--expected-revision", SHA])
+    assert out.exit_code == 0, out.stdout
+    calls = m.commands.calls
+    first_apple = next(i for i, cmd in enumerate(calls) if apple_command(cmd))
+    assert calls[first_apple][:2] == [*ASC_CALL, "inventory"]
+    assert all(i < first_apple for i, cmd in enumerate(calls) if cmd[:2] == ["gh", "api"])
+    assert len(m.uploads) == len(m.notes) == 1
+
+
+def test_existing_unbound_rehearsal_requires_explicit_exact_replacement(tmp_path):
+    m = Mini(tmp_path, version="0.9.57")
+    m.asc = [row("0.9.56", 35), row(m.version, 1)]
+    official_release(m)
+    for flags in ([], ["--supersede-build-id", "x2", "--expected-revision", SHA],
+                  ["--supersede-build-id", "x1"], ["--supersede-build-id", "x1", "--expected-revision", "b" * 40]):
+        out = invoke(m.rt, ["release", "ios", m.version, *flags])
+        assert out.exit_code == 1 and not m.receipt()["clean"]
+        assert not m.notes and not m.uploads and not m.archived
+    out = invoke(m.rt, ["release", "ios", m.version, "--supersede-build-id", "x1", "--expected-revision", SHA])
+    assert out.exit_code == 0, out.stdout
+    assert m.receipt()["build"] == "36"
+    assert m.run().exit_code == 0
+    assert len(m.uploads) == 1 and len(m.archived) == 1 and not m.receipt()["uploaded"]
+
+
+def test_default_resume_of_replacement_rechecks_authority_before_apple(tmp_path):
+    m = Mini(tmp_path, version="0.9.57", ios_wait_minutes=1)
+    m.asc = [row(m.version, 1)]
+    m.beta = ["READY_FOR_BETA_SUBMISSION"]
+    official_release(m)
+    flags = ["--supersede-build-id", "x1", "--expected-revision", SHA]
+    assert invoke(m.rt, ["release", "ios", m.version, *flags]).exit_code == 1
+    assert len(m.uploads) == 1 and not m.notes
+    official_release(m, "rejected")
+    m.commands.calls.clear()
+    m.beta = ["IN_BETA_TESTING"]
+    assert m.run().exit_code == 1 and not m.receipt()["clean"]
+    assert not any(apple_command(cmd) for cmd in m.commands.calls)
+    assert len(m.uploads) == 1 and not m.notes
+
+
+def test_ambiguous_upload_never_submits_again_or_adopts_a_visible_build(tmp_path):
     m = Mini(tmp_path)
-    m.asc.insert(0, row("0.9.53", 32))
-    out = m.run()
-    assert out.exit_code == 0 and "ios: App Store Connect holds 0.9.53 (32) already: verify only" in out.stdout
-    assert not m.archived and not m.uploads and m.receipt()["uploaded"] is False
+    m.fail["upload"] = Result(1, "", "timeout")
+    assert m.run().exit_code == 1
+    m.fail.clear()
+    m.asc.insert(0, row(m.version, 32))
+    assert m.run().exit_code == 1 and "uncertain upload" in m.receipt()["reason"]
+    assert not m.notes and len(m.archived) == 1
+
+
+def test_successful_upload_with_temporary_processing_delay_resumes_same_build(tmp_path):
+    m = Mini(tmp_path, ios_wait_minutes=1)
+    m.beta = ["READY_FOR_BETA_SUBMISSION"]
+    assert m.run().exit_code == 1 and len(m.uploads) == 1
+    m.beta = ["IN_BETA_TESTING"]
+    assert m.run().exit_code == 0 and m.receipt()["build"] == "32" and len(m.uploads) == 1
+
+
+def test_a_version_already_in_app_store_connect_is_only_verified(tmp_path):
+    """Reconfirm an already distributed build bound to the current source and submission."""
+    m = Mini(tmp_path)
+    assert m.run().exit_code == 0 and m.receipt()["clean"]
+    m.commands.calls.clear()
+
+    assert m.run().exit_code == 0
+    assert m.receipt()["build"] == "32" and m.receipt()["clean"]
+    assert any(call[:2] == [*ASC_CALL, "status"] for call in m.commands.calls)
+    assert len(m.archived) == len(m.uploads) == 1
+    assert not any(call[:2] == ["xcodebuild", "archive"] for call in m.commands.calls)
 
 
 def test_assigns_a_valid_build_outside_the_group(tmp_path):
@@ -167,7 +379,7 @@ def test_automatic_group_membership_catches_up_after_valid(tmp_path):
 
     def propagate(argv):
         nonlocal stale_reads
-        verb = argv[5]
+        verb = flight_verb(argv)
         verbs.append(verb)
         result = m.testflight(argv)
         if verb == "status" and f"{m.version} (32) VALID expired=False NOT-in-group" in result.out:
@@ -175,7 +387,7 @@ def test_automatic_group_membership_catches_up_after_valid(tmp_path):
             m.auto_group = stale_reads == 4
         return result
 
-    m.commands.on(["uv", "run", "--quiet", "--script"], propagate)
+    m.on_testflight(propagate)
     out = m.run()
     assert out.exit_code == 0
     assert "assign" not in verbs
@@ -193,11 +405,11 @@ def test_the_assignment_grace_does_not_extend_the_confirmation_deadline(tmp_path
 
     def late_status(argv):
         result = m.testflight(argv)
-        if argv[5] == "status" and not m.rt.providers.clock.slept and "(32) VALID" in result.out:
+        if flight_verb(argv) == "status" and not m.rt.providers.clock.slept and "(32) VALID" in result.out:
             clock.sleep(55)  # first VALID row arrives five seconds before confirmation ends
         return result
 
-    m.commands.on(["uv", "run", "--quiet", "--script"], late_status)
+    m.on_testflight(late_status)
     out = m.run()
     assert out.exit_code == 1 and "not in the internal group" in out.stdout
     assert "assigned build" not in out.stdout
@@ -229,14 +441,14 @@ def test_known_assignment_refusal_requires_positive_membership_before_success(tm
     verbs = []
 
     def assign_race(argv):
-        verb = argv[5]
+        verb = flight_verb(argv)
         verbs.append(verb)
         if verb == "assign":
             m.auto_group = membership_appears
             return Result(1, "", GROUP_POST + json.dumps({"errors": [GROUP_REFUSAL]}, indent=2))
         return m.testflight(argv)
 
-    m.commands.on(["uv", "run", "--quiet", "--script"], assign_race)
+    m.on_testflight(assign_race)
     out = m.run()
     assert verbs.count("assign") == verbs.count("upload") == 1
     assert m.receipt()["clean"] is membership_appears
@@ -271,8 +483,8 @@ def test_other_assignment_errors_are_never_treated_as_propagation(other):
     (lambda m: setattr(m, "beta", ["READY_FOR_BETA_SUBMISSION"]), "build 32 is VALID, beta READY_FOR_BETA_SUBMISSION after 30 min"),
     (lambda m: setattr(m, "beta", ["MISSING_EXPORT_COMPLIANCE"]), "build 32 beta state is MISSING_EXPORT_COMPLIANCE"),
     (lambda m: setattr(m, "release_notes", Result(1, "", "not found")), "the release notes of v0.9.53 are unreadable (gh release view exited 1)"),
-    (lambda m: m.fail.update(notes=Result(2, "", "invalid choice: 'notes'")), "testflight notes exited 2"),
-    (lambda m: m.fail.update(notes=Result(1, "", 'PATCH x: HTTP 409 {\n  "detail" : "invalid text"\n}\n')), 'testflight notes exited 1: PATCH x: HTTP 409 { "detail" : "invalid text" }'),
+    (lambda m: m.fail.update(notes=Result(2, "", "notes unavailable")), "testflight notes failed: notes unavailable"),
+    (lambda m: m.fail.update(notes=Result(1, "", "ASC PATCH request failed: HTTP 409")), "testflight notes failed: ASC PATCH request failed: HTTP 409"),
 ])
 def test_a_failure_is_not_clean_with_its_reason_and_an_alarm(tmp_path, change, reason):
     m = Mini(tmp_path)
@@ -292,10 +504,10 @@ def test_processing_that_ends_badly_stops_at_once(tmp_path):
 
     def bad(argv):
         out = real(argv)
-        if argv[5] == "status":
+        if flight_verb(argv) == "status":
             out = Result(0, out.out.replace("(32) VALID", "(32) INVALID"))
         return out
-    m.commands.on(["uv", "run", "--quiet", "--script"], bad)
+    m.on_testflight(bad)
     out = m.run()
     assert out.exit_code == 1 and "processing of build 32 ended INVALID" in out.stdout
 
@@ -346,7 +558,7 @@ def test_summary_and_latest_receipt(tmp_path):
     assert rules.ios_alarm(running, start + 3599) is None
     assert rules.ios_alarm(running, start + 3600)["key"] == "ios:0.9.9:stuck"
     assert ios.summary(running) == "ios: v0.9.9 TestFlight step running since 2026-11-21T10:00:00+00:00"
-    assert ios.parse_status("garbage\n" + row("None", 3)) == [{"short": "None", "build": "3", "state": "VALID", "expired": False, "in_group": True}]
+    assert ios.parse_status("garbage\n" + row("None", 3)) == [{"short": "None", "build": "3", "state": "VALID", "expired": False, "in_group": True, "id": "x3"}]
     assert ios.next_build([]) == "1"
 
 
@@ -362,14 +574,27 @@ def test_the_tool_can_come_from_a_ref(tmp_path):
     tools = []
 
     def record(argv):
-        tools.append(argv[4])
+        if argv[:1] != ASC_CALL:
+            tools.append(argv[4])
         return Mini.testflight(m, argv)
-    m.commands.on(["uv", "run", "--quiet", "--script"], record)
+    m.on_testflight(record)
     assert m.run().exit_code == 0
     assert tools and all(tool.endswith("/work/testflight") for tool in tools)
+    native_tools = [cmd[2] for cmd in m.commands.calls if cmd[:1] == ASC_CALL]
+    assert native_tools and all(tool.endswith("/src/apple/scripts/testflight") for tool in native_tools)
     m.fail["show"] = Result(128, "", "bad ref")
     out = m.run()
     assert out.exit_code == 1 and "apple/scripts/testflight is not at origin/main" in out.stdout
+
+
+def test_tool_override_with_different_apple_identity_refuses_before_apple(tmp_path, monkeypatch):
+    m = Mini(tmp_path, ios_tool_ref="origin/main")
+    monkeypatch.setattr(ios.ios_inventory, "tag_identity", lambda tool: (
+        "other-app" if tool.parent.name == "work" else "tagged-app", "internal", "en-US",
+    ))
+    out = m.run()
+    assert out.exit_code == 1 and "does not match the tagged ASC identity" in out.stdout
+    assert not any(apple_command(cmd) for cmd in m.commands.calls)
 
 
 def test_a_running_receipt_is_written_first(tmp_path):
@@ -405,7 +630,7 @@ def test_every_testflight_verb_sm_calls_is_in_the_recorded_help():
     offered = set(re.search(r"\{([a-z,]+)\}", helptext)[1].split(","))
     source = inspect.getsource(ios)
     called = set(re.findall(r"testflight\(\s*\"([a-z]+)\"", source)) | set(re.findall(r"\.testflight\(\s*\"([a-z]+)\"", source))
-    assert {"status", "assign", "beta", "notes", "upload"} <= called  # the scan sees every verb the step uses
+    assert called == {"upload"}
     assert called <= offered, f"sm calls testflight verbs the tool does not have: {sorted(called - offered)}"
 
 
@@ -416,3 +641,67 @@ def test_an_older_not_clean_is_superseded_once_a_newer_build_is_assigned(tmp_pat
     ios.write_receipt(state, ios.IosResult(version="0.9.55", build="33", clean=True, beta="IN_BETA_TESTING"), 2.0)
     assert ios.superseded_line(state) == "ios: v0.9.54 NOT-CLEAN superseded by v0.9.55 build 33"
     assert ios.superseded_by(state, ios.read_receipt(state, "0.9.55")) is None
+
+
+def test_after_accepted_ignores_old_verify_only_success_and_leaves_rehearsal_untouched(tmp_path):
+    from steuermaschine.native import NativeRuntime, using
+    from steuermaschine_heinzel.native.go import world
+
+    m = Mini(tmp_path, version="0.9.57")
+    ios.write_receipt(m.state, ios.IosResult(version=m.version, build="1", clean=True, revision=SHA), 0)
+    m.asc.insert(0, row(m.version, 1))
+    with using(NativeRuntime(m.rt.providers, m.rt.settings, m.rt.project)):
+        output = release_ios.after_accepted(world(), m.version)
+    assert output[-1].startswith("IOS NOT-CLEAN") and not m.receipt()["clean"]
+    assert not m.uploads and not m.notes and not m.archived
+
+
+def test_submitted_asc_id_drift_refuses_a_successful_old_number(tmp_path):
+    m = Mini(tmp_path)
+    assert m.run().exit_code == 0
+    m.asc[0] = m.asc[0].replace("id=x32", "id=unrelated")
+    assert m.run().exit_code == 1 and "build ID" in m.receipt()["reason"]
+    assert len(m.notes) == len(m.uploads) == 1
+
+
+def test_unknown_marketing_version_blocks_allocation(tmp_path):
+    m = Mini(tmp_path)
+    m.asc.append(row("None", 500))
+    assert m.run().exit_code == 1 and "without a marketing version" in m.receipt()["reason"]
+    assert not m.uploads and not m.notes
+
+
+def asc_page(identifier, number, *, total=2, link=None):
+    return {"meta": {"paging": {"total": total}}, "links": {"next": link},
+            "included": [{"type": "preReleaseVersions", "id": "v", "attributes": {"version": "0.9.56"}}],
+            "data": [{"type": "builds", "id": identifier, "attributes": {"version": number, "expired": False, "processingState": "VALID"},
+                      "relationships": {"preReleaseVersion": {"data": {"type": "preReleaseVersions", "id": "v"}}}}]}
+
+
+@pytest.mark.parametrize("fault", ["", "truncated", "repeat-id", "changed-total", "different-app", "external-host"])
+def test_inventory_follows_only_complete_app_scoped_pages(fault):
+    from steuermaschine_heinzel.native.release_lib.ios_inventory import inventory
+
+    api = "https://asc.invalid"
+    next_page = api + "/v1/builds?filter%5Bapp%5D=fixture&include=preReleaseVersion&cursor=123"
+    if fault == "different-app":
+        next_page = next_page.replace("fixture", "elsewhere")
+    if fault == "external-host":
+        next_page = next_page.replace("asc.invalid", "remote.invalid")
+    pages = [asc_page("record-1", "2", link=None if fault == "truncated" else next_page),
+             asc_page("record-1" if fault == "repeat-id" else "record-2", "400", total=3 if fault == "changed-total" else 2)]
+    if fault:
+        with pytest.raises(ValueError):
+            inventory(lambda path: pages.pop(0), "fixture", api)
+    else:
+        result = inventory(lambda path: pages.pop(0), "fixture", api)
+        assert result["builds"]["record-2"]["build"] == "400" and result["builds"]["record-1"]["short"] == "0.9.56"
+        assert not pages
+
+
+def test_failed_verification_can_retry_without_overwriting_the_old_archive(tmp_path):
+    m = Mini(tmp_path)
+    m.fail["verify"] = Result(1, "", "signed extension has wrong revision")
+    assert m.run().exit_code == 1 and not m.uploads and not m.notes
+    m.fail.clear()
+    assert m.run().exit_code == 0 and len(m.archived) == 2 and len(m.uploads) == 1

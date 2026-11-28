@@ -9,9 +9,10 @@ from threading import Barrier
 from types import SimpleNamespace
 
 import pytest
-from steuermaschine_heinzel.native.dispatch_lib import rules as c
 
 from steuermaschine.defaults import FileStore, Subprocess
+from steuermaschine.testing import FakeClock
+from steuermaschine_heinzel.native.dispatch_lib import rules as c
 
 # Moved from the former single-lane tool's tests. Assertions are unchanged except where they named the old command.
 
@@ -108,7 +109,7 @@ def test_the_caps_are_the_accounts_and_come_from_settings_not_from_constants():
 @pytest.fixture
 def cli(tmp_path, monkeypatch):
     mod = load()
-    mod.EDGE = mod.Edge(store=FileStore(tmp_path / "store"))
+    mod.EDGE = mod.Edge(store=FileStore(tmp_path / "store"), clock=FakeClock())
     monkeypatch.setattr(mod, "STATE", tmp_path / "runs.jsonl")
     monkeypatch.setattr(mod, "note", lambda *_: None)
     monkeypatch.setattr(mod, "gh", lambda *_a, **_kw: pytest.fail("unexpected GitHub call"))
@@ -227,12 +228,17 @@ def test_partial_main_admission_uses_own_job_status(cli, monkeypatch, capsys, po
             assert "no main CI waiting" in capsys.readouterr().out
 
 
-@pytest.mark.parametrize("payload", [None, [], [{"total_count": 1, "workflow_runs": []}],
-                                     [{"total_count": 1, "workflow_runs": [run(1, status="requested")]}]])
-def test_uncertain_inventory_refuses_before_start(cli, monkeypatch, payload):
+@pytest.mark.parametrize(("payload", "retries"), [
+    (None, [2.0, 5.0]),
+    ([], [2.0, 5.0]),
+    ([{"total_count": 1, "workflow_runs": []}], [2.0, 5.0]),
+    ([{"total_count": 1, "workflow_runs": [run(1, status="requested")]}], []),
+])
+def test_uncertain_inventory_refuses_before_start(cli, monkeypatch, payload, retries):
     monkeypatch.setattr(cli, "ghj", lambda *_: payload)
     with pytest.raises(SystemExit, match=r"inventory|uncertain"):
         cli.admit(lambda _: pytest.fail("started without evidence"), False, False)
+    assert cli.EDGE.clock.slept == retries
 
 
 def test_failed_inventory_api_refuses_before_start(cli, monkeypatch):
@@ -242,6 +248,7 @@ def test_failed_inventory_api_refuses_before_start(cli, monkeypatch):
     monkeypatch.setattr(cli, "ghj", unavailable)
     with pytest.raises(SystemExit, match="unavailable"):
         cli.admit(lambda _: pytest.fail("started without evidence"), False, False)
+    assert cli.EDGE.clock.slept == [2.0, 5.0]
 
 
 def test_partial_job_inventory_refuses_before_start(cli, monkeypatch):
@@ -256,6 +263,7 @@ def test_partial_job_inventory_refuses_before_start(cli, monkeypatch):
     monkeypatch.setattr(cli, "ghj", github)
     with pytest.raises(SystemExit, match="incomplete GitHub jobs"):
         cli.admit(lambda _: pytest.fail("started without job evidence"), False, False)
+    assert cli.EDGE.clock.slept == [2.0, 5.0]
 
 
 @pytest.mark.parametrize("receipt", [True, False])

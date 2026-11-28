@@ -40,6 +40,18 @@ def real_main_plan():
     return main_plan
 
 
+@pytest.fixture
+def native_receipts(tmp_path):
+    """Give direct train calls the same receipt reader as the native queue, over isolated state."""
+    from steuermaschine.defaults import FileStore
+    from steuermaschine.native import NativeRuntime, using
+    from steuermaschine.testing.fakes import fake_providers
+
+    store = FileStore(tmp_path / "receipts-state")
+    with using(NativeRuntime(fake_providers(store=store), {}, None)):
+        yield store
+
+
 @pytest.fixture(autouse=True)
 def _planned_main(request, monkeypatch):
     if "real_main_plan" not in request.fixturenames:

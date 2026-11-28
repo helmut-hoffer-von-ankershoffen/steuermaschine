@@ -21,6 +21,12 @@ TOOLS = Path(__file__).resolve().parent
 OWNER = "helmut-hoffer-von-ankershoffen"
 CORE = f"{OWNER}/heinzel"
 PLUGINS = f"{OWNER}/heinzel-plugins"
+
+
+def requires_independent_review(repo: str) -> bool:
+    """The owner disabled independent source review for these three repositories."""
+    return repo.lower() not in {CORE, PLUGINS, f"{OWNER}/steuermaschine"}
+
 SHORT = {"": CORE, "core": CORE, "plugins": PLUGINS, "acme": f"{OWNER}/heinzel-acme", "sf": f"{OWNER}/heinzel-sf"}
 RUN_URL = re.compile(r"/runs/(\d+)")
 

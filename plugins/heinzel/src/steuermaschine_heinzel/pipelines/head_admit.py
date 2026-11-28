@@ -25,6 +25,7 @@ from steuermaschine.native import unit
 
 from .. import state as statedir
 from ..native import protected
+from ..native.queue_lib import hzlib
 from .common import need, ok, run
 
 VERB = "admit"
@@ -107,9 +108,18 @@ def protected_blobs(ctx: Ctx, paths: list[str]) -> dict[str, str]:
     return out
 
 
+def repository_review_required(ctx: Ctx) -> bool:
+    repo = _repo(ctx)
+    if hzlib.requires_independent_review(repo):
+        return True
+    remote = ctx.providers.commands.run(["git", "-C", ctx.subject.facts["worktree"], "remote", "get-url", "origin"], timeout=20)
+    origins = {f"https://github.com/{repo}", f"git@github.com:{repo}", f"ssh://git@github.com/{repo}"}
+    return bool(remote.rc) or remote.out.strip().removesuffix("/").removesuffix(".git").lower() not in {url.lower() for url in origins}
+
+
 def protected_review(ctx: Ctx) -> tuple[str, str, str]:
     changed = protected_changes(ctx)
-    if not changed:
+    if not changed or not repository_review_required(ctx):
         return "", "", ""  # nothing protected: no stop
     head, wt = ctx.subject.key, ctx.subject.facts["worktree"]
     digest, record = protected.record(protected_blobs(ctx, changed))
@@ -186,9 +196,11 @@ def queue(ctx: Ctx) -> str:
     if not number:
         raise Refuse("no PR is known for this head: the pr step did not record one", f"sm head admit {ctx.subject.facts['worktree']}")
     reviewed = ctx.inputs.get("reviewed")
-    if ctx.data.get("guard") == "needs_review" and not reviewed:
+    expected_pin = not reviewed and not repository_review_required(ctx)
+    if ctx.data.get("guard") == "needs_review" and not reviewed and not expected_pin:
         raise Refuse(f"the diff guard flagged PR #{number}: an independent review first, then --set reviewed=\"review: FILE\"", f"sm head guard {number}")
-    ok("queue add", pr=[str(number)], bead=ctx.inputs.get("bead") or None, reviewed=reviewed or None, reviewed_head=ctx.subject.key if reviewed else None)
+    ok("queue add", pr=[str(number)], bead=ctx.inputs.get("bead") or None, reviewed=reviewed or None, reviewed_head=ctx.subject.key if reviewed else None,
+       **({"expected_head": ctx.subject.key} if expected_pin else {}))
     return f"PR #{number} queued at {ctx.subject.key[:12]}"
 
 

@@ -50,14 +50,15 @@ class ReleaseIos(Model):
         return 0 if self.clean else 1
 
 
-def run(w: probes.World, version: str) -> ReleaseIos:
+def run(w: probes.World, version: str, *, supersede: str = "", expected_revision: str = "") -> ReleaseIos:
     s = w.settings or {}
     repo = s.get("ios_core_repo") or s.get("queue_core_repo") or w.core
     if not repo:  # NOT-CLEAN with a receipt, not a refusal: the release driver and the follower call this and must go on
         done = ios.IosResult(version=version, reason="`sm release ios` checks out the release tag: set ios_core_repo (or queue_core_repo) in [heinzel]")
         ios.write_receipt(w.state_dir, done, w.now())
-        return ReleaseIos(version=version, clean=False, reason=done.reason, lines=done.lines())
-    done = ios.publish(w, version, Path(str(repo)).expanduser(), ios.receipt_dir(w.state_dir) / "work", int(s.get("ios_wait_minutes") or 30) * 60)
+        return ReleaseIos(version=version, clean=False, uploaded=done.uploaded, state=done.state, reason=done.reason, lines=done.lines())
+    done = ios.publish(w, version, Path(str(repo)).expanduser(), ios.receipt_dir(w.state_dir) / "work", int(s.get("ios_wait_minutes") or 30) * 60,
+                       supersede=supersede, expected_revision=expected_revision)
     return ReleaseIos(version=done.version, clean=done.clean, build=done.build, revision=done.revision, uploaded=done.uploaded, state=done.state,
                       in_group=done.in_group, reason=done.reason, lines=done.lines())
 
@@ -71,12 +72,14 @@ def run(w: probes.World, version: str) -> ReleaseIos:
     "Connect holds. HEINZEL_SOURCE_REVISION: the tag's commit. Signing: the tag's ExportOptions-testflight.plist.\n"
     "Done means VALID, in the internal group, internal beta state IN_BETA_TESTING, and What to Test set from the tag's GitHub\n"
     "release notes. Processing longer than ios_wait_minutes (30), an invalid binary or a bad beta state is NOT-CLEAN and an alarm.\n"
-    "Idempotent: when App Store Connect holds a build of VERSION, it only waits for it and confirms it.\n"
+    "Retries resume a verified submission. A pre-existing unbound build requires an explicit replacement pinned to its ASC ID and the tag revision.\n"
     "The last line is `IOS-OK X.Y.Z build N ...` (exit 0) or `IOS NOT-CLEAN X.Y.Z: reason` (exit 1)."))
-def release_ios(version: str = typer.Argument(..., metavar="VERSION", help="The exact released Core version X.Y.Z; its tag vX.Y.Z must exist.")) -> ReleaseIos:
+def release_ios(version: str = typer.Argument(..., metavar="VERSION", help="The exact released Core version X.Y.Z; its tag vX.Y.Z must exist."),
+        supersede: str = typer.Option("", "--supersede-build-id", help="Replace one existing unbound build for VERSION by ASC ID."),
+        expected_revision: str = typer.Option("", "--expected-revision", help="Required final tag commit when replacing an unbound build.")) -> ReleaseIos:
     if not ios.VERSION.fullmatch(version):
         raise Refuse("VERSION must be an exact X.Y.Z", "sm release ios 0.9.54", code=2)
-    return run(world(), version)
+    return run(world(), version, supersede=supersede, expected_revision=expected_revision)
 
 
 def after_accepted(w: probes.World, version: str) -> list[str]:

@@ -7,6 +7,7 @@ import json
 import sys
 
 import pytest
+from test_native_check import vitest_report
 
 from steuermaschine_heinzel.native.check_lib import cheap
 from steuermaschine_heinzel.native.preflight_lib import head
@@ -136,6 +137,66 @@ def test_plan_takes_the_selectors_tests_or_narrows_a_full_selection_with_the_hoo
     assert p.pytest == [] and "only web inputs changed" in p.narrowed and not [line for line in calls if "related_tests" in line]
 
 
+@pytest.mark.parametrize("picked", [["ALL"], ["web/src/b.test.ts"]])
+def test_named_vitest_files_leave_the_whole_suite_to_ci_only_when_selected(tmp_path, monkeypatch, picked):
+    wanted = "web/src/a.test.ts"
+    expected = [wanted] if picked == ["ALL"] else [*picked, wanted]
+    c, calls = context(tmp_path, {}, ["web/src/a.ts"])
+
+    def scoped_hook(ctx, changed, files):
+        assert files == expected
+        return {
+            "web_files": changed,
+            "web": ["web-lint=web exec lint", "web-tests=web exec vitest run " + " ".join(
+                "./" + file.removeprefix("web/") for file in files
+            )],
+        }, ""
+
+    monkeypatch.setattr(cheap, "hook_facts", scoped_hook)
+    c.plan = cheap.plan(c, {"vitest": picked, "pytest": []}, [], web_tests=[wanted])
+    recorded_gate = c.gate
+
+    def gate_with_report(argv, **kwargs):
+        result = recorded_gate(argv, **kwargs)
+        if "--reporter=json" in argv:
+            vitest_report(c.wt, expected)(argv)
+        return result
+
+    c.gate = gate_with_report
+    step = cheap.hook_step("web", "web files", "fix the web check")(c)
+    assert not step.failures
+    assert tuple(c.ci) == (("the whole Vitest suite",) if picked == ["ALL"] else ())
+    assert wanted in step.detail
+    assert any(line.startswith("web exec lint") for line in calls)
+    assert any(line.startswith("web exec vitest run ./src/") for line in calls)
+
+
+def test_named_vitest_files_are_refused_if_the_hook_drops_the_arguments(tmp_path, monkeypatch):
+    c, _ = context(tmp_path, {}, ["web/src/a.ts"])
+    monkeypatch.setattr(cheap, "hook_facts", lambda *_: ({"web": ["web-tests=web exec vitest run"]}, ""))
+    p = cheap.plan(c, {"vitest": ["ALL"]}, [], web_tests=["web/src/a.test.ts"])
+    assert p.hook == "the hook did not select a Vitest step for the named files"
+    assert not p.web_deferred
+
+
+@pytest.mark.parametrize("arguments,note", [("./src/a.test.ts ./src/extra.test.ts", ""), ("", "invalid test path")])
+def test_exact_vitest_refuses_a_hook_that_widens_or_rejects_the_selection(tmp_path, monkeypatch, arguments, note):
+    c, _ = context(tmp_path, {}, ["web/src/a.ts"])
+    monkeypatch.setattr(cheap, "hook_facts", lambda *_: ({"web": [f"web-tests=web exec vitest run {arguments}"], "note": note}, ""))
+    p = cheap.plan(c, {"vitest": ["web/src/a.test.ts", "web/src/b.test.ts"]}, [], web_tests=["web/src/a.test.ts"], vitest_exact=True)
+    assert p.hook == (note or "the hook did not select a Vitest step for the named files")
+    assert not p.web_deferred
+
+
+def test_named_vitest_files_cannot_hide_a_dropped_selector_file(tmp_path, monkeypatch):
+    c, _ = context(tmp_path, {}, ["web/src/a.ts"])
+    monkeypatch.setattr(cheap, "hook_facts", lambda *_: (
+        {"web": ["web-tests=web exec vitest run ./src/named.test.ts"]}, ""
+    ))
+    p = cheap.plan(c, {"vitest": ["web/src/a.test.ts"]}, [], web_tests=["web/src/named.test.ts"])
+    assert p.hook == "the hook did not select a Vitest step for the named files"
+
+
 def test_the_tests_check_fails_on_a_selection_error_and_runs_the_unit_suite_for_everything(tmp_path):
     c, calls = context(tmp_path, {}, [])
     c.plan = cheap.Plan(pytest=[], error="scripts/related_tests.py failed (exit 3)")
@@ -174,6 +235,23 @@ def test_the_steps_stop_at_no_slot_and_name_each_failed_command(tmp_path):
     s = cheap.Step("web")
     cheap.run_steps(c, s, [("web-types", ["tsc", "-p", "a b"]), ("ok", ["true"])], "fix it")
     assert s.failures[0][0].startswith("web-types failed (exit 1): `tsc -p 'a b'`") and s.failures[0][1] == "fix it" and calls[-1] == "true"
+
+
+@pytest.mark.parametrize("docs_result", [0, 1, 75, None])
+def test_early_guard_reuses_only_a_successful_identical_docs_test(tmp_path, docs_result):
+    guard = ["uv", "run", "pytest", "tests/unit/ci_test.py", "-q"]
+    c, calls = context(tmp_path, {"ci_test.py": (docs_result or 0, "")}, [])
+    c.plan = cheap.Plan(pytest=[], docs=[("tooling-ci", guard)], guards=[guard, [*guard, "-x"]])
+    if docs_result is not None:
+        docs = cheap.hook_step("docs", "document(s)", "fix")(c)
+        assert bool(docs.failures) == (docs_result != 0)
+
+    tests = cheap.step_tests(c)
+
+    assert bool(tests.failures) == (docs_result in {1, 75})
+    assert tests.data.get("guards_reused_from_docs", []) == ([guard] if docs_result == 0 else [])
+    assert calls.count(" ".join(guard)) == (2 if docs_result in {1, 75} else 1)
+    assert calls.count(" ".join([*guard, "-x"])) == 1
 
 
 def test_ruff_and_tree_and_bound_steps(tmp_path):

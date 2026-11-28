@@ -201,6 +201,15 @@ class DiffCommands(FakeGh):
         return SimpleNamespace(rc=1, out="", err="unexpected")
 
 
+@pytest.mark.parametrize("origin,required", [("https://github.com/helmut-hoffer-von-ankershoffen/heinzel.git", False),
+                                            ("https://another.host/helmut-hoffer-von-ankershoffen/heinzel.git", True),
+                                            ("https://github.com/another/heinzel.git", True)])
+def test_head_review_requires_registered_repository_and_matching_origin(tmp_path, origin, required):
+    ctx = context(runtime(tmp_path, FakeGh().on("remote get-url origin", origin)), tmp_path / "wt")
+    ctx.settings["repo"] = "helmut-hoffer-von-ankershoffen/heinzel"
+    assert head_admit.repository_review_required(ctx) is required
+
+
 @pytest.mark.parametrize("path", [".github/workflows/ci.yml", "scripts/release.sh", "scripts/publish_pypi.py", "scripts/acceptance_run.py",
                                   "quarantine.toml", "conftest.py", "tests/conftest.py", ".coveragerc", "Makefile", "uv.lock", ".pre-commit-config.yaml",
                                   "sonar-project.properties", "scripts/merge_gate.py"])

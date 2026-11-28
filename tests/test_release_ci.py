@@ -50,7 +50,8 @@ def fake_api(sha: str, *, head=None, state="success", description="APPROVE revie
             raise rc.Refused("API down")
         if path.endswith("/pulls"):
             commit = path.split("/")[-2]
-            return [{"number": 7, "merge_commit_sha": commit, "merged_at": "2026-11-21T10:00:00Z" if merged else None, "head": {"sha": head or commit}}]
+            return [{"number": 7, "base": {"ref": "main", "repo": {"full_name": rc.REPO}}, "merge_commit_sha": commit,
+                     "merged_at": "2026-11-21T10:00:00Z" if merged else None, "head": {"sha": head or commit}}]
         if "/actions/runs" in path:
             return {"workflow_runs": [w for w in (suites or {}).get(path.rsplit("=", 1)[-1], [])]}
         if "/check-runs" in path:
@@ -87,6 +88,21 @@ def no_cz(*cmd, **kw):  # commitizen unavailable: the patch-bump fallback
     return rc.sh(*cmd, **kw)
 
 
+@pytest.mark.parametrize(("target", "repository"), [("other", rc.OFFICIAL_REPO), ("main", "example/steuermaschine")])
+def test_official_release_rejects_a_merge_from_another_target(repo, target, repository):
+    sha = git(repo, "rev-parse", "HEAD")
+    get = fake_api(sha, repo=repo)
+
+    def wrong_target(path):
+        response = get(path)
+        if path.endswith("/pulls"):
+            response[0]["base"] = {"ref": target, "repo": {"full_name": repository}}
+        return response
+
+    with pytest.raises(rc.Refused, match="not merged from a pull request"):
+        rc.gate(repo, sha, wrong_target, no_cz)
+
+
 @pytest.mark.parametrize(("proposed", "expected"), [
     ("0.2.0", "0.2.0"), ("0.1.0", "0.1.1"), ("0.0.9", "0.1.1"), ("unknown", "0.1.1"),
 ])
@@ -112,10 +128,10 @@ def test_next_version_uses_release_tags_instead_of_the_package_version(repo, pro
     assert pyproject.read_text() == source
 
 
-def test_a_green_merge_with_a_verdict_is_released(repo):
+def test_official_release_accepts_the_exact_merge_without_fetching_review(repo):
     sha = git(repo, "rev-parse", "HEAD")
-    out = rc.gate(repo, sha, fake_api(sha, repo=repo), no_cz)
-    assert out == {"version": "0.0.3", "reviewer": "rita", "pr": "7", "head": sha}
+    out = rc.gate(repo, sha, fake_api(sha, repo=repo, fail="check-runs"), no_cz)
+    assert out == {"version": "0.0.3", "reviewer": "", "pr": "7", "head": sha}
 
 
 @pytest.mark.parametrize("over, why", [
@@ -130,10 +146,17 @@ def test_a_green_merge_with_a_verdict_is_released(repo):
     ({"fail": "git/commits"}, "API down"),
     ({"fail": "statuses"}, "API down"),
 ])
-def test_without_a_valid_independent_verdict_nothing_is_released(repo, over, why):
+def test_other_repositories_keep_the_independent_verdict_requirement(repo, over, why, monkeypatch):
+    monkeypatch.setattr(rc, "REPO", "example/steuermaschine")
     sha = git(repo, "rev-parse", "HEAD")
     with pytest.raises(rc.Refused, match=why):
         rc.gate(repo, sha, fake_api(sha, repo=repo, **over), no_cz)
+
+
+def test_official_release_refuses_a_different_tree_even_with_green_checks(repo):
+    sha = git(repo, "rev-parse", "HEAD")
+    with pytest.raises(rc.Refused, match="differs from the head"):
+        rc.gate(repo, sha, fake_api(sha, repo=repo, tree="f" * 40), no_cz)
 
 
 def test_a_commit_already_in_a_release_is_skipped(repo):
@@ -295,7 +318,7 @@ def test_the_follower_installs_the_pypi_wheel_pair_switches_and_restarts_loops(f
     assert os.readlink(stable / "current") == "releases/v0.0.3" and (stable / "previous").is_symlink()
     assert os.readlink(home / ".local" / "bin" / "sm") == str(stable / "bin" / "sm")
     meta = json.loads((stable / "releases" / "v0.0.3" / "release.json").read_text())
-    assert meta["commit"] == cand and meta["reviewer"] == "rita" and set(meta["wheels"]) == {wheel_name(n) for n in WHEELS}
+    assert meta["commit"] == cand and meta["head"] == cand and "reviewer" not in meta and set(meta["wheels"]) == {wheel_name(n) for n in WHEELS}
     install = next(c for c in calls if c[:3] == ("uv", "pip", "install"))
     assert [Path(a).name for a in install[-2:]] == [wheel_name("steuermaschine"), wheel_name("steuermaschine-heinzel")]
     assert ("uv", "venv", "--quiet", "--managed-python", "--python", "3.15", str(stable / "releases" / "v0.0.3" / "venv")) in calls
@@ -311,13 +334,13 @@ def test_the_follower_installs_the_pypi_wheel_pair_switches_and_restarts_loops(f
     ({"pypi": fake_pypi({**WHEELS, "steuermaschine": b"other"})}, "PyPI sha256 .* differs from the release asset"),
     ({"releases": release_assets({"steuermaschine": b"core-wheel"})}, "is on PyPI but not on the release"),
     ({"fetch": fetcher({**WHEELS, "steuermaschine-heinzel": b"tampered"})}, "downloaded from PyPI does not have the sha256"),
-    ({"state": "pending"}, "no `Gate review` success"),
+    ({"merged": False}, "not merged from a pull request"),
     ({"smoke": FAKE_SM.replace("plugin: heinzel (loaded)", "plugin: None")}, "smoke: sm self config"),
 ])
 def test_the_follower_switches_nothing_unless_pypi_the_release_the_verdict_and_the_smoke_agree(follower, over, why):
     stable, clone, home, cand = follower
     api_get = fake_api(cand, repo=clone, releases=over.get("releases") or release_assets(),
-                       **{k: v for k, v in over.items() if k == "state"})
+                       **{k: v for k, v in over.items() if k == "merged"})
     calls: list = []
     with pytest.raises(rc.Refused, match=why):
         rc.follow(stable, clone, home, fake_run(calls, over.get("smoke", FAKE_SM)), api_get, over.get("pypi") or fake_pypi(),

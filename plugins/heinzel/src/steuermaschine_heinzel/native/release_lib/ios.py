@@ -6,12 +6,11 @@ every Heinzel fact from the reviewed source at the release tag, never from a cop
 - HEINZEL_SOURCE_REVISION is the tag's commit;
 - the signing team and the provisioning profile of each bundle come from the tag's
   apple/distribution/ExportOptions-testflight.plist;
-- App Store Connect is reached only through the tag's apple/scripts/testflight (its app ID, its internal group, the
-  API key env file it reads; the key is never read here).
+- App Store Connect identity comes from the tag's apple/scripts/testflight. The tagged helper uploads the archive.
+  The installed ASC client verifies the inventory and internal group and handles exact build-ID operations.
 The build number is the next one above the highest build App Store Connect holds for the app (monotonic, from ASC).
 
-Idempotent: when App Store Connect already holds a build of VERSION, nothing is built or uploaded; the build is only
-waited for and confirmed. Every call writes the receipt ios/vX.Y.Z.json in the state directory: `clean` true only
+Reuse requires a durable record of an upload from the verified release source. Every call writes the receipt ios/vX.Y.Z.json in the state directory: `clean` true only
 when the build is VALID, unexpired and in the internal group. A false `clean` is an alarm (alarm_lib.rules.ios_alarm);
 it never touches the published release.
 """
@@ -20,10 +19,13 @@ from __future__ import annotations
 
 import datetime
 import fcntl
+import hashlib
 import json
+import os
 import plistlib
 import re
 import shutil
+import tempfile
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -31,8 +33,11 @@ from typing import Any
 
 from steuermaschine.config import child_environment
 
+from . import ios_inventory
+from .ios_acceptance import require_replacement_authority
+
 VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
-ROW = re.compile(r"^(?P<short>\S+) \((?P<build>[0-9]+)\) (?P<state>[A-Z_]+) expired=(?P<expired>True|False) (?P<group>in-group|NOT-in-group) id=\S+$")
+ROW = re.compile(r"^(?P<short>\S+) \((?P<build>[0-9]+)\) (?P<state>[A-Z_]+) expired=(?P<expired>True|False) (?P<group>in-group|NOT-in-group) id=(?P<id>\S+)$")
 TESTFLIGHT = "apple/scripts/testflight"
 VERIFIER = "apple/scripts/widget_configuration.py"
 EXPORT_OPTIONS = "apple/distribution/ExportOptions-testflight.plist"
@@ -86,6 +91,10 @@ class IosResult:
 # ----------------------------------------------------------------------------- receipts
 def receipt_dir(state_dir: Path) -> Path:
     return state_dir / "ios"
+
+
+def submission_path(state_dir: Path, version: str) -> Path:
+    return receipt_dir(state_dir) / "submissions" / f"v{version}.json"
 
 
 def read_receipt(state_dir: Path, version: str) -> dict[str, Any] | None:
@@ -164,7 +173,7 @@ def parse_status(text: str) -> list[dict[str, Any]]:
     for line in text.splitlines():
         if found := ROW.match(line.strip()):
             rows.append({"short": found["short"], "build": found["build"], "state": found["state"], "expired": found["expired"] == "True",
-                         "in_group": found["group"] == "in-group"})
+                         "in_group": found["group"] == "in-group", "id": found["id"]})
     return rows
 
 
@@ -201,7 +210,7 @@ class Context:
     env: dict[str, str]
     result: IosResult
     tool: Path | None = None  # the testflight tool; None: the tag's
-
+    asc_id: str = ""
 
     def run(self, argv: list[str], timeout: float, what: str, cwd: Path | None = None) -> str:
         res = self.w.commands.run(argv, cwd=str(cwd or self.checkout), timeout=timeout, env=self.env)
@@ -210,16 +219,35 @@ class Context:
             lines = [line for line in text.splitlines() if line.strip()]
             # The last line, unless the tool ended with a multi-line JSON error: then the whole error on one line.
             shown = " ".join(text.split())[-240:] if lines and lines[-1].strip() in ("}", "]") else (lines[-1][:200] if lines else "")
-            error = GroupAssignmentRefused if what == "testflight assign" and internal_group_refusal(text) else IosFailed
-            raise error(f"{what} exited {res.rc}: {shown}")
+            raise IosFailed(f"{what} exited {res.rc}: {shown}")
         return res.out or ""
 
     def testflight(self, *args: str, timeout: float = 120) -> str:
         tool = self.tool or self.checkout / TESTFLIGHT
         return self.run(["uv", "run", "--quiet", "--script", str(tool), *args], timeout, f"testflight {args[0]}")
 
-    def rows(self) -> list[dict[str, Any]]:
-        return parse_status(self.testflight("status"))
+    def asc(self, action: str, *args: str, timeout: float = 120) -> str:
+        tag_tool = self.checkout / TESTFLIGHT
+        if self.tool is not None:
+            try:
+                matches_tag = ios_inventory.tag_identity(self.tool) == ios_inventory.tag_identity(tag_tool)
+            except (OSError, SyntaxError, ValueError):
+                raise IosFailed("cannot verify the TestFlight tool override's tagged ASC identity") from None
+            if not matches_tag:
+                raise IosFailed("TestFlight tool override does not match the tagged ASC identity")
+        try:
+            return ios_inventory.invoke(tag_tool, action, *args, timeout=timeout)
+        except ios_inventory.AscRequestError as exc:
+            error = GroupAssignmentRefused if action == "assign" and internal_group_refusal(str(exc)) else IosFailed
+            raise error(f"testflight {action} failed: {exc}") from exc
+
+    def asc_build(self, action: str, build: str, *args: str) -> str:
+        if not self.asc_id:
+            raise IosFailed("TestFlight action needs a verified ASC build ID")
+        return self.asc(action, build, self.version, self.asc_id, *args)
+
+    def rows(self, build: str) -> list[dict[str, Any]]:
+        return parse_status(self.asc("status", build))
 
 
 def builds_of(rows: list[dict[str, Any]], version: str) -> list[dict[str, Any]]:
@@ -249,9 +277,35 @@ def signing_xcconfig(options: dict[str, Any], marketing: str, build: str, revisi
     return "\n".join(lines) + "\n"
 
 
-def build_and_upload(ctx: Context, marketing: str, options: dict[str, Any], build: str) -> None:
+def save_submission(path: Path, record: dict[str, Any]) -> None:
+    """Persist the submission boundary before invoking Apple, independently of the mutable status receipt."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    partial = path.with_suffix(".tmp")
+    with partial.open("w") as stream:
+        json.dump(record, stream)
+        stream.flush()
+        os.fsync(stream.fileno())
+    partial.replace(path)
+    directory = os.open(path.parent, os.O_RDONLY)
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
+
+
+def verified_digests(artifacts: Any) -> bool:
+    if not isinstance(artifacts, dict) or set(artifacts) != {"Heinzel.app", "HeinzelWidgets.appex"}:
+        return False
+    return all(isinstance(entry, dict) and set(entry) == {"info_sha256", "executable_sha256"}
+               and all(isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) for value in entry.values())
+               for entry in artifacts.values())
+
+
+def build_and_upload(ctx: Context, marketing: str, options: dict[str, Any], build: str, path: Path, record: dict[str, Any]) -> None:
     r = ctx.result
     archive = ctx.work / f"Heinzel-{ctx.version}-{build}.xcarchive"
+    if archive.exists():  # preserve signing diagnostics from an earlier failure before submission
+        archive = Path(tempfile.mkdtemp(prefix="retry-", dir=ctx.work)) / archive.name
     config = ctx.work / "signing.xcconfig"
     config.write_text(signing_xcconfig(options, marketing, build, r.revision))
     ctx.run(["xcodebuild", "archive", "-project", str(ctx.checkout / PROJECT), "-scheme", "Heinzel", "-configuration", "Release",
@@ -267,12 +321,26 @@ def build_and_upload(ctx: Context, marketing: str, options: dict[str, Any], buil
     upload = dict(options, manageAppVersionAndBuildNumber=False)  # the verified archive's numbers are the uploaded ones
     plist = ctx.work / "ExportOptions-upload.plist"
     plist.write_bytes(plistlib.dumps(upload))
+    app = archive / "Products/Applications/Heinzel.app"
+    digests = {}
+    for bundle in (app, app / "PlugIns/HeinzelWidgets.appex"):
+        info_bytes = (bundle / "Info.plist").read_bytes()
+        info = plistlib.loads(info_bytes)
+        executable = info["CFBundleExecutable"]
+        if info.get("CFBundleShortVersionString") != marketing or not executable or Path(executable).name != executable:
+            raise IosFailed("unexpected signed bundle marketing version or executable")
+        digests[bundle.name] = {"info_sha256": hashlib.sha256(info_bytes).hexdigest(),
+                                "executable_sha256": hashlib.sha256((bundle / executable).read_bytes()).hexdigest()}
+    record.update(status="submitting", artifacts=digests)
+    save_submission(path, record)
     ctx.testflight("upload", str(archive), "--plist", str(plist), "--export-path", str(ctx.work / "export"), timeout=1800)
+    record["status"] = "submitted"
+    save_submission(path, record)
     r.uploaded = True
     r.steps.append(f"uploaded build {build}")
 
 
-def confirm(ctx: Context, build: str, wait_seconds: int) -> None:
+def confirm(ctx: Context, build: str, wait_seconds: int, path: Path, record: dict[str, Any]) -> None:
     """Confirm TestFlight readiness, giving automatic group membership a bounded grace period after VALID."""
     r = ctx.result
     clock: Any = ctx.w.clock
@@ -281,7 +349,17 @@ def confirm(ctx: Context, build: str, wait_seconds: int) -> None:
     assignment_refusal: GroupAssignmentRefused | None = None
     assign_after: float | None = None
     while True:
-        row = next((x for x in ctx.rows() if x["build"] == build and x["short"] == ctx.version), None)
+        matches = [x for x in ctx.rows(build) if x["build"] == build]
+        if len(matches) > 1 or (matches and matches[0]["short"] not in ("None", ctx.version)):
+            raise IosFailed("ASC build number identifies another or ambiguous version")
+        row = matches[0] if matches and matches[0]["short"] == ctx.version else None
+        if row:
+            if record.get("asc_id", row["id"]) != row["id"]:
+                raise IosFailed("ASC build ID differs from the submitted build receipt")
+            if "asc_id" not in record:
+                record["asc_id"] = row["id"]
+                save_submission(path, record)
+            ctx.asc_id = row["id"]
         r.state = row["state"] if row else "NOT-LISTED"
         r.in_group = bool(row and row["in_group"])
         if row and row["state"] in BAD_STATES:
@@ -298,7 +376,7 @@ def confirm(ctx: Context, build: str, wait_seconds: int) -> None:
                 elif assign_after <= now < deadline:
                     assignment_attempted = True
                     try:
-                        ctx.testflight("assign", build)
+                        ctx.asc_build("assign", build)
                     except GroupAssignmentRefused as exc:
                         assignment_refusal = exc
                     else:
@@ -317,7 +395,7 @@ def confirm(ctx: Context, build: str, wait_seconds: int) -> None:
 def beta_ready(ctx: Context, build: str) -> bool:
     """Testers can install it: IN_BETA_TESTING. A state that never becomes it fails at once."""
     r = ctx.result
-    found = re.search(r"internalBuildState=(\S+)", ctx.testflight("beta", build))
+    found = re.search(r"internalBuildState=(\S+)", ctx.asc_build("beta", build))
     r.beta = found[1] if found else "?"
     if r.beta in BETA_BAD:
         raise IosFailed(f"build {build} beta state is {r.beta}")
@@ -331,7 +409,7 @@ def set_notes(ctx: Context, build: str) -> None:
         raise IosFailed(f"the release notes of v{ctx.version} are unreadable (gh release view exited {res.rc})")
     notes = ctx.work / "what-to-test.txt"
     notes.write_text(f"Heinzel {ctx.version}\n\n{res.out.strip()}\n")
-    ctx.testflight("notes", build, str(notes))
+    ctx.asc_build("notes", build, str(notes))
     ctx.result.notes = True
     ctx.result.steps.append(f"What to Test set from the v{ctx.version} release notes")
 
@@ -348,7 +426,50 @@ def tool_of(w: Any, core_repo: Path, ref: str | None, work: Path) -> Path | None
     return tool
 
 
-def publish(w: Any, version: str, core_repo: Path, work_root: Path, wait_seconds: int = 1800) -> IosResult:
+def source_build(ctx: Context, marketing: str, options: dict[str, Any], supersede: str) -> tuple[str, Path, dict[str, Any]]:
+    inventory = json.loads(ctx.asc("inventory", timeout=180))
+    app, builds = inventory["app"], inventory["builds"]
+    if not isinstance(app, str) or not app or not isinstance(builds, dict):
+        raise IosFailed("malformed ASC inventory")
+    path = submission_path(ctx.w.state_dir, marketing)
+    highest = max((int(row["build"]) for row in builds.values()), default=0)
+    submissions = {item: json.loads(item.read_text()) for item in path.parent.glob("v*.json")}
+    for known in submissions.values():
+        if known["app"] != app:
+            raise IosFailed("submission ledger belongs to a different app")
+        highest = max(highest, int(known["build"]))
+    if path in submissions:
+        known = submissions[path]
+        if (known["revision"] != ctx.result.revision or known["version"] != marketing or known["status"] != "submitted"
+                or not verified_digests(known.get("artifacts"))):
+            raise IosFailed("existing submission has different source or an uncertain upload; reconcile it before retrying")
+        if supersede and known.get("superseded_id") != supersede:
+            raise IosFailed("replacement ASC ID differs from the submitted build receipt")
+        build = known["build"]
+        ids = [key for key, row in builds.items() if row["build"] == build]
+        if len(ids) > 1 or ("asc_id" in known and ids != [known["asc_id"]]):
+            raise IosFailed("submitted build ID is missing or ambiguous in ASC")
+        ctx.result.steps.append(f"resuming verified {marketing} ({build}) at {ctx.result.revision[:12]}")
+        return build, path, known
+    if any(known["status"] != "submitted" for known in submissions.values()):
+        raise IosFailed("another release has an uncertain upload; reconcile it before allocating")
+    if any(not row["short"] and not row["expired"] for row in builds.values()):
+        raise IosFailed("ASC has a build without a marketing version; wait for its identity before allocating")
+    mine = builds_of([dict(row, id=key) for key, row in builds.items()], marketing)
+    if mine and all(r["state"] in BAD_STATES for r in mine):
+        raise IosFailed(f"every build of {marketing} in App Store Connect failed processing ({', '.join(r['build'] for r in mine)}); a person decides")
+    if (mine or supersede) and (len(mine) != 1 or mine[0]["id"] != supersede):
+        raise IosFailed("existing build has no verified source receipt; explicitly supersede its exact ASC ID and pin the release revision")
+    build = str(highest + 1)
+    record = {"app": app, "version": marketing, "revision": ctx.result.revision, "build": build}
+    if supersede:
+        record["superseded_id"] = supersede
+    ctx.result.build = build
+    build_and_upload(ctx, marketing, options, build, path, record)
+    return build, path, record
+
+
+def publish(w: Any, version: str, core_repo: Path, work_root: Path, wait_seconds: int = 1800, *, supersede: str = "", expected_revision: str = "") -> IosResult:
     """The whole step; never raises for a failure: the result (and its receipt) says why."""
     result = IosResult(version=version)
     if not VERSION.fullmatch(version):
@@ -368,6 +489,14 @@ def publish(w: Any, version: str, core_repo: Path, work_root: Path, wait_seconds
     write_receipt(w.state_dir, result, started, running=True)
     try:
         result.revision = commit_of(w, core_repo, version)
+        if bool(supersede) != bool(expected_revision) or (expected_revision and expected_revision != result.revision):
+            raise IosFailed("superseding requires the exact ASC build ID and matching official release revision")
+        path = submission_path(w.state_dir, version)
+        prior = json.loads(path.read_text()) if path.exists() else {}
+        if not isinstance(prior, dict):
+            raise IosFailed("malformed iOS submission ledger")
+        if supersede or prior.get("superseded_id"):
+            require_replacement_authority(w, version, result.revision, core_repo)
         fresh_checkout(w, core_repo, checkout, result.revision)
         work.mkdir(parents=True, exist_ok=True)
         developer = w.settings.get("ios_developer_dir")
@@ -375,19 +504,9 @@ def publish(w: Any, version: str, core_repo: Path, work_root: Path, wait_seconds
         ctx = Context(w=w, version=version, checkout=checkout, work=work, env=env, result=result,
                       tool=tool_of(w, core_repo, w.settings.get("ios_tool_ref"), work))
         marketing, options = tag_facts(ctx)
-        rows = ctx.rows()
-        mine = builds_of(rows, version)
-        usable = [x for x in mine if x["state"] not in BAD_STATES]
-        if usable:
-            build = max(usable, key=lambda x: int(x["build"]))["build"]
-            result.steps.append(f"App Store Connect holds {version} ({build}) already: verify only")
-        elif mine:
-            raise IosFailed(f"every build of {version} in App Store Connect failed processing ({', '.join(x['build'] for x in mine)}); a person decides")
-        else:
-            build = next_build(rows)
-            build_and_upload(ctx, marketing, options, build)
+        build, path, record = source_build(ctx, marketing, options, supersede)
         result.build = build
-        confirm(ctx, build, wait_seconds)
+        confirm(ctx, build, wait_seconds, path, record)
         set_notes(ctx, build)
         result.clean = True
     except IosFailed as exc:
