@@ -6,8 +6,8 @@ every Heinzel fact from the reviewed source at the release tag, never from a cop
 - HEINZEL_SOURCE_REVISION is the tag's commit;
 - the signing team and the provisioning profile of each bundle come from the tag's
   apple/distribution/ExportOptions-testflight.plist;
-- App Store Connect identity comes from the tag's apple/scripts/testflight. The tagged helper uploads and reads
-  status. The installed ASC client verifies the full inventory and handles exact build-ID operations.
+- App Store Connect identity comes from the tag's apple/scripts/testflight. The tagged helper uploads the archive.
+  The installed ASC client verifies the inventory and internal group and handles exact build-ID operations.
 The build number is the next one above the highest build App Store Connect holds for the app (monotonic, from ASC).
 
 Reuse requires a durable record of an upload from the verified release source. Every call writes the receipt ios/vX.Y.Z.json in the state directory: `clean` true only
@@ -25,7 +25,6 @@ import os
 import plistlib
 import re
 import shutil
-import sys
 import tempfile
 import tomllib
 from dataclasses import dataclass, field
@@ -34,12 +33,12 @@ from typing import Any
 
 from steuermaschine.config import child_environment
 
+from . import ios_inventory
 from .ios_acceptance import require_replacement_authority
 
 VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
 ROW = re.compile(r"^(?P<short>\S+) \((?P<build>[0-9]+)\) (?P<state>[A-Z_]+) expired=(?P<expired>True|False) (?P<group>in-group|NOT-in-group) id=(?P<id>\S+)$")
 TESTFLIGHT = "apple/scripts/testflight"
-ASC_CLIENT = "from steuermaschine_heinzel.native.release_lib.ios_inventory import main; main()"
 VERIFIER = "apple/scripts/widget_configuration.py"
 EXPORT_OPTIONS = "apple/distribution/ExportOptions-testflight.plist"
 PROJECT = "apple/Heinzel.xcodeproj"
@@ -220,8 +219,7 @@ class Context:
             lines = [line for line in text.splitlines() if line.strip()]
             # The last line, unless the tool ended with a multi-line JSON error: then the whole error on one line.
             shown = " ".join(text.split())[-240:] if lines and lines[-1].strip() in ("}", "]") else (lines[-1][:200] if lines else "")
-            error = GroupAssignmentRefused if what == "testflight assign" and internal_group_refusal(text) else IosFailed
-            raise error(f"{what} exited {res.rc}: {shown}")
+            raise IosFailed(f"{what} exited {res.rc}: {shown}")
         return res.out or ""
 
     def testflight(self, *args: str, timeout: float = 120) -> str:
@@ -229,16 +227,27 @@ class Context:
         return self.run(["uv", "run", "--quiet", "--script", str(tool), *args], timeout, f"testflight {args[0]}")
 
     def asc(self, action: str, *args: str, timeout: float = 120) -> str:
-        tool = self.tool or self.checkout / TESTFLIGHT
-        return self.run([sys.executable, "-I", "-c", ASC_CLIENT, action, str(tool), *args], timeout, f"testflight {action}")
+        tag_tool = self.checkout / TESTFLIGHT
+        if self.tool is not None:
+            try:
+                matches_tag = ios_inventory.tag_identity(self.tool) == ios_inventory.tag_identity(tag_tool)
+            except (OSError, SyntaxError, ValueError):
+                raise IosFailed("cannot verify the TestFlight tool override's tagged ASC identity") from None
+            if not matches_tag:
+                raise IosFailed("TestFlight tool override does not match the tagged ASC identity")
+        try:
+            return ios_inventory.invoke(tag_tool, action, *args, timeout=timeout)
+        except ios_inventory.AscRequestError as exc:
+            error = GroupAssignmentRefused if action == "assign" and internal_group_refusal(str(exc)) else IosFailed
+            raise error(f"testflight {action} failed: {exc}") from exc
 
     def asc_build(self, action: str, build: str, *args: str) -> str:
         if not self.asc_id:
             raise IosFailed("TestFlight action needs a verified ASC build ID")
         return self.asc(action, build, self.version, self.asc_id, *args)
 
-    def rows(self) -> list[dict[str, Any]]:
-        return parse_status(self.testflight("status"))
+    def rows(self, build: str) -> list[dict[str, Any]]:
+        return parse_status(self.asc("status", build))
 
 
 def builds_of(rows: list[dict[str, Any]], version: str) -> list[dict[str, Any]]:
@@ -340,7 +349,7 @@ def confirm(ctx: Context, build: str, wait_seconds: int, path: Path, record: dic
     assignment_refusal: GroupAssignmentRefused | None = None
     assign_after: float | None = None
     while True:
-        matches = [x for x in ctx.rows() if x["build"] == build]
+        matches = [x for x in ctx.rows(build) if x["build"] == build]
         if len(matches) > 1 or (matches and matches[0]["short"] not in ("None", ctx.version)):
             raise IosFailed("ASC build number identifies another or ambiguous version")
         row = matches[0] if matches and matches[0]["short"] == ctx.version else None

@@ -73,7 +73,7 @@ jobs:
           for name in steuermaschine steuermaschine_heinzel; do
             ls dist | grep -q "^${name}-${VERSION}-.*\.whl$" || { echo "::error title=Not released::dist has no ${name} ${VERSION} wheel"; ls dist; exit 1; }
           done
-          unzip -p "dist/steuermaschine_heinzel-${VERSION}-py3-none-any.whl" "steuermaschine_heinzel-${VERSION}.dist-info/METADATA" | grep -qx "Requires-Dist: steuermaschine==${VERSION}" \
+          unzip -p "dist/steuermaschine_heinzel-${VERSION}-py3-none-any.whl" "steuermaschine_heinzel-${VERSION}.dist-info/METADATA" | grep -Fqx "Requires-Dist: steuermaschine==${VERSION}" \
             || { echo "::error title=Not released::the plugin wheel does not require steuermaschine==${VERSION}"; exit 1; }
           unzip -p "dist/steuermaschine_heinzel-${VERSION}-py3-none-any.whl" "steuermaschine_heinzel-${VERSION}.dist-info/METADATA" | grep -Fqx "Requires-Dist: pyjwt[crypto]" \
             || { echo "::error title=Not released::the plugin wheel lacks the TestFlight client dependency"; exit 1; }

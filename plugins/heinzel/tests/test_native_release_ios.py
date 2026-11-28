@@ -4,7 +4,6 @@ directory. No test starts a process, reads the network or sleeps."""
 import hashlib
 import json
 import plistlib
-import sys
 from pathlib import Path
 
 import pytest
@@ -20,7 +19,7 @@ from steuermaschine_heinzel.native.release_lib import ios
 from steuermaschine_heinzel.plugin import plugin
 
 SHA = "a" * 40
-ASC_PROCESS = [sys.executable, "-I", "-c", ios.ASC_CLIENT]
+ASC_CALL = ["asc-fixture"]
 TAGGED_PROCESS = ["uv", "run", "--quiet", "--script"]
 OPTIONS = {"method": "app-store-connect", "destination": "upload", "teamID": "ABCDE12345", "signingStyle": "manual",
            "provisioningProfiles": {"team.example.app": "App Profile", "team.example.app.widgets": "Widget Profile"},
@@ -32,16 +31,34 @@ def row(short, build, state="VALID", group="in-group", expired=False):
 
 
 def flight_verb(argv):
-    return argv[4] if argv[:4] == ASC_PROCESS else argv[5]
+    return argv[1] if argv[:1] == ASC_CALL else argv[5]
 
 
 def apple_command(argv):
-    return argv[:4] == ASC_PROCESS or argv[0] in {"uv", "xcodebuild"}
+    return argv[:1] == ASC_CALL or argv[0] in {"uv", "xcodebuild"}
+
+
+@pytest.fixture(autouse=True)
+def fake_native_asc(monkeypatch):
+    minis = []
+    monkeypatch.setattr(Mini, "active", minis, raising=False)
+    monkeypatch.setattr(ios.ios_inventory, "tag_identity", lambda _: ("fixture-app", "fixture-group", "en-US"))
+
+    def invoke(tool, action, *args, timeout):
+        mini, = (m for m in minis if tool.is_relative_to(m.state))
+        assert timeout == (180 if action == "inventory" else 120)
+        result = mini.commands.run([*ASC_CALL, action, str(tool), *args])
+        if result.rc:
+            raise ios.ios_inventory.AscRequestError(result.err or result.out)
+        return result.out
+
+    monkeypatch.setattr(ios.ios_inventory, "invoke", invoke)
 
 
 class Mini:
     def __init__(self, tmp_path, version="0.9.53", **table):
         self.state = tmp_path / "state"
+        self.active.append(self)
         self.version = version
         self.pyproject = version
         self.asc: list[str] = [row("0.1.0", 31), row("0.1.0", 30)]
@@ -59,7 +76,7 @@ class Mini:
         c.on(["git", "-C", str(tmp_path / "core"), "rev-parse"], lambda argv: self.fail.get("tag") or Result(0, SHA + "\n"))
         c.on(["git", "-C", str(tmp_path / "core"), "worktree"], self.worktree)
         self.on_testflight(self.testflight)
-        c.on([*ASC_PROCESS, "inventory"], lambda argv: Result(0, json.dumps({"app": "test-app", "builds": {
+        c.on([*ASC_CALL, "inventory"], lambda argv: Result(0, json.dumps({"app": "test-app", "builds": {
             r["id"]: dict(r, short=None if r["short"] == "None" else r["short"]) for r in ios.parse_status("\n".join(self.asc))}})))
         c.on(["uv", "run", "--quiet", "--no-project"], self.verify)
         c.on(["xcodebuild", "archive"], self.archive)
@@ -79,14 +96,14 @@ class Mini:
 
     def on_testflight(self, callback):
         self.commands.on(TAGGED_PROCESS, callback)
-        for action in ("beta", "notes", "assign"):
-            self.commands.on([*ASC_PROCESS, action], callback)
+        for action in ("status", "beta", "notes", "assign"):
+            self.commands.on([*ASC_CALL, action], callback)
 
     def testflight(self, argv):
         verb = flight_verb(argv)
         if verb in {"beta", "notes", "assign"}:
-            assert argv[:4] == ASC_PROCESS
-            number, version, identifier = argv[6:9]
+            assert argv[:1] == ASC_CALL
+            number, version, identifier = argv[3:6]
             assert version == self.version and identifier == f"x{number}"
         if verb in self.fail:
             return self.fail[verb]
@@ -97,18 +114,19 @@ class Mini:
             return Result(0)
         if verb == "beta":
             state = self.beta.pop(0) if len(self.beta) > 1 else self.beta[0]
-            return Result(0, f"build {argv[6]} internalBuildState={state}\n")
+            return Result(0, f"build {number} internalBuildState={state}\n")
         if verb == "notes":
-            self.notes.append(Path(argv[9]).read_text())
+            self.notes.append(Path(argv[6]).read_text())
             return Result(0, "notes set\n")
         if verb == "assign":
-            self.asc = [line.replace("NOT-in-group", "in-group") if f"({argv[6]})" in line else line for line in self.asc]
-            return Result(0, f"assigned build {argv[6]}\n")
+            self.asc = [line.replace("NOT-in-group", "in-group") if f"({number})" in line else line for line in self.asc]
+            return Result(0, f"assigned build {number}\n")
         if self.processing:
             self.processing -= 1
         else:
             self.asc = [line.replace("PROCESSING", "VALID").replace("NOT-in-group", "in-group" if self.auto_group else "NOT-in-group") for line in self.asc]
-        return Result(0, "\n".join(self.asc) + "\n")
+        assert verb == "status" and argv[:1] == ASC_CALL
+        return Result(0, "\n".join(line for line in self.asc if f"({argv[3]})" in line) + "\n")
 
     def archive(self, argv):
         if "archive" in self.fail:
@@ -276,7 +294,7 @@ def test_accepted_canonical_replacement_reads_proof_before_first_apple_command(t
     assert out.exit_code == 0, out.stdout
     calls = m.commands.calls
     first_apple = next(i for i, cmd in enumerate(calls) if apple_command(cmd))
-    assert calls[first_apple][:5] == [*ASC_PROCESS, "inventory"]
+    assert calls[first_apple][:2] == [*ASC_CALL, "inventory"]
     assert all(i < first_apple for i, cmd in enumerate(calls) if cmd[:2] == ["gh", "api"])
     assert len(m.uploads) == len(m.notes) == 1
 
@@ -374,11 +392,11 @@ def test_the_assignment_grace_does_not_extend_the_confirmation_deadline(tmp_path
 
     def late_status(argv):
         result = m.testflight(argv)
-        if argv[5] == "status" and not m.rt.providers.clock.slept and "(32) VALID" in result.out:
+        if flight_verb(argv) == "status" and not m.rt.providers.clock.slept and "(32) VALID" in result.out:
             clock.sleep(55)  # first VALID row arrives five seconds before confirmation ends
         return result
 
-    m.commands.on(["uv", "run", "--quiet", "--script"], late_status)
+    m.on_testflight(late_status)
     out = m.run()
     assert out.exit_code == 1 and "not in the internal group" in out.stdout
     assert "assigned build" not in out.stdout
@@ -452,8 +470,8 @@ def test_other_assignment_errors_are_never_treated_as_propagation(other):
     (lambda m: setattr(m, "beta", ["READY_FOR_BETA_SUBMISSION"]), "build 32 is VALID, beta READY_FOR_BETA_SUBMISSION after 30 min"),
     (lambda m: setattr(m, "beta", ["MISSING_EXPORT_COMPLIANCE"]), "build 32 beta state is MISSING_EXPORT_COMPLIANCE"),
     (lambda m: setattr(m, "release_notes", Result(1, "", "not found")), "the release notes of v0.9.53 are unreadable (gh release view exited 1)"),
-    (lambda m: m.fail.update(notes=Result(2, "", "invalid choice: 'notes'")), "testflight notes exited 2"),
-    (lambda m: m.fail.update(notes=Result(1, "", 'PATCH x: HTTP 409 {\n  "detail" : "invalid text"\n}\n')), 'testflight notes exited 1: PATCH x: HTTP 409 { "detail" : "invalid text" }'),
+    (lambda m: m.fail.update(notes=Result(2, "", "notes unavailable")), "testflight notes failed: notes unavailable"),
+    (lambda m: m.fail.update(notes=Result(1, "", "ASC PATCH request failed: HTTP 409")), "testflight notes failed: ASC PATCH request failed: HTTP 409"),
 ])
 def test_a_failure_is_not_clean_with_its_reason_and_an_alarm(tmp_path, change, reason):
     m = Mini(tmp_path)
@@ -473,10 +491,10 @@ def test_processing_that_ends_badly_stops_at_once(tmp_path):
 
     def bad(argv):
         out = real(argv)
-        if argv[5] == "status":
+        if flight_verb(argv) == "status":
             out = Result(0, out.out.replace("(32) VALID", "(32) INVALID"))
         return out
-    m.commands.on(["uv", "run", "--quiet", "--script"], bad)
+    m.on_testflight(bad)
     out = m.run()
     assert out.exit_code == 1 and "processing of build 32 ended INVALID" in out.stdout
 
@@ -543,14 +561,27 @@ def test_the_tool_can_come_from_a_ref(tmp_path):
     tools = []
 
     def record(argv):
-        tools.append(argv[5] if argv[:4] == ASC_PROCESS else argv[4])
+        if argv[:1] != ASC_CALL:
+            tools.append(argv[4])
         return Mini.testflight(m, argv)
     m.on_testflight(record)
     assert m.run().exit_code == 0
     assert tools and all(tool.endswith("/work/testflight") for tool in tools)
+    native_tools = [cmd[2] for cmd in m.commands.calls if cmd[:1] == ASC_CALL]
+    assert native_tools and all(tool.endswith("/src/apple/scripts/testflight") for tool in native_tools)
     m.fail["show"] = Result(128, "", "bad ref")
     out = m.run()
     assert out.exit_code == 1 and "apple/scripts/testflight is not at origin/main" in out.stdout
+
+
+def test_tool_override_with_different_apple_identity_refuses_before_apple(tmp_path, monkeypatch):
+    m = Mini(tmp_path, ios_tool_ref="origin/main")
+    monkeypatch.setattr(ios.ios_inventory, "tag_identity", lambda tool: (
+        "other-app" if tool.parent.name == "work" else "tagged-app", "internal", "en-US",
+    ))
+    out = m.run()
+    assert out.exit_code == 1 and "does not match the tagged ASC identity" in out.stdout
+    assert not any(apple_command(cmd) for cmd in m.commands.calls)
 
 
 def test_a_running_receipt_is_written_first(tmp_path):
@@ -586,7 +617,7 @@ def test_every_testflight_verb_sm_calls_is_in_the_recorded_help():
     offered = set(re.search(r"\{([a-z,]+)\}", helptext)[1].split(","))
     source = inspect.getsource(ios)
     called = set(re.findall(r"testflight\(\s*\"([a-z]+)\"", source)) | set(re.findall(r"\.testflight\(\s*\"([a-z]+)\"", source))
-    assert called == {"status", "upload"}
+    assert called == {"upload"}
     assert called <= offered, f"sm calls testflight verbs the tool does not have: {sorted(called - offered)}"
 
 
