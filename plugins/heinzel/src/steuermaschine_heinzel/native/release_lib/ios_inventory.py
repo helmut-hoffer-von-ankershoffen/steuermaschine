@@ -212,13 +212,34 @@ def verify_build(call: Call, app: str, number: str, version: str, identifier: st
         raise ValueError("TestFlight lookup does not match the submitted build identity")
 
 
-def assign(call: Call, tag: TagIdentity, number: str, version: str, identifier: str) -> str | None:
+def internal_group_members(call: Call, tag: TagIdentity) -> tuple[str, set[str]]:
     groups = related(call, f"/v1/apps/{tag.app}/betaGroups", 200, "betaGroups")
     matches = [key for key, row in groups.items() if row["attributes"]["name"] == tag.group and row["attributes"].get("isInternalGroup") is True]
     if len(matches) != 1:
         raise ValueError("expected exactly one tagged internal TestFlight group")
     path = f"/v1/betaGroups/{matches[0]}/relationships/builds"
-    members = related(call, path, 200, "builds")
+    return path, set(related(call, path, 200, "builds"))
+
+
+def status(call: Call, tag: TagIdentity, number: str) -> str:
+    if not re.fullmatch(r"[0-9]+", number):
+        raise ValueError("invalid TestFlight build number")
+    _, members = internal_group_members(call, tag)
+    builds = inventory(lambda path: call("GET", path), tag.app)["builds"]
+    lines = []
+    for identifier, row in builds.items():
+        if row["build"] != number:
+            continue
+        short, state = row["short"], row["state"]
+        if not RESOURCE_ID.fullmatch(identifier) or not re.fullmatch(r"[A-Z_]+", state) or (short is not None and not re.fullmatch(r"[A-Za-z0-9.+-]+", short)):
+            raise ValueError("invalid TestFlight status row")
+        flag = "in-group" if identifier in members else "NOT-in-group"
+        lines.append(f"{short} ({number}) {state} expired={row['expired']} {flag} id={identifier}")
+    return "\n".join(lines)
+
+
+def assign(call: Call, tag: TagIdentity, number: str, version: str, identifier: str) -> str | None:
+    path, members = internal_group_members(call, tag)
     verify_build(call, tag.app, number, version, identifier)
     if identifier in members:
         return None
@@ -277,6 +298,8 @@ def invoke(tool: Path, action: str, *args: str, timeout: float = 120) -> str:
         call = client(timeout)
         if action == "inventory" and not args:
             return json.dumps(inventory(lambda path: call("GET", path), tag.app))
+        if action == "status" and len(args) == 1:
+            return status(call, tag, args[0])
         if action == "notes" and len(args) == 4:
             number, version, identifier, filename = args
             text = Path(filename).read_text(encoding="utf-8")

@@ -29,10 +29,11 @@ def build_page(*, identifier=BUILD, number="36", version="0.9.57", expired=False
 
 
 class Provider:
-    def __init__(self, *, page=None, member=False, locale=False):
+    def __init__(self, *, page=None, member=False, locale=False, group_flags=(True,)):
         self.page = page if page is not None else build_page()
         self.member = member
         self.locale = locale
+        self.group_flags = group_flags
         self.requests = []
 
     def __call__(self, method, path, body=None):
@@ -43,7 +44,12 @@ class Provider:
             assert f"filter%5Bapp%5D={APP}" in path
             return self.page
         if path.startswith(f"/v1/apps/{APP}/betaGroups?"):
-            return {"data": [{"type": "betaGroups", "id": "internal-group", "attributes": {"name": GROUP, "isInternalGroup": True}}]}
+            return {
+                "data": [
+                    {"type": "betaGroups", "id": "internal-group" if index == 0 else f"same-name-{index}", "attributes": {"name": GROUP, "isInternalGroup": internal}}
+                    for index, internal in reversed(list(enumerate(self.group_flags)))
+                ]
+            }
         if path.startswith("/v1/betaGroups/internal-group/relationships/builds?"):
             return {"data": [{"type": "builds", "id": BUILD}] if self.member else []}
         if path == f"/v1/builds/{BUILD}/buildBetaDetail":
@@ -227,3 +233,27 @@ def test_transport_caps_requests_to_remaining_monotonic_budget(monkeypatch):
     with pytest.raises(asc.AscRequestError, match="deadline exhausted"):
         call("GET", "/v1/builds")
     assert timeouts == [25, 8]
+
+
+def test_status_keeps_duplicate_number_rows_and_marks_exact_internal_membership(tagged_tool, monkeypatch):
+    page = build_page()
+    unresolved = build_page(identifier=OTHER, state="PROCESSING")["data"][0]
+    unresolved["relationships"]["preReleaseVersion"]["data"] = None
+    page["data"] += [unresolved, build_page(identifier="ignored-id", number="37")["data"][0]]
+    page["meta"]["paging"]["total"] = 3
+    provider = Provider(page=page, member=True, group_flags=(True, False))
+    monkeypatch.setattr(asc, "client", lambda timeout: provider)
+    result = asc.invoke(tagged_tool, "status", "36")
+    assert result.splitlines() == [
+        f"0.9.57 (36) VALID expired=False in-group id={BUILD}",
+        f"None (36) PROCESSING expired=False NOT-in-group id={OTHER}",
+    ]
+    assert not provider.writes()
+
+
+@pytest.mark.parametrize("flags", [(False,), (True, True)])
+def test_status_refuses_external_only_or_ambiguous_internal_group(flags):
+    provider = Provider(group_flags=flags)
+    with pytest.raises(ValueError, match="exactly one tagged internal"):
+        asc.status(provider, TAG, "36")
+    assert len(provider.requests) == 1 and not provider.writes()
