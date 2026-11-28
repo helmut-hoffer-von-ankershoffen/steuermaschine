@@ -126,6 +126,29 @@ def test_a_release_without_ci_changes_needs_no_ci_change_verdict(tmp_path, monke
         assert release_cut.ci_change(gate(rt, monkeypatch, (), tmp_path)) == f"no CI path changed since {TAG[:12]}: no ci_change verdict needed"
 
 
+def test_official_core_inventories_ci_changes_without_a_verdict(tmp_path, monkeypatch):
+    from steuermaschine_heinzel.native.queue_lib import hzlib
+
+    rt = runtime(tmp_path)
+    change = f".github/workflows/ci.yml: CI path (not listed as not CI at base {TAG[:12]})"
+    ctx = gate(rt, monkeypatch, (change,), tmp_path)
+    ctx.settings["repo"] = hzlib.CORE
+    with native(rt):
+        assert release_cut.ci_change(ctx) == f"1 CI change(s) since {TAG[:12]} inventoried for {HEAD[:12]}"
+    assert rt.providers.store.get_receipt("verdicts", HEAD) is None
+
+
+def test_official_core_requires_a_readable_ci_comparison(tmp_path, monkeypatch):
+    from steuermaschine_heinzel.native.queue_lib import hzlib
+
+    rt = runtime(tmp_path)
+    ctx = gate(rt, monkeypatch, ("diff unreadable",), tmp_path)
+    ctx.settings["repo"] = hzlib.CORE
+    with native(rt), pytest.raises(Refuse, match=r"cannot classify.*diff unreadable"):
+        release_cut.ci_change(ctx)
+    assert "ci_change_head" not in ctx.data
+
+
 def test_a_ci_change_without_a_verdict_refuses_and_names_the_command(tmp_path, monkeypatch):
     rt = runtime(tmp_path)
     with native(rt), pytest.raises(Refuse, match=f"no verdict is recorded for {HEAD}") as no:
