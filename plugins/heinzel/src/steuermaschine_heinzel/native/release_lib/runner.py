@@ -68,6 +68,7 @@ import tomllib
 import urllib.error
 import urllib.request
 import uuid
+from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -3169,7 +3170,7 @@ def reject_release(args) -> int:
         raise Stop(f"release rejection not finalized: {exc}") from exc
 
 
-def main(argv: list[str]) -> int:
+def main(argv: list[str], *, before_actions: Callable[[], None] | None = None) -> int:
     parser = argparse.ArgumentParser(description="The release steps of AGENTS.md section 6, resumable.")
     parser.add_argument("version", nargs="?", help="X.Y.Z or patch")
     parser.add_argument("--plugin")
@@ -3296,6 +3297,8 @@ def main(argv: list[str]) -> int:
     if args.use_candidate_composite is not None and (args.use_candidate_composite <= 0 or args.version == "patch"
             or args.plugin or args.pause or args.prepare_only or args.reject_release or args.candidate_capacity):
         parser.error("composite evidence requires an exact normal core release resume")
+    if before_actions is not None:
+        before_actions()
     global RECEIPT_OVERRIDE
     try:
         # Core and plugin commands share the receipt. They must share the lock before reading or writing any state.

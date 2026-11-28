@@ -303,7 +303,7 @@ def test_the_policy_reader_reaches_every_release_writer_and_no_copy_of_core_is_k
 
 def typed(rt, monkeypatch, *args):
     seen = []
-    monkeypatch.setattr(area, "run", lambda module, argv: seen.append(argv) or (0, [], []))
+    monkeypatch.setattr(area, "run", lambda module, argv, **kwargs: seen.append(argv) or (0, [], []))
     out = invoke(rt, ["--format", "json", "release", *args])
     assert out.exit_code == 0, out
     return seen[0], json.loads(out.stdout)
@@ -531,7 +531,7 @@ def test_live_runs_the_mini_update_only_after_accepted_and_exits_on_its_proof(tm
     monkeypatch.setattr(release_ios, "after_accepted", lambda w, version: tested.append(version) or [f"IOS NOT-CLEAN {version}: testflight upload exited 70"])
     receipt: dict = {}
     monkeypatch.setattr(area, "receipt_of", lambda module, version: ("tail", receipt))
-    monkeypatch.setattr(area, "run", lambda module, argv: (0, ["ACCEPTED 0.9.41 (run 7)"], []))
+    monkeypatch.setattr(area, "run", lambda module, argv, **kwargs: (0, ["ACCEPTED 0.9.41 (run 7)"], []))
     receipt.update(version="0.9.41", finished=True, accepted=True, acceptance_run=7)
     out = invoke(rt, ["release", "resume", "0.9.41", "--live"])
     # A TestFlight failure is reported beside LIVE-OK and leaves the exit code alone (its alarm is the signal).
@@ -542,7 +542,7 @@ def test_live_runs_the_mini_update_only_after_accepted_and_exits_on_its_proof(tm
     assert out.exit_code == 1 and out.stdout.splitlines()[-2] == "NOT-LIVE: the version served on port 8737 is 0.9.40, the installed one 0.9.41"
     assert tested == ["0.9.41", "0.9.41"]  # iOS publishing does not depend on the Mini: it runs at NOT-LIVE too
     receipt.update(accepted=False)  # NOT ACCEPTED, unfinished or stopped: the Mini is never touched
-    monkeypatch.setattr(area, "run", lambda module, argv: (1, ["NOT ACCEPTED 0.9.41 (run 7)"], []))
+    monkeypatch.setattr(area, "run", lambda module, argv, **kwargs: (1, ["NOT ACCEPTED 0.9.41 (run 7)"], []))
     monkeypatch.setattr(mini, "update", lambda *a, **k: pytest.fail("the Mini was touched"))
     monkeypatch.setattr(release_ios, "after_accepted", lambda *a, **k: pytest.fail("TestFlight was touched"))
     assert invoke(rt, ["release", "resume", "0.9.41", "--live"]).exit_code == 1

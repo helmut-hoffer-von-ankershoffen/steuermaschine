@@ -94,7 +94,7 @@ def test_the_driver_holds_the_window_from_an_unfinished_resume_to_live_ok(monkey
     monkeypatch.setattr(st, "close_window", lambda v, home=None: seen.append(f"close {v}"))
     monkeypatch.setattr(st, "mark_live", lambda *a: seen.append("live"))
     monkeypatch.setattr(release, "runner", lambda: object())
-    monkeypatch.setattr(release, "run", lambda module, argv: (0, [], []))
+    monkeypatch.setattr(release, "run", lambda module, argv, *, before_actions: before_actions() or (0, [], []))
     monkeypatch.setattr(release, "world", lambda: type("W", (), {"now": lambda self: 1.0, "state_dir": tmp_path})())
     monkeypatch.setattr(release.release_ios, "after_accepted", lambda w, v: [])
     monkeypatch.setattr(release.mini, "update", lambda w, v: type("P", (), {"render": lambda self: ["LIVE-OK " + v], "exit_code": 0, "live": True})())
