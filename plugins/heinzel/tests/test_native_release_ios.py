@@ -157,6 +157,26 @@ def official_release(m, fault=""):
     root = f"repos/{hzlib.CORE}/"
     get = ["gh", "api", "--hostname", "github.com"]
     marker = {"schema": 1, "project": "heinzel", "version": m.version, "accepted": True, "acceptance_run": 17}
+    run = {
+        "id": 17, "run_attempt": 1, "path": ".github/workflows/acceptance.yml", "event": "workflow_dispatch",
+        "head_branch": tag, "head_sha": SHA, "status": "completed", "conclusion": "success",
+        "repository": {"full_name": hzlib.CORE}, "head_repository": {"full_name": hzlib.CORE},
+    }
+    acceptance_faults = {
+        "run-id": {"id": 18},
+        "run-retried": {"run_attempt": 2},
+        "run-workflow": {"path": ".github/workflows/ci.yml"},
+        "run-event": {"event": "push"},
+        "run-tag": {"head_branch": "main"},
+        "run-source": {"head_sha": "b" * 40},
+        "run-pending": {"status": "in_progress"},
+        "run-failed": {"conclusion": "failure"},
+        "run-repository": {"repository": {"full_name": "other/heinzel"}},
+        "run-fork": {"head_repository": {"full_name": "other/heinzel"}},
+    }
+    if fault != "run-unavailable":
+        run.update(acceptance_faults.get(fault, {}))
+        m.commands.on([*get, root + "actions/runs/17"], Result(0, json.dumps(run)))
     wheel_name = f"heinzel-{m.version}-py3-none-any.whl"
     wheel = "1" * 64
     manifest = {"schema": 1, "project": "heinzel", "version": m.version, "commit": SHA, "files": {wheel_name: wheel}}
@@ -209,7 +229,9 @@ def official_release(m, fault=""):
 @pytest.mark.parametrize("fault", ["missing", "rejected", "wrong-version", "wrong-project", "wrong-digest", "duplicate",
                                    "wrong-commit", "wrong-ref", "wrong-remote-sha", "wrong-peel", "unpublished", "hosted-profile",
                                    "local-missing-files", "local-other-file", "local-producer-mismatch",
-                                   "hosted-missing-files", "hosted-other-file", "hosted-producer-mismatch"])
+                                   "hosted-missing-files", "hosted-other-file", "hosted-producer-mismatch",
+                                   "run-id", "run-retried", "run-workflow", "run-event", "run-tag", "run-source",
+                                   "run-pending", "run-failed", "run-repository", "run-fork", "run-unavailable"])
 def test_replacement_refuses_before_asc_when_official_acceptance_is_unbound(tmp_path, fault):
     m = Mini(tmp_path, version="0.9.57")
     m.asc = [row(m.version, 1)]
@@ -218,6 +240,9 @@ def test_replacement_refuses_before_asc_when_official_acceptance_is_unbound(tmp_
     assert out.exit_code == 1 and not m.receipt()["clean"]
     if fault.endswith(("-missing-files", "-other-file", "-producer-mismatch")):
         assert "producer manifest does not bind the published release wheel" in m.receipt()["reason"]
+    if fault.startswith("run-"):
+        expected = "cannot authenticate" if fault == "run-unavailable" else "acceptance run is not a successful first attempt"
+        assert expected in m.receipt()["reason"]
     assert not any(cmd[0] in {"uv", "xcodebuild"} or "add" in cmd for cmd in m.commands.calls)
     assert not (m.state / "ios/submissions").exists() and not m.notes
 

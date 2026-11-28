@@ -51,6 +51,19 @@ def require_replacement_authority(w: Any, version: str, revision: str, cwd: Path
     marker = asset("acceptance.json")
     if not accepted_marker(marker, version) or type(marker.get("acceptance_run")) is not int or marker["acceptance_run"] < 1:
         raise ValueError("Core release lacks an accepted verdict for this version")
+    run_id = marker["acceptance_run"]
+    run = api(f"actions/runs/{run_id}")
+    repository, head_repository = run.get("repository"), run.get("head_repository")
+    if (
+        type(run.get("id")) is not int or run["id"] != run_id
+        or type(run.get("run_attempt")) is not int or run["run_attempt"] != 1
+        or run.get("path") != ".github/workflows/acceptance.yml" or run.get("event") != "workflow_dispatch"
+        or run.get("head_branch") != tag or run.get("head_sha") != revision
+        or run.get("status") != "completed" or run.get("conclusion") != "success"
+        or not isinstance(repository, dict) or repository.get("full_name") != repo
+        or not isinstance(head_repository, dict) or head_repository.get("full_name") != repo
+    ):
+        raise ValueError("acceptance run is not a successful first attempt for the requested Core tag and revision")
     manifest = asset("artifact-manifest.json")
     if manifest.get("project") != "heinzel" or manifest.get("version") != version or manifest.get("commit") != revision:
         raise ValueError("published release artifact source differs from the requested tag revision")
