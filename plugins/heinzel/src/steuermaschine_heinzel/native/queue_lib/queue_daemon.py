@@ -1357,7 +1357,12 @@ def plan_guard(item: dict, earlier, refusal: list[str]):
     def guard() -> bool:
         if earlier is not None and not earlier():
             return False
-        reason = main_plan.gap(item["pr"], item.get("reviewed_head") or item.get("guarded_head") or "")  # the pin that merges
+        head = item.get("reviewed_head") or item.get("guarded_head") or ""
+        authorization = item.get("guard_authorization") or {}
+        if earlier is not None and authorization.get("head") == head:
+            reason = main_plan.gap(item["pr"], head, authorized_base=authorization.get("base", ""))
+        else:
+            reason = main_plan.gap(item["pr"], head)
         if reason:
             refusal[:] = [reason]
         return not reason

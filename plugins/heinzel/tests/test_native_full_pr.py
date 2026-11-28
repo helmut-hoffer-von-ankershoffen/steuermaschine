@@ -4,7 +4,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from steuermaschine_heinzel.native.queue_lib import auto_arm, full_pr
+from steuermaschine_heinzel.native import queue_hold
+from steuermaschine_heinzel.native.queue_lib import auto_arm, full_pr, main_plan, queue_daemon
 
 HEAD, BASE, MERGE, TREE = (c * 40 for c in "abcd")
 
@@ -153,7 +154,18 @@ def test_missing_or_stale_ci_never_supplies_full_proof(monkeypatch, tmp_path):
 
 @pytest.mark.parametrize("already_armed", [False, True])
 def test_deferred_queue_entry_is_never_armed(monkeypatch, already_armed):
+    assert_immediate_merge(monkeypatch, already_armed, operator_authorized=False)
+
+
+@pytest.mark.parametrize("already_armed", [False, True])
+def test_operator_authorized_entry_is_never_armed(monkeypatch, already_armed):
+    assert_immediate_merge(monkeypatch, already_armed, operator_authorized=True)
+
+
+def assert_immediate_merge(monkeypatch, already_armed, *, operator_authorized):
     item = {"repo": auto_arm.hzlib.CORE, "pr": "42", "key": "core:42", "guarded_head": HEAD}
+    if operator_authorized:
+        item["guard_authorization"] = {"head": HEAD, "base": BASE}
     info = {"state": "OPEN", "headRefOid": HEAD, "author": {"login": "owner"},
             "statusCheckRollup": [], "autoMergeRequest": {} if not already_armed else {"enabled": True}}
     monkeypatch.setattr(auto_arm.hzlib, "ghj", lambda *_args, **_kwargs: info)
@@ -162,15 +174,25 @@ def test_deferred_queue_entry_is_never_armed(monkeypatch, already_armed):
     monkeypatch.setattr(auto_arm, "freeze_without_candidate", lambda _: "")
     monkeypatch.setattr(auto_arm, "main_hold", lambda *_: "")
     monkeypatch.setattr(auto_arm.hzlib, "tool_required_checks", lambda _: set())
-    monkeypatch.setattr(auto_arm, "merge_rule", lambda *_: ("", False))
+    monkeypatch.setattr(main_plan, "gap", lambda *_args, **_options: "")
+    monkeypatch.setattr(queue_hold, "current", lambda: None)
     monkeypatch.setattr(auto_arm, "armed_on_github", lambda _: [])
-    monkeypatch.setattr(full_pr, "required", lambda _: {"requires_full_pr": True})
+    monkeypatch.setattr(full_pr, "required", lambda _: None if operator_authorized else {"requires_full_pr": True})
     actions = []
     monkeypatch.setattr(auto_arm, "arm", lambda *_: pytest.fail("deferred PR must not arm"))
     monkeypatch.setattr(auto_arm, "disarm", lambda *_: actions.append("disarm") or True)
-    monkeypatch.setattr(auto_arm.hzlib, "load", lambda _: SimpleNamespace(train=lambda *a, **kw: actions.append("immediate") or (False, "proof unavailable")))
+
+    def train(*_args, **kwargs):
+        assert kwargs["immediate_merge"] is operator_authorized
+        assert kwargs["pre_merge_guard"]() is not operator_authorized
+        actions.append("immediate")
+        return False, "test merge not submitted"
+
+    monkeypatch.setattr(auto_arm.hzlib, "load", lambda _: SimpleNamespace(train=train))
+    authorization_checks = iter([True, False])
     q = SimpleNamespace(deps_met=lambda *_: True, assess=lambda *_: "ready", log=lambda *_: None,
-                        update=lambda *_args, **_kwargs: None)
+                        update=lambda *_args, **_kwargs: None, plan_guard=queue_daemon.plan_guard,
+                        authorization_current=lambda _: next(authorization_checks))
     auto_arm.one(q, item, [item])
     assert actions == (["disarm"] if already_armed else ["immediate"])
 
