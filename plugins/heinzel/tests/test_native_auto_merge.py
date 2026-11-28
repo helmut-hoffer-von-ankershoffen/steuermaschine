@@ -69,7 +69,7 @@ def snapshot(checks, classic=None, branch="main", count=None):
 @pytest.fixture
 def world_of_prs(tmp_path, monkeypatch):
     def make(rows, gh, reasons=(), comments=(), moved="", **settings):
-        monkeypatch.setattr(auto_review, "needs_review", lambda *a, **k: [] if k.get("errors_only") else list(reasons))
+        monkeypatch.setattr(auto_review, "needs_review", lambda *a, **k: [r for r in reasons if r.startswith("diff guard:")] if k.get("errors_only") else list(reasons))
         monkeypatch.setattr(prtable, "fetch", lambda g, o, name, now: ([r for r in rows if r.repo == name], ""))
         gh.on("pr view", {**view(comments=comments), "baseRefName": "main", "files": [], "headRefOid": moved or HEAD})
         for repo, names in {"heinzel-management": ["Gate review", "check"], "steuermaschine": ["Gate review", "check"],
@@ -265,18 +265,18 @@ def test_a_gate_touching_pr_waits_for_a_review_of_its_head(world_of_prs):
 def test_policy_disables_dispatch_but_preserves_unreadable_guard_refusal(world_of_prs, monkeypatch):
     gh = FakeGh().on("pr merge", "")
     rt = world_of_prs([row(repo="steuermaschine")], gh, reasons=["diff guard: timeout"])
-    assert "merged" in invoke(rt, ["queue", "auto", "--live", "--dispatch"]).stdout
+    assert "waiting (diff guard: timeout)" in invoke(rt, ["queue", "auto", "--live", "--dispatch"]).stdout
     assert not any(call[0] == "claude" for call in gh.calls)
     monkeypatch.setattr(auto_review, "needs_review", lambda *_, **kwargs: ["the diff guard could not read the diff"])
     out = invoke(rt, ["queue", "auto", "--live", "--dispatch"])
     assert "waiting (the diff guard could not read the diff)" in out.stdout
-    assert len(merged_cmds(gh)) == 1
+    assert not merged_cmds(gh)
 
 
 def test_an_approved_head_is_merged(world_of_prs):
     ok = said(auto_review.comment_body(HEAD, "opus", "sonnet", "fine", "APPROVE"))
     gh = FakeGh().on("pr merge", "")
-    rt = world_of_prs([row(repo="steuermaschine", number=9)], gh, reasons=["diff guard: timeout"], comments=[ok])
+    rt = world_of_prs([row(repo="heinzel-management", number=9)], gh, status_pr_repos=["heinzel-management"], reasons=["diff guard: timeout"], comments=[ok])
     assert "merged" in invoke(rt, ["queue", "auto", "--live"]).stdout and len(merged_cmds(gh)) == 1
 
 

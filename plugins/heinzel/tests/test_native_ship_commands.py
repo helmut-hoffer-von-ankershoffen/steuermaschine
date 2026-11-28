@@ -223,11 +223,22 @@ def test_ship_queues_a_pr_the_guard_passes_with_the_calls_of_the_old_script_in_o
     ]
 
 
-def test_ship_binds_a_flagged_core_pr_without_recording_a_review(rt, gh):
+def test_flagged_core_ship_requires_explicit_exact_operator_authorization(rt, gh):
     gh.on("pr diff 801", WEAKER)
     out = invoke(rt, ["head", "ship", "801"])
-    assert out.exit_code == 0 and keys(rt) == ["801"]
+    assert out.exit_code and keys(rt) == [] and "--authorize-guard" in out.stderr
+    gh.on("--json baseRefOid", {"baseRefOid": "b" * 40})
+    assert invoke(rt, ["queue", "add", "801", "--reviewed", "former receipt", "--reviewed-head", HEAD]).exit_code
+    assert invoke(rt, ["queue", "add", "acme", "801", "--authorize-guard", "reason", "--expected-head", HEAD]).exit_code
+    for options in ([], ["--expected-head", "f" * 40]):
+        assert invoke(rt, ["queue", "add", "801", "--authorize-guard", "specific triage", *options]).exit_code
+        assert keys(rt) == []
+    authorized = invoke(rt, ["queue", "add", "801", "--authorize-guard", "specific triage", "--expected-head", HEAD])
+    assert authorized.exit_code == 0
     item = json.loads(rt.state_file.read_text())["items"][-1]
+    auth = item["guard_authorization"]
+    assert (auth["reason"], auth["base"], auth["head"], auth["findings"]) == ("specific triage", "b" * 40, HEAD, ["coe"])
+    assert len(auth["digest"]) == 64
     assert item["guarded_head"] == HEAD and not item["reviewed_head"]
 
 

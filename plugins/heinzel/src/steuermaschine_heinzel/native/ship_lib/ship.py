@@ -67,7 +67,9 @@ def ship(pr: str, reason: str | None = None, reviewed_head: str | None = None, *
         out += f"NOTE: {in_flight} PR CI runs in flight > 5: queue is fine, but push nothing new until it drops\n"
     guard = deps.captured(hzlib.load("diff_guard").main, [pr])
     verdict = (guard.stdout + guard.stderr).rstrip("\n")
-    if verdict.startswith("PASS") or (verdict.startswith("FLAG ") and not hzlib.requires_independent_review(repo)):  # the queue guards again and binds that verdict to the head it read
+    if verdict.startswith("FLAG ") and not hzlib.requires_independent_review(repo):
+        return _done(2, err=verdict + "\nResolve findings or use sm queue add --expected-head SHA --authorize-guard REASON.\n")
+    if verdict.startswith("PASS"):  # the queue guards again and binds that verdict to the head it read
         added = _add(["--expected-head", expected_head, pr] if expected_head else [pr])
         return _done(added.returncode, out + added.stdout, added.stderr)
     return _done(2, out + f"NEEDS_REVIEW {pr}\n" + "".join(f"{line}\n" for line in verdict.splitlines()[:6]))

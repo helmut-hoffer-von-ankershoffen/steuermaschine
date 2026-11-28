@@ -151,10 +151,13 @@ def test_queue_add_refuses_a_flagged_pr_and_queues_the_clean_one(queue, monkeypa
     assert [i["key"] for i in queue.load()["items"]] == ["plugins #38"] and queue.notes == []
 
 
-def test_queue_policy_binds_checked_head_and_records_no_review(queue, monkeypatch):
+def test_checked_head_alone_does_not_accept_flags_and_does_accept_a_clean_diff(queue, monkeypatch):
     monkeypatch.setattr(queue, "guard_findings", lambda repo, number: (FLAGGED, "FLAG"))
     assert queue.main(["add", "--expected-head", "b" * 40, "393"]) == 1
     assert queue.load()["items"] == []
+    assert queue.main(["add", "--expected-head", "a" * 40, "393"]) == 1
+    assert queue.load()["items"] == []
+    monkeypatch.setattr(queue, "guard_findings", lambda repo, number: ([], "PASS"))
     assert queue.main(["add", "--expected-head", "a" * 40, "393"]) == 0
     item, = queue.load()["items"]
     assert item["guarded_head"] == item["expected_head"] == "a" * 40
@@ -163,15 +166,16 @@ def test_queue_policy_binds_checked_head_and_records_no_review(queue, monkeypatc
 
 def test_queue_add_reviewed_queues_and_logs_the_reason(queue, monkeypatch, capsys):
     monkeypatch.setattr(queue, "guard_findings", lambda repo, number: (FLAGGED, "FLAG 393"))
-    assert queue.main(["add", "--reviewed", "the skip is the documented macOS gap", "393"]) == 0
-    assert [i["key"] for i in queue.load()["items"]] == ["393"]
+    assert queue.main(["add", "--reviewed", "the skip is the documented macOS gap", "acme", "393"]) == 0
+    assert [i["key"] for i in queue.load()["items"]] == ["acme #393"]
     assert len(queue.notes) == 1 and "the skip is the documented macOS gap" in queue.notes[0] and "skip" in queue.notes[0] and "timeout" in queue.notes[0]
 
 
 def test_queue_add_refuses_an_unreadable_diff_unless_reviewed(queue, monkeypatch, capsys):
     monkeypatch.setattr(queue, "guard_findings", lambda repo, number: (None, "UNREADABLE 393"))
     assert queue.main(["add", "393"]) == 1 and queue.load()["items"] == []
-    assert queue.main(["add", "--reviewed", "read the 40k-line diff by hand", "393"]) == 0 and len(queue.load()["items"]) == 1
+    assert queue.main(["add", "--reviewed", "read the 40k-line diff by hand", "393"]) == 1
+    assert queue.main(["add", "--reviewed", "read the 40k-line diff by hand", "acme", "393"]) == 0 and len(queue.load()["items"]) == 1
 
 
 def test_queue_add_passes_a_clean_pr_without_a_note(queue, monkeypatch):

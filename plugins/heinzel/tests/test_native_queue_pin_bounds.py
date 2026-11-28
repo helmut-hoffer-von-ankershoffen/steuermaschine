@@ -136,3 +136,20 @@ def test_ship_in_flight_count_is_bounded(monkeypatch):
     done = ship_mod.ship("7")
     assert seen["timeout"] == hzlib.GH_READ_TIMEOUT
     assert done.returncode == 2 and "UNREADABLE 7" in done.stdout and "in flight" not in done.stdout
+
+
+@pytest.mark.parametrize(("head", "bases", "observed", "current"), [
+    (PIN, [LIVE, LIVE], [("ci.yml", 4, "coe", "continue-on-error: true")], True),
+    (LIVE, [LIVE], [], False),
+    (PIN, [PIN], [], False),
+    (PIN, [LIVE, PIN], [("ci.yml", 4, "coe", "continue-on-error: true")], False),
+    (PIN, [LIVE], [("ci.yml", 5, "coe", "continue-on-error: true")], False),
+    (PIN, [LIVE], None, False),
+])
+def test_pre_merge_authorization_requires_exact_head_base_and_findings(monkeypatch, head, bases, observed, current):
+    reads = iter(bases)
+    auth = {"head": PIN, "base": LIVE, "digest": qd.findings_digest([("ci.yml", 4, "coe", "continue-on-error: true")])}
+    monkeypatch.setattr(qd, "pr_head", lambda *args: head)
+    monkeypatch.setattr(qd, "guard_base", lambda *args: next(reads))
+    monkeypatch.setattr(qd, "guard_findings", lambda *args: (observed, ""))
+    assert qd.authorization_current({"repo": hzlib.CORE, "pr": "7", "guard_authorization": auth}) is current

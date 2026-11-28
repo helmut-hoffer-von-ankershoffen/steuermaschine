@@ -150,7 +150,7 @@ def needs_review(repo: str, number: int, base: str, head: str, files: list[dict[
     found = (guard or hzlib.load("diff_guard").check)(repo, str(number))
     if found is None:
         reasons.append("the diff guard could not read the diff")
-    elif not errors_only:
+    else:
         reasons += [f"diff guard: {str(item[1]) if len(item) > 1 else str(item)}"[:100] for item in found[:5]]
     reasons += list(ci_reasons(w, repo, base, head, files, errors_only=True) if errors_only else ci_reasons(w, repo, base, head, files))
     return reasons
