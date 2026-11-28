@@ -17,6 +17,8 @@ from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_ope
 
 import jwt
 
+from ...environment import AppStoreConnect
+
 API = "https://api.appstoreconnect.apple.com"
 CONSTANTS = frozenset({"APP_ID", "GROUP_NAME", "NOTES_LOCALE", "API"})
 RESOURCE_ID = re.compile(r"[A-Za-z0-9_-]{1,100}\Z")
@@ -61,7 +63,7 @@ def tag_identity(path: Path) -> TagIdentity:
 
 def auth_token() -> str:
     """Read the tagged tool's ASC_ENV_FILE contract only when opening the client."""
-    config = Path(os.environ.get("ASC_ENV_FILE", "~/.appstoreconnect/heinzel-mini.env")).expanduser()
+    config = Path(AppStoreConnect().credentials_file).expanduser()
     fields = {}
     try:
         for raw in config.read_text(encoding="utf-8").splitlines():
