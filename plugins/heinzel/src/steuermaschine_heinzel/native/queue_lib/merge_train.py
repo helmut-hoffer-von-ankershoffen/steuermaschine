@@ -214,6 +214,14 @@ def train(repo: str, pr: str, ignore_freeze: bool = False, queue_core: bool = Fa
             update(repo, pr)
             continue
         if status == "BEHIND" and not bad:  # a Core head behind main was not tested as the tree that merges: update it, CI runs again, requeue
+            if queue_core and expected_head:
+                from . import full_pr
+
+                try:
+                    if full_pr.required(head):
+                        return False, "behind main: the pinned head is unchanged; update and obtain fresh checks and review"
+                except Exception as error:  # noqa: BLE001 - unreadable obligation never authorizes an update
+                    return False, f"full PR obligation unavailable: {error}"
             update(repo, pr)
             detail = "behind main: the branch was updated; its CI runs again, requeue once it is green"
             print(f"#{pr} NOT merged, {detail}", flush=True)
@@ -247,7 +255,28 @@ def train(repo: str, pr: str, ignore_freeze: bool = False, queue_core: bool = Fa
                     return False, "main evidence changed or unavailable after waits; reassessment required"
                 if repo == CORE and not ignore_freeze and hzlib.merge_frozen(FREEZE):
                     return False, "merge freeze appeared during final evidence validation"
-            code, output = gh("pr", "merge", pr, "-R", repo, "--squash", "--match-head-commit", head)
+            obligation = None
+            if repo == CORE:
+                from . import full_pr
+
+                try:
+                    obligation = full_pr.required(head)
+                    if obligation:
+                        proof = full_pr.verify(pr, head, obligation)
+                        if pre_merge_guard is not None and not pre_merge_guard():
+                            return False, "main evidence changed during full PR verification; reassessment required"
+                        if not ignore_freeze and hzlib.merge_frozen(FREEZE):
+                            return False, "merge freeze appeared during full PR verification"
+                        if not full_pr.base_unchanged(proof):
+                            return False, "main changed during full PR verification; reassessment required"
+                except Exception as error:  # noqa: BLE001 - missing proof must not merge
+                    return False, f"full PR evidence unavailable: {error}"
+            if obligation:
+                # REST merges now or refuses; gh pr merge may silently enqueue for later.
+                code, output = gh("api", "--method", "PUT", f"repos/{repo}/pulls/{pr}/merge",
+                                  "-f", "merge_method=squash", "-f", f"sha={head}")
+            else:
+                code, output = gh("pr", "merge", pr, "-R", repo, "--squash", "--match-head-commit", head)
             merged = code == 0
             if not merged:
                 merge_failure = f"gh pr merge exited {code}"

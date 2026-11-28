@@ -158,7 +158,9 @@ def test_unsafe_files_fail_closed(pending, target, home):
         alternate.mkdir(mode=0o700)
         mod.history().symlink_to(alternate)
     elif target == 'history-public':
-        mod.history().mkdir(mode=0o755)
+        directory = mod.history()
+        directory.mkdir(mode=0o700)
+        directory.chmod(0o755)  # Exercise public permissions even with a private test-run umask.
     else:
         own = rel.snapshot_hold_path()
         other = own.parent / 'other'

@@ -1,9 +1,11 @@
 import json
+import subprocess
 import sys
 
 import pytest
 
 CORE = "helmut-hoffer-von-ankershoffen/heinzel"
+pytestmark = pytest.mark.usefixtures("native_receipts")
 
 
 @pytest.fixture(autouse=True)
@@ -77,14 +79,19 @@ def merge_cli(tool, monkeypatch, tmp_path):
     """Use an executable fake gh with no fallback to the real CLI."""
     module = tool("hz-merge-train")
     monkeypatch.setattr(module, "FREEZE", tmp_path / "freeze")
-    monkeypatch.setenv("PATH", str(tmp_path))
     monkeypatch.setenv("GH_DEBUG", "api")
     monkeypatch.setenv("GH_TOKEN", "synthetic-environment-credential")
     calls = tmp_path / "merge-call.json"
+    fake = tmp_path / "gh"
     head = "a" * 40
 
+    def run_fake_gh(argv, **kwargs):
+        assert argv[0] == "gh"
+        return subprocess.run([str(fake), *argv[1:]], **kwargs)
+
+    monkeypatch.setattr(module.edge, "run", run_fake_gh)
+
     def run(code, stdout, stderr, *, post_head=None):
-        fake = tmp_path / "gh"
         fake.write_text(f"#!{sys.executable}\n" + f"""
 import json, os, sys
 from pathlib import Path

@@ -799,6 +799,7 @@ DOCS_TEST = "tests/unit/documentation_test.py"
 SRC = re.compile(r"^src/heinzel/.*\.py$")
 ACCESS = re.compile(r"^src/heinzel/(?:heads/(?:cli|mcp|api|web)/|modules/[a-z_]+/(?:[a-z_]*access[a-z_]*|runner)[/.])")
 DOC_SURFACE = re.compile(r"^src/heinzel/(?:heads/cli/|modules/[a-z_]+/(?:operations?|ops)[/.]|modules/[a-z_]+/operation)")
+PYTEST_FILES_CMD = ["uv", "run", "pytest", "-q", "-n", "2", "-p", "no:cacheprovider"]
 WEB_TESTS_CMD = ["uv", "run", "--quiet", "--script", "scripts/web_build.py", "exec", "vitest", "run"]
 
 
@@ -920,7 +921,7 @@ def step_types(c: Ctx) -> Step:
 def run_tests(c: Ctx, s: Step, label: str, files: list[str]) -> None:
     py = [f for f in files if f.endswith(".py")]
     web = [f for f in files if f.endswith(".ts")]
-    for cmd, group in ((["uv", "run", "pytest", "-q", "-n", "2", "-p", "no:cacheprovider", *py], py),
+    for cmd, group in (([*PYTEST_FILES_CMD, *py], py),
                        ([*WEB_TESTS_CMD, "--maxWorkers=2", *[f.removeprefix("web/") for f in web]], web)):
         if group:
             run_group(c, s, label, cmd, group)

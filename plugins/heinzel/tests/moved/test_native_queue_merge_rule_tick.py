@@ -67,6 +67,57 @@ def test_a_fresh_green_pr_is_queued_and_merges_at_its_pinned_head(merge):
     assert github.merges() == [("pr", "merge", "803", "-R", hzlib.CORE, "--squash", "--match-head-commit", HEAD)]
 
 
+def test_deferred_vitest_refuses_a_merge_without_protected_full_pr_proof(merge, monkeypatch):
+    from steuermaschine_heinzel.native.queue_lib import full_pr
+
+    monkeypatch.setattr(full_pr, "required", lambda _head: {"requires_full_pr": True})
+    def refused(*_args):
+        raise ValueError("full suite missing")
+    monkeypatch.setattr(full_pr, "verify", refused)
+    github = Github()
+    merged, detail, _ = merge(github)
+    assert not merged and not github.merges() and "full suite missing" in detail
+
+
+def test_deferred_vitest_with_proof_merges_immediately_at_pinned_head(merge, monkeypatch):
+    from steuermaschine_heinzel.native.queue_lib import full_pr
+
+    monkeypatch.setattr(full_pr, "required", lambda _head: {"requires_full_pr": True})
+    seen = []
+    monkeypatch.setattr(full_pr, "verify", lambda pr, head, _receipt: seen.append((pr, head)) or {"base": "b" * 40})
+    monkeypatch.setattr(full_pr, "base_unchanged", lambda _proof: True)
+
+    class ImmediateGithub(Github):
+        def __call__(self, *args):
+            if args[:3] == ("api", "--method", "PUT"):
+                self.calls.append(args)
+                return 0, ""
+            return super().__call__(*args)
+
+    github = ImmediateGithub()
+    merged, _, _ = merge(github)
+    assert merged and seen == [("803", HEAD)] and not github.merges()
+    assert ("api", "--method", "PUT", f"repos/{hzlib.CORE}/pulls/803/merge", "-f", "merge_method=squash", "-f", f"sha={HEAD}") in github.calls
+
+
+@pytest.mark.parametrize("changed", ["freeze", "base"])
+def test_deferred_vitest_refuses_when_proof_outlives_freeze_or_base(merge, monkeypatch, changed):
+    from steuermaschine_heinzel.native.queue_lib import full_pr
+
+    monkeypatch.setattr(full_pr, "required", lambda _head: {"requires_full_pr": True})
+    after = {"proof": False}
+    def verify(*_args):
+        after["proof"] = True
+        return {"base": "b" * 40}
+    monkeypatch.setattr(full_pr, "verify", verify)
+    monkeypatch.setattr(full_pr, "base_unchanged", lambda _proof: changed != "base")
+    monkeypatch.setattr(hzlib, "merge_frozen", lambda *_: after["proof"] and changed == "freeze")
+    github = Github()
+    merged, detail, _ = merge(github)
+    assert not merged and not any(call[:3] == ("api", "--method", "PUT") for call in github.calls)
+    assert "freeze" in detail if changed == "freeze" else "main changed" in detail
+
+
 def test_queue_add_queues_without_evaluating_the_rule_and_the_guard_refuses_a_head_behind_main(merge, queue):  # noqa: F811
     github = Github(status="behind")  # the rule would refuse; `queue add` must not
     merged, detail, refusal = merge(github)
@@ -98,6 +149,16 @@ def test_a_core_head_behind_main_is_updated_by_the_train_and_never_merged(merge)
     assert not merged and not github.merges()
     assert "behind main: the branch was updated" in detail
     assert any(c[:2] == ("pr", "update-branch") for c in github.calls)
+
+
+def test_deferred_head_behind_main_is_not_updated_or_merged(merge, monkeypatch):
+    from steuermaschine_heinzel.native.queue_lib import full_pr
+
+    monkeypatch.setattr(full_pr, "required", lambda _head: {"requires_full_pr": True})
+    github = Github(merge_state="BEHIND")
+    merged, detail, _ = merge(github)
+    assert not merged and "pinned head is unchanged" in detail
+    assert not any(c[:2] in (("pr", "merge"), ("pr", "update-branch")) for c in github.calls)
 
 
 def test_the_checks_the_rule_needs_are_the_rulesets_not_the_legacy_ones(merge):

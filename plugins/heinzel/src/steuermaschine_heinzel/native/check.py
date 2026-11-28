@@ -96,14 +96,23 @@ def isolated_gate(gate: _preflight.Shell) -> Iterator[_preflight.Shell]:
         yield run
 
 
-def extra_tests(sel: Path | None) -> list[str]:
+def extra_tests(sel: Path | None) -> tuple[list[str], list[str]]:
     if sel is None:
-        return []
+        return [], []
     try:
-        listed = json.loads(sel.expanduser().read_text()).get("python") or []
+        data = json.loads(sel.expanduser().read_text())
+        python = data.get("python", [])
+        vitest = data.get("vitest", [])
+        if not all(isinstance(paths, list) and all(isinstance(path, str) and path for path in paths)
+                   for paths in (python, vitest)):
+            raise ValueError("python and vitest must be lists of test paths")
+        if any("::" in path for path in python):
+            raise ValueError("the Python selection takes test files, not individual pytest node IDs")
+        if any(any(character.isspace() for character in path) for path in vitest):
+            raise ValueError("Vitest paths cannot contain whitespace")
     except (OSError, ValueError, AttributeError) as why:
         raise Refuse(f"unreadable selection {sel}: {why}", "sm check --help", code=USAGE) from None
-    return [str(test).split("::")[0] for test in listed]
+    return list(dict.fromkeys(python)), list(dict.fromkeys(vitest))
 
 
 def plugins_check(rt: Any, wt: Path) -> HeadCheck:
@@ -169,7 +178,10 @@ def plugins_check(rt: Any, wt: Path) -> HeadCheck:
     "A type check stopped at its own limit (124) or without a slot (75) still fails.\n"
     "--extended gives the same focused work a 600 s wall budget. It keeps each command limit and leaves whole-suite\n"
     "selection to the existing rules. It cannot be combined with --allow-full.\n"
-    "E2E lanes never run here. --sel FILE adds tests ({\"python\": [files]}).\n"
+    "E2E lanes never run here. --sel FILE adds Python and Vitest files. When Core selects all of Vitest, "
+    "named Vitest files run locally and hosted CI must run the complete suite.\n"
+    "Use --vitest-exact to run only the named Vitest files locally. If this omits automatically "
+    "selected files, a full hosted PR run is required before merge.\n"
     "The receipt is bound to the commit and names the base it was measured from: any new commit needs a new run, and\n"
     "an approval needs the receipt's base to be the base the reviewed packet builds the head on. A run with --skip or\n"
     "with another --base than the setting preflight_base, a red run and a dirty tree write none.\n"
@@ -179,7 +191,8 @@ def plugins_check(rt: Any, wt: Path) -> HeadCheck:
     "Exit 0 READY, 1 NOT READY, 2 usage, 75 wait."))
 def check(worktree: Path | None = typer.Argument(None, metavar="WORKTREE", help="Core worktree whose HEAD is the head to check (default: the current directory)."),
           base: str | None = typer.Option(None, "--base", metavar="REV", help="The ref the head branched from (default: the setting preflight_base)."),
-          sel: Path | None = typer.Option(None, "--sel", metavar="FILE", help='More tests to run: JSON {"python": [test files]}.'),
+          sel: Path | None = typer.Option(None, "--sel", metavar="FILE", help='Named local tests: JSON {"python": [files], "vitest": [files]}.'),
+          vitest_exact: bool = typer.Option(False, "--vitest-exact", help="Run only the Vitest files in --sel locally. Omitted tests require full hosted PR CI."),
           skip: list[str] | None = typer.Option(None, "--skip", metavar="NAME", help="Leave one check out (repeatable); named in the verdict, and no receipt is written."),
           extended: bool = typer.Option(False, "--extended", help="Give the focused checks up to 600 seconds in total, with their usual command limits."),
           allow_full: bool = typer.Option(False, "--allow-full", help="Let the run lock run the whole unit suite when nothing narrows the change (the coordinator's call; logged)."),
@@ -198,10 +211,14 @@ def check(worktree: Path | None = typer.Argument(None, metavar="WORKTREE", help=
     if (target / ".git").exists() and gallery_sync.is_plugins(gallery_sync.origin_repo(providers.commands, target)):
         if extended:
             raise Refuse("--extended applies to Core checks", usage, code=USAGE)
+        if vitest_exact:
+            raise Refuse("--vitest-exact applies to Core checks", usage, code=USAGE)
         return plugins_check(rt, target)
     default = str(_preflight.setting(rt, "preflight_base"))
     ref = base or default
-    extra = extra_tests(sel)
+    extra, web_tests = extra_tests(sel)
+    if vitest_exact and not web_tests:
+        raise Refuse("--vitest-exact requires --sel with a nonempty vitest list", usage, code=USAGE)
     c = bound(rt, wt, ref, allow_full, full or allow_full)
     clock = providers.clock
     with slots.pool(lock.policy(rt.settings, providers.commands, clock).directory, "check", rt.say, sleep=clock.sleep, clock=clock.now,
@@ -215,7 +232,7 @@ def check(worktree: Path | None = typer.Argument(None, metavar="WORKTREE", help=
                 selection = affected.selection(select.Repo(wt), c.changed())
             except select.RepoError as why:
                 raise Refuse(f"the selector of {wt} cannot be read: {why}", f"sm head select --repo {wt} --base {ref}", code=USAGE) from None
-            c.plan = cheap.plan(c, selection, extra)
+            c.plan = cheap.plan(c, selection, extra, web_tests=web_tests, vitest_exact=vitest_exact)
             with isolated_gate(c.gate) as c.gate:
                 steps, left_out, not_run = registry.run(c, set(skipped), say=rt.say)
         else:  # no slot, or a loaded machine: nothing ran, so nothing is READY: exit 75, the same command again later
@@ -223,6 +240,7 @@ def check(worktree: Path | None = typer.Argument(None, metavar="WORKTREE", help=
     if c.deferred and not [s for s in steps if s.failures]:  # the budget ran out and nothing failed: part of the run did not happen, so it is not READY
         retry = join(["sm", "check", str(wt), "--extended", *(["--base", base] if base else []),
                       *(["--sel", str(sel.expanduser().resolve())] if sel else []),
+                      *(["--vitest-exact"] if vitest_exact else []),
                       *(arg for name in skipped for arg in ("--skip", name))])
         recovery = (
             "Retry on a quieter machine; the extended budget is already in use."
@@ -251,7 +269,8 @@ def check(worktree: Path | None = typer.Argument(None, metavar="WORKTREE", help=
         report.receipt_note = f"none: measured from --base {ref}, not from {default} (the setting preflight_base); run sm check without --base for the receipt"
     else:
         state = verdicts.record_check(providers.store, c.sha, {"worktree": str(wt), "branch": c.branch, "base": c.base_sha, "at": providers.clock.now(), "command": report.command,
-                                                               "deferred": bool(c.ci), "ci_must_run": list(c.ci), **tests_counts(steps),
+                                                               "deferred": bool(c.ci), "ci_must_run": list(c.ci),
+                                                               "requires_full_pr": c.plan.web_deferred, **tests_counts(steps),
                                                                "checks": [{"name": s.name, "status": s.status, "detail": s.detail} for s in report.steps]})
         report.receipt = state in ("written", "kept")
         report.receipt_note = (f"{verdicts.CHECKS} {c.sha} ({'written' if state == 'written' else 'this commit already had one'}), measured from {c.base_sha[:12]}: "
