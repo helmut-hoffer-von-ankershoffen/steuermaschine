@@ -6,8 +6,8 @@ every Heinzel fact from the reviewed source at the release tag, never from a cop
 - HEINZEL_SOURCE_REVISION is the tag's commit;
 - the signing team and the provisioning profile of each bundle come from the tag's
   apple/distribution/ExportOptions-testflight.plist;
-- App Store Connect is reached only through the tag's apple/scripts/testflight (its app ID, its internal group, the
-  API key env file it reads; the key is never read here).
+- App Store Connect identity comes from the tag's apple/scripts/testflight. The tagged helper uploads and reads
+  status. The installed ASC client verifies the full inventory and handles exact build-ID operations.
 The build number is the next one above the highest build App Store Connect holds for the app (monotonic, from ASC).
 
 Reuse requires a durable record of an upload from the verified release source. Every call writes the receipt ios/vX.Y.Z.json in the state directory: `clean` true only
@@ -25,6 +25,7 @@ import os
 import plistlib
 import re
 import shutil
+import sys
 import tempfile
 import tomllib
 from dataclasses import dataclass, field
@@ -38,6 +39,7 @@ from .ios_acceptance import require_replacement_authority
 VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
 ROW = re.compile(r"^(?P<short>\S+) \((?P<build>[0-9]+)\) (?P<state>[A-Z_]+) expired=(?P<expired>True|False) (?P<group>in-group|NOT-in-group) id=(?P<id>\S+)$")
 TESTFLIGHT = "apple/scripts/testflight"
+ASC_CLIENT = "from steuermaschine_heinzel.native.release_lib.ios_inventory import main; main()"
 VERIFIER = "apple/scripts/widget_configuration.py"
 EXPORT_OPTIONS = "apple/distribution/ExportOptions-testflight.plist"
 PROJECT = "apple/Heinzel.xcodeproj"
@@ -224,12 +226,16 @@ class Context:
 
     def testflight(self, *args: str, timeout: float = 120) -> str:
         tool = self.tool or self.checkout / TESTFLIGHT
-        if args[0] in {"notes", "assign", "beta"}:
-            if not self.asc_id:
-                raise IosFailed("TestFlight action needs a verified ASC build ID")
-            script = Path(__file__).with_name("ios_inventory.py")
-            return self.run(["uv", "run", "--quiet", "--script", str(script), *args, self.version, self.asc_id, str(tool)], timeout, f"testflight {args[0]}")
         return self.run(["uv", "run", "--quiet", "--script", str(tool), *args], timeout, f"testflight {args[0]}")
+
+    def asc(self, action: str, *args: str, timeout: float = 120) -> str:
+        tool = self.tool or self.checkout / TESTFLIGHT
+        return self.run([sys.executable, "-I", "-c", ASC_CLIENT, action, str(tool), *args], timeout, f"testflight {action}")
+
+    def asc_build(self, action: str, build: str, *args: str) -> str:
+        if not self.asc_id:
+            raise IosFailed("TestFlight action needs a verified ASC build ID")
+        return self.asc(action, build, self.version, self.asc_id, *args)
 
     def rows(self) -> list[dict[str, Any]]:
         return parse_status(self.testflight("status"))
@@ -361,7 +367,7 @@ def confirm(ctx: Context, build: str, wait_seconds: int, path: Path, record: dic
                 elif assign_after <= now < deadline:
                     assignment_attempted = True
                     try:
-                        ctx.testflight("assign", build)
+                        ctx.asc_build("assign", build)
                     except GroupAssignmentRefused as exc:
                         assignment_refusal = exc
                     else:
@@ -380,7 +386,7 @@ def confirm(ctx: Context, build: str, wait_seconds: int, path: Path, record: dic
 def beta_ready(ctx: Context, build: str) -> bool:
     """Testers can install it: IN_BETA_TESTING. A state that never becomes it fails at once."""
     r = ctx.result
-    found = re.search(r"internalBuildState=(\S+)", ctx.testflight("beta", build))
+    found = re.search(r"internalBuildState=(\S+)", ctx.asc_build("beta", build))
     r.beta = found[1] if found else "?"
     if r.beta in BETA_BAD:
         raise IosFailed(f"build {build} beta state is {r.beta}")
@@ -394,7 +400,7 @@ def set_notes(ctx: Context, build: str) -> None:
         raise IosFailed(f"the release notes of v{ctx.version} are unreadable (gh release view exited {res.rc})")
     notes = ctx.work / "what-to-test.txt"
     notes.write_text(f"Heinzel {ctx.version}\n\n{res.out.strip()}\n")
-    ctx.testflight("notes", build, str(notes))
+    ctx.asc_build("notes", build, str(notes))
     ctx.result.notes = True
     ctx.result.steps.append(f"What to Test set from the v{ctx.version} release notes")
 
@@ -412,9 +418,7 @@ def tool_of(w: Any, core_repo: Path, ref: str | None, work: Path) -> Path | None
 
 
 def source_build(ctx: Context, marketing: str, options: dict[str, Any], supersede: str) -> tuple[str, Path, dict[str, Any]]:
-    tool = ctx.tool or ctx.checkout / TESTFLIGHT
-    inventory = json.loads(ctx.run(["uv", "run", "--script", str(Path(__file__).with_name("ios_inventory.py")),
-                                    str(tool)], 180, "complete ASC inventory"))
+    inventory = json.loads(ctx.asc("inventory", timeout=180))
     app, builds = inventory["app"], inventory["builds"]
     if not isinstance(app, str) or not app or not isinstance(builds, dict):
         raise IosFailed("malformed ASC inventory")

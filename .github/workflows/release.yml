@@ -60,8 +60,8 @@ jobs:
         run: |
           uv version "$VERSION" --frozen
           uv version --package steuermaschine-heinzel "$VERSION" --frozen
-          sed -i "s/^dependencies = \[\"steuermaschine\"\]$/dependencies = [\"steuermaschine==$VERSION\"]/" plugins/heinzel/pyproject.toml
-          grep -qx "dependencies = \[\"steuermaschine==$VERSION\"\]" plugins/heinzel/pyproject.toml || { echo "::error title=Not released::the plugin's dependency line is not dependencies = [\"steuermaschine\"]; the lockstep pin cannot be set"; exit 1; }
+          sed -i "s/^    \"steuermaschine\",$/    \"steuermaschine==$VERSION\",/" plugins/heinzel/pyproject.toml
+          grep -Fqx "    \"steuermaschine==$VERSION\"," plugins/heinzel/pyproject.toml || { echo "::error title=Not released::the plugin's lockstep pin could not be set"; exit 1; }
       - name: Build
         if: steps.gate.outputs.release == 'true'
         run: make build
@@ -75,6 +75,8 @@ jobs:
           done
           unzip -p "dist/steuermaschine_heinzel-${VERSION}-py3-none-any.whl" "steuermaschine_heinzel-${VERSION}.dist-info/METADATA" | grep -qx "Requires-Dist: steuermaschine==${VERSION}" \
             || { echo "::error title=Not released::the plugin wheel does not require steuermaschine==${VERSION}"; exit 1; }
+          unzip -p "dist/steuermaschine_heinzel-${VERSION}-py3-none-any.whl" "steuermaschine_heinzel-${VERSION}.dist-info/METADATA" | grep -Fqx "Requires-Dist: pyjwt[crypto]" \
+            || { echo "::error title=Not released::the plugin wheel lacks the TestFlight client dependency"; exit 1; }
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: steps.gate.outputs.release == 'true'
         with:

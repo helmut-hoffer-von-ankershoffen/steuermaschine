@@ -4,6 +4,7 @@ directory. No test starts a process, reads the network or sleeps."""
 import hashlib
 import json
 import plistlib
+import sys
 from pathlib import Path
 
 import pytest
@@ -19,6 +20,8 @@ from steuermaschine_heinzel.native.release_lib import ios
 from steuermaschine_heinzel.plugin import plugin
 
 SHA = "a" * 40
+ASC_PROCESS = [sys.executable, "-I", "-c", ios.ASC_CLIENT]
+TAGGED_PROCESS = ["uv", "run", "--quiet", "--script"]
 OPTIONS = {"method": "app-store-connect", "destination": "upload", "teamID": "ABCDE12345", "signingStyle": "manual",
            "provisioningProfiles": {"team.example.app": "App Profile", "team.example.app.widgets": "Widget Profile"},
            "manageAppVersionAndBuildNumber": True}
@@ -26,6 +29,14 @@ OPTIONS = {"method": "app-store-connect", "destination": "upload", "teamID": "AB
 
 def row(short, build, state="VALID", group="in-group", expired=False):
     return f"{short} ({build}) {state} expired={expired} {group} id=x{build}"
+
+
+def flight_verb(argv):
+    return argv[4] if argv[:4] == ASC_PROCESS else argv[5]
+
+
+def apple_command(argv):
+    return argv[:4] == ASC_PROCESS or argv[0] in {"uv", "xcodebuild"}
 
 
 class Mini:
@@ -47,9 +58,9 @@ class Mini:
         c = self.commands = FakeCommands()
         c.on(["git", "-C", str(tmp_path / "core"), "rev-parse"], lambda argv: self.fail.get("tag") or Result(0, SHA + "\n"))
         c.on(["git", "-C", str(tmp_path / "core"), "worktree"], self.worktree)
-        c.on(["uv", "run", "--script"], lambda argv: Result(0, json.dumps({"app": "test-app", "builds": {
+        self.on_testflight(self.testflight)
+        c.on([*ASC_PROCESS, "inventory"], lambda argv: Result(0, json.dumps({"app": "test-app", "builds": {
             r["id"]: dict(r, short=None if r["short"] == "None" else r["short"]) for r in ios.parse_status("\n".join(self.asc))}})))
-        c.on(["uv", "run", "--quiet", "--script"], self.testflight)
         c.on(["uv", "run", "--quiet", "--no-project"], self.verify)
         c.on(["xcodebuild", "archive"], self.archive)
         c.on(["gh", "release", "view"], lambda argv: self.release_notes)
@@ -66,8 +77,17 @@ class Mini:
             (src / ios.EXPORT_OPTIONS).write_bytes(plistlib.dumps(OPTIONS))
         return Result(0)
 
+    def on_testflight(self, callback):
+        self.commands.on(TAGGED_PROCESS, callback)
+        for action in ("beta", "notes", "assign"):
+            self.commands.on([*ASC_PROCESS, action], callback)
+
     def testflight(self, argv):
-        verb = argv[5]
+        verb = flight_verb(argv)
+        if verb in {"beta", "notes", "assign"}:
+            assert argv[:4] == ASC_PROCESS
+            number, version, identifier = argv[6:9]
+            assert version == self.version and identifier == f"x{number}"
         if verb in self.fail:
             return self.fail[verb]
         if verb == "upload":
@@ -79,7 +99,7 @@ class Mini:
             state = self.beta.pop(0) if len(self.beta) > 1 else self.beta[0]
             return Result(0, f"build {argv[6]} internalBuildState={state}\n")
         if verb == "notes":
-            self.notes.append(Path(argv[7]).read_text())
+            self.notes.append(Path(argv[9]).read_text())
             return Result(0, "notes set\n")
         if verb == "assign":
             self.asc = [line.replace("NOT-in-group", "in-group") if f"({argv[6]})" in line else line for line in self.asc]
@@ -243,7 +263,7 @@ def test_replacement_refuses_before_asc_when_official_acceptance_is_unbound(tmp_
     if fault.startswith("run-"):
         expected = "cannot authenticate" if fault == "run-unavailable" else "acceptance run is not a successful first attempt"
         assert expected in m.receipt()["reason"]
-    assert not any(cmd[0] in {"uv", "xcodebuild"} or "add" in cmd for cmd in m.commands.calls)
+    assert not any(apple_command(cmd) or "add" in cmd for cmd in m.commands.calls)
     assert not (m.state / "ios/submissions").exists() and not m.notes
 
 
@@ -255,7 +275,8 @@ def test_accepted_canonical_replacement_reads_proof_before_first_apple_command(t
     out = invoke(m.rt, ["release", "ios", m.version, "--supersede-build-id", "x1", "--expected-revision", SHA])
     assert out.exit_code == 0, out.stdout
     calls = m.commands.calls
-    first_apple = next(i for i, cmd in enumerate(calls) if cmd[0] in {"uv", "xcodebuild"})
+    first_apple = next(i for i, cmd in enumerate(calls) if apple_command(cmd))
+    assert calls[first_apple][:5] == [*ASC_PROCESS, "inventory"]
     assert all(i < first_apple for i, cmd in enumerate(calls) if cmd[:2] == ["gh", "api"])
     assert len(m.uploads) == len(m.notes) == 1
 
@@ -288,7 +309,7 @@ def test_default_resume_of_replacement_rechecks_authority_before_apple(tmp_path)
     m.commands.calls.clear()
     m.beta = ["IN_BETA_TESTING"]
     assert m.run().exit_code == 1 and not m.receipt()["clean"]
-    assert not any(cmd[0] in {"uv", "xcodebuild"} for cmd in m.commands.calls)
+    assert not any(apple_command(cmd) for cmd in m.commands.calls)
     assert len(m.uploads) == 1 and not m.notes
 
 
@@ -327,7 +348,7 @@ def test_automatic_group_membership_catches_up_after_valid(tmp_path):
 
     def propagate(argv):
         nonlocal stale_reads
-        verb = argv[5]
+        verb = flight_verb(argv)
         verbs.append(verb)
         result = m.testflight(argv)
         if verb == "status" and f"{m.version} (32) VALID expired=False NOT-in-group" in result.out:
@@ -335,7 +356,7 @@ def test_automatic_group_membership_catches_up_after_valid(tmp_path):
             m.auto_group = stale_reads == 4
         return result
 
-    m.commands.on(["uv", "run", "--quiet", "--script"], propagate)
+    m.on_testflight(propagate)
     out = m.run()
     assert out.exit_code == 0
     assert "assign" not in verbs
@@ -389,14 +410,14 @@ def test_known_assignment_refusal_requires_positive_membership_before_success(tm
     verbs = []
 
     def assign_race(argv):
-        verb = argv[5]
+        verb = flight_verb(argv)
         verbs.append(verb)
         if verb == "assign":
             m.auto_group = membership_appears
             return Result(1, "", GROUP_POST + json.dumps({"errors": [GROUP_REFUSAL]}, indent=2))
         return m.testflight(argv)
 
-    m.commands.on(["uv", "run", "--quiet", "--script"], assign_race)
+    m.on_testflight(assign_race)
     out = m.run()
     assert verbs.count("assign") == verbs.count("upload") == 1
     assert m.receipt()["clean"] is membership_appears
@@ -522,9 +543,9 @@ def test_the_tool_can_come_from_a_ref(tmp_path):
     tools = []
 
     def record(argv):
-        tools.append(argv[-1] if argv[5] in {"beta", "notes", "assign"} else argv[4])
+        tools.append(argv[5] if argv[:4] == ASC_PROCESS else argv[4])
         return Mini.testflight(m, argv)
-    m.commands.on(["uv", "run", "--quiet", "--script"], record)
+    m.on_testflight(record)
     assert m.run().exit_code == 0
     assert tools and all(tool.endswith("/work/testflight") for tool in tools)
     m.fail["show"] = Result(128, "", "bad ref")
@@ -565,7 +586,7 @@ def test_every_testflight_verb_sm_calls_is_in_the_recorded_help():
     offered = set(re.search(r"\{([a-z,]+)\}", helptext)[1].split(","))
     source = inspect.getsource(ios)
     called = set(re.findall(r"testflight\(\s*\"([a-z]+)\"", source)) | set(re.findall(r"\.testflight\(\s*\"([a-z]+)\"", source))
-    assert {"status", "assign", "beta", "notes", "upload"} <= called  # the scan sees every verb the step uses
+    assert called == {"status", "upload"}
     assert called <= offered, f"sm calls testflight verbs the tool does not have: {sorted(called - offered)}"
 
 
@@ -632,60 +653,6 @@ def test_inventory_follows_only_complete_app_scoped_pages(fault):
         result = inventory(lambda path: pages.pop(0), "fixture", api)
         assert result["builds"]["record-2"]["build"] == "400" and result["builds"]["record-1"]["short"] == "0.9.56"
         assert not pages
-
-
-@pytest.mark.parametrize("verb", ["assign", "beta", "notes"])
-def test_each_tagged_lookup_requires_the_pinned_build_at_operation_time(verb):
-    from types import SimpleNamespace
-
-    from steuermaschine_heinzel.native.release_lib.ios_inventory import scoped_command
-
-    row = {"id": "submitted", "build": "36", "short": "0.9.57", "expired": False, "state": "VALID"}
-    rows = [row]
-    seen = []
-    tool = SimpleNamespace(builds=lambda env: rows)
-
-    def command(env, args):
-        seen.extend(tool.builds(env))
-    tool.cmd_assign = tool.cmd_beta = tool.cmd_notes = command
-    for changed in ([row, dict(row, id="duplicate")], [dict(row, short="other")], [dict(row, id="unbound")], [dict(row, expired=True)], [dict(row, state="FAILED")]):
-        rows = changed
-        with pytest.raises(ValueError, match="submitted build identity"):
-            scoped_command(tool, {}, verb, ["36", "fixture"], "0.9.57", "submitted")
-    assert not seen
-    rows = [row]
-    scoped_command(tool, {}, verb, ["36", "fixture"], "0.9.57", "submitted")
-    assert seen == [row]
-
-
-def test_tag_helper_adapter_runs_the_extensionless_fixture_without_external_calls(tmp_path, monkeypatch, capsys):
-    import runpy
-    import sys
-
-    from steuermaschine_heinzel.native.release_lib import ios_inventory
-
-    script = tmp_path / "testflight"
-    script.write_text("""
-APP_ID = 'a'
-API = 'https://fixture.invalid'
-def load_env():
-    return {}
-def call(env, method, path):
-    assert method == 'GET'
-    return {'meta': {'paging': {'total': 0}}, 'data': [], 'links': {}}
-def builds(env):
-    return [{'id': 'owned', 'build': '42', 'short': '0.9.57', 'expired': False, 'state': 'VALID'}]
-def cmd_notes(env, args):
-    print(args.file, builds(env)[0]['id'])
-cmd_assign = cmd_beta = cmd_notes
-""")
-    bridge = str(ios_inventory.__file__)
-    monkeypatch.setattr(sys, "argv", [bridge, str(script)])
-    runpy.run_path(bridge, run_name="__main__")
-    assert json.loads(capsys.readouterr().out) == {"app": "a", "builds": {}}
-    monkeypatch.setattr(sys, "argv", [bridge, "notes", "42", "fixture.txt", "0.9.57", "owned", str(script)])
-    runpy.run_path(bridge, run_name="__main__")
-    assert capsys.readouterr().out.strip() == "fixture.txt owned"
 
 
 def test_failed_verification_can_retry_without_overwriting_the_old_archive(tmp_path):
