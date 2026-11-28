@@ -59,6 +59,7 @@ def exact_diff(tmp_path, monkeypatch):
     def process(argv, **kwargs):
         if argv[:3] == ["gh", "pr", "diff"]:
             return subprocess.CompletedProcess(argv, 1, "", LIMIT)
+        assert kwargs["env"]["GIT_ATTR_NOSYSTEM"] == "1"
         return run(argv, **kwargs)
 
     monkeypatch.setattr(guard.edge, "setting", lambda name: tmp_path)
@@ -76,6 +77,30 @@ def test_oversize_diff_uses_complete_verified_git_patch(exact_diff, tmp_path):
     assert [(path, kind) for path, _, kind, _ in guard.scan(patch)] == [("test_gate.py", "skip")]
     assert git("rev-parse", "HEAD").strip() == head and git("status", "--porcelain") == status
     assert len(calls) == 3 and all("/files" not in arg for call in calls for arg in call)
+
+
+def test_oversize_diff_refuses_untracked_attributes_that_hide_a_source_hunk(exact_diff, tmp_path):
+    git, base, head, replies, _, _ = exact_diff
+    attrs = tmp_path / ".git" / "info" / "attributes"
+    attrs.write_text("test_gate.py -diff\n")
+    assert "GIT binary patch" in git(f"--attr-source={head}", "diff", "--binary", f"{base}...{head}", "--", "test_gate.py")
+    assert guard.diff_text(REPO, "997") is None
+    attrs.write_text("")
+    replies.append(copy.deepcopy(replies[0]))
+    patch = guard.diff_text(REPO, "997")
+    assert patch is not None and [(p, kind) for p, _, kind, _ in guard.scan(patch)] == [("test_gate.py", "skip")]
+
+
+def test_oversize_diff_refuses_local_attributes_added_while_reading(exact_diff, tmp_path, monkeypatch):
+    run = guard.edge.run
+
+    def process(argv, **kwargs):
+        if "--binary" in argv:
+            (tmp_path / ".git" / "info" / "attributes").write_text("test_gate.py -diff\n")
+        return run(argv, **kwargs)
+
+    monkeypatch.setattr(guard.edge, "run", process)
+    assert guard.diff_text(REPO, "997") is None
 
 
 @pytest.mark.parametrize("mutation", ["head", "base", "base_ref", "closed", "file_count", "compare"])

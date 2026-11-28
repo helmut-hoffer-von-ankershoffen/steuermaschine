@@ -21,6 +21,7 @@ Markdown, rst and txt files are not scanned. Exit 1 on FLAG, 2 when the diff can
 unreadable too). `hz-queue add` runs this and refuses a flagged PR unless given `--reviewed "reason"`."""
 
 import re
+import stat
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -82,6 +83,15 @@ def pull_source(repo: str, number: str) -> PullSource | None:
     return PullSource(commits[0], commits[1], refs[0], refs[1], count) if type(count) is int and count > 0 else None
 
 
+def empty_local_attributes(path: Path) -> bool:
+    """Git's info attributes still override the selected tree, even with --attr-source."""
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        return True
+    return stat.S_ISREG(info.st_mode) and info.st_size == 0
+
+
 def large_core_diff(repo: str, number: str) -> str | None:
     """Recreate a refused patch by exact Git objects, never from the incomplete REST `patch` fields."""
     if repo != hzlib.CORE or not re.fullmatch(r"[1-9][0-9]*", number):
@@ -90,7 +100,7 @@ def large_core_diff(repo: str, number: str) -> str | None:
     source = pull_source(repo, number)
     if not clone or source is None:
         return None
-    env = child_environment(drop_prefixes=("GIT_",), GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_SYSTEM="/dev/null")
+    env = child_environment(drop_prefixes=("GIT_",), GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_SYSTEM="/dev/null", GIT_ATTR_NOSYSTEM="1")
 
     def git(*args: str) -> str | None:
         argv = ["git", "--no-optional-locks", "--no-replace-objects", "--no-lazy-fetch", f"--attr-source={source.head}",
@@ -102,6 +112,9 @@ def large_core_diff(repo: str, number: str) -> str | None:
     prefixes = ("https://github.com/", "git@github.com:", "ssh://git@github.com/")
     origins = {f"{prefix}{repo}{suffix}" for prefix in prefixes for suffix in ("", ".git")}
     if (git("remote", "get-url", "--all", "origin") or "").strip() not in origins:
+        return None
+    attributes = Path((git("rev-parse", "--path-format=absolute", "--git-path", "info/attributes") or "").strip())
+    if not attributes.is_absolute() or not empty_local_attributes(attributes):
         return None
     if git("rev-parse", "--is-shallow-repository") != "false\n":
         return None
@@ -126,7 +139,7 @@ def large_core_diff(repo: str, number: str) -> str | None:
         return None
     patch = git(*diff_args, "--binary", "--full-index", "--src-prefix=a/", "--dst-prefix=b/", "--unified=3",
                 merge_base, source.head, "--")
-    if not patch or not patch.startswith("diff --git ") or pull_source(repo, number) != source:
+    if not patch or not patch.startswith("diff --git ") or not empty_local_attributes(attributes) or pull_source(repo, number) != source:
         return None
     return patch
 
