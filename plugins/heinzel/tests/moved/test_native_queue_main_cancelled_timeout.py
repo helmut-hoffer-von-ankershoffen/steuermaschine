@@ -1,10 +1,15 @@
-"""Provider timeout schema captured from main run42906326430, attempt1 (bead7e5p)."""
+"""Required provider timeouts on original main CI attempts."""
 
+import base64
 import copy
+import json
+import subprocess
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 from steuermaschine_heinzel import state as statedir
+from steuermaschine_heinzel.native.queue_lib import main_capacity, main_checkpoint
 
 RUN = 42906326430
 SHA = "e3dc6ee2325505e542b1f707a371ef8896e17903"
@@ -179,3 +184,167 @@ def test_another_unsuccessful_job_or_extra_annotation_cannot_be_hidden(world):
     responses["annotations"].append(responses["annotations"][0])
     assert world["queue"].main_state() == "unknown"
     assert world["state"].read_bytes() == world["before"]
+
+
+@pytest.fixture
+def full_dispatch(world, monkeypatch):
+    q = world["queue"]
+    responses = world["responses"]
+    run, check = responses["run"], responses["check"]
+    run.update(event="workflow_dispatch", display_title=f"CI {SHA}")
+    world["rows"][0].update(event="workflow_dispatch", displayTitle=run["display_title"])
+    guard = "Fail if any required job failed, naming each with its verdict"
+    direct = "Require the complete direct CI workload"
+    job, aggregate = responses["jobs"]["jobs"]
+    job.update(name="Plugin template", labels=["ubuntu-24.04"], completed_at="2026-11-10T21:44:43Z")
+    job["steps"][0].update(name="Run make template-test AUDIT=1", completed_at="2026-11-10T21:44:40Z")
+    aggregate["steps"] = [
+        {"number": number, "name": name, "status": "completed", "conclusion": outcome}
+        for number, (name, outcome) in enumerate(
+            (("Set up job", "success"), (guard, "failure"), (direct, "skipped"), ("Complete job", "success")), 1
+        )
+    ]
+    check["name"] = job["name"]
+    responses["annotations"][0]["message"] = "The job has exceeded the maximum execution time of 10m0s"
+    policy = q.core_facts.at(SHA)
+    expected = policy.expected_jobs("workflow_dispatch") | {"Plugin template": "success", "Release candidate source": "success"}
+    policy = replace(policy, jobs={**policy.jobs, "workflow_dispatch": expected})
+    monkeypatch.setattr(q.core_facts, "at", lambda _: policy)
+    lane = policy.quarantine
+    observed = expected | {"Release candidate source": "skipped", lane.registry: "success", lane.plan: "success", lane.idle: "skipped"}
+    for identifier, (name, conclusion) in enumerate(observed.items(), JOB + 2):
+        if name not in (job["name"], aggregate["name"]):
+            responses["jobs"]["jobs"].append({**job, "id": identifier, "name": name, "conclusion": conclusion})
+    responses["jobs"]["total_count"] = len(responses["jobs"]["jobs"])
+    world["workflow"] = rf'''name: CI
+jobs:
+  template:
+    name: Plugin template
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: make template-test AUDIT=1
+  other:
+    name: Other workload
+  ci-ok:
+    name: CI OK
+    needs: [template, other]
+    steps:
+      - name: {guard}
+        env:
+          NEEDS: ${{{{ toJSON(needs) }}}}
+        run: |
+          jq -r 'to_entries[] | select(.value.result != "success")
+            | "::error::Required job \(.key) ended with \(.value.result)"' <<< "$NEEDS"
+          for result in $RESULTS; do
+            *) echo "A required job ended with: $result"; exit 1 ;;
+      - name: {direct}
+        run: echo checked
+'''
+
+    def source(path):
+        assert path == f"contents/{policy.workflow}?ref={SHA}"
+        return {"type": "file", "encoding": "base64", "content": base64.b64encode(world["workflow"].encode()).decode()}
+
+    monkeypatch.setattr(main_checkpoint, "get", source)
+    command = next(line.strip() for line in world["workflow"].splitlines() if "jq -r" in line)
+    world["aggregate_verdict"] = "template"
+
+    def aggregate_log(job_id):
+        assert job_id == aggregate["id"]
+        failed_dependency = world["aggregate_verdict"]
+        needs = {key: {"result": "cancelled" if key == failed_dependency else "success"} for key in ("template", "other")}
+        return "\n".join(f"2026-11-10T21:45:00.0000000Z {line}" for line in (
+            f"##[group]Run {command}", f"  NEEDS: {json.dumps(needs)}", "##[endgroup]",
+            f"##[error]Required job {failed_dependency} ended with cancelled", "A required job ended with: cancelled",
+            main_capacity.EXIT,
+        )).encode()
+
+    monkeypatch.setattr(main_capacity, "read_aggregate_log", aggregate_log)
+    return world
+
+
+def test_full_dispatch_required_template_timeout_is_red_while_preserving_the_old_pin(full_dispatch):
+    q = full_dispatch["queue"]
+    assert q.main_state() == "red"
+    assert q.main_red_jobs() == {"run": RUN, "sha": SHA, "jobs": ["Plugin template"]}
+    assert not q.main_is_green()
+    assert not q.later_main_passes()
+    assert q.main_rerun_plan()[0] == "none"
+    assert full_dispatch["state"].read_bytes() == full_dispatch["before"]
+
+
+@pytest.mark.parametrize("damage", ["split", "missing required job", "wrong runner", "wrong workload",
+                                    "extra aggregate failure", "different timeout", "changed workflow"])
+def test_dispatch_timeout_requires_exact_full_inventory_and_hosted_workload(full_dispatch, damage):
+    q = full_dispatch["queue"]
+    responses = full_dispatch["responses"]
+    jobs = responses["jobs"]["jobs"]
+    if damage == "split":
+        responses["run"]["display_title"] = f"CI macOS main {SHA}"
+    elif damage == "missing required job":
+        jobs.remove(next(job for job in jobs if job["name"].startswith("Test (macos")))
+        responses["jobs"]["total_count"] -= 1
+    elif damage == "wrong runner":
+        jobs[0]["labels"] = ["ubuntu-latest"]
+    elif damage == "wrong workload":
+        jobs[0]["steps"][0]["name"] = "Run ./.github/actions/setup-uv"
+    elif damage == "extra aggregate failure":
+        jobs[1]["steps"].append({"name": "Another failure", "conclusion": "failure"})
+    elif damage == "different timeout":
+        responses["annotations"][0]["message"] = "The job has exceeded the maximum execution time of 5m0s"
+    else:
+        full_dispatch["workflow"] = full_dispatch["workflow"].replace("needs: [template, other]", "needs: [other]")
+    assert q.latest_required_timeout(full_dispatch["rows"]) == {}
+    assert q.main_state() == "unknown"
+    assert full_dispatch["state"].read_bytes() == full_dispatch["before"]
+
+
+@pytest.mark.parametrize("damage", [
+    "incomplete", "in progress", "incorrect ordinal", "failed predecessor", "extra cancelled step",
+    "unrelated dependency", "unavailable log",
+])
+def test_dispatch_timeout_needs_completed_aggregate_steps_and_a_causal_log(full_dispatch, monkeypatch, damage):
+    q = full_dispatch["queue"]
+    steps = full_dispatch["responses"]["jobs"]["jobs"][1]["steps"]
+    if damage == "incomplete":
+        steps.pop(0)
+    elif damage == "in progress":
+        steps[1]["status"] = "in_progress"
+    elif damage == "incorrect ordinal":
+        steps[1]["number"] = 3
+    elif damage == "failed predecessor":
+        steps[0]["conclusion"] = "failure"
+    elif damage == "extra cancelled step":
+        steps.insert(2, {"number": 3, "name": "Unexpected step", "status": "completed", "conclusion": "cancelled"})
+    elif damage == "unrelated dependency":
+        full_dispatch["aggregate_verdict"] = "other"
+    else:
+        def timed_out(_):
+            raise subprocess.TimeoutExpired("gh", 60)
+
+        monkeypatch.setattr(main_capacity, "read_aggregate_log", timed_out)
+    assert q.latest_required_timeout(full_dispatch["rows"]) == {}
+    assert q.main_state() == "unknown"
+    assert q.main_red_jobs() == {"run": 41, "sha": "a" * 40, "jobs": ["Historical failure"]}
+    assert full_dispatch["state"].read_bytes() == full_dispatch["before"]
+
+
+def test_dispatch_timeout_refuses_when_protected_main_moves_during_proof(full_dispatch, monkeypatch):
+    q = full_dispatch["queue"]
+    lookup = q.hzlib.ghj
+    tip_reads = 0
+
+    def main_moves(*args, **kwargs):
+        nonlocal tip_reads
+        evidence = lookup(*args, **kwargs)
+        if args[-1].endswith("/git/ref/heads/main"):
+            tip_reads += 1
+            if tip_reads == 2:
+                evidence["object"]["sha"] = "f" * 40
+        return evidence
+
+    monkeypatch.setattr(q.hzlib, "ghj", main_moves)
+    assert q.latest_required_timeout(full_dispatch["rows"]) == {}
+    assert tip_reads == 2
+    assert full_dispatch["state"].read_bytes() == full_dispatch["before"]
