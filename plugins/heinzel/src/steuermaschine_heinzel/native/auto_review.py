@@ -142,7 +142,7 @@ def recorded_verdict(comments: list[dict[str, Any]], head: str, creators: list[s
     return found
 
 
-def needs_review(repo: str, number: int, base: str, head: str, files: list[dict[str, Any]], guard: Any = None) -> list[str]:
+def needs_review(repo: str, number: int, base: str, head: str, files: list[dict[str, Any]], guard: Any = None, *, errors_only: bool = False) -> list[str]:
     """Why the PR touches a gate (empty: it does not): diff-guard findings and CI changes. An unreadable diff or an unreadable CI
     judgment counts as a gate touch (fail closed)."""
     w = world()
@@ -150,9 +150,9 @@ def needs_review(repo: str, number: int, base: str, head: str, files: list[dict[
     found = (guard or hzlib.load("diff_guard").check)(repo, str(number))
     if found is None:
         reasons.append("the diff guard could not read the diff")
-    else:
+    elif not errors_only:
         reasons += [f"diff guard: {str(item[1]) if len(item) > 1 else str(item)}"[:100] for item in found[:5]]
-    reasons += list(ci_reasons(w, repo, base, head, files))
+    reasons += list(ci_reasons(w, repo, base, head, files, errors_only=True) if errors_only else ci_reasons(w, repo, base, head, files))
     return reasons
 
 

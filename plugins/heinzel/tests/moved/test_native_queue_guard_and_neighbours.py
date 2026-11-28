@@ -143,10 +143,20 @@ FLAGGED = [("tests/test_a.py", 9, "skip", "@pytest.mark.skip"), ("ci.yml", 3, "t
 
 def test_queue_add_refuses_a_flagged_pr_and_queues_the_clean_one(queue, monkeypatch, capsys):
     monkeypatch.setattr(queue, "guard_findings", lambda repo, number: (FLAGGED, "FLAG 393\n  tests/test_a.py:9") if number == "393" else ([], "PASS"))
-    assert queue.main(["add", "393", "plugins", "38"]) == 1
+    assert queue.main(["add", "acme", "393", "plugins", "38"]) == 1
     captured = capsys.readouterr()
-    assert "refused 393" in captured.err and "--reviewed" in captured.err and "tests/test_a.py:9" in captured.err
+    assert "refused acme #393" in captured.err and "--reviewed" in captured.err and "tests/test_a.py:9" in captured.err
     assert [i["key"] for i in queue.load()["items"]] == ["plugins #38"] and queue.notes == []
+
+
+def test_queue_policy_binds_checked_head_and_records_no_review(queue, monkeypatch):
+    monkeypatch.setattr(queue, "guard_findings", lambda repo, number: (FLAGGED, "FLAG"))
+    assert queue.main(["add", "--expected-head", "b" * 40, "393"]) == 1
+    assert queue.load()["items"] == []
+    assert queue.main(["add", "--expected-head", "a" * 40, "393"]) == 0
+    item, = queue.load()["items"]
+    assert item["guarded_head"] == item["expected_head"] == "a" * 40
+    assert not item["reviewed_head"] and queue.notes == []
 
 
 def test_queue_add_reviewed_queues_and_logs_the_reason(queue, monkeypatch, capsys):
