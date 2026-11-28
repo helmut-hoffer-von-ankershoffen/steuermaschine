@@ -22,7 +22,6 @@ unreadable too). `hz-queue add` runs this and refuses a flagged PR unless given 
 
 import re
 import stat
-import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -152,7 +151,7 @@ def diff_text(repo: str, number: str) -> str | None:
             return diff.stdout if diff.stdout.strip() else None
         if DIFF_LIMIT_ERROR in diff.stderr and "PullRequest.diff too_large" in diff.stderr.splitlines():
             return large_core_diff(repo, number)
-    except (OSError, ValueError, subprocess.TimeoutExpired):
+    except (OSError, ValueError, edge.ProcessTimeout):
         return None
     return None
 

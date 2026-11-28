@@ -144,3 +144,12 @@ def test_other_gh_responses_do_not_try_the_local_fallback(monkeypatch, code, out
     monkeypatch.setattr(guard.edge, "run", lambda argv, **kwargs: subprocess.CompletedProcess(argv, code, output, error))
     monkeypatch.setattr(guard, "large_core_diff", lambda *args: pytest.fail("unexpected object fallback"))
     assert guard.diff_text(REPO, "997") == expected
+
+
+def test_diff_transport_timeout_refuses_without_using_local_objects(monkeypatch):
+    def timeout(argv, **kwargs):
+        raise subprocess.TimeoutExpired(argv, kwargs["timeout"])
+
+    monkeypatch.setattr(guard.edge, "run", timeout)
+    monkeypatch.setattr(guard, "large_core_diff", lambda *args: pytest.fail("unexpected object fallback"))
+    assert guard.diff_text(REPO, "997") is None
