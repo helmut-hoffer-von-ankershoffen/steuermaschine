@@ -153,8 +153,16 @@ def test_missing_or_stale_ci_never_supplies_full_proof(monkeypatch, tmp_path):
 
 
 @pytest.mark.parametrize("already_armed", [False, True])
-@pytest.mark.parametrize("operator_authorized", [False, True])
-def test_queue_entry_requiring_immediate_merge_is_never_armed(monkeypatch, already_armed, operator_authorized):
+def test_deferred_queue_entry_is_never_armed(monkeypatch, already_armed):
+    assert_immediate_merge(monkeypatch, already_armed, operator_authorized=False)
+
+
+@pytest.mark.parametrize("already_armed", [False, True])
+def test_operator_authorized_entry_is_never_armed(monkeypatch, already_armed):
+    assert_immediate_merge(monkeypatch, already_armed, operator_authorized=True)
+
+
+def assert_immediate_merge(monkeypatch, already_armed, *, operator_authorized):
     item = {"repo": auto_arm.hzlib.CORE, "pr": "42", "key": "core:42", "guarded_head": HEAD}
     if operator_authorized:
         item["guard_authorization"] = {"head": HEAD, "base": BASE}
