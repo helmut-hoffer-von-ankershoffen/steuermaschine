@@ -471,13 +471,11 @@ def step_tests(c: Ctx) -> Step:
             c.ci.append(f"{len(rest)} of {len(files)} selected test files")
             s.warn(f"{why}: {len(files_run)} owning or explicitly named tests run here, {len(rest)} are left to PR CI")
     explicit = set(c.plan.extra)
-    remaining = []
-    for file in files_run:
-        if file in explicit:
-            # Pytest must collect this file; another file's collected tests cannot mask an empty selection.
-            run_steps(c, s, [("named tests", [*head.PYTEST_FILES_CMD, file])], "fix the named test or its selection")
-        else:
-            remaining.append(file)
+    named = [file for file in files_run if file in explicit]
+    remaining = [file for file in files_run if file not in explicit]
+    for start in range(0, len(named), MAX_TEST_FILES):
+        batch = named[start:start + MAX_TEST_FILES]
+        run_steps(c, s, [("named tests", [*head.PYTEST_FILES_CMD, *batch])], "fix the named test or its selection")
     for start in range(0, len(remaining), MAX_TEST_FILES):  # a spent budget stops the run between batches (exit 75)
         head.run_tests(c, s, "selected", remaining[start:start + MAX_TEST_FILES])
     if c.plan.lanes:

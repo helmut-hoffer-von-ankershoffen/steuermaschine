@@ -669,13 +669,13 @@ def test_a_full_selection_the_import_graph_narrows_runs_those_tests_and_the_ones
     pytest.param("<failure/>", id="failed"),
     pytest.param("<error/>", id="error"),
 ])
-@pytest.mark.parametrize("route", ["guard", "standalone", "docs-and-guard"])
+@pytest.mark.parametrize("route", ["guard", "standalone", "explicit-batch", "docs-and-guard"])
 def test_named_python_needs_its_own_passing_case(core, rt, tmp_path, outcome, route):  # noqa: F811
     wanted, other = "tests/unit/wanted_test.py", "tests/unit/other_test.py"
     for name in (wanted, other):
         (core / name).write_text("def test_ok(): pass\n")
     sel = tmp_path / "sel.json"
-    sel.write_text(json.dumps({"python": [wanted]}))
+    sel.write_text(json.dumps({"python": [other, wanted] if route == "explicit-batch" else [wanted]}))
     cmd = ["uv", "run", "pytest", other, wanted, "-m", "unit"]
 
     def emit(argv):
@@ -686,10 +686,11 @@ def test_named_python_needs_its_own_passing_case(core, rt, tmp_path, outcome, ro
         output.write_text(f"<testsuite>{sibling}{requested}</testsuite>")
         return "pytest returned success"
 
-    grouped = route != "standalone"
+    grouped = route in {"guard", "docs-and-guard"}
     guards = [cmd] if grouped else []
     docs = ["named-docs=" + " ".join(cmd)] if route == "docs-and-guard" else []
-    match = " ".join(cmd if grouped else [*check.cheap.head.PYTEST_FILES_CMD, wanted])
+    named = [other, wanted] if route == "explicit-batch" else [wanted]
+    match = " ".join(cmd if grouped else [*check.cheap.head.PYTEST_FILES_CMD, *named])
     machine = checkout(core, {**NONE, "guards": guards, "docs": docs}).on(match, emit)
     runtime = rt(machine)
     found = report(invoke(runtime, ["--format", "json", "check", str(core), "--sel", str(sel)]))
