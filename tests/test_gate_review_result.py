@@ -1,0 +1,109 @@
+import importlib.util
+import json
+import os
+import re
+import subprocess
+from pathlib import Path
+from textwrap import dedent
+
+import pytest
+
+ROOT = Path(__file__).resolve().parents[1]
+SPEC = importlib.util.spec_from_file_location("gate_review_result", ROOT / "bin" / "gate_review_result.py")
+gate = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(gate)
+
+LIMIT = {"type": "result", "subtype": "success", "is_error": True, "terminal_reason": "api_error", "api_error_type": "rate_limit_error",
+         "api_error_status": 429, "api_error_origin": "first_party", "result": "You've hit your monthly spend limit · more details"}
+
+
+def test_specific_provider_limit_has_a_distinct_outcome():
+    kind, public = gate.classify([{"type": "system"}, LIMIT], "failure")
+    assert kind == "skipped-provider-spend-limit" and "Independent review was skipped" in public
+    assert "VERDICT" not in public and "more details" not in public
+
+
+@pytest.mark.parametrize("override,outcome", [
+    ({"result": "429 Too many requests"}, "failure"),
+    ({"terminal_reason": "tool_error"}, "failure"),
+    ({"api_error_type": "authentication_error", "api_error_status": 401}, "failure"),
+    ({"api_error_origin": "third_party"}, "failure"),
+    ({"api_error_status": None}, "failure"),
+    ({"result": "Authentication failed\nYou've hit your monthly spend limit"}, "failure"),
+    ({}, "success"),
+    ({}, "cancelled"),
+])
+def test_weak_or_mixed_error_evidence_never_passes(override, outcome):
+    with pytest.raises(ValueError):
+        gate.classify([{**LIMIT, **override}], outcome)
+
+
+def test_rejection_already_emitted_before_limit_blocks():
+    reject = {"type": "assistant", "message": {"content": [{"type": "text", "text": "A finding\nVERDICT: REJECT"}]}}
+    assert gate.classify([reject, LIMIT], "failure")[0] == "rejected"
+    assert gate.classify([reject, {"type": "result", "is_error": True}], "failure")[0] == "rejected"
+    assert gate.classify([{**LIMIT, "result": "You've hit your monthly spend limit\nVERDICT: REJECT"}], "failure")[0] == "rejected"
+
+
+@pytest.mark.parametrize("answer,kind", [("Looks fine\nVERDICT: APPROVE\n\n", "approved"), ("VERDICT: REJECT", "rejected"),
+                                          ("VERDICT: APPROVE\ntext after", "invalid"), ("VERDICT: REJECT\nVERDICT: APPROVE", "rejected")])
+def test_normal_opus_verdict_path_is_still_exact(answer, kind):
+    assert gate.classify([{"type": "result", "subtype": "success", "is_error": False, "result": answer}], "success") == (kind, answer)
+
+
+def test_collects_the_pinned_actions_failing_file_without_leaking_provider_details(tmp_path, monkeypatch, capsys):
+    execution = tmp_path / "claude-execution-output.json"
+    execution.write_text(json.dumps([LIMIT]))
+    output = tmp_path / "output"
+    for name, value in {"RUNNER_TEMP": tmp_path, "EXECUTION_FILE": execution, "GITHUB_OUTPUT": output, "OUTCOME": "failure"}.items():
+        monkeypatch.setenv(name, str(value))
+    assert gate.main() == 0
+    data = output.read_text()
+    assert "kind=skipped-provider-spend-limit\n" in data and "more details" not in data and not capsys.readouterr().err
+    execution.unlink()
+    assert gate.main() == 1
+
+
+@pytest.mark.parametrize("kind,ready,exit_code", [("approved", "", 0), ("rejected", "true", 1),
+                                                    ("skipped-provider-spend-limit", "true", 0), ("skipped-provider-spend-limit", "", 1)])
+def test_gate_judge_rollout_switch_cannot_pass_a_rejection(tmp_path, kind, ready, exit_code):
+    flow = (ROOT / ".github/workflows/gate-review.yml").read_text(encoding="utf-8")
+    named_steps = dict(step.split("\n", 1) for step in re.split(r"(?m)^      - name: ", flow)[1:])
+    assert "\n".join(("        if: needs.model.outputs.kind == 'rejected'", "        run:")) in named_steps["Record explicit Gate review rejection"]
+    assert "        if: needs.model.outputs.kind == 'skipped-provider-spend-limit' && vars.GATE_SPEND_LIMIT_READY == 'true'\n" in named_steps["Check same-head Gate review history"]
+    assert "        if: needs.model.outputs.kind == 'skipped-provider-spend-limit'\n" in named_steps["Record confirmed provider spend limit"]
+    _config, header, shell = named_steps["Judge the review outcome and comment"].partition("        run: |\n")
+    assert header and shell.strip()
+    gh = tmp_path / "gh"
+    gh.write_text("#!/bin/sh\nexit 0\n")
+    gh.chmod(0o755)
+    env = {**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}", "RUNNER_TEMP": str(tmp_path), "MODE": "review",
+           "MODEL": "success", "KIND": kind, "RESULT": "test outcome", "PR": "42", "GITHUB_REPOSITORY": "owner/repo", "SPEND_LIMIT_READY": ready}
+    assert subprocess.run(["bash", "-e", "-c", dedent(shell)], env=env, check=False).returncode == exit_code
+
+
+@pytest.mark.parametrize("api_outcome", ["source", "empty", "failure"])
+def test_final_gate_loads_only_the_base_history_reader(tmp_path, api_outcome):
+    flow = (ROOT / ".github/workflows/gate-review.yml").read_text(encoding="utf-8")
+    final_job = flow.split("\n  gate-review:\n", 1)[1]
+    assert "uses:" not in final_job
+    step = final_job.split("      - name: Check same-head Gate review history\n", 1)[1].split("\n      - name: ", 1)[0]
+    shell = dedent(step.split("        run: |\n", 1)[1])
+    gh = tmp_path / "gh"
+    gh.write_text('''#!/bin/sh
+printf '%s\n' "$@" > "$TRACE"
+case "$API_OUTCOME" in
+  source) printf '%s\n' 'import os; from pathlib import Path; Path(os.environ["RAN"]).touch()' ;;
+  failure) exit 1 ;;
+esac
+''')
+    gh.chmod(0o755)
+    trace, ran = tmp_path / "trace", tmp_path / "ran"
+    base, head = "a" * 40, "b" * 40
+    env = {**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}", "RUNNER_TEMP": str(tmp_path),
+           "GITHUB_REPOSITORY": "owner/repo", "GITHUB_SHA": base, "PR_HEAD": head,
+           "API_OUTCOME": api_outcome, "TRACE": str(trace), "RAN": str(ran)}
+    result = subprocess.run(["bash", "-e", "-o", "pipefail", "-c", shell], env=env, check=False)
+    assert (result.returncode == 0) is (api_outcome == "source")
+    assert ran.exists() is (api_outcome == "source")
+    assert trace.read_text().splitlines()[-1] == f"repos/owner/repo/contents/bin/gate_review_history.py?ref={base}"

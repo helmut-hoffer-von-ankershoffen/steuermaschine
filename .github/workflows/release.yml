@@ -1,6 +1,6 @@
 name: Release
-# Automatic: every merge to main whose CI is green and whose pull request carries the independent review verdict
-# (`Gate review`: the Gate review workflow's check, or a status by an allowlisted login; bin/release_ci.py) is released:
+# Automatic: every merge to main whose CI is green and whose pull request carries accepted Gate review evidence
+# (an approval or a confirmed provider spending limit from the protected workflow; bin/release_ci.py) is released:
 # steuermaschine and steuermaschine-heinzel at one version from that commit, PyPI, tag and GitHub release, then a
 # clean-container acceptance, and only then Latest (the Mini and every user follow Latest). No manual dispatch.
 # Only the released merge needs its verdict: a release takes everything since the last tag.
@@ -45,7 +45,7 @@ jobs:
           version: "0.13.5"
           python-version: "3.15"
       - run: make install
-      - name: Gate (merged from a pull request with an independent verdict, not yet released) and next version
+      - name: Verify Gate review evidence for the merged pull request and compute the next version
         id: gate
         env:
           GH_TOKEN: ${{ github.token }}

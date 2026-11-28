@@ -27,7 +27,8 @@ $STEUERMASCHINE_AGENT is set and is not --reviewer: the agent that records is th
 
 `record-ci` is for the Mini follower (bin/release_ci.py follow): the CI of a release already holds the independent
 verdict (the `Gate review` status on the merged pull request's head; the release exists only because it was present).
-The follower looks it up and records it here (record-ci and every later `check` re-verify it live through release_ci.verify: verdict, tree equal to the reviewed head, API errors refuse), with an extra line `source: ci TAG URL`. Such a receipt is checked exactly
+The follower looks it up and records it here with `source: ci TAG URL`. Both `record-ci` and later `check` calls use
+release_ci.verify to verify the reviewed tree and real approval again. API errors refuse. Such a receipt is checked exactly
 like any other (commit, base = the live release, reviewer none of the authors) except that `recorded-by` is `ci-follower`
 instead of the reviewer.
 
@@ -214,8 +215,10 @@ def _ci_verify(repo: Path, commit: str, reviewer: str) -> None:
             sys.modules["release_ci"] = mod
             spec.loader.exec_module(mod)
         _, _, who = mod.verify(repo, commit)
-    except Exception as exc:  # noqa: BLE001  (every failure refuses: a receipt alone is never trusted)
+    except Exception as exc:  # every failure refuses: a receipt alone is never trusted
         raise Refused(f"the CI verdict of {commit[:12]} cannot be verified live: {exc}") from None
+    if who is None:
+        raise Refused("CI skipped independent review at the provider spending limit and cannot supply an approval receipt")
     if who.strip() != reviewer.strip():
         raise Refused(f"the live CI verdict is by {who}, the receipt names {reviewer}")
 

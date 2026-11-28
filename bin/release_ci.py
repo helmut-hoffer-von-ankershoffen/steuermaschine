@@ -12,6 +12,7 @@ review`, or a login of GATE_REVIEW_CREATORS runs `release_ci.py record PR --revi
 description `APPROVE reviewer=NAME`, on the PR's head). A merge to main is released when its CI is green (release.yml
 starts on the finished CI run of main), the merged pull request's final head carries a verdict, the merged tree equals
 the reviewed head's tree, and the reviewer is none of the commit's authors (bin/promote_verdict.py's identity rule).
+The protected workflow can also attest a confirmed provider spending limit. This records a skipped review with no reviewer.
 github-actions[bot] never sets a valid status; all agents share one token, so the allowlist cannot tell agents apart.
 Only the merge being released needs its verdict: a release takes every commit since the last tag (a merge whose own run
 was superseded is released with its successor). A refusal is red (exit 1, an `::error::` line); the one exception is a
@@ -58,6 +59,8 @@ CONTEXT = "Gate review"
 BOT = "github-actions[bot]"
 WORKFLOW_REVIEWER = "gate-review-workflow"
 GATE_WORKFLOW = ".github/workflows/gate-review.yml"
+SPEND_LIMIT_STEP = "Record confirmed provider spend limit"
+SPEND_LIMIT = "skipped-provider-spend-limit"
 DESCRIPTION = re.compile(r"APPROVE reviewer=(\S.*)")
 REPO = os.environ.get("SM_RELEASE_REPO", "helmut-hoffer-von-ankershoffen/steuermaschine")
 LOOPS = re.compile(r"steuermaschine-stable|\.local/bin/sm<|/sm</string>")
@@ -93,8 +96,39 @@ def creators(get: Callable[[str], object]) -> set[str]:
     return {c.strip() for c in raw.split(",") if c.strip()} - {BOT}
 
 
-def verdict_for(sha: str, api_get: Callable[[str], object] | None = None) -> tuple[int, str, str]:
-    """(PR number, PR head, reviewer) of the merged pull request of commit SHA; Refused when there is no valid verdict.
+def workflow_reviewer(run: dict[str, Any], check_id: int, head: str, get: Callable[[str], object]) -> str | None:
+    """Read the matched Gate job's own steps. None is authenticated provider spend-limit evidence."""
+    run_id, attempt = run.get("id"), run.get("run_attempt")
+    if type(run_id) is not int or type(attempt) is not int or type(check_id) is not int:
+        raise Refused("Gate review workflow run, attempt or check identity is missing")
+    job = get(f"repos/{REPO}/actions/jobs/{check_id}")
+    if (not isinstance(job, dict) or (job.get("id"), job.get("run_id"), job.get("run_attempt"), job.get("head_sha"),
+                                     job.get("name"), job.get("status"), job.get("conclusion"))
+            != (check_id, run_id, attempt, head, CONTEXT, "completed", "success")):
+        raise Refused("Gate review job does not match the successful workflow attempt and head")
+    steps = job.get("steps")
+    if not isinstance(steps, list) or not all(isinstance(step, dict) for step in steps):
+        raise Refused("Gate review job steps are unreadable")
+
+    def outcomes(name: str) -> list[tuple[str, str]]:
+        return [(step.get("status", ""), step.get("conclusion", "")) for step in steps if step.get("name") == name]
+
+    judged = outcomes("Judge the review outcome and comment")
+    legacy = outcomes("Judge the review and comment")
+    spend_limit = outcomes(SPEND_LIMIT_STEP)
+    success = [("completed", "success")]
+    if legacy == success and not judged and not spend_limit:
+        return WORKFLOW_REVIEWER
+    if judged == success and not legacy:
+        if spend_limit == success and outcomes("Check same-head Gate review history") == success:
+            return None
+        if spend_limit == [("completed", "skipped")]:
+            return WORKFLOW_REVIEWER
+    raise Refused("Gate review job does not prove either approval or a confirmed provider spending limit")
+
+
+def verdict_for(sha: str, api_get: Callable[[str], object] | None = None) -> tuple[int, str, str | None]:
+    """(PR number, PR head, reviewer or None for a confirmed spend limit); refuse absent evidence.
     Two sources, the first that holds wins: the check run `Gate review` of the Gate review workflow (an app check run: only
     the workflow can make one, the model reviewer is `gate-review-workflow`), or the commit status `Gate review` set by hand
     (`record`) by a login of the allowlist. Limit: every agent shares the owner's token, so the allowlist cannot tell
@@ -118,9 +152,10 @@ def verdict_for(sha: str, api_get: Callable[[str], object] | None = None) -> tup
             suite = (latest_run.get("check_suite") or {}).get("id")
             found = get(f"repos/{REPO}/actions/runs?check_suite_id={suite}") if suite else {}
             runs_of = found.get("workflow_runs", []) if isinstance(found, dict) else []
-            if any(w.get("path") == GATE_WORKFLOW and w.get("event") == "pull_request_target" and w.get("head_sha") == head
-                   and w.get("conclusion") == "success" for w in runs_of):
-                return number, head, WORKFLOW_REVIEWER
+            matched = [w for w in runs_of if w.get("path") == GATE_WORKFLOW and w.get("event") == "pull_request_target"
+                       and w.get("head_sha") == head and w.get("conclusion") == "success"]
+            if len(matched) == 1:
+                return number, head, workflow_reviewer(matched[0], latest_run.get("id"), head, get)
             forged = f" (a check run `{CONTEXT}` exists but does not come from {GATE_WORKFLOW} on pull_request_target for this head)"
     statuses = get(f"repos/{REPO}/commits/{head}/statuses?per_page=100")
     latest = next((s for s in statuses if s.get("context") == CONTEXT), None) if isinstance(statuses, list) else None  # newest first
@@ -135,7 +170,7 @@ def verdict_for(sha: str, api_get: Callable[[str], object] | None = None) -> tup
     return number, head, match.group(1).strip()
 
 
-def verify(repo: Path, sha: str, api_get: Callable[[str], object] | None = None, run: Run = sh) -> tuple[int, str, str]:
+def verify(repo: Path, sha: str, api_get: Callable[[str], object] | None = None, run: Run = sh) -> tuple[int, str, str | None]:
     """verdict_for plus: the merged tree is the reviewed head's tree, and the reviewer is none of the authors. Live, every time."""
     get = api_get or api
     number, head, reviewer = verdict_for(sha, get)
@@ -143,8 +178,10 @@ def verify(repo: Path, sha: str, api_get: Callable[[str], object] | None = None,
     tree = reviewed["tree"]["sha"] if isinstance(reviewed, dict) and isinstance(reviewed.get("tree"), dict) else ""
     merged = run("git", "rev-parse", f"{sha}^{{tree}}", cwd=repo).strip()
     if not tree or tree != merged:
-        raise Refused(f"{sha[:12]} is not what was reviewed: its tree {merged[:12]} differs from the head {head[:12]} of PR #{number} ({tree[:12] or 'unknown'})")
-    independent(repo, sha, reviewer)
+        reason = "does not match the head covered by the spending-limit evidence" if reviewer is None else "is not what was reviewed"
+        raise Refused(f"{sha[:12]} {reason}: its tree {merged[:12]} differs from the head {head[:12]} of PR #{number} ({tree[:12] or 'unknown'})")
+    if reviewer is not None:
+        independent(repo, sha, reviewer)
     return number, head, reviewer
 
 
@@ -213,7 +250,8 @@ def gate(repo: Path, sha: str, api_get: Callable[[str], object] | None = None, r
         raise AlreadyReleased(f"{sha[:12]} is already in a release")
     number, head, reviewer = verify(repo, sha, api_get, run)
     version = next_version(repo, run)
-    return {"version": version, "reviewer": reviewer, "pr": str(number), "head": head}
+    review = {"review": SPEND_LIMIT} if reviewer is None else {"reviewer": reviewer}
+    return {"version": version, "pr": str(number), "head": head, **review}
 
 
 def sha256(path: Path) -> str:
@@ -431,10 +469,11 @@ def follow(stable: Path, clone: Path, home: Path, run: Run = sh, api_get: Callab
         run(str(rel / "venv" / "bin" / "python"), str(clone / "bin" / "migrate_config.py"), str(source),
             str(home / ".config" / "steuermaschine" / "migrate-values.toml"), str(rel / "user-config.toml"))
         smoke(rel, run)
-        meta = {"tag": tag, "version": version, "commit": commit, "pr": number, "reviewer": reviewer,
+        review_meta = {"review": SPEND_LIMIT} if reviewer is None else {"reviewer": reviewer}
+        meta = {"tag": tag, "version": version, "commit": commit, "pr": number, **review_meta,
                 "wheels": {w["filename"]: w["sha256"] for w in wheels}}
         (rel / "release.json").write_text(json.dumps(meta, indent=1) + "\n", encoding="utf-8")
-    start_canary(stable, clone, home, rel, tag, at)
+    start_canary(stable, clone, home, rel, tag, at, spend_limit_commit=commit if reviewer is None else "")
     return (f"{tag} ({commit[:12]}) is the canary: the follower's probe and {stable / 'bin' / 'sm-canary'} use it for one tick "
             f"({CANARY_SECONDS}s); builders stay on {live['name'] or 'the live release'}")
 
@@ -528,7 +567,7 @@ exec "$rel/venv/bin/steuermaschine" "$@"
 """
 
 
-def start_canary(stable: Path, clone: Path, home: Path, rel: Path, tag: str, at: float) -> None:
+def start_canary(stable: Path, clone: Path, home: Path, rel: Path, tag: str, at: float, *, spend_limit_commit: str = "") -> None:
     """STABLE/canary -> releases/vX and STABLE/bin/sm-canary, the coordinator's way to it. `current` and `bin/sm` (every
     builder's launcher) are untouched: the new release's launcher is installed only by the swap."""
     (stable / "bin").mkdir(parents=True, exist_ok=True)
@@ -536,7 +575,8 @@ def start_canary(stable: Path, clone: Path, home: Path, rel: Path, tag: str, at:
     tmp.write_text(CANARY_LAUNCHER, encoding="utf-8")
     tmp.chmod(0o755)
     os.replace(tmp, stable / "bin" / "sm-canary")
-    (stable / "canary.json").write_text(json.dumps({"tag": tag, "since": int(at), "at": now_stamp(at)}) + "\n", encoding="utf-8")
+    review = {"review": SPEND_LIMIT, "commit": spend_limit_commit} if spend_limit_commit else {}
+    (stable / "canary.json").write_text(json.dumps({"tag": tag, "since": int(at), "at": now_stamp(at), **review}) + "\n", encoding="utf-8")
     point(stable, "canary", f"releases/{rel.name}")
 
 
@@ -598,6 +638,14 @@ def canary_tick(stable: Path, clone: Path, home: Path, run: Run, at: float, get:
         return f"{tag} is the canary for {int(CANARY_SECONDS - (at - since))}s more; no exit 70 so far"
     if held := core_window(home, at):
         return f"{tag} passed its canary tick; the swap waits: {held}"
+    if meta.get("review") == SPEND_LIMIT:
+        commit = meta.get("commit", "")
+        try:
+            if not isinstance(commit, str) or not re.fullmatch(r"[0-9a-f]{40}", commit):
+                raise Refused("the canary spending-limit evidence has no exact commit")
+            verify(clone, commit, get, run)
+        except Refused as exc:
+            return f"{tag}: Gate review evidence cannot be reverified ({exc}); the swap waits"
     done = subprocess.run(["bash", "-c", SWITCH], check=False, env=lib_env(clone, stable, home, REL=str(rel), ID=rel.name))
     if done.returncode == 75:
         raise Wait(f"{tag}: a write step still runs; the next run swaps")
