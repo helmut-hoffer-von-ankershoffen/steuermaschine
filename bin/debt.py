@@ -3,12 +3,17 @@ Numbers: coverage per package (line+branch), mypy strict findings, ruff findings
 The core has no debt: bin/check gates it at zero findings and 90% coverage. Compared with docs/debt.json:
 `--gate` exits 1 when a number got worse, cannot be read (no coverage data, no tool summary line) or is missing from
 docs/debt.json (bin/check runs it so); `--record` writes the current numbers (do it in the
-commit that makes a number better, never to hide a worse one). Reads the .coverage file of the test run."""
+commit that makes a number better, never to hide a worse one: it refuses to lower a recorded number unless `--lower` is
+given). Coverage is recorded per platform (key `coverage core % [linux]`): the same tests cover different lines on
+macOS and Linux, so each platform is gated against the baseline recorded for it, and a platform with no baseline is not
+gated on coverage unless it is darwin or linux, whose baseline must exist; a platform not gated is listed as such and never borrows another's. Reads the .coverage file of the
+test run."""
 
 from __future__ import annotations
 
 import ast
 import json
+import math
 import re
 import subprocess
 import sys
@@ -16,6 +21,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 RATCHET = ROOT / "docs" / "debt.json"
+PLATFORM = sys.platform.rstrip("0123456789")  # darwin, linux
 GROUPS = {"core": "src/steuermaschine/*", "plugin new code": "plugins/heinzel/src/steuermaschine_heinzel/*", "plugin moved libraries": "*/native/*_lib/*"}
 
 
@@ -27,9 +33,31 @@ def coverage(include: str, omit: str = "") -> float | None:
     args = ["uv", "run", "--quiet", "coverage", "report", f"--include={include}", "--format=total", "--fail-under=0"] + ([f"--omit={omit}"] if omit else [])
     out = run(*args).strip().splitlines()
     try:
-        return float(out[-1])
+        value = float(out[-1])
+        return value if 0 <= value <= 100 else None
     except (IndexError, ValueError):
         return None
+
+
+def read_baseline(path: Path) -> dict[str, int | float]:
+    """Read debt metrics without ambiguous keys, non-numbers or impossible measurements."""
+    def unique(pairs: list) -> dict:
+        values = dict(pairs)
+        if len(values) != len(pairs):
+            raise ValueError("duplicate debt baseline key")
+        return values
+
+    baseline = json.loads(path.read_text(), object_pairs_hook=unique)
+    if not isinstance(baseline, dict):
+        raise ValueError("debt baseline must be an object")
+    for key, value in baseline.items():
+        if type(value) not in (int, float) or (isinstance(value, float) and not math.isfinite(value)):
+            raise ValueError(f"{key}: expected a finite debt baseline number")
+        if value < 0 or (key.startswith("coverage") and value > 100):
+            raise ValueError(f"{key}: debt baseline outside measurement range")
+        if not key.startswith("coverage") and isinstance(value, float) and not value.is_integer():
+            raise ValueError(f"{key}: expected a whole finding count")
+    return baseline
 
 
 def count(pattern: str, text: str, clean: str) -> int | None:
@@ -45,16 +73,35 @@ MYPY = (r"Found (\d+) errors? in \d+ files?", r"^Success: no issues found")
 RUFF = (r"Found (\d+) errors?", r"^All checks passed!")
 
 
-def problems(now: dict[str, float | int | None], before: dict[str, float | int]) -> list[str]:
-    """Why the gate is red: a number that got worse, could not be read, or has no recorded value (empty: green)."""
+def worse(key: str, value: float | int, old: float | int) -> bool:
+    return (value < old - 0.05) if key.startswith("coverage") else (value > old)
+
+
+REQUIRED_PLATFORMS = ("darwin", "linux")  # the platforms the project builds on: a missing coverage baseline there is red
+
+
+def required(key: str) -> bool:
+    return key.startswith("coverage") and key.endswith(tuple(f"[{name}]" for name in REQUIRED_PLATFORMS))
+
+
+def ungated(now: dict[str, float | int | None], before: dict[str, float | int]) -> list[str]:
+    """Coverage numbers of a platform that has no baseline in docs/debt.json: not gated there."""
+    return [key for key in now if key.startswith("coverage") and key not in before and not required(key)]
+
+
+def problems(now: dict[str, float | int | None], before: dict[str, float | int], strict: bool = False) -> list[str]:
+    """Why the gate is red: a number that got worse, could not be read, or has no recorded value (empty: green).
+    A coverage number with no recorded value is skipped (see `ungated`) unless `strict` (the hosted promotion, which
+    needs its platform recorded)."""
     out = []
     for key, value in now.items():
         old = before.get(key)
         if value is None:
             out.append(f"{key}: could not be read (no coverage data, or the tool printed no summary line)")
         elif old is None:
-            out.append(f"{key}: not recorded in docs/debt.json (record it: bin/debt.py --record)")
-        elif (value < old - 0.05) if key.startswith("coverage") else (value > old):
+            if strict or not key.startswith("coverage") or required(key):
+                out.append(f"{key}: not recorded in docs/debt.json (record it: bin/debt.py --record)")
+        elif worse(key, value, old):
             out.append(f"{key}: {value} is WORSE than recorded {old}")
     return out
 
@@ -102,9 +149,9 @@ def old_names() -> int:
 
 def coverage_metrics() -> dict[str, float | int | None]:
     return {
-        "coverage core %": coverage(GROUPS["core"]),
-        "coverage plugin new code %": coverage(GROUPS["plugin new code"], GROUPS["plugin moved libraries"]),
-        "coverage plugin moved libraries %": coverage(GROUPS["plugin moved libraries"]),
+        f"coverage core % [{PLATFORM}]": coverage(GROUPS["core"]),
+        f"coverage plugin new code % [{PLATFORM}]": coverage(GROUPS["plugin new code"], GROUPS["plugin moved libraries"]),
+        f"coverage plugin moved libraries % [{PLATFORM}]": coverage(GROUPS["plugin moved libraries"]),
     }
 
 
@@ -124,7 +171,11 @@ def main() -> None:
         print("partial debt measurements cannot be recorded", file=sys.stderr)
         sys.exit(2)
     now = ({} if source_only else coverage_metrics()) | source_metrics()
-    before = json.loads(RATCHET.read_text()) if RATCHET.exists() else {}
+    try:
+        before = read_baseline(RATCHET) if RATCHET.exists() else {}
+    except ValueError as exc:
+        print(f"invalid debt baseline: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
     print("check: DEBT of the plugin (the ratchet docs/debt.json; the bar for 'clean' is 90% coverage, 0 findings)")
     for key, value in now.items():
         print(f"    {key}: {value}")
@@ -132,10 +183,16 @@ def main() -> None:
         if any(value is None for value in now.values()):
             print("    not recorded: a number could not be read")
             sys.exit(1)
-        RATCHET.write_text(json.dumps(now, indent=1, sort_keys=True) + "\n")
+        lowered = [f"{key}: {value} is worse than recorded {before[key]}" for key, value in now.items() if value is not None and key in before and worse(key, value, before[key])]
+        if lowered and "--lower" not in sys.argv:
+            print("\n".join(f"    RED {line}" for line in lowered) + "\n    not recorded: a recorded number would be lowered (--lower says so on purpose)")
+            sys.exit(1)
+        RATCHET.write_text(json.dumps(before | now, indent=1, sort_keys=True) + "\n")  # other platforms' numbers stay
         print(f"    recorded in {RATCHET.relative_to(ROOT)}")
         return
     found = problems(now, before)
+    for key in ungated(now, before):
+        print(f"    not gated: {key} has no baseline for {PLATFORM} in docs/debt.json (bin/debt.py --record on {PLATFORM} adds it)")
     for line in found:
         print(f"    RED {line}")
     if found:

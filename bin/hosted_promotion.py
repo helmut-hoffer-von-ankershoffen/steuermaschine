@@ -183,9 +183,9 @@ def coverage(xml: bytes, expected_files: set[str], baseline: dict) -> dict[str, 
     require(root_totals == totals, "coverage totals do not reconcile")
     values = {name: float(display_covered(100 * hit / total, 0)) for name, (hit, total) in groups.items()}
     require(values["core"] >= 90 and values["plugin"] >= 90, "hosted package coverage is below 90 percent")
-    metrics = {"coverage core %": values["core"], "coverage plugin new code %": values["new"],
-               "coverage plugin moved libraries %": values["moved"]}
-    require(not debt.problems(metrics, baseline), "hosted coverage violates the existing debt ratchet")
+    metrics = {"coverage core % [linux]": values["core"], "coverage plugin new code % [linux]": values["new"],
+               "coverage plugin moved libraries % [linux]": values["moved"]}  # hosted runners are Linux: their own baseline
+    require(not debt.problems(metrics, baseline, strict=True), "hosted coverage violates the existing debt ratchet")
     return values
 
 
@@ -231,7 +231,7 @@ def verify(repo: str, run_id: int, sha: str, installed: Path) -> dict:
     tracked = command("git", "ls-files", "-z", "src/steuermaschine", "plugins/heinzel/src/steuermaschine_heinzel").decode().split("\0")
     expected = {name for name in tracked if name.endswith(".py") and (name.startswith(CORE) or name.startswith(PLUGIN))}
     try:
-        baseline = json.loads((ROOT / "docs/debt.json").read_text())
+        baseline = debt.read_baseline(ROOT / "docs/debt.json")
     except (OSError, ValueError) as exc:
         raise Refused("debt baseline unavailable") from exc
     return {"repo": repo, "run": run_id, "head": sha, "artifact": artifact["id"], "digest": artifact["digest"],
