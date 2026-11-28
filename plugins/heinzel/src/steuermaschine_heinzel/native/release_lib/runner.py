@@ -84,7 +84,10 @@ from ..queue_lib import (
 from . import acceptance_capacity as release_acceptance_capacity
 from . import candidate_capacity as release_candidate_capacity
 from . import candidate_policy as release_candidate_policy
-from . import edge  # moved: siblings are imported relatively, no sys.path entry
+from . import (
+    compose_dependency,
+    edge,  # moved: siblings are imported relatively, no sys.path entry
+)
 from . import notes_audit as release_notes_audit  # noqa: E402
 from . import rejection as release_rejection
 from . import snapshot as release_snapshot  # noqa: E402
@@ -1369,7 +1372,16 @@ def compose_step(version: str, timeout: float, *, wait_for: bool = True) -> None
     an explicit version would compose nothing for a held core. A final core keeps the explicit dispatch.
     """
     app = f"app-v{version}"
+    def dependency_call(function, *args):
+        try:
+            return function(*args, remember)
+        except compose_dependency.EVIDENCE_ERRORS as exc:
+            raise Stop(f"compose dependency recovery: {exc}") from exc
+
     def released() -> bool:
+        if intent := state().get("compose_dependency"):
+            app_release = published_release(PLUGINS, app)
+            return bool(app_release and app_release.get("prerelease") is False and dependency_call(compose_dependency.recovered, intent))
         guard = state().get("compose_replacement_guard")
         if guard:
             run = ours(PLUGINS, "compose.yml", "compose")
@@ -1402,9 +1414,11 @@ def compose_step(version: str, timeout: float, *, wait_for: bool = True) -> None
         dispatch(PLUGINS, "compose.yml", "main", "compose", version=version, core_wheel=wheel)
 
     def act() -> None:
-        if state().get("compose_replacement_guard"):
+        if state().get("compose_replacement_guard") or state().get("compose_dependency"):
             return  # released() verified or refused the one bound replacement; never dispatch it again.
-        if ours(PLUGINS, "compose.yml", "compose"):
+        if original := ours(PLUGINS, "compose.yml", "compose"):
+            if not wait_for and original.get("status") == "completed" and original.get("conclusion") == "failure":
+                dependency_call(compose_dependency.begin, state(), version, original)
             return
         held_core = held()
         if not wait_for and not held_core:
@@ -1416,10 +1430,14 @@ def compose_step(version: str, timeout: float, *, wait_for: bool = True) -> None
 
     def check() -> None:
         for key in ("compose", "compose_finalize"):
+            if key == "compose" and state().get("compose_dependency"):
+                continue  # released() tracks the marked recovery and reports any terminal failure.
             run = ours(PLUGINS, "compose.yml", key) if state().get(key) else None
             if run and run["status"] == "completed" and run["conclusion"] != "success" and not released():
                 if key == "compose" and state().get("compose_replacement_guard"):
                     raise Stop(f"reviewed compose replacement {run['databaseId']} ended {run['conclusion']}; no further dispatch")
+                if key == "compose" and dependency_call(compose_dependency.begin, state(), version, run):
+                    return
                 if key == "compose" and (fix := compose_fix_landed(run)):
                     if compose_busy():
                         return  # the fresh compose waits for the queue, like the first one
@@ -1430,6 +1448,8 @@ def compose_step(version: str, timeout: float, *, wait_for: bool = True) -> None
                     dispatch_compose(held())
                     return
                 raise Stop(f"compose run {run['databaseId']} ended {run['conclusion']}: sm ci watch {run['databaseId']} -R {PLUGINS}")
+        if (intent := state().get("compose_dependency")) and not dependency_call(compose_dependency.recovered, intent):
+            return
         run = ours(PLUGINS, "compose.yml", "compose")
         if (run and run["status"] == "completed" and not state().get("compose_finalize") and not compose_busy()
                 and (r := published_release(PLUGINS, app)) and r.get("prerelease") is True):
