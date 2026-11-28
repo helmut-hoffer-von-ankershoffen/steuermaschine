@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field
 
 from steuermaschine import WAITING
 from steuermaschine.engine import Refuse, Wait
-from steuermaschine.github import GhError
+from steuermaschine.github import Gh, GhError
 from steuermaschine.helpdoc import H
 from steuermaschine.models import Model
 from steuermaschine.native import Group, NativeRuntime, native, runtime
@@ -98,6 +98,69 @@ def repo_of(rt: NativeRuntime) -> str:
     if not repo:
         raise Refuse("the setting `repo` (OWNER/NAME of the core repository) is empty", "sm self config")
     return repo
+
+
+class ClaudeReviewState(Model):
+    """One repository's read-back of the Claude review switch."""
+
+    repository: str
+    state: str
+    changed: bool = False
+    error: str = ""
+
+
+class ClaudeReview(Model):
+    repositories: list[ClaudeReviewState]
+
+    def render(self) -> list[str]:
+        return [f"{row.repository}: {row.state}" + (f" ({row.error})" if row.error else "") for row in self.repositories]
+
+    @property
+    def exit_code(self) -> int:
+        return int(any(row.error for row in self.repositories))
+
+
+@native("ci claude-review", writes=True, help=H(
+    "Read, pause or resume Claude PR review for Core and steuermaschine.",
+    "Use when checking or changing the review setting. With no flag, read both repositories. Use --repo core or --repo sm for one.",
+    "A pause or resume sets only the repository Actions variable CLAUDE_REVIEW and reads it back. Existing runs keep their input.",
+    "sm ci claude-review --pause", "sm ci claude-review --resume"))
+def claude_review(
+    repo: str = typer.Option("both", "--repo", metavar="core|sm|both", help="Repository selection. Default: both."),
+    pause: bool = typer.Option(False, "--pause", "--disable", help="Pause Claude review."),
+    resume: bool = typer.Option(False, "--resume", "--enable", help="Resume Claude review."),
+) -> ClaudeReview:
+    if repo not in ("core", "sm", "both") or (pause and resume):
+        raise Refuse("choose core, sm or both, and at most one of --pause or --resume", "sm ci claude-review --help", code=2)
+    rt = runtime()
+    targets = {
+        "core": repo_of(rt) if repo != "sm" else "",
+        "sm": "helmut-hoffer-von-ankershoffen/steuermaschine",
+    }
+    desired = "false" if pause else "true" if resume else None
+    rows = []
+    for label, repository in targets.items():
+        if repo not in (label, "both"):
+            continue
+        gh = Gh(providers_of(rt).commands, repo=repository)
+        path = "actions/variables/CLAUDE_REVIEW"
+        original, _ = gh.api(path)
+        prior = original.get("value") if isinstance(original, dict) and original.get("name") == "CLAUDE_REVIEW" else None
+        changed, error = False, ""
+        if desired is not None and prior != desired:
+            result = gh.run(["variable", "set", "CLAUDE_REVIEW", "--repo", repository, "--body", desired], retry=False)
+            changed = result.rc == 0
+            if result.rc:
+                error = "could not update the repository variable"
+        data, _ = gh.api(path) if desired is not None and prior != desired else (original, "")
+        value = data.get("value") if isinstance(data, dict) and data.get("name") == "CLAUDE_REVIEW" else None
+        state = "enabled" if value == "true" else "paused" if value == "false" else "invalid" if value is not None else "unavailable"
+        if desired is not None and value != desired and not error:
+            error = "could not verify the requested setting"
+        elif desired is None and state in ("invalid", "unavailable"):
+            error = "expected true or false" if state == "invalid" else "missing or unreadable repository variable"
+        rows.append(ClaudeReviewState(repository=repository, state=state, changed=changed, error=error))
+    return ClaudeReview(repositories=rows)
 
 
 # ============================================================================= defer

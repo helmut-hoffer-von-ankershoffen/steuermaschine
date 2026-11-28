@@ -1,0 +1,5 @@
+# Append only the history checker to the existing exact-head Sonar coverage data.
+[run]
+branch = true
+include =
+    scripts/review_history.py
