@@ -34,6 +34,7 @@ import re
 import shlex
 import tempfile
 import tomllib
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -96,6 +97,9 @@ class Plan:
     hook: str = ""  # why the hook's steps could not be read; "": they were
     note: str = ""
     extra: list[str] = field(default_factory=list)  # tests the caller added (--sel)
+    named_web_tests: list[str] = field(default_factory=list)
+    vitest_exact: bool = False
+    web_deferred: bool = False
     lanes: list[str] = field(default_factory=list)  # the e2e lanes the selector names: never run here
 
 
@@ -149,7 +153,7 @@ def hook_facts(c: head.Ctx, changed: list[str], vitest: list[str] | None) -> tup
     return found, ""
 
 
-def plan(c: Ctx, selection: dict[str, Any], extra: list[str]) -> Plan:
+def plan(c: Ctx, selection: dict[str, Any], extra: list[str], *, web_tests: list[str] | None = None, vitest_exact: bool = False) -> Plan:
     """Bind the selector's answer and the hook's answer for the head's changed paths."""
     changed = c.changed()
     full = bool(selection.get("full")) or selection.get("pytest") == ["ALL"]
@@ -159,10 +163,26 @@ def plan(c: Ctx, selection: dict[str, Any], extra: list[str]) -> Plan:
     else:
         narrow(c, p)
     vitest = selection.get("vitest") or []
-    facts, p.hook = hook_facts(c, changed, None if vitest == ["ALL"] else list(vitest))
+    whole_web = vitest == ["ALL"]
+    picked = None if whole_web else list(vitest)
+    if vitest_exact:
+        picked = web_tests
+    elif web_tests:
+        picked = list(dict.fromkeys([*(picked or []), *web_tests]))
+    facts, p.hook = hook_facts(c, changed, picked)
     p.web, p.docs = steps_of(facts.get("web") or []), steps_of(facts.get("docs") or [])
     p.guards = [[str(word) for word in command] for command in facts.get("guards") or []]
     p.web_files, p.docs_files, p.note = list(facts.get("web_files") or []), list(facts.get("doc_files") or []), str(facts.get("note") or "")
+    if web_tests and not p.hook:
+        expected = {f"./{file.removeprefix('web/')}" for file in picked or []}
+        targets = [{arg for arg in argv if arg.startswith("./")} for name, argv in p.web if name == "web-tests"]
+        matched = targets == [expected] if vitest_exact else any(expected <= step_targets for step_targets in targets)
+        if p.note or not matched:
+            p.hook = p.note or "the hook did not select a Vitest step for the named files"
+        else:
+            p.named_web_tests = list(picked or [])
+            p.vitest_exact = vitest_exact
+            p.web_deferred = whole_web or (vitest_exact and not set(vitest).issubset(web_tests))
     return p
 
 
@@ -171,7 +191,7 @@ def narrow(c: Ctx, p: Plan) -> None:
     tests of the change; when it says ALL too, the whole unit suite runs; when it fails, the run fails."""
     mappable = [f for f in p.changed if not f.startswith(head.WEB_INPUTS)]
     if not mappable:
-        p.pytest, p.narrowed = [], "the selector selects the full set; only web inputs changed, so the web check runs every Vitest file and no unit test"
+        p.pytest, p.narrowed = [], "the selector selects the full set; only web inputs changed, so no Python unit tests are selected"
         return
     if not (c.wt / head.RELATED_SCRIPT).is_file():
         p.narrowed = f"the selector selects the full set and Core has no {head.RELATED_SCRIPT} to narrow it: the whole unit suite runs"
@@ -219,8 +239,12 @@ def production(c: Ctx) -> list[str]:
 
 def selected_tests(c: Ctx) -> list[str]:
     """The selector's tests plus the caller's, without the ones a hook step already runs by name."""
-    named = {word for _, argv in [*c.plan.web, *c.plan.docs] for word in argv} | {word for argv in c.plan.guards for word in argv}
-    return [t for t in dict.fromkeys([*(c.plan.pytest or []), *c.plan.extra]) if t not in named and (c.wt / t).exists()]
+    hooks = [argv for _, argv in [*c.plan.web, *c.plan.docs]] + c.plan.guards
+    hook_words = {word for argv in hooks for word in argv}
+    # A non-pytest command may mention a test as data. It does not own an explicitly requested pytest run.
+    verified_hook_files = {file for argv in hooks for file in hook_pytest_files(c, argv)}
+    files = dict.fromkeys([*(c.plan.pytest or []), *c.plan.extra])
+    return [t for t in files if (t not in hook_words or (t in c.plan.extra and t not in verified_hook_files)) and (c.wt / t).exists()]
 
 
 # ---- steps ---------------------------------------------------------------------------------------------------------
@@ -253,9 +277,82 @@ def step_ruff(c: Ctx) -> Step:
     return s
 
 
+def verify_named_vitest(report: Path, expected: list[str], root: Path, *, exact: bool) -> None:
+    """Require passing bodies in all selected files, and no extra files for exact selection."""
+    data = json.loads(report.read_text(encoding="utf-8"))
+    if not isinstance(data, dict) or data.get("success") is not True or not isinstance(results := data.get("testResults"), list):
+        raise ValueError("the Vitest JSON report is invalid or unsuccessful")
+    actual = []
+    for result in results:
+        if not isinstance(result, dict) or not isinstance(name := result.get("name"), str):
+            raise ValueError("the Vitest JSON report contains an invalid file entry")
+        assertions = result.get("assertionResults")
+        if result.get("status") != "passed" or not isinstance(assertions, list):
+            raise ValueError("a reported Vitest file did not pass")
+        statuses = [assertion.get("status") if isinstance(assertion, dict) else None for assertion in assertions]
+        if "passed" not in statuses or any(status not in ("passed", "pending", "todo", "skipped") for status in statuses):
+            raise ValueError("a reported Vitest file has no passing test or contains a failed test")
+        actual.append(Path(name))
+    observed = set(actual)
+    requested = {root / name for name in expected}
+    if len(observed) != len(actual) or not requested.issubset(observed):
+        raise ValueError("the reported Vitest inventory contains duplicate files or omits a selection")
+    if exact and requested != observed:
+        raise ValueError("the reported Vitest file inventory differs from the exact selection")
+
+
+def run_named_vitest(c: Ctx, argv: list[str]) -> tuple[int, str]:
+    with tempfile.TemporaryDirectory(prefix="sm-vitest-") as directory:
+        report = Path(directory) / "results.json"
+        command = [*argv, "--reporter=default", "--reporter=json", f"--outputFile.json={report}"]
+        rc, out = c.gate(command, cwd=c.wt)
+        if rc == 0:
+            try:
+                verify_named_vitest(report, c.plan.named_web_tests, c.wt, exact=c.plan.vitest_exact)
+            except (OSError, ValueError) as error:
+                return 1, f"{out}\nnamed Vitest evidence: {error}"
+        return rc, out
+
+
+def hook_pytest_files(c: Ctx, argv: list[str]) -> set[str]:
+    """The named files in a direct Core pytest hook whose original invocation can provide file evidence."""
+    if argv[:3] != ["uv", "run", "pytest"]:
+        return set()
+    return set(c.plan.extra).intersection(argv)
+
+
+def run_named_pytest(c: Ctx, argv: list[str], expected: set[str]) -> tuple[int, str]:
+    """Use the selected pytest session to verify at least one passing case in each requested file."""
+    with tempfile.TemporaryDirectory(prefix="sm-pytest-") as directory:
+        report = Path(directory) / "results.xml"
+        # Core's guards and documentation steps do not request JUnit. Preserve a future hook's own artifact.
+        if any(arg.split("=", 1)[0] in ("--junitxml", "--junit-xml") for arg in argv):
+            return 1, "cannot collect named-file evidence without overriding the hook's own JUnit report"
+        rc, out = c.gate([*argv, "-o", "junit_family=xunit1", f"--junitxml={report}"], cwd=c.wt)
+        if rc:
+            return rc, out
+        try:
+            cases = ET.parse(report).iterfind(".//testcase")
+            passing = {
+                (c.wt / path).resolve() for case in cases if (path := case.get("file"))
+                and not any(child.tag in {"skipped", "failure", "error"} for child in case)
+            }
+        except (ET.ParseError, OSError, ValueError) as error:
+            return 1, f"{out}\nnamed pytest evidence: {error}"
+        missing = sorted(file for file in expected if (c.wt / file).resolve() not in passing)
+        if missing:
+            return 1, f"{out}\nnamed pytest evidence: pytest reported no passing case from {', '.join(missing)}"
+        return rc, out
+
+
 def run_steps(c: Ctx, s: Step, steps: list[tuple[str, list[str]]], fix: str) -> None:
     for name, argv in steps:
-        rc, out = c.gate(argv, cwd=c.wt)
+        if name == "web-tests" and c.plan.named_web_tests:
+            rc, out = run_named_vitest(c, argv)
+        elif expected := hook_pytest_files(c, argv):
+            rc, out = run_named_pytest(c, argv, expected)
+        else:
+            rc, out = c.gate(argv, cwd=c.wt)
         if rc == 75:
             s.fail(f"the run lock gave no slot for {name} (exit 75 = WAIT)", NO_SLOT)
             return
@@ -310,7 +407,12 @@ def hook_step(name: str, files: str, fix: str) -> Any:
         run_steps(c, s, steps, fix)
         if name == "web" and c.plan.note:
             s.warn(c.plan.note)
+        if name == "web" and c.plan.web_deferred:
+            c.ci.append("the whole Vitest suite")
+            s.warn("PR CI must run the whole Vitest suite.")
         s.detail = f"{len(touched)} changed {files}: {', '.join(n for n, _ in steps)} green" if s.status != FAIL else ""
+        if s.detail and name == "web" and c.plan.named_web_tests:
+            s.detail += " (named Vitest files: " + ", ".join(c.plan.named_web_tests) + ")"
         return s
 
     return step
@@ -318,6 +420,15 @@ def hook_step(name: str, files: str, fix: str) -> Any:
 
 def step_tests(c: Ctx) -> Step:
     s = Step("tests")
+    missing = [
+        name for name in c.plan.extra
+        if Path(name).is_absolute() or name.startswith("-")
+        or re.fullmatch(r"(?:test_.+|.+_test)\.py", Path(name).name) is None
+        or not (c.wt / name).is_file() or not (c.wt / name).resolve().is_relative_to(c.wt.resolve())
+    ]
+    if missing:
+        return s.fail(f"named Python test files are missing or outside the worktree: {', '.join(missing)}",
+                      "correct the Python test paths in the --sel file")
     for argv in c.plan.guards:
         run_steps(c, s, [("the hook's early guard", argv)], "fix the code, never the test: the push hook runs these guards before anything else")
     if c.plan.error:
@@ -342,23 +453,36 @@ def step_tests(c: Ctx) -> Step:
         s.warn(c.plan.narrowed)
     files_run = files
     if why := too_many(files):  # a wide selection: the tests that own the changed modules run here, the rest is PR CI's (a required check)
-        files_run = owning_tests(c, files)
-        if not files_run:  # nothing owns the change, or nothing fits: zero tests ran, so there is no receipt (exit 75)
+        owned = set(owning_tests(c, files))
+        if not owned:  # nothing owns the change, or nothing fits: zero tests ran, so there is no receipt (exit 75)
+            files_run = []
             c.unrun = f"{why}, and no test owns a changed module, so none could run here"
             c.ci.append(f"{len(files)} selected test files")
             s.warn(f"no receipt: {c.unrun}")
         else:
+            files_run = [file for file in files if file in owned or file in c.plan.extra]
             rest = [f for f in files if f not in files_run]
             c.ci.append(f"{len(rest)} of {len(files)} selected test files")
-            s.warn(f"{why}: the {len(files_run)} that own the changed modules run here, {len(rest)} are left to PR CI")
-    for start in range(0, len(files_run), MAX_TEST_FILES):  # batches: the budget stops the run between them (exit 75)
-        head.run_tests(c, s, "selected", files_run[start:start + MAX_TEST_FILES])
+            s.warn(f"{why}: {len(files_run)} owning or explicitly named tests run here, {len(rest)} are left to PR CI")
+    explicit = set(c.plan.extra)
+    remaining = []
+    for file in files_run:
+        if file in explicit:
+            # Pytest must collect this file; another file's collected tests cannot mask an empty selection.
+            run_steps(c, s, [("named tests", [*head.PYTEST_FILES_CMD, file])], "fix the named test or its selection")
+        else:
+            remaining.append(file)
+    for start in range(0, len(remaining), MAX_TEST_FILES):  # a spent budget stops the run between batches (exit 75)
+        head.run_tests(c, s, "selected", remaining[start:start + MAX_TEST_FILES])
     if c.plan.lanes:
         s.warn(f"e2e lanes the selector names are not run here: {', '.join(c.plan.lanes)}")
     s.data.update(tests=files, guards=len(c.plan.guards), selector=c.plan.selector, unit_suite=whole and c.full)
     if len(files_run) != len(files):  # the receipt and the approval say how many ran here
         s.data.update(tests_ran=len(files_run), tests_selected=len(files))
-    where = f"{len(files)} selected test file(s)" if len(files_run) == len(files) else f"{len(files_run)} of {len(files)} selected test file(s) ran, {len(files) - len(files_run)} deferred to PR CI (over {MAX_TEST_FILES})"
+    where = f"{len(files)} selected test file(s)"
+    if len(files_run) != len(files):
+        where = (f"{len(files_run)} of {len(files)} selected test file(s) ran, "
+                 f"{len(files) - len(files_run)} deferred to PR CI (over {MAX_TEST_FILES})")
     suite = "the whole unit suite, " if whole and c.full else "the whole unit suite left to PR CI, " if whole else ""
     s.detail = f"{len(c.plan.guards)} early guard command(s), {suite}{where}" if s.status != FAIL else ""
     return s

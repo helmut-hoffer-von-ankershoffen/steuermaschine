@@ -215,6 +215,7 @@ def test_train_pre_merge_guard(monkeypatch):
     assert mt.train("o/r", "1", pre_merge_guard=lambda: True) == (True, HEAD[:8])
 
 
+@pytest.mark.usefixtures("native_receipts")
 def test_train_waits_out_the_freeze_and_refuses_a_new_one(monkeypatch):
     s = Script(monkeypatch, [open_pr(), {"statusCheckRollup": [OK]}, open_pr()])
     freezes = iter([True, True, False])
