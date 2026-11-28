@@ -7,20 +7,15 @@
     release_ci.py match --version X             CI acceptance: PyPI's files of both packages equal the release's, by sha256
     release_ci.py follow                        the Mini (launchd, every 5 min): install the Latest release's wheels, switch
 
-The verdict. The independent reviewer reads the pull request; the Gate review workflow then sets its check run `Gate
-review`, or a login of GATE_REVIEW_CREATORS runs `release_ci.py record PR --reviewer NAME` (commit status `Gate review`,
-description `APPROVE reviewer=NAME`, on the PR's head). A merge to main is released when its CI is green (release.yml
-starts on the finished CI run of main), the merged pull request's final head carries a verdict, the merged tree equals
-the reviewed head's tree, and the reviewer is none of the commit's authors (bin/promote_verdict.py's identity rule).
-github-actions[bot] never sets a valid status; all agents share one token, so the allowlist cannot tell agents apart.
-Only the merge being released needs its verdict: a release takes every commit since the last tag (a merge whose own run
-was superseded is released with its successor). A refusal is red (exit 1, an `::error::` line); the one exception is a
+The official release workflow uses successful push CI on main, the exact merged pull request and equality of the
+merge and PR-head trees. Other repositories also require an independent verdict. Legacy CI-review receipts and the
+explicit record command keep their original verification rules. A refusal is red (exit 1, an `::error::` line); the one exception is a
 merge already in a release (exit 0). The version is the commitizen bump from the commits since the last tag (a patch
 bump when they carry no release note); steuermaschine and steuermaschine-heinzel get it in lockstep, the plugin pins
 steuermaschine==X. Order: draft release with the files, core to PyPI, plugin to PyPI (skip-existing: a rerun resumes),
 publish the release (this makes the tag), clean-container acceptance, then Latest.
 
-The follower. It reads the Latest GitHub release (Latest only after acceptance), checks the verdict of that tag's merge
+The follower. It reads the Latest GitHub release (Latest only after acceptance), checks the source of that tag's merge
 the same way, takes the PyPI wheels of both packages whose sha256 equal the release's assets, installs them into
 $SM_STABLE/releases/vX (its own uv venv) beside the live one, migrates the user config, smokes, and makes it the canary
 for one tick (`canary`; only the follower's probe and the coordinator's bin/sm-canary run it). The next run after the tick
@@ -59,7 +54,8 @@ BOT = "github-actions[bot]"
 WORKFLOW_REVIEWER = "gate-review-workflow"
 GATE_WORKFLOW = ".github/workflows/gate-review.yml"
 DESCRIPTION = re.compile(r"APPROVE reviewer=(\S.*)")
-REPO = os.environ.get("SM_RELEASE_REPO", "helmut-hoffer-von-ankershoffen/steuermaschine")
+OFFICIAL_REPO = "helmut-hoffer-von-ankershoffen/steuermaschine"
+REPO = os.environ.get("SM_RELEASE_REPO", OFFICIAL_REPO)
 LOOPS = re.compile(r"steuermaschine-stable|\.local/bin/sm<|/sm</string>")
 Run = Callable[..., str]
 
@@ -100,13 +96,29 @@ def verdict_for(sha: str, api_get: Callable[[str], object] | None = None) -> tup
     (`record`) by a login of the allowlist. Limit: every agent shares the owner's token, so the allowlist cannot tell
     agents apart; independence rests on the reviewer name against the commit's authors (promote_verdict.independent)."""
     get = api_get or api
+    number, head = merged_pull(sha, get)
+    return number, head, review_of_head(number, head, get)
+
+
+def merged_pull(sha: str, get: Callable[[str], object], *, official_main: bool = False) -> tuple[int, str]:
     pulls = get(f"repos/{REPO}/commits/{sha}/pulls")
     merged = [p for p in pulls if isinstance(p, dict) and p.get("merge_commit_sha") == sha and p.get("merged_at")] if isinstance(pulls, list) else []
+    if official_main:
+        merged = [p for p in merged if p.get("base", {}).get("ref") == "main"
+                  and p["base"].get("repo", {}).get("full_name") == OFFICIAL_REPO]
+        if len(merged) > 1:
+            raise Refused(f"{sha[:12]} matches multiple merged pull requests on main")
     if not merged:
         raise Refused(f"{sha[:12]} was not merged from a pull request: no review verdict, no release")
     pull = merged[0]
     head = pull["head"]["sha"]
+    if not isinstance(head, str) or not re.fullmatch(r"[0-9a-f]{40}", head):
+        raise Refused("the merged pull request does not identify an exact head commit")
     number = int(pull["number"])
+    return number, head
+
+
+def review_of_head(number: int, head: str, get: Callable[[str], object]) -> str:
     runs = get(f"repos/{REPO}/commits/{head}/check-runs?per_page=100")
     mine = [r for r in (runs.get("check_runs", []) if isinstance(runs, dict) else [])
             if r.get("name") == CONTEXT and (r.get("app") or {}).get("slug") == "github-actions"]
@@ -120,7 +132,7 @@ def verdict_for(sha: str, api_get: Callable[[str], object] | None = None) -> tup
             runs_of = found.get("workflow_runs", []) if isinstance(found, dict) else []
             if any(w.get("path") == GATE_WORKFLOW and w.get("event") == "pull_request_target" and w.get("head_sha") == head
                    and w.get("conclusion") == "success" for w in runs_of):
-                return number, head, WORKFLOW_REVIEWER
+                return WORKFLOW_REVIEWER
             forged = f" (a check run `{CONTEXT}` exists but does not come from {GATE_WORKFLOW} on pull_request_target for this head)"
     statuses = get(f"repos/{REPO}/commits/{head}/statuses?per_page=100")
     latest = next((s for s in statuses if s.get("context") == CONTEXT), None) if isinstance(statuses, list) else None  # newest first
@@ -132,18 +144,22 @@ def verdict_for(sha: str, api_get: Callable[[str], object] | None = None) -> tup
     match = DESCRIPTION.fullmatch((latest.get("description") or "").strip())
     if not match:
         raise Refused(f"the `{CONTEXT}` of PR #{number} is not `APPROVE reviewer=NAME`: {(latest.get('description') or '')[:60]!r}")
-    return number, head, match.group(1).strip()
+    return match.group(1).strip()
 
 
-def verify(repo: Path, sha: str, api_get: Callable[[str], object] | None = None, run: Run = sh) -> tuple[int, str, str]:
-    """verdict_for plus: the merged tree is the reviewed head's tree, and the reviewer is none of the authors. Live, every time."""
+def verify(repo: Path, sha: str, api_get: Callable[[str], object] | None = None, run: Run = sh, *, release: bool = False) -> tuple[int, str, str]:
+    """Recheck the merged source. Legacy verdict receipts and third-party releases also require independent review."""
     get = api_get or api
-    number, head, reviewer = verdict_for(sha, get)
+    official_release = release and REPO == OFFICIAL_REPO
+    number, head = merged_pull(sha, get, official_main=official_release)
     reviewed = get(f"repos/{REPO}/git/commits/{head}")
     tree = reviewed["tree"]["sha"] if isinstance(reviewed, dict) and isinstance(reviewed.get("tree"), dict) else ""
     merged = run("git", "rev-parse", f"{sha}^{{tree}}", cwd=repo).strip()
     if not tree or tree != merged:
         raise Refused(f"{sha[:12]} is not what was reviewed: its tree {merged[:12]} differs from the head {head[:12]} of PR #{number} ({tree[:12] or 'unknown'})")
+    if official_release:
+        return number, head, ""
+    reviewer = review_of_head(number, head, get)
     independent(repo, sha, reviewer)
     return number, head, reviewer
 
@@ -206,12 +222,10 @@ class AlreadyReleased(Refused):
 
 
 def gate(repo: Path, sha: str, api_get: Callable[[str], object] | None = None, run: Run = sh) -> dict[str, str]:
-    """The outputs of the release gate; Refused names why SHA is not released. Only the merge being released needs its
-    verdict: a release takes everything since the last tag (the merges before it whose own run was superseded or that
-    predate the Gate review check are not re-reviewed; their review was the gate of their own PR)."""
+    """Return the release identity for the exact merge after checking its source."""
     if run("git", "tag", "--list", "v*", "--contains", sha, cwd=repo).strip():
         raise AlreadyReleased(f"{sha[:12]} is already in a release")
-    number, head, reviewer = verify(repo, sha, api_get, run)
+    number, head, reviewer = verify(repo, sha, api_get, run, release=True)
     version = next_version(repo, run)
     return {"version": version, "reviewer": reviewer, "pr": str(number), "head": head}
 
@@ -409,7 +423,7 @@ def follow(stable: Path, clone: Path, home: Path, run: Run = sh, api_get: Callab
             raise Refused(str(exc)) from None
         if subprocess.run(["git", "-C", str(clone), "merge-base", "--is-ancestor", base, commit], check=False).returncode != 0:
             raise Refused(f"{tag} ({commit[:12]}) does not descend from the live {base[:12]}: not going back or sideways")
-    number, _, reviewer = verify(clone, commit, get, run)  # the Gate review of the merge this release was cut from
+    number, head, reviewer = verify(clone, commit, get, run, release=True)
     wheels = matching_wheels(version, get, run, pypi)
     run("git", "checkout", "--quiet", "--force", "--detach", commit, cwd=clone)  # the follower's own code and helpers: the release's
     rel = stable / "releases" / tag
@@ -431,8 +445,10 @@ def follow(stable: Path, clone: Path, home: Path, run: Run = sh, api_get: Callab
         run(str(rel / "venv" / "bin" / "python"), str(clone / "bin" / "migrate_config.py"), str(source),
             str(home / ".config" / "steuermaschine" / "migrate-values.toml"), str(rel / "user-config.toml"))
         smoke(rel, run)
-        meta = {"tag": tag, "version": version, "commit": commit, "pr": number, "reviewer": reviewer,
+        meta = {"tag": tag, "version": version, "commit": commit, "pr": number, "head": head,
                 "wheels": {w["filename"]: w["sha256"] for w in wheels}}
+        if reviewer:
+            meta["reviewer"] = reviewer
         (rel / "release.json").write_text(json.dumps(meta, indent=1) + "\n", encoding="utf-8")
     start_canary(stable, clone, home, rel, tag, at)
     return (f"{tag} ({commit[:12]}) is the canary: the follower's probe and {stable / 'bin' / 'sm-canary'} use it for one tick "

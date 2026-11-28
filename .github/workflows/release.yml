@@ -1,9 +1,6 @@
 name: Release
-# Automatic: every merge to main whose CI is green and whose pull request carries the independent review verdict
-# (`Gate review`: the Gate review workflow's check, or a status by an allowlisted login; bin/release_ci.py) is released:
-# steuermaschine and steuermaschine-heinzel at one version from that commit, PyPI, tag and GitHub release, then a
-# clean-container acceptance, and only then Latest (the Mini and every user follow Latest). No manual dispatch.
-# Only the released merge needs its verdict: a release takes everything since the last tag.
+# Successful main push CI releases a merge whose tree matches its pull request head.
+# Build both packages from the exact CI commit, publish them in lockstep, then mark Latest after acceptance.
 # A refusal is red with its reason; only "already in a release" ends green with nothing done.
 # Resume: "Re-run failed jobs" reuses the built files; a full rerun finds the draft of the same commit and takes its
 # files, so PyPI and the release always carry the same bytes (uploads skip what is there).
@@ -45,10 +42,11 @@ jobs:
           version: "0.13.5"
           python-version: "3.15"
       - run: make install
-      - name: Gate (merged from a pull request with an independent verdict, not yet released) and next version
+      - name: Verify the merged PR source and select the next version
         id: gate
         env:
           GH_TOKEN: ${{ github.token }}
+          SM_RELEASE_REPO: ${{ github.repository }}
           SM_GATE_CREATORS: ${{ vars.GATE_REVIEW_CREATORS }}
         run: |
           git fetch --tags --force origin
