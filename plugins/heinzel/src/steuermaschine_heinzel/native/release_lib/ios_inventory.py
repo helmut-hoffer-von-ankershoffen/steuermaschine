@@ -22,6 +22,7 @@ CONSTANTS = frozenset({"APP_ID", "GROUP_NAME", "NOTES_LOCALE", "API"})
 RESOURCE_ID = re.compile(r"[A-Za-z0-9_-]{1,100}\Z")
 BUILD_UUID = re.compile(r"[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}\Z")
 GROUP_POST = re.compile(r"/v1/betaGroups/[A-Za-z0-9_-]{1,100}/relationships/builds\Z")
+MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 GROUP_REFUSAL = {
     "code": "ENTITY_UNPROCESSABLE",
     "title": "Builds cannot be assigned to this internal group.",
@@ -118,8 +119,14 @@ class Call(Protocol):
 
 def client(timeout: float) -> Call:
     deadline = time.monotonic() + timeout
-    if timeout <= 0:
-        raise AscRequestError("App Store Connect request deadline exhausted")
+
+    def remaining() -> float:
+        seconds = deadline - time.monotonic()
+        if seconds <= 0:
+            raise AscRequestError("App Store Connect request deadline exhausted")
+        return seconds
+
+    remaining()
     bearer = auth_token()
     opener = build_opener(ProxyHandler({}), NoRedirect())
 
@@ -133,17 +140,25 @@ def client(timeout: float) -> Call:
             headers={"Authorization": f"Bearer {bearer}", "Content-Type": "application/json"},
             method=method,
         )
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            raise AscRequestError("App Store Connect request deadline exhausted")
         try:
-            with opener.open(request, timeout=min(60, remaining)) as response:
-                response_body = response.read()
+            with opener.open(request, timeout=min(60, remaining())) as response:
+                response_body = bytearray()
+                while True:
+                    remaining()
+                    chunk = response.read1(65536)
+                    if not chunk:
+                        break
+                    response_body.extend(chunk)
+                    if len(response_body) > MAX_RESPONSE_BYTES:
+                        raise AscRequestError("App Store Connect response exceeds the size limit")
         except HTTPError as error:
-            raise request_failure(error, method, path) from None
+            failure = request_failure(error, method, path)
+            remaining()
+            raise failure from None
         except URLError, OSError, HTTPException:
             raise AscRequestError(f"ASC {method} request failed") from None
         result = json.loads(response_body) if response_body else {}
+        remaining()
         if not isinstance(result, dict):
             raise ValueError("invalid App Store Connect response")
         return result

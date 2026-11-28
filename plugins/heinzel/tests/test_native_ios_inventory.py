@@ -217,8 +217,8 @@ def test_in_process_call_hides_tag_path_and_syntax_values(tmp_path):
 
 def test_transport_caps_requests_to_remaining_monotonic_budget(monkeypatch):
     monkeypatch.setattr(asc, "auth_token", lambda: "fictional JWT")
-    moments = iter([100.0, 100.0, 117.0, 125.0])
-    monkeypatch.setattr(asc, "time", SimpleNamespace(monotonic=lambda: next(moments)))
+    now = [100.0]
+    monkeypatch.setattr(asc, "time", SimpleNamespace(monotonic=lambda: now[0]))
     timeouts = []
 
     class Opener:
@@ -229,10 +229,32 @@ def test_transport_caps_requests_to_remaining_monotonic_budget(monkeypatch):
     monkeypatch.setattr(asc, "build_opener", lambda *handlers: Opener())
     call = asc.client(25)
     assert call("GET", "/v1/builds") == {}
+    now[0] = 117
     assert call("GET", "/v1/builds") == {}
+    now[0] = 125
     with pytest.raises(asc.AscRequestError, match="deadline exhausted"):
         call("GET", "/v1/builds")
     assert timeouts == [25, 8]
+
+
+def test_transport_refuses_a_successful_response_that_arrived_after_the_deadline(monkeypatch):
+    monkeypatch.setattr(asc, "auth_token", lambda: "fictional JWT")
+    now = [100.0]
+    monkeypatch.setattr(asc, "time", SimpleNamespace(monotonic=lambda: now[0]))
+
+    class Response(io.BytesIO):
+        def read1(self, size=-1):
+            now[0] += 6
+            return super().read1(size)
+
+    class Opener:
+        def open(self, request, *, timeout):
+            return Response(b"{}")
+
+    monkeypatch.setattr(asc, "build_opener", lambda *handlers: Opener())
+    call = asc.client(10)
+    with pytest.raises(asc.AscRequestError, match="deadline exhausted"):
+        call("GET", "/v1/builds")
 
 
 def test_status_keeps_duplicate_number_rows_and_marks_exact_internal_membership(tagged_tool, monkeypatch):
