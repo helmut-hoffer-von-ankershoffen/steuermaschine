@@ -129,6 +129,7 @@ def moved(tool: str) -> ModuleType:
 
 # ----------------------------------------------------------------------------- processes
 _RAW = {"input", "stdin", "stdout", "stderr", "shell"}
+ProcessError = subprocess.SubprocessError
 ProcessTimeout = subprocess.TimeoutExpired
 
 
