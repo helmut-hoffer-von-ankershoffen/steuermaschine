@@ -152,8 +152,11 @@ def test_missing_or_stale_ci_never_supplies_full_proof(monkeypatch, tmp_path):
 
 
 @pytest.mark.parametrize("already_armed", [False, True])
-def test_deferred_queue_entry_is_never_armed(monkeypatch, already_armed):
+@pytest.mark.parametrize("operator_authorized", [False, True])
+def test_queue_entry_requiring_immediate_merge_is_never_armed(monkeypatch, already_armed, operator_authorized):
     item = {"repo": auto_arm.hzlib.CORE, "pr": "42", "key": "core:42", "guarded_head": HEAD}
+    if operator_authorized:
+        item["guard_authorization"] = {"head": HEAD, "base": BASE}
     info = {"state": "OPEN", "headRefOid": HEAD, "author": {"login": "owner"},
             "statusCheckRollup": [], "autoMergeRequest": {} if not already_armed else {"enabled": True}}
     monkeypatch.setattr(auto_arm.hzlib, "ghj", lambda *_args, **_kwargs: info)
@@ -164,11 +167,16 @@ def test_deferred_queue_entry_is_never_armed(monkeypatch, already_armed):
     monkeypatch.setattr(auto_arm.hzlib, "tool_required_checks", lambda _: set())
     monkeypatch.setattr(auto_arm, "merge_rule", lambda *_: ("", False))
     monkeypatch.setattr(auto_arm, "armed_on_github", lambda _: [])
-    monkeypatch.setattr(full_pr, "required", lambda _: {"requires_full_pr": True})
+    monkeypatch.setattr(full_pr, "required", lambda _: None if operator_authorized else {"requires_full_pr": True})
     actions = []
     monkeypatch.setattr(auto_arm, "arm", lambda *_: pytest.fail("deferred PR must not arm"))
     monkeypatch.setattr(auto_arm, "disarm", lambda *_: actions.append("disarm") or True)
-    monkeypatch.setattr(auto_arm.hzlib, "load", lambda _: SimpleNamespace(train=lambda *a, **kw: actions.append("immediate") or (False, "proof unavailable")))
+    def train(*_args, **kwargs):
+        assert kwargs["immediate_merge"] is operator_authorized
+        actions.append("immediate")
+        return False, "proof unavailable"
+
+    monkeypatch.setattr(auto_arm.hzlib, "load", lambda _: SimpleNamespace(train=train))
     q = SimpleNamespace(deps_met=lambda *_: True, assess=lambda *_: "ready", log=lambda *_: None,
                         update=lambda *_args, **_kwargs: None)
     auto_arm.one(q, item, [item])

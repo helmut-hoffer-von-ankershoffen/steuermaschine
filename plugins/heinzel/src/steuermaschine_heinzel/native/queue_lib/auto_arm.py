@@ -138,13 +138,19 @@ def main_hold(q: Any, item: dict[str, Any]) -> str:
     return ""
 
 
-def merge_rule(item: dict[str, Any], pinned: str) -> tuple[str, bool]:
+def merge_rule(q: Any, item: dict[str, Any], pinned: str) -> tuple[str, bool]:
     """(refusal, wait) of the merge rule for a Core PR at PINNED; ('', False) when it holds. WAIT: pending or unreadable."""
     if item["repo"] != hzlib.CORE:
         return "", False
     from . import main_plan
 
-    reason = main_plan.gap(item["pr"], pinned)
+    if item.get("guard_authorization"):
+        refusal: list[str] = []
+        if q.plan_guard(item, lambda: q.authorization_current(item), refusal)():
+            return "", False
+        reason = refusal[0] if refusal else "operator guard authorization changed or is unreadable; reassess and requeue"
+    else:
+        reason = main_plan.gap(item["pr"], pinned)
     return reason, bool(reason) and ("required checks not green" in reason or "cannot" in reason)
 
 
@@ -227,7 +233,7 @@ def one(q: Any, item: dict[str, Any], items: list[dict[str, Any]]) -> None:
             disarm(item["repo"], item["pr"])
         q.stuck_or_merged(item, "needs work", "completed main observation changed or unavailable; reassessment and requeue required")
         return
-    reason, wait = merge_rule(item, pinned)
+    reason, wait = merge_rule(q, item, pinned)
     if reason and not (armed and wait):  # an armed PR whose checks are pending or unreadable keeps its arm: GitHub waits for the checks itself
         if armed and not disarm(item["repo"], item["pr"]):
             q.log(f"{item['key']}: {reason}, and auto-merge could not be switched off; the next tick tries again")
@@ -249,12 +255,14 @@ def one(q: Any, item: dict[str, Any], items: list[dict[str, Any]]) -> None:
                 disarm(item["repo"], item["pr"])
             q.update(item["key"], detail=f"not armed: local full PR obligation unavailable: {error}")
             return
-        if obligation:
+        operator_authorized = bool(item.get("guard_authorization"))
+        if obligation or operator_authorized:
             if armed:
+                proof = "operator guard authorization" if operator_authorized else "full PR proof"
                 if not disarm(item["repo"], item["pr"]):
-                    q.update(item["key"], detail="full PR proof requires auto-merge to be disabled")
+                    q.update(item["key"], detail=f"{proof} requires auto-merge to be disabled")
                 else:
-                    q.update(item["key"], detail="auto-merge disabled; full PR proof required before immediate merge")
+                    q.update(item["key"], detail=f"auto-merge disabled; {proof} required before immediate merge")
                 return
             if candidate:
                 q.update(item["key"], detail="release candidate with deferred Vitest needs its dedicated release proof")
@@ -274,10 +282,11 @@ def one(q: Any, item: dict[str, Any], items: list[dict[str, Any]]) -> None:
                 if hold and not hold.lets([queue_hold.queued_key(row) for row in q.load()["items"] if row["status"] == "queued"]):
                     return False
                 return not (freeze_without_candidate(item["repo"]) or main_hold(q, item)
-                            or merge_rule(item, pinned)[0] or armed_on_github(hzlib.CORE) != [])
+                            or merge_rule(q, item, pinned)[0] or armed_on_github(hzlib.CORE) != [])
 
             done, detail = hzlib.load("merge_train").train(item["repo"], item["pr"], queue_core=True,
-                                                             expected_head=pinned, pre_merge_guard=guard)
+                                                             expected_head=pinned, pre_merge_guard=guard,
+                                                             immediate_merge=operator_authorized)
             q.update(item["key"], detail=f"{'merged' if done else 'not merged'}: {detail}")
             return
     if candidate:
