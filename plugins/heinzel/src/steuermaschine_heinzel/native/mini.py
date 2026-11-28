@@ -14,7 +14,7 @@ import os
 import re
 import stat
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import typer
 from pydantic import BaseModel, Field
@@ -24,8 +24,9 @@ from steuermaschine.engine import Refuse
 from steuermaschine.helpdoc import H
 from steuermaschine.models import Model
 from steuermaschine.native import native
+from steuermaschine.protocols import Commands
 
-from . import updater_hold
+from . import release_stages, updater_hold
 from .go import world
 from .go_lib import probes
 from .mini_lib import serve
@@ -210,9 +211,10 @@ def verify(w: probes.World, minimum: str | None = None) -> MiniVerify:
     port = int(s.get("mini_port") or 8737)
     remote = s.get("mini_remote_url")
     out = MiniVerify(target_kind="minimum" if minimum else "latest")
+    commands = cast(Commands, w.commands)
 
     def command(*argv: str) -> str:
-        res = w.commands.run(list(argv), timeout=12, env=env)
+        res = commands.run(list(argv), timeout=12, env=env)
         if res.rc in (124, 127):
             raise Unverified(f"{' '.join(argv)} unavailable")
         if res.rc:
@@ -311,6 +313,33 @@ def update(w: probes.World, minimum: str | None = None) -> MiniVerify:
     return after.model_copy(update={"updated": steps})
 
 
+def reconcile_update(w: probes.World, proof: MiniVerify) -> None:
+    """Retire only the window for this live version and its exact published acceptance run."""
+    if (not proof.live or not re.fullmatch(VERSION, proof.version) or proof.acceptance_run is None
+            or release_stages.window_version(release_stages.window_path()) != proof.version):
+        return
+    observed_at = w.now()
+    tag, repository = f"v{proof.version}", release_stages.CORE
+    try:
+        release = w.gh_json(["release", "view", tag, "-R", repository, "--json", "tagName,isDraft,isPrerelease"])
+        if (not isinstance(release, dict) or release.get("tagName") != tag or release.get("isDraft") is not False
+                or release.get("isPrerelease") is not False):
+            raise Unverified("release is not public and final")
+        asset = w.gh.run(["release", "download", tag, "-R", repository, "-p", "acceptance.json", "-O", "-"], retry=False)
+        if asset.rc != 0:
+            raise Unverified("public acceptance marker is unavailable")
+        marker = object_data(asset.out, "public acceptance marker")
+        if (type(marker.get("schema")) is not int or marker["schema"] != 1 or marker.get("project") != "heinzel"
+                or marker.get("version") != proof.version or marker.get("accepted") is not True
+                or type(marker.get("acceptance_run")) is not int or marker["acceptance_run"] != proof.acceptance_run):
+            raise Unverified("public and local acceptance records do not match")
+    except (RuntimeError, Unverified):
+        proof.warnings.append(f"release window for {tag} kept: exact public acceptance could not be verified")
+        return
+    if release_stages.reconcile_live_window(w.state_dir, proof.version, observed_at):
+        proof.updated.append(f"recorded LIVE-OK and closed the release window for {tag}")
+
+
 @native("mini verify", writes=False, replaces=("hz-verify-mini",), help=H(
     "Prove the Mini runs a healthy, accepted Core release (LIVE-OK).",
     "Use after a release is published and before telling the owner it is live.",
@@ -329,7 +358,7 @@ def mini_verify(minimum: str | None = typer.Option(None, "--minimum", metavar="X
 @native("mini update", writes=True, help=H(
     "Bring the Mini to a healthy, accepted Core release and prove it (LIVE-OK).",
     "Use after a release is accepted, when `sm mini verify` says NOT-LIVE; `sm release resume VERSION --live` runs it itself.",
-    "runs `hz system update --channel stable --yes` and restarts the web and daemon launchd jobs (`launchctl kickstart -k`); nothing when the proof holds already.",
+    "runs `hz system update --channel stable --yes` and restarts web and daemon jobs if needed; records LIVE-OK and closes its matching release window after checking public acceptance.",
     "sm mini update --minimum 0.9.53", "sm beads sweep   (after LIVE-OK)",
     "The restart happens only when the proof still fails after the update and the installed version is not older than\n"
     "--minimum. Then it waits (setting mini_update_wait_seconds) until the version served on the port equals the\n"
@@ -337,4 +366,7 @@ def mini_verify(minimum: str | None = typer.Option(None, "--minimum", metavar="X
 def mini_update(minimum: str | None = typer.Option(None, "--minimum", metavar="X.Y.Z", help="Accept this version or a newer accepted one.")) -> MiniVerify:
     if minimum is not None and not re.fullmatch(VERSION, minimum):
         raise Refuse("--minimum requires an exact X.Y.Z", "sm mini update --minimum 0.9.53", code=2)
-    return update(world(), minimum)
+    w = world()
+    proof = update(w, minimum)
+    reconcile_update(w, proof)
+    return proof

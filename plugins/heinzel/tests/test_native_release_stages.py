@@ -55,7 +55,8 @@ def test_the_record_keeps_rows_and_the_live_mark(tmp_path):
     st.mark_live(tmp_path, "0.9.54", 1795320000.0)
     saved = st.read_record(tmp_path, "0.9.54")
     assert saved["live_at"].endswith("Z")
-    st.record(tmp_path, "0.9.54", rows, saved["live_at"])
+    st.mark_live(tmp_path, "0.9.54", 1795321000.0)
+    st.record(tmp_path, "0.9.54", rows, "")  # a concurrent status read may have started before LIVE-OK
     again = st.read_record(tmp_path, "0.9.54")
     assert [r["name"] for r in again["stages"]] == [r.name for r in rows] and again["live_at"] == saved["live_at"]
 
