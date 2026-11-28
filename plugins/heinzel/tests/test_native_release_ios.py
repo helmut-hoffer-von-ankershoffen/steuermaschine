@@ -349,6 +349,19 @@ def test_successful_upload_with_temporary_processing_delay_resumes_same_build(tm
     assert m.run().exit_code == 0 and m.receipt()["build"] == "32" and len(m.uploads) == 1
 
 
+def test_a_version_already_in_app_store_connect_is_only_verified(tmp_path):
+    """Reconfirm an already distributed build bound to the current source and submission."""
+    m = Mini(tmp_path)
+    assert m.run().exit_code == 0 and m.receipt()["clean"]
+    m.commands.calls.clear()
+
+    assert m.run().exit_code == 0
+    assert m.receipt()["build"] == "32" and m.receipt()["clean"]
+    assert any(call[:2] == [*ASC_CALL, "status"] for call in m.commands.calls)
+    assert len(m.archived) == len(m.uploads) == 1
+    assert not any(call[:2] == ["xcodebuild", "archive"] for call in m.commands.calls)
+
+
 def test_assigns_a_valid_build_outside_the_group(tmp_path):
     m = Mini(tmp_path)
     m.auto_group = False
