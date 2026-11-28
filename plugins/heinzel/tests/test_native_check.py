@@ -39,7 +39,12 @@ def checkout(core, hook=NONE, **files):  # noqa: F811
                        "tests/unit/prose_rules_test.py": "", **files}.items():
         (core / path).parent.mkdir(parents=True, exist_ok=True)
         (core / path).write_text(text)
-    return Machine(**{"core_scoped_checks": json.dumps(hook)})
+    def pass_x_test(argv):
+        report = Path(next(arg.split("=", 1)[1] for arg in argv if arg.startswith("--junitxml=")))
+        report.write_text('<testsuite><testcase file="tests/unit/x_test.py" name="test_x"/></testsuite>')
+        return "1 passed"
+
+    return Machine(**{"core_scoped_checks": json.dumps(hook)}).on("tests/unit/x_test.py -o junit_family=xunit1", pass_x_test)
 
 
 def report(done):
@@ -664,7 +669,8 @@ def test_a_full_selection_the_import_graph_narrows_runs_those_tests_and_the_ones
     pytest.param("<failure/>", id="failed"),
     pytest.param("<error/>", id="error"),
 ])
-def test_named_python_in_grouped_hook_needs_its_own_passing_case(core, rt, tmp_path, outcome):  # noqa: F811
+@pytest.mark.parametrize("grouped", [True, False], ids=["grouped", "standalone"])
+def test_named_python_needs_its_own_passing_case(core, rt, tmp_path, outcome, grouped):  # noqa: F811
     wanted, other = "tests/unit/wanted_test.py", "tests/unit/other_test.py"
     for name in (wanted, other):
         (core / name).write_text("def test_ok(): pass\n")
@@ -680,7 +686,9 @@ def test_named_python_in_grouped_hook_needs_its_own_passing_case(core, rt, tmp_p
         output.write_text(f"<testsuite>{sibling}{requested}</testsuite>")
         return "pytest returned success"
 
-    machine = checkout(core, {**NONE, "guards": [cmd]}).on(" ".join(cmd), emit)
+    guards = [cmd] if grouped else []
+    match = " ".join(cmd if grouped else [*check.cheap.head.PYTEST_FILES_CMD, wanted])
+    machine = checkout(core, {**NONE, "guards": guards}).on(match, emit)
     runtime = rt(machine)
     found = report(invoke(runtime, ["--format", "json", "check", str(core), "--sel", str(sel)]))
     passed = outcome == ""
@@ -689,7 +697,7 @@ def test_named_python_in_grouped_hook_needs_its_own_passing_case(core, rt, tmp_p
     calls = [argv for argv, *_ in machine.calls if "pytest" in argv and wanted in argv]
     assert len(calls) == 1
     if not passed:
-        assert "hook reported no passing case from" in found.failures[0].message
+        assert "pytest reported no passing case from" in found.failures[0].message
 
 
 def test_named_python_files_cannot_disappear_from_a_receipt(core, rt, tmp_path):  # noqa: F811

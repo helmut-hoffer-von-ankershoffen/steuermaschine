@@ -321,8 +321,8 @@ def hook_pytest_files(c: Ctx, argv: list[str]) -> set[str]:
     return set(c.plan.extra).intersection(argv)
 
 
-def run_hook_pytest(c: Ctx, argv: list[str], expected: set[str]) -> tuple[int, str]:
-    """Use the hook's own pytest session to verify at least one passing case in each requested file."""
+def run_named_pytest(c: Ctx, argv: list[str], expected: set[str]) -> tuple[int, str]:
+    """Use the selected pytest session to verify at least one passing case in each requested file."""
     with tempfile.TemporaryDirectory(prefix="sm-pytest-") as directory:
         report = Path(directory) / "results.xml"
         # Core's guards and documentation steps do not request JUnit. Preserve a future hook's own artifact.
@@ -341,7 +341,7 @@ def run_hook_pytest(c: Ctx, argv: list[str], expected: set[str]) -> tuple[int, s
             return 1, f"{out}\nnamed pytest evidence: {error}"
         missing = sorted(file for file in expected if (c.wt / file).resolve() not in passing)
         if missing:
-            return 1, f"{out}\nnamed pytest evidence: hook reported no passing case from {', '.join(missing)}"
+            return 1, f"{out}\nnamed pytest evidence: pytest reported no passing case from {', '.join(missing)}"
         return rc, out
 
 
@@ -350,7 +350,7 @@ def run_steps(c: Ctx, s: Step, steps: list[tuple[str, list[str]]], fix: str) -> 
         if name == "web-tests" and c.plan.named_web_tests:
             rc, out = run_named_vitest(c, argv)
         elif expected := hook_pytest_files(c, argv):
-            rc, out = run_hook_pytest(c, argv, expected)
+            rc, out = run_named_pytest(c, argv, expected)
         else:
             rc, out = c.gate(argv, cwd=c.wt)
         if rc == 75:
@@ -469,7 +469,7 @@ def step_tests(c: Ctx) -> Step:
     for file in files_run:
         if file in explicit:
             # Pytest must collect this file; another file's collected tests cannot mask an empty selection.
-            head.run_tests(c, s, "named", [file])
+            run_steps(c, s, [("named tests", [*head.PYTEST_FILES_CMD, file])], "fix the named test or its selection")
         else:
             remaining.append(file)
     for start in range(0, len(remaining), MAX_TEST_FILES):  # a spent budget stops the run between batches (exit 75)
