@@ -17,7 +17,10 @@ classifiers = [
     "Programming Language :: Python :: 3.15",
     "Typing :: Typed",
 ]
-dependencies = ["steuermaschine"]
+dependencies = [
+    "steuermaschine",
+    "pyjwt[crypto]",
+]
 
 [project.urls]
 Homepage = "https://github.com/helmut-hoffer-von-ankershoffen/steuermaschine"

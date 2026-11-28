@@ -265,3 +265,101 @@ def test_main_refuses_a_different_main_and_bad_requests(monkeypatch, tmp_path):
     monkeypatch.setattr(rd.sys, "stdin", SimpleNamespace(buffer=io.BytesIO(b"x" * (rd.MAX_INPUT + 1))))
     with pytest.raises(ValueError, match="exceeds bound"):
         rd.main()
+
+
+TREE = "d" * 40
+
+
+class FullGate:
+    WORKFLOW = ".github/workflows/ci.yml"
+
+    class Gate:
+        def __init__(self, repo, pr, head):
+            self.repo, self.pr, self.head = repo, pr, head
+
+    def __init__(self):
+        self.verdict = "Whole-project coverage measured by full PR CI"
+        self.merge_tree = TREE
+        self.current = READER
+        self.proof = {"type": "full-pr-capacity/v1", "head": SHA, "base": READER, "tree": TREE,
+                      "run": 7, "attempt": 2, "original_attempt": 1}
+
+    def git(self, *args):
+        assert args == ("show", f"{READER}:{self.WORKFLOW}")
+        return b"trusted workflow"
+
+    def full_pr_jobs(self):
+        pass
+
+    def verify(self, gate, run, manifest, read):
+        assert (gate.repo, gate.pr, gate.head, run, manifest) == (rd.REPOSITORY, "42", SHA, 7, "{}")
+        assert gate.github("identity") == {"checked": True}
+        assert read("artifact") == b"receipt"
+        return self.verdict
+
+    def verify_full_pr_capacity(self, gate, run, read):
+        assert (gate.pr, run, read("artifact")) == ("42", 7, b"receipt")
+        return self.proof
+
+    def pull_identity(self, gate, head):
+        assert head == SHA
+        return {}, "merge-sha", self.current
+
+
+def full_request(mode="full-pr"):
+    return {"mode": mode, "head": SHA, "reader_head": READER, "tree": TREE, "pr": 42, "run": 7}
+
+
+def full_reader(monkeypatch, tmp_path, request=None, gate=None, fp=None):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(rd, "api", lambda path: {"checked": True})
+    monkeypatch.setattr(rd, "read", lambda path: b"receipt")
+    fp = fp or Fp()
+    fp.object_id = lambda name: TREE if name == "merge-sha^{tree}" else None
+    return rd.verified_full_pr(request or full_request(), fp, gate or FullGate())
+
+
+@pytest.mark.parametrize("mode", ["full-pr", "full-pr-capacity"])
+def test_full_reader_authenticates_workflow_and_exact_proof(monkeypatch, tmp_path, mode):
+    result = full_reader(monkeypatch, tmp_path, full_request(mode))
+    assert result == {"type": f"{mode}/v1", "head": SHA, "base": READER, "tree": TREE,
+                      "run": 7, "attempt": 2 if mode.endswith("capacity") else 1,
+                      **({"original_attempt": 1} if mode.endswith("capacity") else {})}
+    assert (tmp_path / FullGate.WORKFLOW).read_bytes() == b"trusted workflow"
+
+
+@pytest.mark.parametrize("failure", ["unsupported", "sha", "verdict", "base", "tree"])
+def test_full_reader_refuses_unverified_source_or_identity(monkeypatch, tmp_path, failure):
+    gate = FullGate()
+    req = full_request()
+    if failure == "unsupported":
+        gate.full_pr_jobs = None
+    elif failure == "sha":
+        req["tree"] = "bad"
+    elif failure == "verdict":
+        gate.verdict = "focused evidence only"
+    elif failure == "base":
+        gate.current = "e" * 40
+    else:
+        req["tree"] = "e" * 40
+    with pytest.raises(ValueError):
+        full_reader(monkeypatch, tmp_path, req, gate)
+
+
+@pytest.mark.parametrize("change", [{"run": 8}, {"attempt": 1}, {"original_attempt": 2}, {"run": True},
+                                    {"base": "e" * 40}, {"tree": "e" * 40}])
+def test_full_reader_rejects_contradictory_capacity_proofs(monkeypatch, tmp_path, change):
+    gate = FullGate()
+    gate.proof.update(change)
+    with pytest.raises(ValueError, match="not authenticated"):
+        full_reader(monkeypatch, tmp_path, full_request("full-pr-capacity"), gate)
+
+
+@pytest.mark.parametrize(("mode", "selected"), [("full-pr", "full"), ("full-pr-capacity", "full"), ("segment", "segment")])
+def test_main_dispatches_only_to_selected_protected_reader(monkeypatch, tmp_path, capsys, mode, selected):
+    calls = []
+    monkeypatch.setattr(rd, "verified_full_pr", lambda request, fp, fg: calls.append(("full", request["mode"])) or {"reader": "full"})
+    monkeypatch.setattr(rd, "verified_segment", lambda request, fp, fg: calls.append(("segment", request["mode"])) or {"reader": "segment"})
+    run_main(monkeypatch, tmp_path, {"reader_head": READER, "core_repo": str(tmp_path), "mode": mode}, modules())
+    assert calls == [(selected, mode)]
+    assert json.loads(capsys.readouterr().out) == {"reader": selected}

@@ -107,15 +107,19 @@ def required_contexts(w: probes.World, repo: str, base: str) -> tuple[frozenset[
     return frozenset(found), ""
 
 
-def ci_reasons(w: probes.World, repo: str, base: str, head: str, files: list[dict[str, Any]]) -> tuple[str, ...]:
+def ci_reasons(w: probes.World, repo: str, base: str, head: str, files: list[dict[str, Any]], *, errors_only: bool = False) -> tuple[str, ...]:
     """Why the PR changes CI: Core's ci_changes on the local Core clone (the base's not-CI paths); another repository by
     its workflow files. No clone of Core: a reason (fail closed)."""
     from .queue_lib import core_policy
 
     if repo != w.repo:
+        if errors_only:
+            return ()
         return tuple(f"{f['path']}: a workflow file" for f in files if str(f.get("path", "")).startswith(WORKFLOWS))
     if not w.core:
         return ("no local Core clone (setting core_repo_dir) to judge the CI paths",)
+    if errors_only:
+        return core_policy.ci_changes(w.core, base, head, errors_only=True)
     return core_policy.ci_changes(w.core, base, head)
 
 

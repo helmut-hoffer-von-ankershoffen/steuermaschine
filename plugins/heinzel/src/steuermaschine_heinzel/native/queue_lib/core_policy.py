@@ -325,7 +325,7 @@ def collected_kind(repo: str | Path, treeish: str, lane: str) -> str:
 SPECIAL_MODES = frozenset(("120000", "160000"))  # a symlink or a gitlink: never "not CI", whatever its path
 
 
-def ci_changes(repo: str | Path, base: str, head: str) -> tuple[str, ...]:
+def ci_changes(repo: str | Path, base: str, head: str, *, errors_only: bool = False) -> tuple[str, ...]:
     """Why the change from `base` to `head` touches Core's CI: one line per reason, empty when it does not.
 
     The not-CI paths are those of the manifest at BASE (`git show BASE:scripts/release_policy.json`), never the head's:
@@ -364,9 +364,9 @@ def ci_changes(repo: str | Path, base: str, head: str) -> tuple[str, ...]:
             continue
         if len(parts) != 5 or not parts[0].startswith(":"):
             reasons.append(f"{path}: garbled diff entry")
-        elif SPECIAL_MODES & {parts[0][1:], parts[1]}:
+        elif not errors_only and SPECIAL_MODES & {parts[0][1:], parts[1]}:
             reasons.append(f"{path}: symlink or submodule")
-        elif not policy.is_not_ci(path):
+        elif not errors_only and not policy.is_not_ci(path):
             reasons.append(f"{path}: CI path (not listed as not CI at base {base[:12]})")
     return tuple(reasons)
 

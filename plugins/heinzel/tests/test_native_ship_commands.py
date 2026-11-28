@@ -223,20 +223,32 @@ def test_ship_queues_a_pr_the_guard_passes_with_the_calls_of_the_old_script_in_o
     ]
 
 
-def test_ship_answers_needs_review_for_a_flagged_diff_and_queues_it_with_a_written_reason(rt, gh):
+def test_flagged_core_ship_requires_explicit_exact_operator_authorization(rt, gh):
     gh.on("pr diff 801", WEAKER)
-    out = invoke(rt, ["--format", "json", "head", "ship", "801"])
-    result = doc(out)
-    assert out.exit_code == 2 and result.verdict == "needs_review" and result.lines[0] == "NEEDS_REVIEW 801" and len(result.lines) <= 7
-    assert keys(rt) == []
-    reviewed = invoke(rt, ["head", "ship", "801", "independent review: research/review-pr801.md"])
-    assert reviewed.exit_code == 0 and reviewed.stdout == "queued 801\n" and keys(rt) == ["801"]
-    assert "reviewed: independent review: research/review-pr801.md" in (rt.records / "AGENTS.md").read_text()
-    again = invoke(rt, ["head", "ship", "801"])
-    assert again.exit_code == 0 and again.stdout.startswith("CLEARED 801: guard already cleared")
-    gh.on("pr view 801", {"title": "fix: x", "body": "one fix", "headRefOid": "f" * 40, "headRefName": "fix/x"})
-    moved = invoke(rt, ["head", "ship", "801"])  # review F2: a cleared verdict holds for the cleared head only
-    assert moved.exit_code == 2 and moved.stdout.startswith("NEEDS_REVIEW 801"), moved
+    out = invoke(rt, ["head", "ship", "801"])
+    assert out.exit_code and keys(rt) == [] and "--authorize-guard" in out.stderr
+    gh.on("--json baseRefOid", {"baseRefOid": "b" * 40})
+    assert invoke(rt, ["queue", "add", "801", "--reviewed", "former receipt", "--reviewed-head", HEAD]).exit_code
+    assert invoke(rt, ["queue", "add", "acme", "801", "--authorize-guard", "reason", "--expected-head", HEAD]).exit_code
+    for options in ([], ["--expected-head", "f" * 40]):
+        assert invoke(rt, ["queue", "add", "801", "--authorize-guard", "specific triage", *options]).exit_code
+        assert keys(rt) == []
+    authorized = invoke(rt, ["queue", "add", "801", "--authorize-guard", "specific triage", "--expected-head", HEAD])
+    assert authorized.exit_code == 0
+    item = json.loads(rt.state_file.read_text())["items"][-1]
+    auth = item["guard_authorization"]
+    assert (auth["reason"], auth["base"], auth["head"], auth["findings"]) == ("specific triage", "b" * 40, HEAD, ["coe"])
+    assert len(auth["digest"]) == 64
+    assert item["guarded_head"] == HEAD and not item["reviewed_head"]
+
+
+def test_policy_pin_refuses_a_moved_head_and_an_unreadable_guard(rt, gh):
+    gh.on("pr diff 801", WEAKER)
+    moved = invoke(rt, ["queue", "add", "801", "--expected-head", "b" * 40])
+    assert moved.exit_code == 1 and keys(rt) == []
+    gh.on("pr diff 801", Result(1, "", "unavailable"))
+    unreadable = invoke(rt, ["queue", "add", "801", "--expected-head", HEAD])
+    assert unreadable.exit_code == 1 and keys(rt) == []
 
 
 def test_ship_pins_the_reviewed_head_and_passes_the_queues_refusal_on(rt, gh):
@@ -325,6 +337,8 @@ def test_pr_live_pushes_the_checked_sha_once_under_the_run_lock_opens_the_pr_and
     gh.on("pr create", lambda argv: bodies.append((argv[argv.index("--body-file") + 1], Path(argv[argv.index("--body-file") + 1]).read_text())) or "https://example.invalid/pull/801\n")
     out = invoke(rt, ["head", "pr", "abc", "fix(web): keep the draft", "--body-file", str(worktree), "--live"])
     assert out.exit_code == 0 and out.stdout.splitlines()[-2:] == ["queued 801", "801"], out
+    item = json.loads(rt.state_file.read_text())["items"][-1]
+    assert item["expected_head"] == HEAD and not item["reviewed_head"]
     lines = [" ".join(c) for c in gh.calls]
     push = [line for line in lines if "git push" in line]
     assert len(push) == 1 and push[0].endswith(f"-m steuermaschine.app gate run --max-wait 1800 -- git push origin {HEAD}:refs/heads/fix/x")

@@ -35,7 +35,7 @@ def _done(code: int, out: str = "", err: str = "") -> Done:
     return Done(code, out, err)
 
 
-def ship(pr: str, reason: str | None = None, reviewed_head: str | None = None) -> Done:
+def ship(pr: str, reason: str | None = None, reviewed_head: str | None = None, *, expected_head: str | None = None) -> Done:
     """Without a reason: the guard decides. With one: queued as reviewed (the queue still refuses a moved head)."""
     if reason == "--reviewed-head" or (reviewed_head is not None and not reason):
         return _done(2, err=USAGE + "\n")
@@ -54,7 +54,8 @@ def ship(pr: str, reason: str | None = None, reviewed_head: str | None = None) -
     except ValueError:
         repo, number = "", ""
     queued_before = repo and any(str(i.get("pr")) == number and i.get("repo") == repo for i in items)
-    if queued_before and known_failures.guard_cleared(number, items, repo, module.pr_head(repo, number)):
+    current = module.pr_head(repo, number) if queued_before else ""
+    if queued_before and (not expected_head or current == expected_head) and known_failures.guard_cleared(number, items, repo, current):
         return _done(0, f"CLEARED {pr}: guard already cleared at this head (queued or reviewed); nothing to review\n")
     out = ""
     try:  # as the script: a failed read counts as 0 runs in flight; hzlib.gh bounds it (a timeout is exit 124)
@@ -66,8 +67,10 @@ def ship(pr: str, reason: str | None = None, reviewed_head: str | None = None) -
         out += f"NOTE: {in_flight} PR CI runs in flight > 5: queue is fine, but push nothing new until it drops\n"
     guard = deps.captured(hzlib.load("diff_guard").main, [pr])
     verdict = (guard.stdout + guard.stderr).rstrip("\n")
+    if verdict.startswith("FLAG ") and not hzlib.requires_independent_review(repo):
+        return _done(2, err=verdict + "\nResolve findings or use sm queue add --expected-head SHA --authorize-guard REASON.\n")
     if verdict.startswith("PASS"):  # the queue guards again and binds that verdict to the head it read
-        added = _add([pr])
+        added = _add(["--expected-head", expected_head, pr] if expected_head else [pr])
         return _done(added.returncode, out + added.stdout, added.stderr)
     return _done(2, out + f"NEEDS_REVIEW {pr}\n" + "".join(f"{line}\n" for line in verdict.splitlines()[:6]))
 

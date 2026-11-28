@@ -3,6 +3,7 @@ comes from (the checkout's selector and hook, never a list in sm), and the recei
 No network, no real git, uv or node; the lock files live under tmp_path."""
 
 import json
+from pathlib import Path
 from shlex import split
 
 import pytest
@@ -38,7 +39,12 @@ def checkout(core, hook=NONE, **files):  # noqa: F811
                        "tests/unit/prose_rules_test.py": "", **files}.items():
         (core / path).parent.mkdir(parents=True, exist_ok=True)
         (core / path).write_text(text)
-    return Machine(**{"core_scoped_checks": json.dumps(hook)})
+    def pass_x_test(argv):
+        report = Path(next(arg.split("=", 1)[1] for arg in argv if arg.startswith("--junitxml=")))
+        report.write_text('<testsuite><testcase file="tests/unit/x_test.py" name="test_x"/></testsuite>')
+        return "1 passed"
+
+    return Machine(**{"core_scoped_checks": json.dumps(hook)}).on("tests/unit/x_test.py -o junit_family=xunit1", pass_x_test)
 
 
 def report(done):
@@ -75,9 +81,100 @@ def test_a_web_change_runs_the_hooks_web_steps_and_the_selected_vitest_file_and_
     assert not machine.ran("git push") and not [call for call in machine.calls if call[0][0] == "gh"]
     receipt = runtime.providers.store.get_receipt(verdicts.CHECKS, HEAD)
     assert receipt["green"] is True and receipt["head"] == HEAD and receipt["base"] == MAIN and receipt["branch"] == "feat/thing"
+    assert receipt["requires_full_pr"] is False
     assert [row["name"] for row in receipt["checks"]] == list(check.cheap.STEPS)
     again = invoke(runtime, ["check", str(core)])  # the same commit again: the receipt is written once
     assert again.exit_code == 0 and again.stdout.splitlines()[-1].startswith(f"receipt: checks {HEAD} (this commit already had one)")
+
+
+def test_deferred_whole_vitest_is_bound_to_check_receipt(core, rt, tmp_path):  # noqa: F811
+    sel = tmp_path / "sel.json"
+    sel.write_text(json.dumps({"vitest": ["web/src/a.test.ts"]}))
+    hook = {**WEB, "web": ["web-tests=web exec vitest run ./src/a.test.ts"]}
+    machine = checkout(core, hook).on("git diff --name-only", "pyproject.toml")
+    machine.on("web exec vitest run", vitest_report(core, ["web/src/a.test.ts"]))
+    runtime = rt(machine)
+    result = invoke(runtime, ["--format", "json", "check", str(core), "--sel", str(sel)])
+    found = report(result)
+    assert found.ready and "the whole Vitest suite" in found.ci_must_run
+    receipt = runtime.providers.store.get_receipt(verdicts.CHECKS, HEAD)
+    assert receipt["head"] == HEAD and receipt["base"] == MAIN and receipt["requires_full_pr"] is True
+
+
+def vitest_report(worktree, names):
+    def write(argv):
+        assert "--reporter=default" in argv and "--reporter=json" in argv
+        report = Path(next(arg.split("=", 1)[1] for arg in argv if arg.startswith("--outputFile.json=")))
+        assert not report.exists() and not report.is_relative_to(worktree)
+        results = [{"name": str(worktree / name), "status": "passed", "assertionResults": [{"status": "passed"}]} for name in names]
+        report.write_text(json.dumps({"success": True, "testResults": results}), encoding="utf-8")
+        return "Vitest passed"
+
+    return write
+
+
+@pytest.mark.parametrize("changed", ["pyproject.toml", "web/src/a.ts"])
+def test_named_vitest_green_exit_cannot_hide_a_dropped_suite(core, rt, tmp_path, changed):  # noqa: F811
+    wanted = ["web/src/a.test.ts", "web/src/b.test.ts"]
+    sel = tmp_path / "sel.json"
+    sel.write_text(json.dumps({"vitest": wanted}))
+    command = "web exec vitest run ./src/a.test.ts ./src/b.test.ts"
+    machine = checkout(core, {**WEB, "web": [f"web-tests={command}"]}).on("git diff --name-only", changed)
+    machine.on(command, vitest_report(core, wanted[:1]))
+    runtime = rt(machine)
+    found = report(invoke(runtime, ["--format", "json", "check", str(core), "--sel", str(sel)]))
+    assert not found.ready and not found.receipt
+    assert [failure.step for failure in found.failures] == ["web"]
+    assert "omits a selection" in found.failures[0].message
+    assert not runtime.providers.store.get_receipt(verdicts.CHECKS, HEAD)
+
+
+@pytest.mark.parametrize("automatic, deferred", [("web/src/a.ts\nweb/src/b.ts", True), ("web/src/a.ts", False)])
+def test_exact_vitest_runs_only_named_files_and_records_full_pr_when_it_omits_tests(core, rt, tmp_path, automatic, deferred):  # noqa: F811
+    wanted = "web/src/a.test.ts"
+    sel = tmp_path / "sel.json"
+    sel.write_text(json.dumps({"vitest": [wanted]}))
+    command = "web exec vitest run ./src/a.test.ts"
+    hook = {**WEB, "web": [*WEB["web"][:-1], f"web-tests={command}"]}
+    machine = checkout(core, hook).on("git diff --name-only", automatic).on(command, vitest_report(core, [wanted]))
+    runtime = rt(machine)
+    found = report(invoke(runtime, ["--format", "json", "check", str(core), "--sel", str(sel), "--vitest-exact"]))
+    assert found.ready and found.receipt
+    (probe, _, _), = machine.ran("core_scoped_checks")
+    assert json.loads(probe[-1])["vitest"] == [wanted]
+    assert machine.ran(command) and machine.ran("biome ci") and machine.ran("tsc --noEmit")
+    receipt = runtime.providers.store.get_receipt(verdicts.CHECKS, HEAD)
+    assert receipt["head"] == HEAD and receipt["base"] == MAIN and receipt["requires_full_pr"] is deferred
+    assert found.ci_must_run == receipt["ci_must_run"] == (["the whole Vitest suite"] if deferred else [])
+
+
+@pytest.mark.parametrize("reported", [["web/src/a.test.ts", "web/src/nested/src/a.test.ts"], ["web/src/nested/src/a.test.ts"], []])
+def test_exact_vitest_green_exit_cannot_hide_extra_or_missing_results(core, rt, tmp_path, reported):  # noqa: F811
+    wanted = "web/src/a.test.ts"
+    sel = tmp_path / "sel.json"
+    sel.write_text(json.dumps({"vitest": [wanted]}))
+    command = "web exec vitest run ./src/a.test.ts"
+    machine = checkout(core, {**WEB, "web": [f"web-tests={command}"]}).on(command, vitest_report(core, reported))
+    runtime = rt(machine)
+    found = report(invoke(runtime, ["--format", "json", "check", str(core), "--sel", str(sel), "--vitest-exact"]))
+    assert not found.ready and not found.receipt
+    assert [failure.step for failure in found.failures] == ["web"]
+    assert "reported Vitest" in found.failures[0].message
+    assert not runtime.providers.store.get_receipt(verdicts.CHECKS, HEAD)
+
+
+@pytest.mark.parametrize("selection", [None, {}, {"vitest": []}, {"vitest": ["web/src/a b.test.ts"]}])
+def test_exact_vitest_refuses_missing_empty_or_invalid_selection(core, rt, tmp_path, selection):  # noqa: F811
+    machine = checkout(core)
+    runtime = rt(machine)
+    args = ["check", str(core), "--vitest-exact"]
+    if selection is not None:
+        sel = tmp_path / "sel.json"
+        sel.write_text(json.dumps(selection))
+        args.extend(["--sel", str(sel)])
+    result = invoke(runtime, args)
+    assert result.exit_code == 2, result
+    assert not machine.ran("core_scoped_checks") and not runtime.providers.store.get_receipt(verdicts.CHECKS, HEAD)
 
 
 def test_a_document_change_runs_the_docs_style_test_the_selector_names_and_the_hooks_document_steps(core, rt):  # noqa: F811
@@ -554,7 +651,7 @@ def test_a_failing_import_graph_fails_the_run_instead_of_passing_for_everything(
 
 def test_a_full_selection_the_import_graph_narrows_runs_those_tests_and_the_ones_of_sel(core, rt, tmp_path):  # noqa: F811
     sel = tmp_path / "sel.json"
-    sel.write_text(json.dumps({"python": ["tests/unit/x_test.py::test_one"]}))
+    sel.write_text(json.dumps({"python": ["tests/unit/x_test.py"]}))
     machine = checkout(core).on("git diff --name-only", "pyproject.toml").on("scripts/related_tests.py", "tests/unit/x_test.py\n")
     found = report(invoke(rt(machine), ["--format", "json", "check", str(core), "--sel", str(sel)]))
     assert found.ready and step(found, "tests").data["tests"] == ["tests/unit/x_test.py"] and not machine.ran("unit and not perf")
@@ -562,6 +659,62 @@ def test_a_full_selection_the_import_graph_narrows_runs_those_tests_and_the_ones
     machine = checkout(core).on("git diff --name-only", "pyproject.toml\nsrc/heinzel/x.py").on("scripts/related_tests.py", "ALL\n")
     found = report(invoke(rt(machine), ["--format", "json", "check", str(core)]))  # src/ changed and no test named: fails, as before
     assert not found.ready and [f.step for f in found.failures] == ["tests"] and "no test is selected" in found.failures[0].message and "--sel FILE" in found.failures[0].fix
+
+
+@pytest.mark.parametrize("outcome", [
+    pytest.param("", id="passed"),
+    pytest.param(None, id="absent"),
+    pytest.param('<skipped type="pytest.skip"/>', id="skipped"),
+    pytest.param('<skipped type="pytest.xfail"/>', id="xfailed"),
+    pytest.param("<failure/>", id="failed"),
+    pytest.param("<error/>", id="error"),
+])
+@pytest.mark.parametrize("route", ["guard", "standalone", "explicit-batch", "docs-and-guard"])
+def test_named_python_needs_its_own_passing_case(core, rt, tmp_path, outcome, route):  # noqa: F811
+    wanted, other = "tests/unit/wanted_test.py", "tests/unit/other_test.py"
+    for name in (wanted, other):
+        (core / name).write_text("def test_ok(): pass\n")
+    sel = tmp_path / "sel.json"
+    sel.write_text(json.dumps({"python": [other, wanted] if route == "explicit-batch" else [wanted]}))
+    cmd = ["uv", "run", "pytest", other, wanted, "-m", "unit"]
+
+    def emit(argv):
+        output = Path(next(arg.split("=", 1)[1] for arg in argv if arg.startswith("--junitxml=")))
+        assert not output.exists() and not output.is_relative_to(core)
+        sibling = f'<testcase file="{other}" name="test_sibling"/>'
+        requested = "" if outcome is None else f'<testcase file="{wanted}" name="test_requested">{outcome}</testcase>'
+        output.write_text(f"<testsuite>{sibling}{requested}</testsuite>")
+        return "pytest returned success"
+
+    grouped = route in {"guard", "docs-and-guard"}
+    guards = [cmd] if grouped else []
+    docs = ["named-docs=" + " ".join(cmd)] if route == "docs-and-guard" else []
+    named = [other, wanted] if route == "explicit-batch" else [wanted]
+    match = " ".join(cmd if grouped else [*check.cheap.head.PYTEST_FILES_CMD, *named])
+    machine = checkout(core, {**NONE, "guards": guards, "docs": docs}).on(match, emit)
+    runtime = rt(machine)
+    found = report(invoke(runtime, ["--format", "json", "check", str(core), "--sel", str(sel)]))
+    passed = outcome == ""
+    assert found.ready is passed and bool(found.receipt) is passed
+    assert bool(runtime.providers.store.get_receipt(verdicts.CHECKS, HEAD)) is passed
+    calls = [argv for argv, *_ in machine.calls if "pytest" in argv and wanted in argv]
+    assert len(calls) == (2 if docs and not passed else 1)
+    assert step(found, "tests").data.get("guards_reused_from_docs", []) == ([cmd] if docs and passed else [])
+    if not passed:
+        assert "pytest reported no passing case from" in found.failures[0].message
+
+
+def test_named_python_files_cannot_disappear_from_a_receipt(core, rt, tmp_path):  # noqa: F811
+    sel = tmp_path / "sel.json"
+    sel.write_text(json.dumps({"python": ["tests/unit/x_test.py", "tests/unit/missing_test.py"]}))
+    machine = checkout(core).on("git diff --name-only", "src/heinzel/x.py")
+    runtime = rt(machine)
+    found = report(invoke(runtime, ["--format", "json", "check", str(core), "--sel", str(sel)]))
+    assert not found.ready and "missing_test.py" in next(f.message for f in found.failures if f.step == "tests")
+    assert runtime.providers.store.get_receipt(verdicts.CHECKS, HEAD) is None
+    sel.write_text(json.dumps({"python": ["tests/unit/x_test.py::missing_case"]}))
+    done = invoke(runtime, ["check", str(core), "--sel", str(sel)])
+    assert done.exit_code == 2 and "individual pytest node IDs" in done.stderr
 
 
 def test_a_hook_that_does_not_answer_fails_the_run_whatever_changed(core, rt, tmp_path):  # noqa: F811

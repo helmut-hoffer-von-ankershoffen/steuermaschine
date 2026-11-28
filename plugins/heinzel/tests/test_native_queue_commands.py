@@ -185,8 +185,8 @@ def test_add_refuses_a_diff_that_weakens_a_check_and_queues_it_with_a_review_rea
     refused = invoke(rt, ["queue", "add", "801"])
     assert refused.exit_code == 1 and refused.stdout.strip() == "" and "FLAG" in refused.stderr and "refused 801" in refused.stderr
     assert rt.state_file.read_text() == before
-    reviewed = invoke(rt, ["queue", "add", "--reviewed", "review: research/review-pr801.md", "801"])
-    assert reviewed.exit_code == 0 and reviewed.stdout == "queued 801\n" and "FLAG" in reviewed.stderr
+    reviewed = invoke(rt, ["queue", "add", "--reviewed", "review: research/review-pr801.md", "acme", "801"])
+    assert reviewed.exit_code == 0 and reviewed.stdout == "queued acme #801\n" and "FLAG" in reviewed.stderr
     note = rt.notes.read_text().splitlines()[-1]
     assert note.endswith("queued past the diff guard (coe), reviewed: review: research/review-pr801.md") and note.startswith("- ")
 
