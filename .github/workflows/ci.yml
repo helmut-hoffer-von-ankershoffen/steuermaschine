@@ -93,7 +93,7 @@ jobs:
       - name: Submit main analysis to SonarQube Cloud
         # Release consumes the push CI conclusion. Main analysis stays asynchronous.
         if: github.event_name == 'push' && steps.sonar.outputs.token == 'true'
-        uses: SonarSource/sonarqube-scan-action@59202af334b4ba7b5db01b701b8e79f8b3bef0f4 # v8.5.0
+        uses: SonarSource/sonarqube-scan-action@70bad232163b09d998ea0707ee80c0ec80798c16 # v8.5.1
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
@@ -149,7 +149,7 @@ jobs:
       - name: Verify this pull request's Sonar quality gate
         id: sonar-analysis
         if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
-        uses: SonarSource/sonarqube-scan-action@59202af334b4ba7b5db01b701b8e79f8b3bef0f4 # v8.5.0
+        uses: SonarSource/sonarqube-scan-action@70bad232163b09d998ea0707ee80c0ec80798c16 # v8.5.1
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         with:
