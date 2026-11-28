@@ -55,7 +55,7 @@ def native_receipts(tmp_path):
 @pytest.fixture(autouse=True)
 def _planned_main(request, monkeypatch):
     if "real_main_plan" not in request.fixturenames:
-        monkeypatch.setattr(main_plan, "gap", lambda pr, head="": "")
+        monkeypatch.setattr(main_plan, "gap", lambda pr, head="", *, authorized_base="": "")
     yield
 
 
