@@ -203,3 +203,99 @@ def test_real_push_run_names_and_a_lane_run_read_side_by_side(q):
     push = {**run(8, Y), "displayTitle": main_batch.PREFIX + Y}  # the push run's name on a split main
     q.world = World([run(9, Y, lane=True, status="in_progress"), push], jobs={8: job_rows(LINUX + [DISPATCH])})
     assert q.main_state() == "green"
+
+
+@pytest.mark.parametrize("case", [
+    "green", "two_docs", "product", "installer", "changelog", "rename_product", "truncated", "wrong_parent",
+    "pending_product_tip", "unreadable_ref", "unsafe_docs", "missing_secret", "no_tip_lane", "wrong_child", "second_attempt", "new_red", "failed_lane", "incomplete_lane", "no_parent_full",
+    "no_docs_policy", "partial_docs_jobs", "unreadable_commit", "diverged", "unrelated_green",
+])
+def test_docs_push_preserves_full_recovery_only_on_proven_parent(q, monkeypatch, case):
+
+    pin = run(7, X, conclusion="failure")
+    q.update(main_failure=pin)
+    base = {**run(10, Y), "event": "push"}
+    docs = {**run(20, Z), "event": "push"}
+    mac = {**run(11, Y, lane=True), "event": "workflow_dispatch"}
+    latest_mac = {**run(21, Z, lane=True), "event": "workflow_dispatch"}
+    docs_names = ["CI OK", "Changed paths", "Main batch admission", "Secret scan", "Quarantine registry", DISPATCH]
+    commit = {"sha": Z, "parents": [{"sha": Y}], "files": [{"status": "modified", "filename": "docs/overrides/home.html"}]}
+    jobs = {10: job_rows(LINUX + [DISPATCH]), 11: job_rows(["CI OK", *MAC]),
+            20: job_rows(docs_names), 21: job_rows(["CI OK", *MAC])}
+    runs = [latest_mac, docs, mac, base, pin]
+    tip = Z
+    if case == "two_docs":
+        tip = "d" * 40
+        runs.insert(0, {**run(30, tip), "event": "push"})
+        runs.insert(0, {**run(31, tip, lane=True), "event": "workflow_dispatch"})
+        jobs[30] = job_rows(docs_names)
+        jobs[31] = job_rows(["CI OK", *MAC])
+    if case == "pending_product_tip":
+        runs.insert(0, {**run(30, "e" * 40, status="in_progress"), "event": "push"})
+    if case == "product":
+        commit["files"][0]["filename"] = "web/src/Home.tsx"
+    if case == "unsafe_docs":
+        commit["files"][0]["filename"] = "docs/install.command"
+    if case == "missing_secret":
+        jobs[20] = job_rows([n for n in docs_names if n != "Secret scan"])
+    if case == "no_tip_lane":
+        runs.remove(latest_mac)
+    if case == "installer":
+        commit["files"][0]["filename"] = "docs/install.sh"
+    if case == "changelog":
+        commit["files"][0]["filename"] = "docs/CHANGELOG.md"
+    if case == "rename_product":
+        commit["files"][0].update(status="renamed", previous_filename="src/product.py")
+    if case == "truncated":
+        commit["files"] *= 100
+    if case == "wrong_parent":
+        commit["parents"] = [{"sha": X}]
+    if case == "wrong_child":
+        commit["sha"] = Y
+    if case == "second_attempt":
+        docs["attempt"] = 2
+    if case == "new_red":
+        runs.insert(2, {**run(15, Y, conclusion="failure"), "event": "schedule"})
+    if case == "failed_lane":
+        latest_mac["conclusion"] = "failure"
+    if case == "incomplete_lane":
+        jobs[11] = job_rows(["CI OK"])
+    if case == "no_parent_full":
+        jobs[10] = job_rows(["CI OK"])
+    if case == "no_docs_policy":
+        prior = q.reviewed_policy
+        monkeypatch.setattr(q, "reviewed_policy", lambda sha: None if sha == Z else prior(sha))
+    if case == "partial_docs_jobs":
+        jobs[20] = job_rows(["CI OK"])
+    if case == "unreadable_commit":
+        commit = None
+    if case == "unrelated_green":
+        runs.insert(2, {**run(15, "d" * 40), "event": "push"})
+    world = World(runs, jobs, {f"{X}...{Y}": "diverged" if case == "diverged" else "ahead"})
+    original = world.ghj
+
+    def read(*args, default=None):
+        if args[0] == "api" and args[1].endswith("/git/ref/heads/main"):
+            if case == "unreadable_ref":
+                return None
+            return {"ref": "refs/heads/main", "object": {"type": "commit", "sha": "e" * 40 if case == "pending_product_tip" else tip}}
+        if any("/commits/" in arg for arg in args):
+            if case == "two_docs" and f"/commits/{tip}?" in args[1]:
+                return {"sha": tip, "parents": [{"sha": Z}], "files": [{"status": "modified", "filename": "docs/guide.md"}]}
+            return commit
+        if args[0] == "api":
+            for row in runs:
+                rid = row["databaseId"]
+                if args[1].endswith(f"/actions/runs/{rid}"):
+                    return {"id": rid, "head_sha": row["headSha"], "run_attempt": row["attempt"], "status": row["status"],
+                            "conclusion": row["conclusion"], "event": row.get("event"), "head_branch": "main",
+                            "path": kit.WORKFLOW, "repository": {"full_name": q.hzlib.CORE}, "head_repository": {"full_name": q.hzlib.CORE}}
+                if f"/runs/{rid}/attempts/1/jobs" in args[1] and rid in jobs:
+                    data = jobs[rid]
+                    return {**data, "jobs": [{**j, "run_id": rid, "run_attempt": 1, "head_sha": row["headSha"]} for j in data["jobs"]]}
+        return original(*args, default=default)
+
+    q.world = world
+    monkeypatch.setattr(q.hzlib, "ghj", read)
+    assert q.later_main_passes() is (case in {"green", "two_docs"})
+    assert q.load()["main_failure"] == pin
