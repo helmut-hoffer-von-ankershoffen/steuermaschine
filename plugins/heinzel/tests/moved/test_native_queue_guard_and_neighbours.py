@@ -1,5 +1,6 @@
 import json
 import re
+import subprocess
 import sys
 import time
 from collections import Counter
@@ -119,9 +120,10 @@ def test_guard_cli_prints_file_line_and_exit_codes(tool, lib, monkeypatch, capsy
 def test_guard_reads_gh_pr_diff(tool, lib, monkeypatch):
     guard = tool("hz-diff-guard")
     seen = []
-    monkeypatch.setattr(lib, "gh", lambda *a: (seen.append(a), (0, "diff --git a/x b/x\n"))[1])
+    monkeypatch.setattr(lib, "_gh_process", lambda *a, **kw: (
+        seen.append(a), subprocess.CompletedProcess(a, 0, "diff --git a/x b/x\n", ""))[1])
     assert guard.diff_text(lib.PLUGINS, "38") and seen == [("pr", "diff", "38", "-R", lib.PLUGINS)]
-    monkeypatch.setattr(lib, "gh", lambda *a: (1, ""))
+    monkeypatch.setattr(lib, "_gh_process", lambda *a, **kw: subprocess.CompletedProcess(a, 1, "", ""))
     assert guard.diff_text(lib.CORE, "1") is None
 
 
