@@ -1323,3 +1323,25 @@ def test_batch_publisher_requires_explicit_enablement(queue, lib, monkeypatch, e
     queue.train_tick(now=10_000)
     assert queue.merges == [(lib.CORE, "393"), (lib.CORE, "394")]
     assert not queue.load()["batch_proof"]
+
+
+@pytest.mark.parametrize("moved_base", [False, True])
+def test_operator_guard_is_rechecked_in_the_final_immediate_merge(queue, lib, monkeypatch, moved_base):
+    seen = []
+    base = "b" * 40
+    setup(monkeypatch, lib, queue, [{**view(), "headRefOid": REVIEWED_HEAD}])
+    monkeypatch.setattr(queue, "guard_base", lambda *args: base)
+    monkeypatch.setattr(queue, "guard_findings", lambda *args: ([("ci.yml", 4, "coe", "continue-on-error: true")], "FLAG"))
+    assert queue.main(["add", "--expected-head", REVIEWED_HEAD, "--authorize-guard", "scoped fixture", "594"]) == 0
+    if moved_base:
+        base = "c" * 40
+
+    def merge(repo, pr, *, immediate_merge, expected_head, pre_merge_guard, queue_core):
+        assert immediate_merge and expected_head == REVIEWED_HEAD and queue_core
+        allowed = pre_merge_guard()
+        seen.append(allowed)
+        return allowed, "merged" if allowed else "base changed"
+
+    monkeypatch.setattr(lib.load("hz-merge-train"), "train", merge)
+    queue.train_tick(now=10_000)
+    assert seen == [not moved_base]

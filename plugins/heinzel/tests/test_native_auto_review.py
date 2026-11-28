@@ -33,6 +33,13 @@ def gated(monkeypatch):
     monkeypatch.setattr(area, "needs_review", lambda *a, **k: ["diff guard: timeout raised"])
 
 
+def test_suppressed_independent_review_still_surfaces_a_diff_guard_finding(monkeypatch):
+    monkeypatch.setattr(area, "world", lambda: object())
+    monkeypatch.setattr(area, "ci_reasons", lambda *args, **kwargs: ())
+    findings = [("ci.yml", 4, "coe", "continue-on-error: true")]
+    assert area.needs_review(OWNER + "/steuermaschine", 9, BASE, HEAD, [], guard=lambda *args: findings, errors_only=True)
+
+
 def test_the_author_family_comes_from_the_trailers_and_the_reviewer_differs():
     assert area.author_families(["x\nCo-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"]) == {"sonnet"}
     assert area.author_families(["x\nCo-Authored-By: Claude Opus 4 <a@b>"]) == {"opus"} and area.author_families(["nothing"]) == set()

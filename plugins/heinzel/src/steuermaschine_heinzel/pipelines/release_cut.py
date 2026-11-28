@@ -47,8 +47,7 @@ INPUTS = {
     "main_ci": "focused (default): reserve a registry plan; full: request full candidate validation, subject to independent exact-source no-reservation review",
 }
 TRAPS = {
-    "ci change": "A release whose CI paths changed since the last published tag needs a ci_change verdict on its exact commit: "
-                 "read the changed paths, then record it; no checksum stands in for that review.",
+    "ci change": "Compare CI paths with the last published release. Core requires a readable comparison; other repositories require a ci_change verdict.",
     "notes": "Release notes that drop a combine member are refused by the runner after the push: fix them before the cut.",
     "packet": "A packet is bound to its review file and transcript: a changed review file needs a rebuilt packet and a new admission review.",
     "admit prepare": "Admit BEFORE the push and before resume (resume takes the hold); any merge on main voids the plan: rebuild from release.sh.",
@@ -220,9 +219,8 @@ def changes_since_release(core: str, head: str) -> tuple[str, tuple[str, ...]]:
 
 
 def judged(ctx: Ctx, head: str) -> str:
-    """The CI-change judgement of exactly `head`: no CI change since the newest published release, or an independent
-    ci_change verdict on that commit. Every step that acts on the release commit calls this, so a remade commit is
-    judged again; the run's data keeps only the commit judged last."""
+    """Bind CI path changes to the exact release commit and enforce the repository's review policy."""
+    from ..native.queue_lib import hzlib
     if not SHA.fullmatch(head or ""):
         raise Refuse("no exact release commit to judge for CI changes")
     core = str(path_input(ctx, "clone", "the hooked release clone"))
@@ -230,7 +228,14 @@ def judged(ctx: Ctx, head: str) -> str:
     if ctx.data.get("ci_change_head") == head:
         return str(ctx.data.get("ci_change_detail") or "")
     base, changes = changes_since_release(core, head)
-    if changes:
+    if changes and ctx.settings.get("repo") == hzlib.CORE:
+        # ci_changes returns diagnostics alongside positively classified paths; ambiguous input stays blocked.
+        suffix = f": CI path (not listed as not CI at base {base[:12]})"
+        for reason in changes:
+            if not reason.endswith(suffix):
+                raise Refuse(f"cannot classify the exact release CI changes: {reason}")
+        detail = f"{len(changes)} CI change(s) since {base[:12]} inventoried for {head[:12]}"
+    elif changes:
         store = ctx.providers.store
         for author in dict.fromkeys((ctx.author, verdicts.current_agent())):  # the run's author and the driving agent
             if author:
@@ -279,8 +284,7 @@ def _same_commit(ctx: Ctx) -> str:
 
 
 def ci_change(ctx: Ctx) -> str:
-    """The release commit's CI paths against the newest published release, by the not-CI paths of that release's policy.
-    A change needs an independent `ci_change` verdict on the exact release commit; none, or another kind, refuses."""
+    """Compare the exact release commit with the newest published release using its path policy."""
     main_ci(ctx)
     return judged(ctx, _clone_head(ctx))
 

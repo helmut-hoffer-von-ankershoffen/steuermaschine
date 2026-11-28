@@ -1,5 +1,6 @@
 import json
 import re
+import subprocess
 import sys
 import time
 from collections import Counter
@@ -119,9 +120,10 @@ def test_guard_cli_prints_file_line_and_exit_codes(tool, lib, monkeypatch, capsy
 def test_guard_reads_gh_pr_diff(tool, lib, monkeypatch):
     guard = tool("hz-diff-guard")
     seen = []
-    monkeypatch.setattr(lib, "gh", lambda *a: (seen.append(a), (0, "diff --git a/x b/x\n"))[1])
+    monkeypatch.setattr(lib, "_gh_process", lambda *a, **kw: (
+        seen.append(a), subprocess.CompletedProcess(a, 0, "diff --git a/x b/x\n", ""))[1])
     assert guard.diff_text(lib.PLUGINS, "38") and seen == [("pr", "diff", "38", "-R", lib.PLUGINS)]
-    monkeypatch.setattr(lib, "gh", lambda *a: (1, ""))
+    monkeypatch.setattr(lib, "_gh_process", lambda *a, **kw: subprocess.CompletedProcess(a, 1, "", ""))
     assert guard.diff_text(lib.CORE, "1") is None
 
 
@@ -143,23 +145,37 @@ FLAGGED = [("tests/test_a.py", 9, "skip", "@pytest.mark.skip"), ("ci.yml", 3, "t
 
 def test_queue_add_refuses_a_flagged_pr_and_queues_the_clean_one(queue, monkeypatch, capsys):
     monkeypatch.setattr(queue, "guard_findings", lambda repo, number: (FLAGGED, "FLAG 393\n  tests/test_a.py:9") if number == "393" else ([], "PASS"))
-    assert queue.main(["add", "393", "plugins", "38"]) == 1
+    assert queue.main(["add", "acme", "393", "plugins", "38"]) == 1
     captured = capsys.readouterr()
-    assert "refused 393" in captured.err and "--reviewed" in captured.err and "tests/test_a.py:9" in captured.err
+    assert "refused acme #393" in captured.err and "--reviewed" in captured.err and "tests/test_a.py:9" in captured.err
     assert [i["key"] for i in queue.load()["items"]] == ["plugins #38"] and queue.notes == []
+
+
+def test_checked_head_alone_does_not_accept_flags_and_does_accept_a_clean_diff(queue, monkeypatch):
+    monkeypatch.setattr(queue, "guard_findings", lambda repo, number: (FLAGGED, "FLAG"))
+    assert queue.main(["add", "--expected-head", "b" * 40, "393"]) == 1
+    assert queue.load()["items"] == []
+    assert queue.main(["add", "--expected-head", "a" * 40, "393"]) == 1
+    assert queue.load()["items"] == []
+    monkeypatch.setattr(queue, "guard_findings", lambda repo, number: ([], "PASS"))
+    assert queue.main(["add", "--expected-head", "a" * 40, "393"]) == 0
+    item, = queue.load()["items"]
+    assert item["guarded_head"] == item["expected_head"] == "a" * 40
+    assert not item["reviewed_head"] and queue.notes == []
 
 
 def test_queue_add_reviewed_queues_and_logs_the_reason(queue, monkeypatch, capsys):
     monkeypatch.setattr(queue, "guard_findings", lambda repo, number: (FLAGGED, "FLAG 393"))
-    assert queue.main(["add", "--reviewed", "the skip is the documented macOS gap", "393"]) == 0
-    assert [i["key"] for i in queue.load()["items"]] == ["393"]
+    assert queue.main(["add", "--reviewed", "the skip is the documented macOS gap", "acme", "393"]) == 0
+    assert [i["key"] for i in queue.load()["items"]] == ["acme #393"]
     assert len(queue.notes) == 1 and "the skip is the documented macOS gap" in queue.notes[0] and "skip" in queue.notes[0] and "timeout" in queue.notes[0]
 
 
 def test_queue_add_refuses_an_unreadable_diff_unless_reviewed(queue, monkeypatch, capsys):
     monkeypatch.setattr(queue, "guard_findings", lambda repo, number: (None, "UNREADABLE 393"))
     assert queue.main(["add", "393"]) == 1 and queue.load()["items"] == []
-    assert queue.main(["add", "--reviewed", "read the 40k-line diff by hand", "393"]) == 0 and len(queue.load()["items"]) == 1
+    assert queue.main(["add", "--reviewed", "read the 40k-line diff by hand", "393"]) == 1
+    assert queue.main(["add", "--reviewed", "read the 40k-line diff by hand", "acme", "393"]) == 0 and len(queue.load()["items"]) == 1
 
 
 def test_queue_add_passes_a_clean_pr_without_a_note(queue, monkeypatch):

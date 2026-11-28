@@ -5,12 +5,14 @@ only the fields the proof reads. No test starts a process or reads the network."
 import json
 from pathlib import Path
 
+import pytest
+
 from steuermaschine.app import Runtime
 from steuermaschine.config import Project
 from steuermaschine.plugins import stack_of
 from steuermaschine.protocols import Result
 from steuermaschine.testing import FakeCommands, fake_providers, invoke
-from steuermaschine_heinzel.native import mini
+from steuermaschine_heinzel.native import mini, release_stages
 from steuermaschine_heinzel.plugin import plugin
 
 NOW = 1_800_000_000
@@ -220,6 +222,62 @@ def test_update_does_nothing_when_already_live(tmp_path):
     out = update_run(m, "--minimum", "0.9.39")
     assert out.exit_code == 0 and out.stdout.splitlines()[0] == "update: nothing to do: already live" and out.stdout.splitlines()[-1] == "LIVE-OK 0.9.39"
     assert not [a for a in m.commands.calls if a[:3] == ["hz", "system", "update"] or a[0] == "launchctl"]
+
+
+def accepted_window(m, tmp_path, monkeypatch, *, version="0.9.39", marker=None):
+    window = release_stages.window_path(tmp_path / "home")
+    monkeypatch.setattr(release_stages, "window_path", lambda home=None: window)
+    release_stages.open_window(version, NOW - 60)
+    m.commands.on(["gh", "release", "view", "v0.9.39"], lambda argv: Result(
+        0, json.dumps({"tagName": "v0.9.39", "isDraft": False, "isPrerelease": False})))
+    m.commands.on(["gh", "release", "download", "v0.9.39"], lambda argv: Result(
+        0, json.dumps({"schema": 1, "accepted": True, "project": "heinzel", "version": "0.9.39",
+                       "acceptance_run": 43158281029} | (marker or {}))))
+    return window
+
+
+def test_standalone_update_reconciles_only_after_public_exact_acceptance(tmp_path, monkeypatch):
+    m = Mini(tmp_path)
+    window = accepted_window(m, tmp_path, monkeypatch)
+    assert m.run().exit_code == 0 and window.is_file()
+    assert not [call for call in m.commands.calls if call[0] == "gh"]
+    assert not release_stages.read_record(m.state, "0.9.39")
+
+    out = update_run(m, "--minimum", "0.9.39")
+    assert out.exit_code == 0 and "closed the release window for v0.9.39" in out.stdout
+    assert not window.exists()
+    record = release_stages.read_record(m.state, "0.9.39")
+    assert record == {"version": "0.9.39", "live_at": "2027-01-15T08:00:00Z"}
+    assert update_run(m, "--minimum", "0.9.39").exit_code == 0
+    assert release_stages.read_record(m.state, "0.9.39") == record
+    assert {call[0] for call in m.commands.calls} == {"hz", "curl", "ps", "lsof", "gh"}
+    assert len([call for call in m.commands.calls if call[0] == "gh"]) == 2
+    assert not [call for call in m.commands.calls if call[:3] == ["hz", "system", "update"]]
+
+
+@pytest.mark.parametrize("marker", [{"acceptance_run": 1}, {"version": "0.9.38"}, {"accepted": False}])
+def test_live_update_keeps_window_when_public_acceptance_does_not_match(tmp_path, monkeypatch, marker):
+    m = Mini(tmp_path)
+    window = accepted_window(m, tmp_path, monkeypatch, marker=marker)
+    out = update_run(m, "--minimum", "0.9.39")
+    assert out.exit_code == 0 and "exact public acceptance could not be verified" in out.stdout
+    assert window.is_file() and not release_stages.read_record(m.state, "0.9.39")
+
+
+def test_live_update_preserves_newer_window_even_when_it_opens_during_public_read(tmp_path, monkeypatch):
+    m = Mini(tmp_path)
+    window = accepted_window(m, tmp_path, monkeypatch)
+
+    def advance(argv):
+        assert release_stages.open_window("0.9.40", NOW)
+        return Result(0, json.dumps({"schema": 1, "accepted": True, "project": "heinzel", "version": "0.9.39",
+                                     "acceptance_run": 43158281029}))
+
+    m.commands.on(["gh", "release", "download", "v0.9.39"], advance)
+    out = update_run(m, "--minimum", "0.9.39")
+    assert out.exit_code == 0 and "closed the release window" not in out.stdout
+    assert release_stages.window_version(window) == "0.9.40"
+    assert not release_stages.read_record(m.state, "0.9.39")
 
 
 def test_update_kickstarts_both_jobs_until_the_served_version_is_the_installed_one(tmp_path):

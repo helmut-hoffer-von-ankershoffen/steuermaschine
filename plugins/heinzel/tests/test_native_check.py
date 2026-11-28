@@ -669,13 +669,13 @@ def test_a_full_selection_the_import_graph_narrows_runs_those_tests_and_the_ones
     pytest.param("<failure/>", id="failed"),
     pytest.param("<error/>", id="error"),
 ])
-@pytest.mark.parametrize("grouped", [True, False], ids=["grouped", "standalone"])
-def test_named_python_needs_its_own_passing_case(core, rt, tmp_path, outcome, grouped):  # noqa: F811
+@pytest.mark.parametrize("route", ["guard", "standalone", "explicit-batch", "docs-and-guard"])
+def test_named_python_needs_its_own_passing_case(core, rt, tmp_path, outcome, route):  # noqa: F811
     wanted, other = "tests/unit/wanted_test.py", "tests/unit/other_test.py"
     for name in (wanted, other):
         (core / name).write_text("def test_ok(): pass\n")
     sel = tmp_path / "sel.json"
-    sel.write_text(json.dumps({"python": [wanted]}))
+    sel.write_text(json.dumps({"python": [other, wanted] if route == "explicit-batch" else [wanted]}))
     cmd = ["uv", "run", "pytest", other, wanted, "-m", "unit"]
 
     def emit(argv):
@@ -686,16 +686,20 @@ def test_named_python_needs_its_own_passing_case(core, rt, tmp_path, outcome, gr
         output.write_text(f"<testsuite>{sibling}{requested}</testsuite>")
         return "pytest returned success"
 
+    grouped = route in {"guard", "docs-and-guard"}
     guards = [cmd] if grouped else []
-    match = " ".join(cmd if grouped else [*check.cheap.head.PYTEST_FILES_CMD, wanted])
-    machine = checkout(core, {**NONE, "guards": guards}).on(match, emit)
+    docs = ["named-docs=" + " ".join(cmd)] if route == "docs-and-guard" else []
+    named = [other, wanted] if route == "explicit-batch" else [wanted]
+    match = " ".join(cmd if grouped else [*check.cheap.head.PYTEST_FILES_CMD, *named])
+    machine = checkout(core, {**NONE, "guards": guards, "docs": docs}).on(match, emit)
     runtime = rt(machine)
     found = report(invoke(runtime, ["--format", "json", "check", str(core), "--sel", str(sel)]))
     passed = outcome == ""
     assert found.ready is passed and bool(found.receipt) is passed
     assert bool(runtime.providers.store.get_receipt(verdicts.CHECKS, HEAD)) is passed
     calls = [argv for argv, *_ in machine.calls if "pytest" in argv and wanted in argv]
-    assert len(calls) == 1
+    assert len(calls) == (2 if docs and not passed else 1)
+    assert step(found, "tests").data.get("guards_reused_from_docs", []) == ([cmd] if docs and passed else [])
     if not passed:
         assert "pytest reported no passing case from" in found.failures[0].message
 
