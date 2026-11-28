@@ -35,6 +35,18 @@ def test_plan_guard_checks_the_pinned_head(monkeypatch, row, pinned):
     assert seen == [("7", pinned)] and refusal == []
 
 
+def test_plan_guard_passes_only_revalidated_authorization_for_the_pinned_head(monkeypatch):
+    seen = []
+    base = "b" * 40
+    row = {"pr": "7", "guarded_head": PIN, "guard_authorization": {"head": PIN, "base": base}}
+    monkeypatch.setattr(main_plan, "gap", lambda pr, head, **options: seen.append((pr, head, options)) or "")
+    assert qd.plan_guard(row, lambda: True, [])()
+    assert qd.plan_guard(row, None, [])()
+    assert not qd.plan_guard(row, lambda: False, [])()
+    assert qd.plan_guard({**row, "guarded_head": "c" * 40}, lambda: True, [])()
+    assert seen == [("7", PIN, {"authorized_base": base}), ("7", PIN, {}), ("7", "c" * 40, {})]
+
+
 def test_queue_add_pins_the_guarded_head_and_does_not_evaluate_the_merge_rule(monkeypatch):
     seen = []
     heads = iter([PIN, PIN])

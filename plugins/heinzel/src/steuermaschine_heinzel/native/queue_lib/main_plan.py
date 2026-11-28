@@ -133,10 +133,10 @@ def protected_blobs(pr: str, head: str, main: str) -> dict[str, str]:
     return {name: changed[name] for name in found}
 
 
-def gap(pr: str, head: str = "") -> str:
+def gap(pr: str, head: str = "", *, authorized_base: str = "") -> str:
     """'' when the merge rule holds for the pinned head of PR, else the refusal reason (always starting with PREFIX).
-    The recorded verdict for protected paths is never skipped: a required check is matched by name, and a PR that edits
-    the workflows can add a job of that name."""
+    Protected changes need a verdict or a revalidated operator authorization for this head and base.
+    A PR that edits the workflows can add a job with a required check's name, so green checks alone are insufficient."""
     try:
         info = hzlib.ghj("pr", "view", pr, "-R", hzlib.CORE, "--json", "headRefOid,statusCheckRollup", default={}) or {}
         current = info.get("headRefOid", "") if isinstance(info, dict) else ""
@@ -161,6 +161,7 @@ def gap(pr: str, head: str = "") -> str:
         blobs = protected_blobs(pr, head, main)
     except Exception as error:  # noqa: BLE001 - fail closed: every error is a named refusal
         return f"{PREFIX}: cannot check #{pr}: {error}"
-    if blobs and (reason := _verdict(head, blobs, release_scope(pr, main))):
+    authorized = authorized_base == main and not hzlib.requires_independent_review(hzlib.CORE)
+    if blobs and not authorized and (reason := _verdict(head, blobs, release_scope(pr, main))):
         return f"{PREFIX}: #{pr} ({head[:8]}): {reason}"
     return ""
