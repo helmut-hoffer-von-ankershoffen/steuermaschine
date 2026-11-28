@@ -210,7 +210,12 @@ def _status_command(rt: Runtime, sub: typer.Typer, subject: str) -> None:
         f"{PROG} {subject} status --json",
         "the NEXT of the row you care about."))
     def status(as_json: bool = JSON, all_: bool = typer.Option(False, "--all", help="Include finished runs.")) -> None:
-        rows = [s for s in go_mod.run_states(rt.providers.store) if s["pipeline"].startswith(subject + ".") and (all_ or s.get("status") != "finished")]
+        # The run store also holds legacy replan archives without a pipeline field.
+        rows = [
+            s for s in go_mod.run_states(rt.providers.store)
+            if isinstance(pipeline := s.get("pipeline"), str) and pipeline.startswith(subject + ".")
+            and (all_ or s.get("status") != "finished")
+        ]
         lines = [f"{s.get('status', '?'):9} {s.get('label')}  {s.get('phase')}\n          NEXT {s.get('next') or 'nothing runnable now'}" for s in rows]
         emit(as_json, rows, lines or [f"no {subject} in flight"], models.RunState)
 
