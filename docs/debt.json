@@ -1,7 +1,10 @@
 {
- "coverage core %": 95.0,
- "coverage plugin moved libraries %": 95.0,
- "coverage plugin new code %": 98.0,
+ "coverage core % [darwin]": 95.0,
+ "coverage core % [linux]": 95.0,
+ "coverage plugin moved libraries % [darwin]": 95.0,
+ "coverage plugin moved libraries % [linux]": 95.0,
+ "coverage plugin new code % [darwin]": 98.0,
+ "coverage plugin new code % [linux]": 98.0,
  "environment reads plugin": 13,
  "mypy strict findings core": 0,
  "mypy strict findings plugin": 1989,
