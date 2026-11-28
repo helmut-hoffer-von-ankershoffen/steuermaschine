@@ -86,10 +86,10 @@ def gap(monkeypatch, tmp_path, real_main_plan):
     """`gap(world)`: the rule with `world` as GitHub, under a native runtime whose store holds the verdicts."""
     rt = runtime(tmp_path)
 
-    def run(world, head=HEAD):
+    def run(world, head=HEAD, **options):
         monkeypatch.setattr(hzlib, "gh", world)
         with native(rt):
-            return main_plan.gap("803", head)
+            return main_plan.gap("803", head, **options)
 
     run.rt = rt
     return run
@@ -254,6 +254,16 @@ def test_the_protected_matcher_and_digest_are_one_definition():
     one, text = protected.record({"b": "2", "a": "1"})
     assert one == protected.record({"a": "1", "b": "2"})[0] and '"a": "1"' in text
     assert protected.record({"a": "1", "b": "3"})[0] != one
+
+
+def test_operator_authorization_applies_only_to_current_green_head_and_base(gap, monkeypatch):
+    world = World(files=[".github/workflows/ci.yml"])
+    assert gap(world, authorized_base=MAIN) == ""
+    assert "no verdict is recorded" in gap(world, authorized_base="c" * 40)
+    assert "not the pinned head" in gap(World(files=world.files, head="c" * 40), authorized_base=MAIN)
+    assert "required checks not green" in gap(World(files=world.files, rollup=[]), authorized_base=MAIN)
+    monkeypatch.setattr(hzlib, "requires_independent_review", lambda _repo: True)
+    assert "no verdict is recorded" in gap(world, authorized_base=MAIN)
 
 
 GATE_RULESET = [{"type": "required_status_checks", "parameters": {"required_status_checks": [{"context": "CI OK"}, {"context": "Gate review"}]}}]
