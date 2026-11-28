@@ -46,6 +46,7 @@ DIFF_LIMIT = 200_000  # bytes of diff given to the reviewer; a larger one is not
 ATTEMPTS, DAYS, PASS_LOCK = "heinzel.auto-review.attempts", "heinzel.auto-review.days", "heinzel.auto-review.pass"
 AUTH_NOTE = "headless review cannot authenticate"
 AUTH_FAILED = re.compile(r"not logged in|please run /login|invalid api key|oauth token|authentication[_ ]error|failed to authenticate|\b401\b|credit balance|unauthorized", re.I)
+TOKEN_VARIABLE, TOKEN_KEYCHAIN_ITEM = "CLAUDE_CODE_OAUTH_TOKEN", "claude-code-oauth-token"
 REVIEWER_MODEL = re.compile(r"\breviewer-model=(\S+)")
 
 
@@ -250,6 +251,17 @@ def review_dispatch(number: int = typer.Argument(..., metavar="PR", help="The pu
     return run_review(rt, out, settings, full, number)
 
 
+def reviewer_environment(commands: Any) -> dict[str, str]:
+    """The child's environment; when CLAUDE_CODE_OAUTH_TOKEN is unset it is read once from the macOS Keychain
+    (`security find-generic-password -s claude-code-oauth-token -w`). Held in memory only: never written to a file, a plist or a log."""
+    env = child_environment()
+    if env.get(TOKEN_VARIABLE):
+        return env
+    got = commands.run(["security", "find-generic-password", "-s", TOKEN_KEYCHAIN_ITEM, "-w"], timeout=10)
+    token = got.out.strip() if got.rc == 0 else ""
+    return {**env, TOKEN_VARIABLE: token} if token else env
+
+
 def run_review(rt: Any, out: Dispatched, settings: AutoReviewSettings, full: str, number: int) -> Dispatched:
     """One headless review under the pass lock, the attempt count and the day's budget; the verdict is posted bound to the head."""
     store, commands = rt.providers.store, rt.providers.commands
@@ -268,7 +280,7 @@ def run_review(rt: Any, out: Dispatched, settings: AutoReviewSettings, full: str
             argv = [*settings.review_agent_command, "--model", out.reviewer_model, "--permission-mode", PERMISSION_MODE, "--tools", NO_TOOLS,
                     f"--disallowedTools={DENIED_TOOLS}", "--", brief(full, number, out.head, out.reasons, diff.out)]  # `--`: the prompt is a positional, never a tool name
             with tempfile.TemporaryDirectory(prefix="sm-review-") as scratch:  # the child gets CLAUDE_CODE_OAUTH_TOKEN when this process has it
-                res = commands.run(argv, cwd=scratch, timeout=float(settings.review_agent_timeout_seconds), env=child_environment())
+                res = commands.run(argv, cwd=scratch, timeout=float(settings.review_agent_timeout_seconds), env=reviewer_environment(commands))
             if res.rc != 0 and AUTH_FAILED.search(f"{res.out}\n{res.err}"):
                 refund(store, rt.providers.clock, key)  # a login problem is not a review attempt: nothing is burned
                 out.note = f"{AUTH_NOTE}: log in (claude /login) or set CLAUDE_CODE_OAUTH_TOKEN, then run it again"

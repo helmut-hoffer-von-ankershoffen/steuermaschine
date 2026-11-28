@@ -169,6 +169,23 @@ def test_the_reviewer_gets_the_oauth_token_of_this_process(gated, tmp_path, monk
     assert out.exit_code == 0 and env["CLAUDE_CODE_OAUTH_TOKEN"] == "tok-abc" and "tok-abc" not in out.stdout + out.stderr
 
 
+def test_the_token_comes_from_the_keychain_when_the_variable_is_unset(gated, tmp_path, monkeypatch):
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+    gh = Spy().on("find-generic-password", "tok-kc\n").on("pr view", view()).on("pr diff", DIFF).on("--model opus", "ok\nVERDICT: APPROVE fine").on("pr comment", "")
+    out = invoke(runtime_for(tmp_path, gh), ["review", "dispatch", "5", "--live"])
+    argv, env = next((a, e) for a, e in gh.envs if a[0] == "claude")
+    security = next(a for a, _ in gh.envs if a[0] == "security")
+    assert out.exit_code == 0 and env["CLAUDE_CODE_OAUTH_TOKEN"] == "tok-kc" and security[-3:] == ["-s", "claude-code-oauth-token", "-w"]
+    assert "tok-kc" not in out.stdout + out.stderr + " ".join(argv)
+
+
+def test_the_variable_wins_over_the_keychain_and_a_missing_item_changes_nothing(gated, tmp_path, monkeypatch):
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+    gh = Spy().on("find-generic-password", Result(44, "", "not found")).on("pr view", view()).on("pr diff", DIFF).on("--model opus", "ok\nVERDICT: APPROVE fine").on("pr comment", "")
+    invoke(runtime_for(tmp_path, gh), ["review", "dispatch", "5", "--live"])
+    assert "CLAUDE_CODE_OAUTH_TOKEN" not in next(e for a, e in gh.envs if a[0] == "claude")
+
+
 def test_an_expired_login_is_an_alarm_not_a_burned_attempt(gated, tmp_path):
     login = Result(1, "", "Invalid API key. Please run /login")
     gh = FakeGh().on("pr view", view()).on("pr diff", DIFF).on("--model opus", login)
