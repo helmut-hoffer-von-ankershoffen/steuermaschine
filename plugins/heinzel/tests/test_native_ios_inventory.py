@@ -3,7 +3,7 @@ import json
 from email.message import Message
 from pathlib import Path
 from types import SimpleNamespace
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from urllib.request import Request
 
 import pytest
@@ -150,6 +150,23 @@ def test_inventory_checks_complete_filtered_pages_and_ignores_no_redirect():
         asc.inventory(lambda _: first, APP)
 
 
+def test_inventory_refuses_a_paginator_that_repeats_its_cursor():
+    first, second = build_page(), build_page(identifier=OTHER, number="37")
+    next_page = asc.API + f"/v1/builds?filter%5Bapp%5D={APP}&include=preReleaseVersion&limit=200"
+    first["links"]["next"] = second["links"]["next"] = next_page
+    for page in (first, second):
+        page["meta"]["paging"]["total"] = 2
+    pages = iter([first, second])
+    with pytest.raises(ValueError, match="pagination repeated a page"):
+        asc.inventory(lambda _: next(pages), APP)
+
+
+@pytest.mark.parametrize("change", [{"expired": "false"}, {"state": ""}, {"version": ""}])
+def test_inventory_refuses_a_build_with_missing_identity_or_state(change):
+    with pytest.raises(ValueError, match="missing ASC build identity or state"):
+        asc.inventory(lambda _: build_page(**change), APP)
+
+
 def test_runtime_credential_file_shell_shape_without_emitting_auth(tmp_path, monkeypatch, capsys):
     private = tmp_path / "fixture-private-key.p8"
     private.write_text("fictional private key")
@@ -167,6 +184,35 @@ def test_runtime_credential_file_shell_shape_without_emitting_auth(tmp_path, mon
     monkeypatch.setattr(asc.jwt, "encode", fake_encode)
     assert asc.auth_token() == "fictional JWT"
     assert capsys.readouterr() == ("", "")
+
+
+def test_missing_credential_file_reports_no_path(tmp_path, monkeypatch):
+    monkeypatch.setenv("ASC_ENV_FILE", str(tmp_path / "private-credential-path.env"))
+    with pytest.raises(ValueError, match=r"^could not read or sign with the App Store Connect credentials$"):
+        asc.auth_token()
+
+
+@pytest.mark.parametrize(
+    ("response", "error", "message"),
+    [
+        (b"[]", ValueError, "invalid App Store Connect response"),
+        (b"x" * 33, asc.AscRequestError, "response exceeds the size limit"),
+        (URLError("private provider detail"), asc.AscRequestError, r"^ASC GET request failed$"),
+    ],
+)
+def test_transport_rejects_invalid_or_unavailable_responses(monkeypatch, response, error, message):
+    monkeypatch.setattr(asc, "auth_token", lambda: "fictional JWT")
+    monkeypatch.setattr(asc, "MAX_RESPONSE_BYTES", 32)
+
+    class Opener:
+        def open(self, request, *, timeout):
+            if isinstance(response, URLError):
+                raise response
+            return io.BytesIO(response)
+
+    monkeypatch.setattr(asc, "build_opener", lambda *handlers: Opener())
+    with pytest.raises(error, match=message):
+        asc.client(30)("GET", "/v1/builds")
 
 
 def test_transport_refuses_off_origin_and_discards_unapproved_error_payload(monkeypatch):
@@ -205,6 +251,51 @@ def test_in_process_inventory_reads_only_tag_identity(tagged_tool, monkeypatch):
     monkeypatch.setattr(asc, "client", lambda timeout: provider)
     output = json.loads(asc.invoke(tagged_tool, "inventory", timeout=180))
     assert output["app"] == APP and output["builds"][BUILD]["short"] == "0.9.57"
+
+
+@pytest.mark.parametrize("action", ["assign", "beta", "notes"])
+def test_in_process_dispatch_matches_exact_build_before_writing(tagged_tool, tmp_path, monkeypatch, action):
+    provider = Provider()
+    monkeypatch.setattr(asc, "client", lambda timeout: provider)
+    notes = tmp_path / "notes.md"
+    notes.write_text("## Test note\n")
+    args = ("36", "0.9.57", BUILD)
+    if action == "notes":
+        args += (str(notes),)
+    assert asc.invoke(tagged_tool, action, *args) == {
+        "assign": f"assigned build 36 ({BUILD})",
+        "beta": "build 36 internalBuildState=IN_BETA_TESTING",
+        "notes": "notes set for build 36 (9 characters)",
+    }[action]
+    assert len(provider.writes()) == (0 if action == "beta" else 1)
+    if action == "notes":
+        assert provider.writes()[0][2]["data"]["attributes"]["whatsNew"] == "Test note"
+
+
+@pytest.mark.parametrize(("action", "args"), [("unknown", ()), ("assign", ("36", "0.9.57", "wrong-build-id"))])
+def test_in_process_dispatch_rejects_bad_commands_without_contacting_provider(tagged_tool, monkeypatch, action, args):
+    provider = Provider()
+    monkeypatch.setattr(asc, "client", lambda timeout: provider)
+    with pytest.raises(asc.AscRequestError, match=r"^Could not verify App Store Connect identity or credentials\.$"):
+        asc.invoke(tagged_tool, action, *args)
+    assert not provider.requests
+
+
+@pytest.mark.parametrize("state", [None, "invalid provider text", 123])
+def test_beta_reports_only_valid_internal_build_states(state):
+    provider = Provider()
+
+    def call(method, path, body=None):
+        if path == f"/v1/builds/{BUILD}/buildBetaDetail":
+            return {"data": {"attributes": {"internalBuildState": state}}}
+        return provider(method, path, body)
+
+    if state is None:
+        assert asc.run(call, TAG, "beta", "36", "0.9.57", BUILD) == "build 36 internalBuildState=None"
+    else:
+        with pytest.raises(ValueError, match="invalid internal TestFlight build state"):
+            asc.run(call, TAG, "beta", "36", "0.9.57", BUILD)
+    assert not provider.writes()
 
 
 def test_in_process_call_hides_tag_path_and_syntax_values(tmp_path):
