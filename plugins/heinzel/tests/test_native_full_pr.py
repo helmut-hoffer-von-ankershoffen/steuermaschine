@@ -4,7 +4,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from steuermaschine_heinzel.native.queue_lib import auto_arm, full_pr
+from steuermaschine_heinzel.native import queue_hold
+from steuermaschine_heinzel.native.queue_lib import auto_arm, full_pr, main_plan, queue_daemon
 
 HEAD, BASE, MERGE, TREE = (c * 40 for c in "abcd")
 
@@ -165,20 +166,25 @@ def test_queue_entry_requiring_immediate_merge_is_never_armed(monkeypatch, alrea
     monkeypatch.setattr(auto_arm, "freeze_without_candidate", lambda _: "")
     monkeypatch.setattr(auto_arm, "main_hold", lambda *_: "")
     monkeypatch.setattr(auto_arm.hzlib, "tool_required_checks", lambda _: set())
-    monkeypatch.setattr(auto_arm, "merge_rule", lambda *_: ("", False))
+    monkeypatch.setattr(main_plan, "gap", lambda *_args, **_options: "")
+    monkeypatch.setattr(queue_hold, "current", lambda: None)
     monkeypatch.setattr(auto_arm, "armed_on_github", lambda _: [])
     monkeypatch.setattr(full_pr, "required", lambda _: None if operator_authorized else {"requires_full_pr": True})
     actions = []
     monkeypatch.setattr(auto_arm, "arm", lambda *_: pytest.fail("deferred PR must not arm"))
     monkeypatch.setattr(auto_arm, "disarm", lambda *_: actions.append("disarm") or True)
+
     def train(*_args, **kwargs):
         assert kwargs["immediate_merge"] is operator_authorized
+        assert kwargs["pre_merge_guard"]() is not operator_authorized
         actions.append("immediate")
-        return False, "proof unavailable"
+        return False, "test merge not submitted"
 
     monkeypatch.setattr(auto_arm.hzlib, "load", lambda _: SimpleNamespace(train=train))
+    authorization_checks = iter([True, False])
     q = SimpleNamespace(deps_met=lambda *_: True, assess=lambda *_: "ready", log=lambda *_: None,
-                        update=lambda *_args, **_kwargs: None)
+                        update=lambda *_args, **_kwargs: None, plan_guard=queue_daemon.plan_guard,
+                        authorization_current=lambda _: next(authorization_checks))
     auto_arm.one(q, item, [item])
     assert actions == (["disarm"] if already_armed else ["immediate"])
 

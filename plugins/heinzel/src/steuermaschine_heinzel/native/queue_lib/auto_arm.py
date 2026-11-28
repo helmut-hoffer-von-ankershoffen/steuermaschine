@@ -16,9 +16,9 @@ One tick, for each queued entry whose `after` PRs merged:
     merge rule not met        -> not armed: checks pending or unreadable wait, any other refusal needs work
     otherwise                 -> `gh pr merge N --squash --auto --match-head-commit PINNED`
 
-The merge rule is `main_plan.gap`, applied before every arm of a Core PR: the ruleset's required checks green on the
-pinned head, main an ancestor of it, and a recorded independent verdict for protected paths (always, whatever the
-ruleset requires). The rule is read again every tick on an armed PR: one that no longer meets it is switched off. The red-main hold is the old `gate()`: main's latest run not green or unknown holds all
+The Core merge rule checks the required status checks on the pinned head, ancestry from main, and authorization for
+protected paths. An operator-authorized PR uses an immediate merge and revalidates the authorization at the merge
+boundary. The rule is read again every tick on an armed PR: one that no longer meets it is switched off. The red-main hold is the old `gate()`: main's latest run not green or unknown holds all
 Core arming except a PR that fixes main (fixes_main, fix-forward, or a reviewed safety fix, mitigation, diagnostic).
 
 An incident, verified release hold, or uncertain hold state freezes every repository.
